@@ -1,0 +1,3 @@
+# Authorization Specification
+
+Authorization specification.

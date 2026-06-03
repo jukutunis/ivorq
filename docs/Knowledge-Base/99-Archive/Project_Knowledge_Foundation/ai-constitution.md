@@ -1,0 +1,3 @@
+# AI Constitution
+
+AI constitution.
