@@ -8,7 +8,9 @@ use Modules\Foundation\Authorization\Database\Seeders\RoleSeeder;
 use Modules\Foundation\Department\Database\Seeders\DepartmentSeeder;
 use Modules\Foundation\Property\Database\Seeders\PropertySeeder;
 use Modules\Foundation\User\Database\Seeders\SuperAdminSeeder;
+use Modules\Operations\Housekeeping\Database\Seeders\CleaningChecklistSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\HousekeepingPermissionSeeder;
+use Modules\Operations\Housekeeping\Database\Seeders\RoomSeeder;
 use Modules\Operations\Zoning\Database\Seeders\ZonePermissionSeeder;
 
 class DatabaseSeeder extends Seeder
@@ -28,6 +30,10 @@ class DatabaseSeeder extends Seeder
             PropertySeeder::class,
             DepartmentSeeder::class,
             SuperAdminSeeder::class,
+
+            // Housekeeping sample data
+            RoomSeeder::class,
+            CleaningChecklistSeeder::class,
         ]);
     }
 }

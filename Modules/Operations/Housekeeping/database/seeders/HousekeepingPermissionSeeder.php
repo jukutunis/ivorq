@@ -10,12 +10,35 @@ class HousekeepingPermissionSeeder extends Seeder
     public function run(): void
     {
         $permissions = [
-            'housekeeping.view',
-            'housekeeping.create',
-            'housekeeping.edit',
-            'housekeeping.delete',
-            'housekeeping.assign',
-            'housekeeping.inspect',
+            // Room
+            'housekeeping.room.view',
+            'housekeeping.room.create',
+            'housekeeping.room.edit',
+            'housekeeping.room.delete',
+            'housekeeping.room.cleanliness',
+            'housekeeping.room.occupancy',
+
+            // Task
+            'housekeeping.task.view',
+            'housekeeping.task.create',
+            'housekeeping.task.edit',
+            'housekeeping.task.delete',
+            'housekeeping.task.assign',
+            'housekeeping.task.start',
+            'housekeeping.task.complete',
+            'housekeeping.task.cancel',
+
+            // Checklist
+            'housekeeping.checklist.view',
+            'housekeeping.checklist.create',
+            'housekeeping.checklist.edit',
+            'housekeeping.checklist.delete',
+
+            // Inspection
+            'housekeeping.inspection.view',
+            'housekeeping.inspection.create',
+            'housekeeping.inspection.conduct',
+            'housekeeping.inspection.approve',
         ];
 
         foreach ($permissions as $name) {

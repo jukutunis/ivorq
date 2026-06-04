@@ -107,6 +107,132 @@ export interface ZoneTemplate {
     updated_at: string;
 }
 
+// ── Housekeeping ─────────────────────────────────────────────────────────────
+
+export interface Room {
+    id: string;
+    property_id: string;
+    zone_id: string | null;
+    room_number: string;
+    room_name: string | null;
+    room_type: EnumOption;
+    floor: string | null;
+    building: string | null;
+    cleanliness_status: EnumOption;
+    occupancy_status: EnumOption | null;
+    is_active: boolean;
+    notes: string | null;
+    created_by: string | null;
+    updated_by: string | null;
+    created_at: string;
+    updated_at: string;
+    zone?: { id: string; zone_code: string; zone_name: string };
+    status_histories?: RoomStatusHistory[];
+    inspections?: RoomInspection[];
+}
+
+export interface RoomStatusHistory {
+    id: string;
+    room_id: string;
+    status_field: string;
+    from_status: string | null;
+    to_status: string;
+    action: string;
+    remarks: string | null;
+    created_at: string;
+    performer?: { id: string; name: string } | null;
+}
+
+export interface CleaningTask {
+    id: string;
+    property_id: string;
+    room_id: string | null;
+    zone_id: string | null;
+    task_code: string;
+    title: string;
+    description: string | null;
+    task_type: EnumOption;
+    status: EnumOption;
+    priority: number;
+    estimated_duration_minutes: number | null;
+    due_date: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    completed_by: string | null;
+    actual_duration_minutes: number | null;
+    created_by: string | null;
+    updated_by: string | null;
+    created_at: string;
+    updated_at: string;
+    room?: { id: string; room_number: string; room_name: string | null };
+    zone?: { id: string; zone_code: string; zone_name: string };
+    assignments?: TaskAssignment[];
+}
+
+export interface TaskAssignment {
+    id: string;
+    property_id: string;
+    cleaning_task_id: string;
+    user_id: string | null;
+    department_id: string | null;
+    assigned_by: string | null;
+    assigned_at: string;
+    completed_at: string | null;
+    notes: string | null;
+    status: EnumOption;
+    created_at: string;
+    updated_at: string;
+    task?: { id: string; task_code: string; title: string };
+    user?: { id: string; name: string } | null;
+    department?: { id: string; name: string } | null;
+}
+
+export interface RoomInspection {
+    id: string;
+    property_id: string;
+    room_id: string;
+    cleaning_task_id: string | null;
+    inspector_id: string | null;
+    inspection_type: EnumOption;
+    status: EnumOption;
+    inspection_severity: EnumOption | null;
+    remarks: string | null;
+    inspected_at: string | null;
+    created_by: string | null;
+    updated_by: string | null;
+    created_at: string;
+    updated_at: string;
+    room?: { id: string; room_number: string; room_name: string | null };
+    task?: { id: string; task_code: string; title: string } | null;
+    inspector?: { id: string; name: string } | null;
+}
+
+export interface CleaningChecklist {
+    id: string;
+    property_id: string;
+    name: string;
+    task_type: EnumOption | null;
+    description: string | null;
+    is_active: boolean;
+    items_count?: number;
+    created_by: string | null;
+    updated_by: string | null;
+    created_at: string;
+    updated_at: string;
+    items?: ChecklistItem[];
+}
+
+export interface ChecklistItem {
+    id: string;
+    property_id: string;
+    checklist_id: string;
+    item_text: string;
+    sort_order: number;
+    is_required: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
 export interface PaginatedData<T> {
     data: T[];
     current_page: number;

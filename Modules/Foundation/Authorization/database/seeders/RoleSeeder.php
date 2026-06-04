@@ -40,11 +40,21 @@ class RoleSeeder extends Seeder
             'audit.view', 'activity.view',
             // Zoning
             'zone.view', 'zone.create', 'zone.edit', 'zone.assign', 'zone.archive',
-            // Housekeeping
-            'housekeeping.view', 'housekeeping.create', 'housekeeping.edit', 'housekeeping.assign',
+            // Housekeeping — Room
+            'housekeeping.room.view', 'housekeeping.room.create', 'housekeeping.room.edit',
+            'housekeeping.room.cleanliness', 'housekeeping.room.occupancy',
+            // Housekeeping — Task
+            'housekeeping.task.view', 'housekeeping.task.create', 'housekeeping.task.edit',
+            'housekeeping.task.assign', 'housekeeping.task.start',
+            'housekeeping.task.complete', 'housekeeping.task.cancel',
+            // Housekeeping — Checklist
+            'housekeeping.checklist.view', 'housekeeping.checklist.create', 'housekeeping.checklist.edit',
+            // Housekeeping — Inspection
+            'housekeeping.inspection.view', 'housekeeping.inspection.create',
+            'housekeeping.inspection.conduct', 'housekeeping.inspection.approve',
         ]);
 
-        // Staff — basic access
+        // Staff — basic operational access
         $staff = Role::firstOrCreate([
             'name'       => 'staff',
             'guard_name' => 'web',
@@ -53,7 +63,17 @@ class RoleSeeder extends Seeder
         $staff->syncPermissions([
             'activity.view',
             'zone.view',
-            'housekeeping.view',
+            // Housekeeping — Room
+            'housekeeping.room.view',
+            // Housekeeping — Task
+            'housekeeping.task.view',
+            'housekeeping.task.start',
+            'housekeeping.task.complete',
+            // Housekeeping — Checklist
+            'housekeeping.checklist.view',
+            // Housekeeping — Inspection
+            'housekeeping.inspection.view',
+            'housekeeping.inspection.conduct',
         ]);
     }
 }

@@ -1,0 +1,35 @@
+<?php
+
+namespace Modules\Operations\Housekeeping\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Modules\Operations\Housekeeping\Enums\RoomTypeEnum;
+use Modules\Operations\Housekeeping\Models\Room;
+use Shared\Services\CurrentPropertyService;
+
+class StoreRoomRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('create', Room::class);
+    }
+
+    public function rules(): array
+    {
+        $propertyId = app(CurrentPropertyService::class)->getId();
+
+        return [
+            'room_number' => ['required', 'string', 'max:20',
+                "unique:rooms,room_number,NULL,id,property_id,{$propertyId},deleted_at,NULL",
+            ],
+            'room_name'   => ['nullable', 'string', 'max:255'],
+            'room_type'   => ['required', Rule::enum(RoomTypeEnum::class)],
+            'zone_id'     => ['nullable', 'string', 'exists:zones,id'],
+            'floor'       => ['nullable', 'string', 'max:10'],
+            'building'    => ['nullable', 'string', 'max:100'],
+            'is_active'   => ['nullable', 'boolean'],
+            'notes'       => ['nullable', 'string'],
+        ];
+    }
+}
