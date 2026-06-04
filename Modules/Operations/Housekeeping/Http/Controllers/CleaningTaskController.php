@@ -14,7 +14,6 @@ use Modules\Operations\Housekeeping\Http\Requests\StoreCleaningTaskRequest;
 use Modules\Operations\Housekeeping\Http\Requests\StoreTaskAssignmentRequest;
 use Modules\Operations\Housekeeping\Http\Requests\UpdateCleaningTaskRequest;
 use Modules\Operations\Housekeeping\Http\Resources\CleaningTaskResource;
-use Modules\Operations\Housekeeping\Http\Resources\TaskAssignmentResource;
 use Modules\Operations\Housekeeping\Models\CleaningTask;
 use Modules\Operations\Housekeeping\Services\CleaningTaskService;
 use Shared\Services\CurrentPropertyService;
@@ -132,7 +131,7 @@ class CleaningTaskController extends Controller
         $model = $this->taskService->find($task);
         $this->authorize('assign', $model);
 
-        $assignment = $this->taskService->assign($task, array_merge($request->validated(), [
+        $this->taskService->assign($task, array_merge($request->validated(), [
             'assigned_by' => auth()->id(),
         ]));
 

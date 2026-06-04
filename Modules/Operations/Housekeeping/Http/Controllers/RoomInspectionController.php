@@ -8,7 +8,6 @@ use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
 use Inertia\Response;
 use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
-use Modules\Operations\Housekeeping\Enums\InspectionStatusEnum;
 use Modules\Operations\Housekeeping\Enums\InspectionTypeEnum;
 use Modules\Operations\Housekeeping\Http\Requests\FailInspectionRequest;
 use Modules\Operations\Housekeeping\Http\Requests\PassInspectionRequest;
@@ -60,9 +59,10 @@ class RoomInspectionController extends Controller
 
     public function store(StoreRoomInspectionRequest $request): RedirectResponse
     {
-        $data = array_merge($request->validated(), [
+        $validated = $request->validated();
+        $data      = array_merge($validated, [
             'property_id'  => app(CurrentPropertyService::class)->getId(),
-            'inspector_id' => $request->validated()['inspector_id'] ?? auth()->id(),
+            'inspector_id' => $validated['inspector_id'] ?? auth()->id(),
         ]);
 
         $inspection = $this->inspectionService->create($data);

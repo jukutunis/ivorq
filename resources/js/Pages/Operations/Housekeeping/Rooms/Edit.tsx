@@ -3,13 +3,11 @@ import { Link, useForm } from '@inertiajs/react';
 import { Room, EnumOption } from '@/Types';
 
 interface Props {
-    room:                 Room;
-    room_types:           EnumOption[];
-    cleanliness_statuses: EnumOption[];
-    occupancy_statuses:   EnumOption[];
+    room:       Room;
+    room_types: EnumOption[];
 }
 
-export default function RoomEdit({ room, room_types, cleanliness_statuses, occupancy_statuses }: Props) {
+export default function RoomEdit({ room, room_types }: Props) {
     const { data, setData, put, processing, errors } = useForm({
         room_name: room.room_name ?? '',
         room_type: String(room.room_type.value),

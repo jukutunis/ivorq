@@ -45,14 +45,6 @@ class RoomController extends Controller
                 fn(RoomTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 RoomTypeEnum::cases()
             ),
-            'cleanliness_statuses' => array_map(
-                fn(RoomCleanlinessStatusEnum $s) => ['value' => $s->value, 'label' => $s->label()],
-                RoomCleanlinessStatusEnum::cases()
-            ),
-            'occupancy_statuses' => array_map(
-                fn(RoomOccupancyStatusEnum $s) => ['value' => $s->value, 'label' => $s->label()],
-                RoomOccupancyStatusEnum::cases()
-            ),
         ]);
     }
 
@@ -88,14 +80,6 @@ class RoomController extends Controller
             'room_types' => array_map(
                 fn(RoomTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 RoomTypeEnum::cases()
-            ),
-            'cleanliness_statuses' => array_map(
-                fn(RoomCleanlinessStatusEnum $s) => ['value' => $s->value, 'label' => $s->label()],
-                RoomCleanlinessStatusEnum::cases()
-            ),
-            'occupancy_statuses' => array_map(
-                fn(RoomOccupancyStatusEnum $s) => ['value' => $s->value, 'label' => $s->label()],
-                RoomOccupancyStatusEnum::cases()
             ),
         ]);
     }

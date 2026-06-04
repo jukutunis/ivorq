@@ -70,7 +70,7 @@ class CleaningChecklistController extends Controller
         $this->authorize('view', $model);
 
         return Inertia::render('Operations/Housekeeping/Checklists/Show', [
-            'checklist' => new CleaningChecklistResource($model->loadCount('items')->load('items')),
+            'checklist' => new CleaningChecklistResource($model->loadCount('items')),
         ]);
     }
 
