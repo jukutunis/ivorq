@@ -3,6 +3,7 @@
 namespace Modules\Foundation\Property\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdatePropertyRequest extends FormRequest
 {
@@ -19,7 +20,7 @@ class UpdatePropertyRequest extends FormRequest
 
         return [
             'name'     => ['sometimes', 'string', 'max:255'],
-            'code'     => ['sometimes', 'string', 'max:20', "unique:properties,code,{$propertyId}"],
+            'code'     => ['sometimes', 'string', 'max:20', Rule::unique('properties', 'code')->ignore($propertyId)->whereNull('deleted_at')],
             'email'    => ['nullable', 'email'],
             'phone'    => ['nullable', 'string', 'max:50'],
             'address'  => ['nullable', 'string'],

@@ -10,7 +10,7 @@ trait BelongsToProperty
     {
         static::creating(function ($model) {
             if (empty($model->property_id)) {
-                $model->property_id = app(\Shared\Services\CurrentPropertyService::class)->getId();
+                $model->property_id = app(\Shared\Services\CurrentPropertyService::class)->resolveOrFail();
             }
         });
 

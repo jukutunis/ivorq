@@ -20,7 +20,7 @@ class UpdateRoomInspectionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'inspector_id'        => ['nullable', 'string', 'exists:users,id'],
+            'inspector_id'        => ['nullable', 'string', Rule::exists('users', 'id')->whereNull('deleted_at')],
             'inspection_type'     => ['sometimes', Rule::enum(InspectionTypeEnum::class)],
             'inspection_severity' => ['nullable', Rule::enum(InspectionSeverityEnum::class)],
             'remarks'             => ['nullable', 'string'],

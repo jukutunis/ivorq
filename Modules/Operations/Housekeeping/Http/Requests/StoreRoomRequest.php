@@ -25,7 +25,7 @@ class StoreRoomRequest extends FormRequest
             ],
             'room_name'   => ['nullable', 'string', 'max:255'],
             'room_type'   => ['required', Rule::enum(RoomTypeEnum::class)],
-            'zone_id'     => ['nullable', 'string', 'exists:zones,id'],
+            'zone_id'     => ['nullable', 'string', Rule::exists('zones', 'id')->where('property_id', $propertyId)->whereNull('deleted_at')],
             'floor'       => ['nullable', 'string', 'max:10'],
             'building'    => ['nullable', 'string', 'max:100'],
             'is_active'   => ['nullable', 'boolean'],

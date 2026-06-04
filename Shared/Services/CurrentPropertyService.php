@@ -2,21 +2,37 @@
 
 namespace Shared\Services;
 
+use Shared\Exceptions\PropertyNotResolvedException;
+
 class CurrentPropertyService
 {
     private ?string $propertyId = null;
 
-    public function setId(string $propertyId): void
+    // ── Primary API ──────────────────────────────────────────────────────────
+
+    public function setPropertyId(?string $propertyId): void
     {
         $this->propertyId = $propertyId;
     }
 
-    public function getId(): ?string
+    public function getPropertyId(): ?string
     {
-        if ($this->propertyId) {
+        // Tier 1: explicit override
+        if ($this->propertyId !== null) {
             return $this->propertyId;
         }
 
+        // Tier 2: session-based current_property_id
+        try {
+            $sessionId = session('current_property_id');
+            if ($sessionId) {
+                return $sessionId;
+            }
+        } catch (\Throwable) {
+            // Session not available in this context (e.g., console/queue)
+        }
+
+        // Tier 3: authenticated user property_id
         if (auth()->check() && auth()->user()->property_id) {
             return auth()->user()->property_id;
         }
@@ -24,13 +40,41 @@ class CurrentPropertyService
         return null;
     }
 
+    public function resolveOrFail(): string
+    {
+        $propertyId = $this->getPropertyId();
+
+        if ($propertyId === null) {
+            throw new PropertyNotResolvedException();
+        }
+
+        return $propertyId;
+    }
+
+    public function clear(): void
+    {
+        $this->propertyId = null;
+    }
+
+    // ── Backward-compatible aliases ──────────────────────────────────────────
+
+    public function setId(string $propertyId): void
+    {
+        $this->setPropertyId($propertyId);
+    }
+
+    public function getId(): ?string
+    {
+        return $this->getPropertyId();
+    }
+
     public function resolve(): ?string
     {
-        return $this->getId();
+        return $this->getPropertyId();
     }
 
     public function isResolved(): bool
     {
-        return $this->getId() !== null;
+        return $this->getPropertyId() !== null;
     }
 }

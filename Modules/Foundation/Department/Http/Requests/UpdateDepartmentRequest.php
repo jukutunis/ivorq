@@ -20,7 +20,7 @@ class UpdateDepartmentRequest extends FormRequest
 
         return [
             'name'        => ['sometimes', 'string', 'max:255'],
-            'code'        => ['sometimes', 'string', 'max:20', "unique:departments,code,{$departmentId},id,property_id,{$propertyId}"],
+            'code'        => ['sometimes', 'string', 'max:20', "unique:departments,code,{$departmentId},id,property_id,{$propertyId},deleted_at,NULL"],
             'description' => ['nullable', 'string'],
             'is_active'   => ['sometimes', 'boolean'],
         ];

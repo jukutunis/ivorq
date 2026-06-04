@@ -21,7 +21,7 @@ class StoreCleaningChecklistRequest extends FormRequest
 
         return [
             'name'        => ['required', 'string', 'max:255',
-                "unique:cleaning_checklists,name,NULL,id,property_id,{$propertyId}",
+                "unique:cleaning_checklists,name,NULL,id,property_id,{$propertyId},deleted_at,NULL",
             ],
             'task_type'   => ['nullable', Rule::enum(TaskTypeEnum::class)],
             'description' => ['nullable', 'string'],
