@@ -13,6 +13,7 @@ use Modules\Operations\Zoning\Enums\ZonePriorityEnum;
 use Modules\Operations\Zoning\Http\Requests\ChangeZoneStatusRequest;
 use Modules\Operations\Zoning\Http\Requests\StoreZoneRequest;
 use Modules\Operations\Zoning\Http\Requests\UpdateZoneRequest;
+use Modules\Operations\Zoning\Http\Resources\ZoneAssignmentResource;
 use Modules\Operations\Zoning\Http\Resources\ZoneHistoryResource;
 use Modules\Operations\Zoning\Http\Resources\ZoneResource;
 use Modules\Operations\Zoning\Http\Resources\ZoneTemplateResource;
@@ -81,7 +82,7 @@ class ZoneController extends Controller
 
         return Inertia::render('Operations/Zone/Show', [
             'zone'        => new ZoneResource($model),
-            'assignments' => ZoneResource::collection($model->activeAssignments()->with(['user', 'department'])->get()),
+            'assignments' => ZoneAssignmentResource::collection($model->activeAssignments()->with(['user', 'department'])->get()),
             'histories'   => ZoneHistoryResource::collection($histories),
         ]);
     }
