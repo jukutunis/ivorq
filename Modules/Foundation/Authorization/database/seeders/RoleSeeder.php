@@ -33,10 +33,15 @@ class RoleSeeder extends Seeder
             'team_id'    => null,
         ]);
         $manager->syncPermissions([
+            // Foundation
             'department.view', 'department.create', 'department.edit',
             'user.view', 'user.create', 'user.edit',
             'role.view',
             'audit.view', 'activity.view',
+            // Zoning
+            'zone.view', 'zone.create', 'zone.edit', 'zone.assign', 'zone.archive',
+            // Housekeeping
+            'housekeeping.view', 'housekeeping.create', 'housekeeping.edit', 'housekeeping.assign',
         ]);
 
         // Staff — basic access
@@ -47,6 +52,8 @@ class RoleSeeder extends Seeder
         ]);
         $staff->syncPermissions([
             'activity.view',
+            'zone.view',
+            'housekeeping.view',
         ]);
     }
 }

@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 return Application::configure(basePath: dirname(__DIR__))
     ->withProviders([
         Modules\Foundation\FoundationServiceProvider::class,
+        Modules\Operations\OperationsServiceProvider::class,
     ])
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

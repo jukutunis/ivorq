@@ -4,6 +4,8 @@ namespace Tests\Feature\Foundation\Concerns;
 
 use Modules\Foundation\Authorization\Database\Seeders\PermissionSeeder;
 use Modules\Foundation\Authorization\Database\Seeders\RoleSeeder;
+use Modules\Operations\Housekeeping\Database\Seeders\HousekeepingPermissionSeeder;
+use Modules\Operations\Zoning\Database\Seeders\ZonePermissionSeeder;
 use Modules\Foundation\Department\Models\Department;
 use Modules\Foundation\Department\Models\Position;
 use Modules\Foundation\Property\Models\Company;
@@ -21,6 +23,8 @@ trait CreatesFoundationData
         }
 
         $this->seed(PermissionSeeder::class);
+        $this->seed(ZonePermissionSeeder::class);
+        $this->seed(HousekeepingPermissionSeeder::class);
         $this->seed(RoleSeeder::class);
 
         app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
