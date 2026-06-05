@@ -15,6 +15,16 @@ use Modules\Operations\Engineering\Database\Seeders\WorkOrderSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\CleaningChecklistSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\HousekeepingPermissionSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\RoomSeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryAdjustmentSeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryCategorySeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryIssueSeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryItemSeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryLocationSeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryOpeningBalanceSeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryPermissionSeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryReceiptSeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryTransferSeeder;
+use Modules\Operations\Inventory\Database\Seeders\InventoryUnitSeeder;
 use Modules\Operations\PMS\Database\Seeders\GuestSeeder;
 use Modules\Operations\PMS\Database\Seeders\PmsPermissionSeeder;
 use Modules\Operations\PMS\Database\Seeders\RatePlanSeeder;
@@ -33,6 +43,7 @@ class DatabaseSeeder extends Seeder
             HousekeepingPermissionSeeder::class,
             EngineeringPermissionSeeder::class,
             PmsPermissionSeeder::class,
+            InventoryPermissionSeeder::class,
 
             // Roles — must run after all permission seeders (syncPermissions uses Permission::all())
             RoleSeeder::class,
@@ -56,6 +67,21 @@ class DatabaseSeeder extends Seeder
             RatePlanSeeder::class,
             ReservationSeeder::class,
             RoomBlockSeeder::class,
+
+            // Inventory master data — must run after PropertySeeder
+            InventoryCategorySeeder::class,
+            InventoryUnitSeeder::class,
+            InventoryLocationSeeder::class,
+            InventoryItemSeeder::class,
+
+            // Inventory opening balances — must run after master data seeders
+            InventoryOpeningBalanceSeeder::class,
+
+            // Inventory transactions — must run after opening balances
+            InventoryReceiptSeeder::class,
+            InventoryIssueSeeder::class,
+            InventoryTransferSeeder::class,
+            InventoryAdjustmentSeeder::class,
         ]);
     }
 }
