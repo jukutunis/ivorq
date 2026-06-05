@@ -8,6 +8,10 @@ use Modules\Foundation\Authorization\Database\Seeders\RoleSeeder;
 use Modules\Foundation\Department\Database\Seeders\DepartmentSeeder;
 use Modules\Foundation\Property\Database\Seeders\PropertySeeder;
 use Modules\Foundation\User\Database\Seeders\SuperAdminSeeder;
+use Modules\Operations\Engineering\Database\Seeders\EngineeringChecklistSeeder;
+use Modules\Operations\Engineering\Database\Seeders\EngineeringPermissionSeeder;
+use Modules\Operations\Engineering\Database\Seeders\PreventiveMaintenanceSeeder;
+use Modules\Operations\Engineering\Database\Seeders\WorkOrderSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\CleaningChecklistSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\HousekeepingPermissionSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\RoomSeeder;
@@ -22,6 +26,7 @@ class DatabaseSeeder extends Seeder
             PermissionSeeder::class,
             ZonePermissionSeeder::class,
             HousekeepingPermissionSeeder::class,
+            EngineeringPermissionSeeder::class,
 
             // Roles — must run after all permission seeders (syncPermissions uses Permission::all())
             RoleSeeder::class,
@@ -34,6 +39,11 @@ class DatabaseSeeder extends Seeder
             // Housekeeping sample data
             RoomSeeder::class,
             CleaningChecklistSeeder::class,
+
+            // Engineering sample data — must run after RoomSeeder (WorkOrderSeeder uses rooms)
+            EngineeringChecklistSeeder::class,
+            PreventiveMaintenanceSeeder::class,
+            WorkOrderSeeder::class,
         ]);
     }
 }

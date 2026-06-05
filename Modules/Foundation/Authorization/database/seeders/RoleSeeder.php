@@ -52,6 +52,17 @@ class RoleSeeder extends Seeder
             // Housekeeping — Inspection
             'housekeeping.inspection.view', 'housekeeping.inspection.create',
             'housekeeping.inspection.conduct', 'housekeeping.inspection.approve',
+            // Engineering — Work Orders
+            'engineering.work-order.view', 'engineering.work-order.create', 'engineering.work-order.edit',
+            'engineering.work-order.delete', 'engineering.work-order.assign', 'engineering.work-order.approve',
+            // Engineering — Preventive Maintenance
+            'engineering.pm.view', 'engineering.pm.create', 'engineering.pm.edit', 'engineering.pm.delete',
+            // Engineering — Asset Requests
+            'engineering.asset-request.view', 'engineering.asset-request.create',
+            'engineering.asset-request.edit', 'engineering.asset-request.approve',
+            // Engineering — Checklists
+            'engineering.checklist.view', 'engineering.checklist.create',
+            'engineering.checklist.edit', 'engineering.checklist.delete',
         ]);
 
         // Staff — basic operational access
@@ -74,6 +85,8 @@ class RoleSeeder extends Seeder
             // Housekeeping — Inspection
             'housekeeping.inspection.view',
             'housekeeping.inspection.conduct',
+            // Engineering — no access for staff role
+            // (engineering.work-order.view etc. are manager-level and above)
         ]);
     }
 }
