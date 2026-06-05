@@ -36,7 +36,10 @@ class InventoryItemController extends Controller
     {
         $this->authorize('create', InventoryItem::class);
 
-        return Inertia::render('Operations/Inventory/Items/Create');
+        return Inertia::render('Operations/Inventory/Items/Create', [
+            'categories' => $this->masterDataService->paginateCategories([], 500)->items(),
+            'units'      => $this->masterDataService->paginateUnits([], 500)->items(),
+        ]);
     }
 
     public function store(StoreItemRequest $request): RedirectResponse
@@ -67,7 +70,9 @@ class InventoryItemController extends Controller
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/Inventory/Items/Edit', [
-            'item' => new InventoryItemResource($model),
+            'item'       => new InventoryItemResource($model),
+            'categories' => $this->masterDataService->paginateCategories([], 500)->items(),
+            'units'      => $this->masterDataService->paginateUnits([], 500)->items(),
         ]);
     }
 
