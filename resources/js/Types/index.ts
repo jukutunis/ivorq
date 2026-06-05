@@ -251,3 +251,83 @@ export interface PageProps {
         error: string | null;
     };
 }
+
+// ── Engineering ─────────────────────────────────────────────────────────────
+
+export interface WorkOrder {
+    id: string;
+    property_id: string;
+    work_order_number: string;
+    title: string;
+    description: string | null;
+    work_order_type: EnumOption | string;
+    priority: number | EnumOption;
+    status: EnumOption | string;
+    location_type: string | null;
+    room_id: string | null;
+    zone_id: string | null;
+    location_description: string | null;
+    asset_description: string | null;
+    due_date: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    created_at: string;
+    updated_at: string;
+    room?: { id: string; room_number: string; room_name: string | null };
+    zone?: { id: string; zone_code: string; zone_name: string };
+    assignments?: any[];
+}
+
+export interface PreventiveMaintenance {
+    id: string;
+    property_id: string;
+    pm_code: string;
+    title: string;
+    description: string | null;
+    frequency: EnumOption;
+    status: EnumOption;
+    next_due_at: string | null;
+    last_run_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PreventiveMaintenanceTask {
+    id: string;
+    property_id: string;
+    preventive_maintenance_id: string;
+    status: EnumOption;
+    scheduled_date: string | null;
+    completed_at: string | null;
+    created_at: string;
+    updated_at: string;
+    preventive_maintenance?: {
+        id: string;
+        pm_code: string;
+        title: string;
+    };
+}
+
+export interface AssetRequest {
+    id: string;
+    property_id: string;
+    request_number: string;
+    title: string;
+    description: string | null;
+    status: EnumOption;
+    priority: EnumOption;
+    requester_id: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface EngineeringChecklist {
+    id: string;
+    property_id: string;
+    title: string;
+    description: string | null;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+    items?: any[];
+}
