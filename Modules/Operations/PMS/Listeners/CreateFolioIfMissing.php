@@ -27,8 +27,12 @@ class CreateFolioIfMissing
             return;
         }
 
+        $seq          = Folio::where('property_id', $reservation->property_id)->withTrashed()->count() + 1;
+        $folioNumber  = sprintf('FOL-%05d', $seq);
+
         $this->folioRepository->create([
             'property_id'    => $reservation->property_id,
+            'folio_number'   => $folioNumber,
             'reservation_id' => $reservation->id,
             'guest_id'       => $stay->guest_id,
             'status'         => FolioStatusEnum::Open->value,
