@@ -70,5 +70,7 @@ class PMSServiceProvider extends ServiceProvider
         Event::listen(FolioCreated::class,     [LogPmsActivity::class, 'handle']);
         Event::listen(FolioItemPosted::class,  [LogPmsActivity::class, 'handle']);
         Event::listen(FolioItemVoided::class,  [LogPmsActivity::class, 'handle']);
+
+        $this->loadRoutesFrom(__DIR__ . '/routes/web.php');
     }
 }

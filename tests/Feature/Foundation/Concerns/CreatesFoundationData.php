@@ -6,6 +6,7 @@ use Modules\Foundation\Authorization\Database\Seeders\PermissionSeeder;
 use Modules\Foundation\Authorization\Database\Seeders\RoleSeeder;
 use Modules\Operations\Engineering\Database\Seeders\EngineeringPermissionSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\HousekeepingPermissionSeeder;
+use Modules\Operations\PMS\Database\Seeders\PmsPermissionSeeder;
 use Modules\Operations\Zoning\Database\Seeders\ZonePermissionSeeder;
 use Modules\Foundation\Department\Models\Department;
 use Modules\Foundation\Department\Models\Position;
@@ -27,6 +28,7 @@ trait CreatesFoundationData
         $this->seed(ZonePermissionSeeder::class);
         $this->seed(HousekeepingPermissionSeeder::class);
         $this->seed(EngineeringPermissionSeeder::class);
+        $this->seed(PmsPermissionSeeder::class);
         $this->seed(RoleSeeder::class);
 
         app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
