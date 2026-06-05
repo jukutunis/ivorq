@@ -63,4 +63,13 @@ class InventoryAdjustmentPolicy
         return $user->hasPermissionTo('inventory.adjustment.approve')
             && ($user->isSuperAdmin() || $user->property_id === $adjustment->property_id);
     }
+
+    /**
+     * Cancellation by any user with create permission (draft) or approve permission (submitted).
+     */
+    public function cancel(User $user, InventoryAdjustment $adjustment): bool
+    {
+        return $user->hasPermissionTo('inventory.adjustment.create')
+            && ($user->isSuperAdmin() || $user->property_id === $adjustment->property_id);
+    }
 }
