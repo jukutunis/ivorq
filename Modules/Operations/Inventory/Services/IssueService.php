@@ -34,12 +34,20 @@ class IssueService
             ]);
         }
 
+        // BR-041: at least one line required
+        if ($issue->lines->isEmpty()) {
+            throw ValidationException::withMessages([
+                'lines' => ['An issue must have at least one line before it can be posted.'],
+            ]);
+        }
+
         DB::transaction(function () use ($issue, $userId) {
             foreach ($issue->lines as $line) {
-                $item = $this->itemRepository->find($line->item_id);
+                $item       = $this->itemRepository->find($line->item_id);
                 $currentWac = (string) $item->average_cost;
                 $quantityChange = -1 * (float) $line->quantity;
 
+                // BR-018: stamp current WAC as unit_cost on the stock card
                 $this->stockMovementService->move(
                     $issue->property_id,
                     $line->item_id,

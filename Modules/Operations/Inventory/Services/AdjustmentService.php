@@ -26,7 +26,7 @@ class AdjustmentService
         return $this->adjustmentRepository->create($data);
     }
 
-    public function submit(string $id): InventoryAdjustment
+    public function submit(string $id, ?string $userId = null): InventoryAdjustment
     {
         $adjustment = $this->adjustmentRepository->find($id);
 
@@ -39,7 +39,7 @@ class AdjustmentService
         return $this->adjustmentRepository->update($id, [
             'status'       => AdjustmentStatusEnum::Submitted->value,
             'submitted_at' => now(),
-            'submitted_by' => auth()->id(),
+            'submitted_by' => $userId ?? auth()->id(),  // M-01: use injected userId or fallback
         ]);
     }
 
@@ -53,9 +53,19 @@ class AdjustmentService
             ]);
         }
 
+        // L-01: at least one line required before approving
+        if ($adjustment->lines->isEmpty()) {
+            throw ValidationException::withMessages([
+                'lines' => ['An adjustment must have at least one line before it can be approved.'],
+            ]);
+        }
+
         DB::transaction(function () use ($adjustment, $userId) {
             foreach ($adjustment->lines as $line) {
-                $balance = $this->balanceRepository->lockForUpdate($line->item_id, $adjustment->location_id);
+                // BR-065: staleness check — lock balance row for this item at the
+                // adjustment header location (adjustment lines always share the
+                // header location_id by design; no per-line location override).
+                $balance    = $this->balanceRepository->lockForUpdate($line->item_id, $adjustment->location_id);
                 $currentQty = $balance ? (float) $balance->quantity : 0.0;
 
                 if ($currentQty !== (float) $line->quantity_system) {
@@ -65,20 +75,23 @@ class AdjustmentService
                 }
 
                 $variance = (float) $line->quantity_variance;
+
+                // BR-063: skip zero-variance lines — no stock card written
                 if ($variance == 0) {
                     continue;
                 }
 
                 $item = $this->itemRepository->find($line->item_id);
-                
-                // positive adjustment may use unit_cost from the line
-                // negative adjustment uses the item's average_cost
-                $unitCost = $variance > 0 && $line->unit_cost 
-                    ? (string) $line->unit_cost 
+
+                // BR-067: cost stamped at approval time using item.average_cost.
+                // positive adjustment may use unit_cost from the line if provided;
+                // negative adjustment always uses the item's average_cost.
+                $unitCost = $variance > 0 && $line->unit_cost
+                    ? (string) $line->unit_cost
                     : (string) $item->average_cost;
 
-                $movementType = $variance > 0 
-                    ? TransactionTypeEnum::AdjustmentIn 
+                $movementType = $variance > 0
+                    ? TransactionTypeEnum::AdjustmentIn
                     : TransactionTypeEnum::AdjustmentOut;
 
                 $this->stockMovementService->move(

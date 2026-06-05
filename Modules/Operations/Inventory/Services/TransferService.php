@@ -20,7 +20,7 @@ class TransferService
 
     public function create(array $data): InventoryTransfer
     {
-        $data['status'] = TransferStatusEnum::Draft->value; // Or Submitted if there's no Draft
+        $data['status'] = TransferStatusEnum::Draft->value;
         return $this->transferRepository->create($data);
     }
 
@@ -28,40 +28,47 @@ class TransferService
     {
         $transfer = $this->transferRepository->find($id);
 
-        // According to rules: submitted -> completed only. Assuming status has canTransitionTo
         if (! $transfer->status->canTransitionTo(TransferStatusEnum::Completed)) {
             throw ValidationException::withMessages([
                 'status' => ["Cannot transition transfer from {$transfer->status->label()} to Completed."],
             ]);
         }
 
+        // BR-051: at least one line required before completing
+        if ($transfer->lines->isEmpty()) {
+            throw ValidationException::withMessages([
+                'lines' => ['A transfer must have at least one line before it can be completed.'],
+            ]);
+        }
+
         DB::transaction(function () use ($transfer, $userId) {
             foreach ($transfer->lines as $line) {
-                $item = $this->itemRepository->find($line->item_id);
-                $unitCost = (string) $item->average_cost;
                 $quantity = (float) $line->quantity_requested;
 
-                // Stock out from source
+                // V1: transfer movements carry null unit_cost / null total_value (BR-019, BR-055).
+                // Adjustment lines always use the header location_id (by design — no per-line location).
+
+                // Stock out from source location
                 $this->stockMovementService->move(
                     $transfer->property_id,
                     $line->item_id,
                     $transfer->from_location_id,
                     (string) (-1 * $quantity),
                     TransactionTypeEnum::TransferOut,
-                    $unitCost,
+                    null,  // BR-019: no cost tracking on transfers in V1
                     $transfer->id,
                     $transfer->transfer_number,
                     $userId
                 );
 
-                // Stock in to destination
+                // Stock in to destination location
                 $this->stockMovementService->move(
                     $transfer->property_id,
                     $line->item_id,
                     $transfer->to_location_id,
                     (string) $quantity,
                     TransactionTypeEnum::TransferIn,
-                    $unitCost,
+                    null,  // BR-019: no cost tracking on transfers in V1
                     $transfer->id,
                     $transfer->transfer_number,
                     $userId

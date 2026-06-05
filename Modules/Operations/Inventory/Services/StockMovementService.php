@@ -20,6 +20,10 @@ class StockMovementService
     ) {}
 
     /**
+     * Post a single stock movement.
+     *
+     * MUST be called inside an active DB::transaction().
+     *
      * @throws ValidationException
      */
     public function move(
@@ -28,22 +32,29 @@ class StockMovementService
         string $locationId,
         string $quantityChange,
         TransactionTypeEnum $movementType,
-        string $unitCost,
+        ?string $unitCost = null,
         ?string $referenceId = null,
         ?string $remarks = null,
         ?string $userId = null
     ): InventoryStockCard {
-        $balance = $this->balanceRepository->lockForUpdate($itemId, $locationId);
-
-        if (! $balance) {
-            $balance = $this->balanceRepository->findOrCreate($itemId, $locationId, $propertyId);
-            // Need to lock again since we just created it
-            $balance = $this->balanceRepository->lockForUpdate($itemId, $locationId);
+        // --- Guard: item must be active ----------------------------------------
+        $item = $this->itemRepository->find($itemId);
+        if (! $item->is_active) {
+            throw ValidationException::withMessages([
+                'item' => ["Item {$itemId} is inactive and cannot receive stock movements."],
+            ]);
         }
 
+        // --- Atomic find-or-create + lock (C-02 fix) ---------------------------
+        // findOrCreateLocked() issues an upsert (no-op on conflict) then locks
+        // the guaranteed-existing row, avoiding the TOCTOU race between the old
+        // findOrCreate() + lockForUpdate() two-step.
+        $balance = $this->balanceRepository->findOrCreateLocked($itemId, $locationId, $propertyId);
+
+        // --- Quantity check (BR-001) --------------------------------------------
         $quantityBefore = (float) $balance->quantity;
-        $change = (float) $quantityChange;
-        $quantityAfter = $quantityBefore + $change;
+        $change         = (float) $quantityChange;
+        $quantityAfter  = $quantityBefore + $change;
 
         if ($quantityAfter < 0) {
             throw ValidationException::withMessages([
@@ -51,9 +62,17 @@ class StockMovementService
             ]);
         }
 
-        $newStatus = $quantityAfter > 0 ? ItemStatusEnum::InStock : ItemStatusEnum::OutOfStock;
+        // --- Status recomputation (BR-007, M-06 fix) ---------------------------
+        // Three-way: out_of_stock / low_stock / in_stock
+        // reorder_point is NOT NULL (default 0) — when 0, low_stock is inactive.
+        $reorderPoint = (float) $item->reorder_point;
+        $newStatus = match (true) {
+            $quantityAfter <= 0                                  => ItemStatusEnum::OutOfStock,
+            $reorderPoint > 0 && $quantityAfter < $reorderPoint => ItemStatusEnum::LowStock,
+            default                                              => ItemStatusEnum::InStock,
+        };
 
-        // In IVORQ, we update balance via repository
+        // --- Update balance -----------------------------------------------------
         $this->balanceRepository->updateBalance(
             $balance->id,
             (string) $quantityAfter,
@@ -61,8 +80,11 @@ class StockMovementService
             now()
         );
 
-        $totalValue = $change * (float) $unitCost;
+        // --- Calculate total_value ---------------------------------------------
+        // unit_cost may be null for transfer movements (BR-019)
+        $totalValue = ($unitCost !== null) ? $change * (float) $unitCost : null;
 
+        // --- Write stock card (append-only ledger, BR-005) ----------------------
         return $this->cardRepository->create([
             'property_id'     => $propertyId,
             'item_id'         => $itemId,
