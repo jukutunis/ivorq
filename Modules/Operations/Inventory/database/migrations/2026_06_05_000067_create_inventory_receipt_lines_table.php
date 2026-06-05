@@ -26,6 +26,7 @@ return new class extends Migration
             $table->foreign('item_id')->references('id')->on('inventory_items')->restrictOnDelete();
             $table->foreign('location_id')->references('id')->on('inventory_locations')->restrictOnDelete();
 
+            $table->unique(['receipt_id', 'item_id', 'location_id']);
             $table->index(['receipt_id']);
             $table->index(['property_id', 'item_id']);
             $table->index(['property_id', 'location_id']);

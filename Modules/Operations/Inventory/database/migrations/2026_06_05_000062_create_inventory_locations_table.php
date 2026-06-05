@@ -22,6 +22,8 @@ return new class extends Migration
             $table->softDeletes();
 
             $table->foreign('property_id')->references('id')->on('properties')->restrictOnDelete();
+            $table->foreign('created_by')->references('id')->on('users')->nullOnDelete();
+            $table->foreign('updated_by')->references('id')->on('users')->nullOnDelete();
 
             $table->unique(['property_id', 'location_code']);
             $table->index(['property_id', 'location_type']);

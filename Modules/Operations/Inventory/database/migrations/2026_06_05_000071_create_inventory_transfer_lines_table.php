@@ -22,6 +22,7 @@ return new class extends Migration
             $table->foreign('transfer_id')->references('id')->on('inventory_transfers')->cascadeOnDelete();
             $table->foreign('item_id')->references('id')->on('inventory_items')->restrictOnDelete();
 
+            $table->unique(['transfer_id', 'item_id']);
             $table->index(['transfer_id']);
             $table->index(['property_id', 'item_id']);
         });

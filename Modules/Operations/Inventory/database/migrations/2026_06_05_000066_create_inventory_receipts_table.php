@@ -29,6 +29,8 @@ return new class extends Migration
             $table->foreign('property_id')->references('id')->on('properties')->restrictOnDelete();
             $table->foreign('posted_by')->references('id')->on('users')->nullOnDelete();
             $table->foreign('cancelled_by')->references('id')->on('users')->nullOnDelete();
+            $table->foreign('created_by')->references('id')->on('users')->nullOnDelete();
+            $table->foreign('updated_by')->references('id')->on('users')->nullOnDelete();
 
             $table->unique(['property_id', 'receipt_number']);
             $table->index(['property_id', 'status']);

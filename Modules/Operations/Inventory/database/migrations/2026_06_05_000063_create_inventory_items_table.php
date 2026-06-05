@@ -33,6 +33,8 @@ return new class extends Migration
             $table->foreign('property_id')->references('id')->on('properties')->restrictOnDelete();
             $table->foreign('category_id')->references('id')->on('inventory_categories')->restrictOnDelete();
             $table->foreign('unit_id')->references('id')->on('inventory_units')->restrictOnDelete();
+            $table->foreign('created_by')->references('id')->on('users')->nullOnDelete();
+            $table->foreign('updated_by')->references('id')->on('users')->nullOnDelete();
 
             $table->unique(['property_id', 'item_code']);
             $table->unique(['property_id', 'sku']); // NULLs naturally excluded in PostgreSQL

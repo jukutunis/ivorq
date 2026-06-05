@@ -17,6 +17,7 @@ return new class extends Migration
             $table->decimal('quantity_system', 10, 3);
             $table->decimal('quantity_actual', 10, 3);
             $table->decimal('quantity_variance', 10, 3);
+            $table->decimal('unit_cost', 14, 4)->nullable();
             $table->text('notes')->nullable();
             $table->timestamps();
 
@@ -24,6 +25,7 @@ return new class extends Migration
             $table->foreign('adjustment_id')->references('id')->on('inventory_adjustments')->cascadeOnDelete();
             $table->foreign('item_id')->references('id')->on('inventory_items')->restrictOnDelete();
 
+            $table->unique(['adjustment_id', 'item_id']);
             $table->index(['adjustment_id']);
             $table->index(['property_id', 'item_id']);
         });

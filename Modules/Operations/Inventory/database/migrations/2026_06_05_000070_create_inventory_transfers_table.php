@@ -35,6 +35,8 @@ return new class extends Migration
             $table->foreign('approved_by')->references('id')->on('users')->nullOnDelete();
             $table->foreign('completed_by')->references('id')->on('users')->nullOnDelete();
             $table->foreign('cancelled_by')->references('id')->on('users')->nullOnDelete();
+            $table->foreign('created_by')->references('id')->on('users')->nullOnDelete();
+            $table->foreign('updated_by')->references('id')->on('users')->nullOnDelete();
 
             $table->unique(['property_id', 'transfer_number']);
             $table->index(['property_id', 'status']);
