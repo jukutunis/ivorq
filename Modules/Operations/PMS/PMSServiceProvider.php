@@ -3,6 +3,7 @@
 namespace Modules\Operations\PMS;
 
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Modules\Operations\PMS\Events\FolioCreated;
 use Modules\Operations\PMS\Events\FolioItemPosted;
@@ -18,6 +19,18 @@ use Modules\Operations\PMS\Listeners\CreateFolioIfMissing;
 use Modules\Operations\PMS\Listeners\LogPmsActivity;
 use Modules\Operations\PMS\Listeners\UpdateRoomStatusToOccupied;
 use Modules\Operations\PMS\Listeners\UpdateRoomStatusToDirty;
+use Modules\Operations\PMS\Models\Folio;
+use Modules\Operations\PMS\Models\Guest;
+use Modules\Operations\PMS\Models\RatePlan;
+use Modules\Operations\PMS\Models\Reservation;
+use Modules\Operations\PMS\Models\RoomBlock;
+use Modules\Operations\PMS\Models\Stay;
+use Modules\Operations\PMS\Policies\FolioPolicy;
+use Modules\Operations\PMS\Policies\GuestPolicy;
+use Modules\Operations\PMS\Policies\RatePlanPolicy;
+use Modules\Operations\PMS\Policies\ReservationPolicy;
+use Modules\Operations\PMS\Policies\RoomBlockPolicy;
+use Modules\Operations\PMS\Policies\StayPolicy;
 
 class PMSServiceProvider extends ServiceProvider
 {
@@ -26,6 +39,14 @@ class PMSServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadMigrationsFrom(__DIR__ . '/database/migrations');
+
+        // ── Policies ──────────────────────────────────────────────────────────
+        Gate::policy(Guest::class,       GuestPolicy::class);
+        Gate::policy(Reservation::class, ReservationPolicy::class);
+        Gate::policy(RoomBlock::class,   RoomBlockPolicy::class);
+        Gate::policy(Stay::class,        StayPolicy::class);
+        Gate::policy(Folio::class,       FolioPolicy::class);
+        Gate::policy(RatePlan::class,    RatePlanPolicy::class);
 
         // ── Reservation events ────────────────────────────────────────────────
         Event::listen(ReservationCreated::class,   [LogPmsActivity::class, 'handle']);
