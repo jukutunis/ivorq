@@ -326,3 +326,156 @@ export interface EngineeringChecklist {
     updated_at: string;
     items?: any[];
 }
+
+// ── PMS ─────────────────────────────────────────────────────────────────────
+
+export interface Guest {
+    id: string;
+    property_id: string;
+    guest_code: string;
+    full_name: string;
+    email: string | null;
+    phone: string | null;
+    nationality: string | null;
+    id_type: string | null;
+    id_number: string | null;
+    guest_type: EnumOption;
+    vip_level: number | null;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+    reservations?: Reservation[];
+    stays?: Stay[];
+    folios?: Folio[];
+}
+
+export interface RatePlan {
+    id: string;
+    property_id: string;
+    rate_code: string;
+    rate_name: string;
+    plan_type: EnumOption;
+    base_rate: number;
+    currency: string;
+    is_active: boolean;
+    description: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface Reservation {
+    id: string;
+    property_id: string;
+    reservation_number: string;
+    primary_guest_id: string;
+    rate_plan_id: string | null;
+    adults: number;
+    children: number;
+    arrival_date: string;
+    departure_date: string;
+    nights: number;
+    reservation_source: EnumOption;
+    status: EnumOption;
+    reserved_room_type: EnumOption;
+    assigned_room_id: string | null;
+    remarks: string | null;
+    created_at: string;
+    updated_at: string;
+    primary_guest?: Guest;
+    guests?: Guest[];
+    rate_plan?: RatePlan;
+    assigned_room?: {
+        id: string;
+        room_number: string;
+        room_name: string | null;
+        room_type: EnumOption;
+        cleanliness_status: EnumOption;
+        occupancy_status: EnumOption | null;
+    } | null;
+    stays?: Stay[];
+    stays_count?: number;
+    folios?: Folio[];
+    folios_count?: number;
+}
+
+export interface Stay {
+    id: string;
+    property_id: string;
+    reservation_id: string;
+    room_id: string;
+    guest_id: string;
+    status: EnumOption;
+    check_in_at: string;
+    expected_departure_at: string | null;
+    check_out_at: string | null;
+    duration_minutes: number | null;
+    created_at: string;
+    updated_at: string;
+    reservation?: Reservation;
+    guest?: Guest;
+    room?: {
+        id: string;
+        room_number: string;
+        room_name: string | null;
+        room_type: EnumOption;
+    };
+}
+
+export interface RoomBlock {
+    id: string;
+    property_id: string;
+    room_id: string;
+    block_type: EnumOption;
+    status: EnumOption;
+    reason: EnumOption | null;
+    notes: string | null;
+    start_at: string;
+    end_at: string | null;
+    released_at: string | null;
+    released_by: string | null;
+    created_at: string;
+    updated_at: string;
+    room?: {
+        id: string;
+        room_number: string;
+        room_name: string | null;
+        room_type: EnumOption;
+    } | null;
+    released_by_user?: { id: string; name: string } | null;
+}
+
+export interface FolioItem {
+    id: string;
+    property_id: string;
+    folio_id: string;
+    item_type: EnumOption;
+    description: string;
+    quantity: number;
+    amount: number;
+    is_void: boolean;
+    posted_at: string | null;
+    posted_by: string | null;
+    created_at: string;
+    folio?: { id: string; folio_number: string } | null;
+    posted_by_user?: { id: string; name: string } | null;
+}
+
+export interface Folio {
+    id: string;
+    property_id: string;
+    folio_number: string;
+    reservation_id: string | null;
+    guest_id: string | null;
+    status: EnumOption;
+    currency: string;
+    total_charges: number;
+    total_payments: number;
+    balance: number;
+    created_at: string;
+    updated_at: string;
+    reservation?: { id: string; reservation_number: string } | null;
+    guest?: Guest;
+    items?: FolioItem[];
+    active_items?: FolioItem[];
+    items_count?: number;
+}
