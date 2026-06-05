@@ -5,6 +5,7 @@ namespace Modules\Operations;
 use Illuminate\Support\ServiceProvider;
 use Modules\Operations\Engineering\EngineeringServiceProvider;
 use Modules\Operations\Housekeeping\HousekeepingServiceProvider;
+use Modules\Operations\Inventory\InventoryServiceProvider;
 use Modules\Operations\PMS\PMSServiceProvider;
 use Modules\Operations\Zoning\ZoningServiceProvider;
 
@@ -16,6 +17,7 @@ class OperationsServiceProvider extends ServiceProvider
         HousekeepingServiceProvider::class,
         EngineeringServiceProvider::class,
         PMSServiceProvider::class,
+        InventoryServiceProvider::class,
     ];
 
     public function register(): void
