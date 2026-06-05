@@ -480,3 +480,219 @@ export interface Folio {
     active_items?: FolioItem[];
     items_count?: number;
 }
+
+// ── Inventory ────────────────────────────────────────────────────────────────
+
+export interface InventoryCategory {
+    id: string;
+    property_id: string;
+    category_code: string;
+    name: string;
+    description: string | null;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface InventoryUnit {
+    id: string;
+    property_id: string;
+    unit_code: string;
+    name: string;
+    abbreviation: string;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface InventoryLocation {
+    id: string;
+    property_id: string;
+    location_code: string;
+    name: string;
+    location_type: EnumOption;
+    description: string | null;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface InventoryItem {
+    id: string;
+    property_id: string;
+    item_code: string;
+    name: string;
+    description: string | null;
+    category_id: string;
+    unit_id: string;
+    average_cost: number;
+    reorder_point: number;
+    is_active: boolean;
+    item_status: EnumOption;
+    created_at: string;
+    updated_at: string;
+    category?: InventoryCategory;
+    unit?: InventoryUnit;
+    stock_balances?: InventoryStockBalance[];
+}
+
+export interface InventoryStockBalance {
+    id: string;
+    property_id: string;
+    item_id: string;
+    location_id: string;
+    quantity: number;
+    item?: InventoryItem;
+    location?: InventoryLocation;
+}
+
+export interface InventoryStockCard {
+    id: string;
+    property_id: string;
+    item_id: string;
+    location_id: string;
+    movement_type: EnumOption;
+    reference_type: string | null;
+    reference_id: string | null;
+    quantity_in: number;
+    quantity_out: number;
+    quantity_balance: number;
+    unit_cost: number;
+    total_value: number;
+    transacted_at: string;
+    item?: InventoryItem;
+    location?: InventoryLocation;
+}
+
+export interface InventoryReceiptLine {
+    id: string;
+    property_id: string;
+    receipt_id: string;
+    item_id: string;
+    location_id: string;
+    quantity: number;
+    unit_cost: number;
+    total_value: number;
+    notes: string | null;
+    item?: InventoryItem;
+    location?: InventoryLocation;
+}
+
+export interface InventoryReceipt {
+    id: string;
+    property_id: string;
+    receipt_number: string;
+    supplier_name: string | null;
+    external_reference: string | null;
+    status: EnumOption;
+    received_at: string | null;
+    posted_at: string | null;
+    posted_by: string | null;
+    cancelled_at: string | null;
+    cancelled_by: string | null;
+    remarks: string | null;
+    lines_count?: number;
+    lines?: InventoryReceiptLine[];
+    created_at: string;
+    updated_at: string;
+}
+
+export interface InventoryIssueLine {
+    id: string;
+    property_id: string;
+    issue_id: string;
+    item_id: string;
+    location_id: string;
+    quantity: number;
+    remarks: string | null;
+    item?: InventoryItem;
+    location?: InventoryLocation;
+}
+
+export interface InventoryIssue {
+    id: string;
+    property_id: string;
+    issue_number: string;
+    department_id: string | null;
+    issued_to_type: string | null;
+    issued_to_id: string | null;
+    status: EnumOption;
+    issued_at: string | null;
+    posted_at: string | null;
+    posted_by: string | null;
+    cancelled_at: string | null;
+    cancelled_by: string | null;
+    remarks: string | null;
+    lines_count?: number;
+    lines?: InventoryIssueLine[];
+    created_at: string;
+    updated_at: string;
+}
+
+export interface InventoryTransferLine {
+    id: string;
+    property_id: string;
+    transfer_id: string;
+    item_id: string;
+    quantity_requested: number;
+    notes: string | null;
+    item?: InventoryItem;
+}
+
+export interface InventoryTransfer {
+    id: string;
+    property_id: string;
+    transfer_number: string;
+    from_location_id: string;
+    to_location_id: string;
+    status: EnumOption;
+    requested_by: string | null;
+    approved_by: string | null;
+    approved_at: string | null;
+    completed_by: string | null;
+    completed_at: string | null;
+    cancelled_by: string | null;
+    cancelled_at: string | null;
+    notes: string | null;
+    lines_count?: number;
+    lines?: InventoryTransferLine[];
+    from_location?: InventoryLocation;
+    to_location?: InventoryLocation;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface InventoryAdjustmentLine {
+    id: string;
+    property_id: string;
+    adjustment_id: string;
+    item_id: string;
+    quantity_system: number;
+    quantity_actual: number;
+    quantity_variance: number;
+    unit_cost: number | null;
+    notes: string | null;
+    item?: InventoryItem;
+}
+
+export interface InventoryAdjustment {
+    id: string;
+    property_id: string;
+    adjustment_number: string;
+    location_id: string;
+    adjustment_type: EnumOption;
+    status: EnumOption;
+    reason: string;
+    submitted_by: string | null;
+    submitted_at: string | null;
+    approved_by: string | null;
+    approved_at: string | null;
+    rejected_by: string | null;
+    rejected_at: string | null;
+    rejection_reason: string | null;
+    lines_count?: number;
+    lines?: InventoryAdjustmentLine[];
+    location?: InventoryLocation;
+    created_at: string;
+    updated_at: string;
+}

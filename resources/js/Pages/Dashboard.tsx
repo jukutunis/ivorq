@@ -9,8 +9,18 @@ interface PmsStats {
     available_rooms:  number;
 }
 
+interface InventoryStats {
+    total_items:          number;
+    low_stock_items:      number;
+    draft_receipts:       number | null;
+    draft_issues:         number | null;
+    pending_transfers:    number | null;
+    pending_adjustments:  number | null;
+}
+
 interface Props {
-    pmsStats: PmsStats | null;
+    pmsStats:       PmsStats | null;
+    inventoryStats: InventoryStats | null;
 }
 
 const modules = [
@@ -42,7 +52,7 @@ function StatCard({
     );
 }
 
-export default function Dashboard({ pmsStats }: Props) {
+export default function Dashboard({ pmsStats, inventoryStats }: Props) {
     const { auth } = usePage<PageProps>().props;
 
     return (
@@ -89,6 +99,69 @@ export default function Dashboard({ pmsStats }: Props) {
                             href="/operations/rooms"
                             colorClass="text-gray-900"
                         />
+                    </div>
+                </div>
+            )}
+
+            {/* Inventory Metrics */}
+            {inventoryStats && (
+                <div className="mt-8">
+                    <div className="flex items-center justify-between mb-3">
+                        <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">
+                            Inventory
+                        </h2>
+                        <Link
+                            href="/operations/inventory"
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                        >
+                            Inventory Dashboard →
+                        </Link>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+                        <StatCard
+                            label="Total Items"
+                            value={inventoryStats.total_items}
+                            href="/operations/inventory/items"
+                            colorClass="text-gray-900"
+                        />
+                        <StatCard
+                            label="Low Stock"
+                            value={inventoryStats.low_stock_items}
+                            href="/operations/inventory/items"
+                            colorClass={inventoryStats.low_stock_items > 0 ? 'text-amber-600' : 'text-gray-900'}
+                        />
+                        {inventoryStats.draft_receipts !== null && (
+                            <StatCard
+                                label="Draft Receipts"
+                                value={inventoryStats.draft_receipts}
+                                href="/operations/inventory/receipts"
+                                colorClass="text-blue-600"
+                            />
+                        )}
+                        {inventoryStats.draft_issues !== null && (
+                            <StatCard
+                                label="Draft Issues"
+                                value={inventoryStats.draft_issues}
+                                href="/operations/inventory/issues"
+                                colorClass="text-indigo-600"
+                            />
+                        )}
+                        {inventoryStats.pending_transfers !== null && (
+                            <StatCard
+                                label="Pending Transfers"
+                                value={inventoryStats.pending_transfers}
+                                href="/operations/inventory/transfers"
+                                colorClass="text-violet-600"
+                            />
+                        )}
+                        {inventoryStats.pending_adjustments !== null && (
+                            <StatCard
+                                label="Pending Adjustments"
+                                value={inventoryStats.pending_adjustments}
+                                href="/operations/inventory/adjustments"
+                                colorClass={inventoryStats.pending_adjustments > 0 ? 'text-orange-600' : 'text-gray-900'}
+                            />
+                        )}
                     </div>
                 </div>
             )}

@@ -66,6 +66,17 @@ export default function AppLayout({ children }: PropsWithChildren) {
         can('pms.folio.view') ||
         can('pms.rate-plan.view');
 
+    // Inventory section visible if user has any inventory view permission
+    const showInventory =
+        can('inventory.category.view') ||
+        can('inventory.unit.view') ||
+        can('inventory.location.view') ||
+        can('inventory.item.view') ||
+        can('inventory.receipt.view') ||
+        can('inventory.issue.view') ||
+        can('inventory.transfer.view') ||
+        can('inventory.adjustment.view');
+
     return (
         <div className="min-h-screen bg-gray-50 flex">
 
@@ -122,6 +133,27 @@ export default function AppLayout({ children }: PropsWithChildren) {
                             {can('pms.room-block.view')  && <SubNavItem href="/operations/pms/room-blocks"  label="Room Blocks"  active={starts('/operations/pms/room-blocks')} />}
                             {can('pms.folio.view')       && <SubNavItem href="/operations/pms/folios"       label="Folios"       active={starts('/operations/pms/folios')} />}
                             {can('pms.rate-plan.view')   && <SubNavItem href="/operations/pms/rate-plans"   label="Rate Plans"   active={starts('/operations/pms/rate-plans')} />}
+                        </>
+                    )}
+
+                    {/* Inventory */}
+                    {showInventory && (
+                        <>
+                            <SectionLabel label="Inventory" />
+                            <NavItem
+                                href="/operations/inventory"
+                                label="Dashboard"
+                                active={is('/operations/inventory')}
+                            />
+                            {can('inventory.category.view')   && <SubNavItem href="/operations/inventory/categories"  label="Categories"   active={starts('/operations/inventory/categories')} />}
+                            {can('inventory.unit.view')        && <SubNavItem href="/operations/inventory/units"        label="Units"        active={starts('/operations/inventory/units')} />}
+                            {can('inventory.location.view')    && <SubNavItem href="/operations/inventory/locations"    label="Locations"    active={starts('/operations/inventory/locations')} />}
+                            {can('inventory.item.view')        && <SubNavItem href="/operations/inventory/items"        label="Items"        active={starts('/operations/inventory/items')} />}
+                            {can('inventory.item.view')        && <SubNavItem href="/operations/inventory/stock-cards"  label="Stock Cards"  active={starts('/operations/inventory/stock-cards')} />}
+                            {can('inventory.receipt.view')     && <SubNavItem href="/operations/inventory/receipts"     label="Receipts"     active={starts('/operations/inventory/receipts')} />}
+                            {can('inventory.issue.view')       && <SubNavItem href="/operations/inventory/issues"       label="Issues"       active={starts('/operations/inventory/issues')} />}
+                            {can('inventory.transfer.view')    && <SubNavItem href="/operations/inventory/transfers"    label="Transfers"    active={starts('/operations/inventory/transfers')} />}
+                            {can('inventory.adjustment.view')  && <SubNavItem href="/operations/inventory/adjustments"  label="Adjustments"  active={starts('/operations/inventory/adjustments')} />}
                         </>
                     )}
 
