@@ -15,6 +15,7 @@ use Modules\Operations\Inventory\Http\Requests\UpdateReceiptRequest;
 use Modules\Operations\Inventory\Http\Resources\InventoryReceiptResource;
 use Modules\Operations\Inventory\Models\InventoryReceipt;
 use Modules\Operations\Inventory\Repositories\InventoryReceiptRepository;
+use Modules\Operations\Inventory\Services\InventoryMasterDataService;
 use Modules\Operations\Inventory\Services\ReceiptService;
 use Shared\Services\CurrentPropertyService;
 
@@ -23,6 +24,7 @@ class InventoryReceiptController extends Controller
     public function __construct(
         private ReceiptService $receiptService,
         private InventoryReceiptRepository $receiptRepository,
+        private InventoryMasterDataService $masterDataService,
     ) {}
 
     public function index(): Response
@@ -46,7 +48,10 @@ class InventoryReceiptController extends Controller
     {
         $this->authorize('create', InventoryReceipt::class);
 
-        return Inertia::render('Operations/Inventory/Receipts/Create');
+        return Inertia::render('Operations/Inventory/Receipts/Create', [
+            'items'     => $this->masterDataService->paginateItems([], 500)->items(),
+            'locations' => $this->masterDataService->paginateLocations([], 500)->items(),
+        ]);
     }
 
     public function store(StoreReceiptRequest $request): RedirectResponse
@@ -77,7 +82,9 @@ class InventoryReceiptController extends Controller
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/Inventory/Receipts/Edit', [
-            'receipt' => new InventoryReceiptResource($model),
+            'receipt'   => new InventoryReceiptResource($model),
+            'items'     => $this->masterDataService->paginateItems([], 500)->items(),
+            'locations' => $this->masterDataService->paginateLocations([], 500)->items(),
         ]);
     }
 

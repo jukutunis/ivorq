@@ -15,6 +15,7 @@ use Modules\Operations\Inventory\Http\Requests\UpdateIssueRequest;
 use Modules\Operations\Inventory\Http\Resources\InventoryIssueResource;
 use Modules\Operations\Inventory\Models\InventoryIssue;
 use Modules\Operations\Inventory\Repositories\InventoryIssueRepository;
+use Modules\Operations\Inventory\Services\InventoryMasterDataService;
 use Modules\Operations\Inventory\Services\IssueService;
 use Shared\Services\CurrentPropertyService;
 
@@ -23,6 +24,7 @@ class InventoryIssueController extends Controller
     public function __construct(
         private IssueService $issueService,
         private InventoryIssueRepository $issueRepository,
+        private InventoryMasterDataService $masterDataService,
     ) {}
 
     public function index(): Response
@@ -46,7 +48,10 @@ class InventoryIssueController extends Controller
     {
         $this->authorize('create', InventoryIssue::class);
 
-        return Inertia::render('Operations/Inventory/Issues/Create');
+        return Inertia::render('Operations/Inventory/Issues/Create', [
+            'items'     => $this->masterDataService->paginateItems([], 500)->items(),
+            'locations' => $this->masterDataService->paginateLocations([], 500)->items(),
+        ]);
     }
 
     public function store(StoreIssueRequest $request): RedirectResponse
@@ -77,7 +82,9 @@ class InventoryIssueController extends Controller
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/Inventory/Issues/Edit', [
-            'issue' => new InventoryIssueResource($model),
+            'issue'     => new InventoryIssueResource($model),
+            'items'     => $this->masterDataService->paginateItems([], 500)->items(),
+            'locations' => $this->masterDataService->paginateLocations([], 500)->items(),
         ]);
     }
 

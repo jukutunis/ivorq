@@ -19,6 +19,7 @@ use Modules\Operations\Inventory\Http\Resources\InventoryAdjustmentResource;
 use Modules\Operations\Inventory\Models\InventoryAdjustment;
 use Modules\Operations\Inventory\Repositories\InventoryAdjustmentRepository;
 use Modules\Operations\Inventory\Services\AdjustmentService;
+use Modules\Operations\Inventory\Services\InventoryMasterDataService;
 use Shared\Services\CurrentPropertyService;
 
 class InventoryAdjustmentController extends Controller
@@ -26,6 +27,7 @@ class InventoryAdjustmentController extends Controller
     public function __construct(
         private AdjustmentService $adjustmentService,
         private InventoryAdjustmentRepository $adjustmentRepository,
+        private InventoryMasterDataService $masterDataService,
     ) {}
 
     public function index(): Response
@@ -58,6 +60,8 @@ class InventoryAdjustmentController extends Controller
                 fn(AdjustmentTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 AdjustmentTypeEnum::cases()
             ),
+            'items'     => $this->masterDataService->paginateItems([], 500)->items(),
+            'locations' => $this->masterDataService->paginateLocations([], 500)->items(),
         ]);
     }
 
@@ -94,6 +98,8 @@ class InventoryAdjustmentController extends Controller
                 fn(AdjustmentTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 AdjustmentTypeEnum::cases()
             ),
+            'items'     => $this->masterDataService->paginateItems([], 500)->items(),
+            'locations' => $this->masterDataService->paginateLocations([], 500)->items(),
         ]);
     }
 

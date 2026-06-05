@@ -15,6 +15,7 @@ use Modules\Operations\Inventory\Http\Requests\UpdateTransferRequest;
 use Modules\Operations\Inventory\Http\Resources\InventoryTransferResource;
 use Modules\Operations\Inventory\Models\InventoryTransfer;
 use Modules\Operations\Inventory\Repositories\InventoryTransferRepository;
+use Modules\Operations\Inventory\Services\InventoryMasterDataService;
 use Modules\Operations\Inventory\Services\TransferService;
 use Shared\Services\CurrentPropertyService;
 
@@ -23,6 +24,7 @@ class InventoryTransferController extends Controller
     public function __construct(
         private TransferService $transferService,
         private InventoryTransferRepository $transferRepository,
+        private InventoryMasterDataService $masterDataService,
     ) {}
 
     public function index(): Response
@@ -46,7 +48,10 @@ class InventoryTransferController extends Controller
     {
         $this->authorize('create', InventoryTransfer::class);
 
-        return Inertia::render('Operations/Inventory/Transfers/Create');
+        return Inertia::render('Operations/Inventory/Transfers/Create', [
+            'items'     => $this->masterDataService->paginateItems([], 500)->items(),
+            'locations' => $this->masterDataService->paginateLocations([], 500)->items(),
+        ]);
     }
 
     public function store(StoreTransferRequest $request): RedirectResponse
@@ -78,7 +83,9 @@ class InventoryTransferController extends Controller
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/Inventory/Transfers/Edit', [
-            'transfer' => new InventoryTransferResource($model),
+            'transfer'  => new InventoryTransferResource($model),
+            'items'     => $this->masterDataService->paginateItems([], 500)->items(),
+            'locations' => $this->masterDataService->paginateLocations([], 500)->items(),
         ]);
     }
 
