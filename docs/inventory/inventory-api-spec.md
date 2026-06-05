@@ -156,46 +156,125 @@ GET  /operations/inventory/items/{item}/stock-cards
 
 ### Receipts
 
+Receipts are draft-then-post documents. Creation makes a draft; a separate post action applies stock movements. No edit after posting. Corrections via Adjustment.
+
 ```
 GET    /operations/inventory/receipts
        → ReceiptController@index
-       → Props: receipts (paginated), locations, filters
+       → name: operations.inventory.receipts.index
+       → Inertia: Operations/Inventory/Receipts/Index
+       → Props: receipts (paginated), statuses, filters
+       → Filters: status, supplier_name, date_from, date_to
 
 GET    /operations/inventory/receipts/create
        → ReceiptController@create
+       → name: operations.inventory.receipts.create
+       → Inertia: Operations/Inventory/Receipts/Create
        → Props: locations (active), items (active, with balances)
 
 POST   /operations/inventory/receipts
        → ReceiptController@store
+       → name: operations.inventory.receipts.store
        → Request: StoreReceiptRequest
-       → Posts stock card entries, updates balances
+       → Creates Draft receipt with lines
        → Redirect: receipts.show
 
 GET    /operations/inventory/receipts/{receipt}
        → ReceiptController@show
-       → Props: receipt (with lines, stock_card_entries)
-```
+       → name: operations.inventory.receipts.show
+       → Inertia: Operations/Inventory/Receipts/Show
+       → Props: receipt (with lines, stock_card_entries when posted)
 
-Note: Receipts are the header record; no edit or delete after posting. Corrections via adjustment.
+GET    /operations/inventory/receipts/{receipt}/edit
+       → ReceiptController@edit
+       → name: operations.inventory.receipts.edit
+       → Only allowed when status = draft
+       → Inertia: Operations/Inventory/Receipts/Edit
+
+PUT    /operations/inventory/receipts/{receipt}
+       → ReceiptController@update
+       → name: operations.inventory.receipts.update
+       → Request: UpdateReceiptRequest
+       → Only allowed when status = draft
+
+POST   /operations/inventory/receipts/{receipt}/post
+       → ReceiptController@post
+       → name: operations.inventory.receipts.post
+       → Request: PostReceiptRequest (authorize: inventory.receive)
+       → Validates: status = draft, at least one line, all quantities > 0
+       → Applies stock movements, updates average_cost via WAC
+       → Transitions: Draft → Posted
+       → Returns JSON { message, receipt }
+
+POST   /operations/inventory/receipts/{receipt}/cancel
+       → ReceiptController@cancel
+       → name: operations.inventory.receipts.cancel
+       → Request: CancelReceiptRequest (authorize: inventory.receive)
+       → Only allowed when status = draft
+       → Transitions: Draft → Cancelled
+       → Returns JSON { message, receipt }
+```
 
 ---
 
 ### Issues
 
+Issues are draft-then-post documents. Mirrors the receipt workflow. No edit after posting.
+
 ```
 GET    /operations/inventory/issues
        → IssueController@index
+       → name: operations.inventory.issues.index
+       → Inertia: Operations/Inventory/Issues/Index
+       → Props: issues (paginated), statuses, filters
+       → Filters: status, department_id, date_from, date_to
 
 GET    /operations/inventory/issues/create
-       → Props: locations (active), items (active, with balances)
+       → IssueController@create
+       → name: operations.inventory.issues.create
+       → Inertia: Operations/Inventory/Issues/Create
+       → Props: locations (active), items (active, with balances), departments
 
 POST   /operations/inventory/issues
        → IssueController@store
+       → name: operations.inventory.issues.store
        → Request: StoreIssueRequest
-       → Validates no negative stock (BR-001)
+       → Creates Draft issue with lines
        → Redirect: issues.show
 
 GET    /operations/inventory/issues/{issue}
+       → IssueController@show
+       → name: operations.inventory.issues.show
+       → Inertia: Operations/Inventory/Issues/Show
+       → Props: issue (with lines, stock_card_entries when posted)
+
+GET    /operations/inventory/issues/{issue}/edit
+       → IssueController@edit
+       → name: operations.inventory.issues.edit
+       → Only allowed when status = draft
+
+PUT    /operations/inventory/issues/{issue}
+       → IssueController@update
+       → name: operations.inventory.issues.update
+       → Request: UpdateIssueRequest
+       → Only allowed when status = draft
+
+POST   /operations/inventory/issues/{issue}/post
+       → IssueController@post
+       → name: operations.inventory.issues.post
+       → Request: PostIssueRequest (authorize: inventory.issue)
+       → Validates: status = draft, at least one line, sufficient stock per line (BR-001)
+       → Applies stock movements with average_cost stamped as unit_cost
+       → Transitions: Draft → Posted
+       → Returns JSON { message, issue }
+
+POST   /operations/inventory/issues/{issue}/cancel
+       → IssueController@cancel
+       → name: operations.inventory.issues.cancel
+       → Request: CancelIssueRequest (authorize: inventory.issue)
+       → Only allowed when status = draft
+       → Transitions: Draft → Cancelled
+       → Returns JSON { message, issue }
 ```
 
 ---
@@ -284,9 +363,10 @@ POST   /operations/inventory/adjustments/{adjustment}/submit
 POST   /operations/inventory/adjustments/{adjustment}/approve
        → AdjustmentController@approve
        → Request: ApproveAdjustmentRequest (authorize: inventory.approve)
-       → Validates negative variance lines against current balance (BR-035)
-       → Wraps in DB::transaction
-       → Creates adjustment_in / adjustment_out stock card entries
+       → Validates ALL lines: current_balance == quantity_system snapshot (BR-065 staleness check)
+       → Validates negative-variance lines: current_balance >= |variance| (BR-066)
+       → Wraps in DB::transaction with lockForUpdate on balances
+       → Creates adjustment_in / adjustment_out stock card entries (unit_cost = item.average_cost)
        → Returns JSON
 
 POST   /operations/inventory/adjustments/{adjustment}/reject
@@ -340,20 +420,71 @@ prohibited: item_code, property_id
 
 ### StoreReceiptRequest
 ```
-authorize: can('receive', InventoryLocation::class) → requires inventory.receive
+authorize: can('create', InventoryReceipt::class) → requires inventory.receive
 rules:
-  location_id:      required, size:26, exists:inventory_locations,id (property scoped, active)
-  notes:            nullable, string
-  lines:            required, array, min:1
-  lines.*.item_id:  required, size:26, exists:inventory_items,id (property scoped, active)
-  lines.*.quantity: required, numeric, min:0.001
-  lines.*.notes:    nullable, string
+  supplier_name:       nullable, string, max:255
+  external_reference:  nullable, string, max:100
+  received_at:         nullable, date
+  remarks:             nullable, string
+  lines:               required, array, min:1
+  lines.*.item_id:     required, size:26, exists:inventory_items,id (property scoped, active)
+  lines.*.location_id: required, size:26, exists:inventory_locations,id (property scoped, active)
+  lines.*.quantity:    required, numeric, min:0.001
+  lines.*.unit_cost:   required, numeric, min:0
+  lines.*.notes:       nullable, string
+prohibited: receipt_number, status, posted_by, posted_at
+```
+
+### PostReceiptRequest
+```
+authorize: can('post', InventoryReceipt::class) → requires inventory.receive
+           + validates receipt.status == 'draft'
+rules:     (no additional fields — post action takes no body)
+```
+
+### CancelReceiptRequest
+```
+authorize: can('cancel', InventoryReceipt::class) → requires inventory.receive
+           + validates receipt.status == 'draft'
+rules:     (no additional fields)
+```
+
+### UpdateReceiptRequest
+```
+authorize: can('update', InventoryReceipt::class) → requires inventory.receive
+           + validates receipt.status == 'draft'
+rules:     same as StoreReceiptRequest (full replacement of header + lines)
 ```
 
 ### StoreIssueRequest
 ```
-authorize: requires inventory.issue
-rules: same structure as StoreReceiptRequest but for issuing
+authorize: can('create', InventoryIssue::class) → requires inventory.issue
+rules:
+  issued_to_type:      nullable, string, max:50
+  issued_to_id:        nullable, size:26
+  department_id:       nullable, size:26, exists:departments,id (property scoped)
+  issued_at:           nullable, date
+  remarks:             nullable, string
+  lines:               required, array, min:1
+  lines.*.item_id:     required, size:26, exists:inventory_items,id (property scoped, active)
+  lines.*.location_id: required, size:26, exists:inventory_locations,id (property scoped, active)
+  lines.*.quantity:    required, numeric, min:0.001
+  lines.*.remarks:     nullable, string
+prohibited: issue_number, status, posted_by, posted_at
+```
+
+### PostIssueRequest
+```
+authorize: can('post', InventoryIssue::class) → requires inventory.issue
+           + validates issue.status == 'draft'
+rules:     (no additional fields)
+```
+
+### CancelIssueRequest
+```
+authorize: can('cancel', InventoryIssue::class) → requires inventory.issue
+           + validates issue.status == 'draft'
+rules:     (no additional fields)
 ```
 
 ### StoreTransferRequest
@@ -434,11 +565,80 @@ rules:
   "quantity_before": 150.000,
   "quantity_change": -5.000,
   "quantity_after": 145.000,
+  "unit_cost": 2.5000,
+  "total_value": 12.5000,
   "reference_type": "issue",
   "reference_id": "01J...",
   "remarks": "Issued for room 305 cleaning",
   "posted_by": { "id": "...", "name": "Jane Smith" },
   "posted_at": "2026-06-05T..."
+}
+```
+
+### InventoryReceiptResource
+```json
+{
+  "id": "01J...",
+  "property_id": "01J...",
+  "receipt_number": "RCT-00001",
+  "supplier_name": "ABC Supplies Sdn Bhd",
+  "external_reference": "PO-2026-0042",
+  "status": { "value": "posted", "label": "Posted" },
+  "received_at": "2026-06-05T09:00:00",
+  "remarks": null,
+  "posted_by": { "id": "...", "name": "John Doe" },
+  "posted_at": "2026-06-05T09:15:00",
+  "cancelled_by": null,
+  "cancelled_at": null,
+  "lines_count": 3,
+  "lines": [InventoryReceiptLineResource, ...],   // whenLoaded
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+
+### InventoryReceiptLineResource
+```json
+{
+  "id": "01J...",
+  "item": { "id": "...", "item_code": "ITM-00001", "name": "Toilet Roll 2-Ply" },
+  "location": { "id": "...", "name": "Main Store" },
+  "quantity": 200.000,
+  "unit_cost": 1.2500,
+  "total_value": 250.0000,
+  "notes": null
+}
+```
+
+### InventoryIssueResource
+```json
+{
+  "id": "01J...",
+  "property_id": "01J...",
+  "issue_number": "ISS-00001",
+  "issued_to_type": "department",
+  "issued_to_id": null,
+  "department": { "id": "...", "name": "Housekeeping" },
+  "status": { "value": "posted", "label": "Posted" },
+  "issued_at": "2026-06-05T10:00:00",
+  "remarks": "Morning room replenishment",
+  "posted_by": { "id": "...", "name": "Jane Smith" },
+  "posted_at": "2026-06-05T10:05:00",
+  "lines_count": 4,
+  "lines": [InventoryIssueLineResource, ...],     // whenLoaded
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+
+### InventoryIssueLineResource
+```json
+{
+  "id": "01J...",
+  "item": { "id": "...", "item_code": "ITM-00002", "name": "Shampoo 30ml" },
+  "location": { "id": "...", "name": "Housekeeping Store" },
+  "quantity": 50.000,
+  "remarks": null
 }
 ```
 
@@ -484,21 +684,27 @@ rules:
 
 ---
 
-## Controller Structure
+## Controller Structure (v1.1)
 
 ```
 Modules/Operations/Inventory/Http/Controllers/
-├── InventoryDashboardController.php   (index only)
-├── CategoryController.php             (resource)
-├── UnitController.php                 (resource)
-├── ItemController.php                 (resource)
-├── LocationController.php             (resource)
-├── StockCardController.php            (index, forItem — read only)
-├── ReceiptController.php              (index, create, store, show)
-├── IssueController.php                (index, create, store, show)
-├── TransferController.php             (resource + submit, complete, cancel)
-└── AdjustmentController.php           (resource + submit, approve, reject)
+├── InventoryDashboardController.php    (index only)
+├── CategoryController.php              (resource)
+├── UnitController.php                  (resource)
+├── ItemController.php                  (resource)
+├── LocationController.php              (resource)
+├── StockCardController.php             (index, forItem — read only)
+├── ReceiptController.php               (index, create, store, show, edit, update, post, cancel)
+├── IssueController.php                 (index, create, store, show, edit, update, post, cancel)
+├── TransferController.php              (resource + submit, complete, cancel)
+└── AdjustmentController.php            (resource + submit, approve, reject)
 ```
+
+**ReceiptController and IssueController** now include:
+- `edit()` — form to edit draft
+- `update()` — save draft changes
+- `post()` — apply stock movements (returns JSON)
+- `cancel()` — cancel draft (returns JSON)
 
 Each controller:
 - Injects a Service (not a Repository) via constructor DI

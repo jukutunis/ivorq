@@ -151,38 +151,66 @@ Movement types:
 
 ## Stock Receipts
 
-A receipt records stock coming in to a location (from a supplier or purchase).
+A receipt records stock coming in from a supplier or purchase. It is a two-step document: create as a draft, then post to apply stock changes.
 
-Receipt fields:
-- `receipt_number` — auto-generated (RCT-00001)
-- `location_id` — where stock is received
-- `notes`
-- Lines: item_id, quantity, notes
+Receipt header fields:
+- `receipt_number` — auto-generated (RCT-00001), unique per property
+- `supplier_name` — optional free-text supplier name
+- `external_reference` — optional PO number, delivery note, or invoice reference
+- `received_at` — actual date/time goods were physically received (defaults to post time if not set)
+- `status` — Draft → Posted | Cancelled
+- `remarks` — optional notes
 
-Posting a receipt:
-1. Validates quantities are > 0
-2. Increments stock balance for each line item
-3. Creates `purchase_receipt` stock card entries
-4. Updates balance status
+Receipt line fields (per item):
+- `item_id` — item being received
+- `location_id` — destination storage location (per line — different items can go to different locations)
+- `quantity` — quantity received (must be > 0)
+- `unit_cost` — cost per unit for this line (decimal(14,4), must be ≥ 0)
+- `total_value` — stored as `quantity * unit_cost` at post time
+
+Workflow:
+1. **Draft** — create receipt with lines; editable; no stock change
+2. **Post** — applies all movements atomically:
+   - Creates `purchase_receipt` stock card entry per line (with unit_cost, total_value)
+   - Increments balance at each `line.location_id`
+   - Updates `item.average_cost` via WAC formula for each item in the receipt
+3. **Cancel** — available from Draft only; terminal; no stock change
+
+Costing on post:
+```
+new_avg_cost = (total_on_hand_qty * current_avg + Σ line_qty * line_unit_cost)
+               ÷ (total_on_hand_qty + Σ line_qty)
+```
+Applied per item across all lines for that item within the receipt.
 
 ---
 
 ## Stock Issues
 
-An issue records stock leaving a location for use.
+An issue records stock leaving a location for use. Two-step: create draft, then post.
 
-Issue fields:
-- `issue_number` — auto-generated (ISS-00001)
-- `location_id` — from which location
-- `notes`
-- Lines: item_id, quantity, notes
+Issue header fields:
+- `issue_number` — auto-generated (ISS-00001), unique per property
+- `issued_to_type` — optional polymorphic type (`work_order`, `cleaning_task`, `department`, `general` — V1: nullable)
+- `issued_to_id` — optional ULID of the referenced record (V1: nullable)
+- `department_id` — optional direct FK to departments for tracking consuming department
+- `issued_at` — actual date/time stock was physically issued (defaults to post time if not set)
+- `status` — Draft → Posted | Cancelled
+- `remarks` — optional notes
 
-Posting an issue:
-1. Validates quantities are > 0
-2. Validates sufficient stock exists (no negative balance)
-3. Decrements stock balance for each line item
-4. Creates `issue` stock card entries
-5. Updates balance status
+Issue line fields (per item):
+- `item_id`
+- `location_id` — source storage location (per line — different items can come from different locations)
+- `quantity` — quantity issued (must be > 0)
+- `remarks` — optional per-line notes
+
+Workflow:
+1. **Draft** — create issue with lines; editable; no stock change
+2. **Post** — applies all movements atomically:
+   - Validates all lines pass BR-001 (no negative stock) before any writes
+   - Creates `issue` stock card entry per line (unit_cost = `item.average_cost` at post time, total_value stored)
+   - Decrements balance at each `line.location_id`
+3. **Cancel** — available from Draft only; terminal; no stock change
 
 ---
 
