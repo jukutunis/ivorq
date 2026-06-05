@@ -281,31 +281,26 @@ export interface WorkOrder {
 export interface PreventiveMaintenance {
     id: string;
     property_id: string;
-    pm_code: string;
     title: string;
     description: string | null;
-    frequency: EnumOption;
-    status: EnumOption;
-    next_due_at: string | null;
-    last_run_at: string | null;
+    frequency: string | EnumOption;
+    status: string | EnumOption;
+    next_due_date: string | null;
+    last_completed_date: string | null;
     created_at: string;
     updated_at: string;
 }
 
 export interface PreventiveMaintenanceTask {
     id: string;
-    property_id: string;
     preventive_maintenance_id: string;
-    status: EnumOption;
-    scheduled_date: string | null;
+    title: string;
+    status: string | EnumOption;
+    due_date: string | null;
     completed_at: string | null;
     created_at: string;
     updated_at: string;
-    preventive_maintenance?: {
-        id: string;
-        pm_code: string;
-        title: string;
-    };
+    preventive_maintenance?: PreventiveMaintenance;
 }
 
 export interface AssetRequest {
@@ -314,9 +309,9 @@ export interface AssetRequest {
     request_number: string;
     title: string;
     description: string | null;
-    status: EnumOption;
-    priority: EnumOption;
-    requester_id: string | null;
+    status: string | EnumOption;
+    priority: number | EnumOption;
+    requested_by: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -324,7 +319,7 @@ export interface AssetRequest {
 export interface EngineeringChecklist {
     id: string;
     property_id: string;
-    title: string;
+    name: string;
     description: string | null;
     is_active: boolean;
     created_at: string;
