@@ -15,6 +15,11 @@ use Modules\Operations\Engineering\Database\Seeders\WorkOrderSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\CleaningChecklistSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\HousekeepingPermissionSeeder;
 use Modules\Operations\Housekeeping\Database\Seeders\RoomSeeder;
+use Modules\Operations\PMS\Database\Seeders\GuestSeeder;
+use Modules\Operations\PMS\Database\Seeders\PmsPermissionSeeder;
+use Modules\Operations\PMS\Database\Seeders\RatePlanSeeder;
+use Modules\Operations\PMS\Database\Seeders\ReservationSeeder;
+use Modules\Operations\PMS\Database\Seeders\RoomBlockSeeder;
 use Modules\Operations\Zoning\Database\Seeders\ZonePermissionSeeder;
 
 class DatabaseSeeder extends Seeder
@@ -27,6 +32,7 @@ class DatabaseSeeder extends Seeder
             ZonePermissionSeeder::class,
             HousekeepingPermissionSeeder::class,
             EngineeringPermissionSeeder::class,
+            PmsPermissionSeeder::class,
 
             // Roles — must run after all permission seeders (syncPermissions uses Permission::all())
             RoleSeeder::class,
@@ -44,6 +50,12 @@ class DatabaseSeeder extends Seeder
             EngineeringChecklistSeeder::class,
             PreventiveMaintenanceSeeder::class,
             WorkOrderSeeder::class,
+
+            // PMS sample data — must run after RoomSeeder, GuestSeeder, RatePlanSeeder
+            GuestSeeder::class,
+            RatePlanSeeder::class,
+            ReservationSeeder::class,
+            RoomBlockSeeder::class,
         ]);
     }
 }

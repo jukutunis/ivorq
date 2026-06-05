@@ -63,6 +63,17 @@ class RoleSeeder extends Seeder
             // Engineering — Checklists
             'engineering.checklist.view', 'engineering.checklist.create',
             'engineering.checklist.edit', 'engineering.checklist.delete',
+            // PMS — Guest
+            'pms.guest.view', 'pms.guest.create', 'pms.guest.edit',
+            // PMS — Reservation
+            'pms.reservation.view', 'pms.reservation.create', 'pms.reservation.edit',
+            'pms.reservation.delete', 'pms.reservation.checkin', 'pms.reservation.checkout',
+            // PMS — Room Block
+            'pms.room-block.view', 'pms.room-block.create', 'pms.room-block.edit', 'pms.room-block.delete',
+            // PMS — Folio
+            'pms.folio.view', 'pms.folio.manage',
+            // PMS — Rate Plan (view only for manager)
+            'pms.rate-plan.view',
         ]);
 
         // Staff — basic operational access
