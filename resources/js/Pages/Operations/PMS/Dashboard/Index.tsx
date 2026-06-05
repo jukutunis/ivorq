@@ -63,7 +63,7 @@ export default function PmsDashboard({ stats, arrivals_today, departures_today }
                     <h1 className="text-2xl font-bold text-gray-900">PMS</h1>
                     <p className="text-sm text-gray-500 mt-1">Front Desk Overview</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <Link href="/operations/pms/guests" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
                         Guests
                     </Link>

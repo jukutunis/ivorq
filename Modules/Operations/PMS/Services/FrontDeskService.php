@@ -2,6 +2,7 @@
 
 namespace Modules\Operations\PMS\Services;
 
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Operations\Housekeeping\Enums\RoomCleanlinessStatusEnum;
 use Modules\Operations\Housekeeping\Enums\RoomOccupancyStatusEnum;
@@ -83,18 +84,21 @@ class FrontDeskService
             ]);
         }
 
-        $stay = $this->stayRepository->create([
-            'property_id'           => $reservation->property_id,
-            'reservation_id'        => $reservation->id,
-            'room_id'               => $room->id,
-            'guest_id'              => $reservation->primary_guest_id,
-            'status'                => StayStatusEnum::CheckedIn,
-            'check_in_at'           => now(),
-            'expected_departure_at' => $reservation->departure_date->startOfDay(),
-        ]);
+        [$stay, $reservation] = DB::transaction(function () use ($reservation, $room) {
+            $stay = $this->stayRepository->create([
+                'property_id'           => $reservation->property_id,
+                'reservation_id'        => $reservation->id,
+                'room_id'               => $room->id,
+                'guest_id'              => $reservation->primary_guest_id,
+                'status'                => StayStatusEnum::CheckedIn,
+                'check_in_at'           => now(),
+                'expected_departure_at' => $reservation->departure_date->startOfDay(),
+            ]);
 
-        $reservation->update(['status' => ReservationStatusEnum::CheckedIn]);
-        $reservation = $reservation->fresh();
+            $reservation->update(['status' => ReservationStatusEnum::CheckedIn]);
+
+            return [$stay, $reservation->fresh()];
+        });
 
         event(new GuestCheckedIn($reservation, $stay));
 
@@ -122,16 +126,19 @@ class FrontDeskService
             ]);
         }
 
-        $stay->update([
-            'status'       => StayStatusEnum::CheckedOut,
-            'check_out_at' => now(),
-        ]);
+        [$stay, $reservation] = DB::transaction(function () use ($stay) {
+            $stay->update([
+                'status'       => StayStatusEnum::CheckedOut,
+                'check_out_at' => now(),
+            ]);
 
-        $stay = $stay->fresh();
+            $stay = $stay->fresh();
 
-        $reservation = $this->reservationRepository->findOrFail($stay->reservation_id);
-        $reservation->update(['status' => ReservationStatusEnum::CheckedOut]);
-        $reservation = $reservation->fresh();
+            $reservation = $this->reservationRepository->findOrFail($stay->reservation_id);
+            $reservation->update(['status' => ReservationStatusEnum::CheckedOut]);
+
+            return [$stay, $reservation->fresh()];
+        });
 
         event(new GuestCheckedOut($reservation, $stay));
 

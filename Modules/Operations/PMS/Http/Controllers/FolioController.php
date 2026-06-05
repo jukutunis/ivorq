@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
 use Inertia\Response;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
+use Modules\Operations\PMS\Enums\FolioStatusEnum;
 use Modules\Operations\PMS\Http\Requests\CloseFolioRequest;
 use Modules\Operations\PMS\Http\Requests\PostFolioItemRequest;
 use Modules\Operations\PMS\Http\Requests\VoidFolioItemRequest;
@@ -50,6 +51,15 @@ class FolioController extends Controller
     public function store(string $reservation): RedirectResponse
     {
         $this->authorize('create', Folio::class);
+
+        $existingOpenFolio = Folio::where('reservation_id', $reservation)
+            ->where('status', FolioStatusEnum::Open)
+            ->first();
+
+        if ($existingOpenFolio) {
+            return redirect()->route('operations.pms.folios.show', $existingOpenFolio->id)
+                ->with('success', 'An open folio already exists for this reservation.');
+        }
 
         $propertyId  = app(CurrentPropertyService::class)->getId();
         $seq         = Folio::where('property_id', $propertyId)->withTrashed()->count() + 1;

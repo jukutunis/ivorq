@@ -40,7 +40,7 @@ export default function ReservationIndex({ reservations, statuses, room_types, s
                     <h1 className="text-2xl font-bold text-gray-900">Reservations</h1>
                     <p className="text-sm text-gray-500 mt-1">{reservations.total} reservation{reservations.total !== 1 ? 's' : ''} total</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <Link href="/operations/pms" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
                         Dashboard
                     </Link>
@@ -90,6 +90,7 @@ export default function ReservationIndex({ reservations, statuses, room_types, s
                         No reservations found.
                     </div>
                 ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50 border-b border-gray-200">
                             <tr>
@@ -125,6 +126,7 @@ export default function ReservationIndex({ reservations, statuses, room_types, s
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 )}
 
                 {reservations.last_page > 1 && (

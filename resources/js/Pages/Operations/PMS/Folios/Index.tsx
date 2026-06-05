@@ -28,7 +28,7 @@ export default function FolioIndex({ folios }: Props) {
                     <h1 className="text-2xl font-bold text-gray-900">Folios</h1>
                     <p className="text-sm text-gray-500 mt-1">{folios.total} folio{folios.total !== 1 ? 's' : ''} total</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <Link href="/operations/pms" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
                         Dashboard
                     </Link>
@@ -44,6 +44,7 @@ export default function FolioIndex({ folios }: Props) {
                         No folios found. Folios are created from a reservation.
                     </div>
                 ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50 border-b border-gray-200">
                             <tr>
@@ -82,6 +83,7 @@ export default function FolioIndex({ folios }: Props) {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 )}
 
                 {folios.last_page > 1 && (

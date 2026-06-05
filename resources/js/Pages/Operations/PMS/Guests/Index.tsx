@@ -35,7 +35,7 @@ export default function GuestIndex({ guests, guest_types, filters }: Props) {
                     <h1 className="text-2xl font-bold text-gray-900">Guests</h1>
                     <p className="text-sm text-gray-500 mt-1">{guests.total} guest{guests.total !== 1 ? 's' : ''} total</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <Link href="/operations/pms" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
                         Dashboard
                     </Link>
@@ -46,7 +46,7 @@ export default function GuestIndex({ guests, guest_types, filters }: Props) {
             </div>
 
             {/* Filters */}
-            <div className="flex gap-3 mb-4">
+            <div className="flex flex-wrap gap-3 mb-4">
                 <input
                     type="text"
                     value={filters.search ?? ''}
@@ -72,6 +72,7 @@ export default function GuestIndex({ guests, guest_types, filters }: Props) {
                         No guests found.
                     </div>
                 ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50 border-b border-gray-200">
                             <tr>
@@ -113,6 +114,7 @@ export default function GuestIndex({ guests, guest_types, filters }: Props) {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 )}
 
                 {guests.last_page > 1 && (

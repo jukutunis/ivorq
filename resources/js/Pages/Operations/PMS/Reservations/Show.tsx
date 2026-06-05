@@ -34,7 +34,7 @@ function folioStatusBadge(status: EnumOption) {
     };
     const cls = classes[String(status.value)] ?? 'bg-gray-100 text-gray-700';
     return (
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${cls}`}>
             {status.label}
         </span>
     );
@@ -245,7 +245,7 @@ export default function ReservationShow({ reservation }: Props) {
                             <p className="text-sm font-medium text-gray-700 mb-3">Assign Room</p>
                             <div className="flex gap-3 items-end">
                                 <div className="flex-1">
-                                    <label className="block text-xs text-gray-500 mb-1">Room ID (ULID)</label>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Room ID (ULID)</label>
                                     <input
                                         type="text"
                                         value={roomId}
@@ -275,7 +275,7 @@ export default function ReservationShow({ reservation }: Props) {
                             <p className="text-sm font-medium text-gray-700 mb-3">Cancel Reservation</p>
                             <div className="flex gap-3 items-end">
                                 <div className="flex-1">
-                                    <label className="block text-xs text-gray-500 mb-1">Reason (optional)</label>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Reason (optional)</label>
                                     <input
                                         type="text"
                                         value={cancelReason}
@@ -309,6 +309,7 @@ export default function ReservationShow({ reservation }: Props) {
                             <span className="ml-2 bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-xs">{stays.length}</span>
                         </h2>
                     </div>
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50">
                             <tr>
@@ -325,7 +326,7 @@ export default function ReservationShow({ reservation }: Props) {
                                     <td className="px-6 py-4 text-gray-600 text-xs">{stay.check_in_at}</td>
                                     <td className="px-6 py-4 text-gray-600 text-xs">{stay.check_out_at ?? '—'}</td>
                                     <td className="px-6 py-4">
-                                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
                                             {stay.status.label}
                                         </span>
                                     </td>
@@ -333,6 +334,7 @@ export default function ReservationShow({ reservation }: Props) {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
 
@@ -358,6 +360,7 @@ export default function ReservationShow({ reservation }: Props) {
                 {folios.length === 0 ? (
                     <div className="px-6 py-8 text-center text-gray-400 text-sm">No folios yet.</div>
                 ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50">
                             <tr>
@@ -384,6 +387,7 @@ export default function ReservationShow({ reservation }: Props) {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 )}
             </div>
         </AppLayout>

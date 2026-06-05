@@ -109,7 +109,23 @@ class ReservationService
 
     public function assignRoom(string $id, string $roomId): Reservation
     {
-        Room::findOrFail($roomId);
+        $room        = Room::findOrFail($roomId);
+        $reservation = $this->reservationRepository->findOrFail($id);
+
+        if (
+            $reservation->reserved_room_type !== null &&
+            $room->room_type !== $reservation->reserved_room_type
+        ) {
+            throw ValidationException::withMessages([
+                'room_id' => [
+                    sprintf(
+                        'Room type "%s" does not match the reserved room type "%s".',
+                        $room->room_type->label(),
+                        $reservation->reserved_room_type->label(),
+                    ),
+                ],
+            ]);
+        }
 
         return $this->reservationRepository->update($id, [
             'assigned_room_id' => $roomId,

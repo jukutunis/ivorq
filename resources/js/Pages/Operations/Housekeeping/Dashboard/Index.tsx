@@ -78,7 +78,7 @@ export default function HousekeepingDashboard({ stats, todays_tasks, failed_insp
                     <h1 className="text-2xl font-bold text-gray-900">Housekeeping</h1>
                     <p className="text-sm text-gray-500 mt-1">Operations overview</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <Link href="/operations/rooms" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
                         Rooms
                     </Link>

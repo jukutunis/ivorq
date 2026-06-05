@@ -245,6 +245,7 @@ export interface PaginatedData<T> {
 export interface PageProps {
     auth: {
         user: User | null;
+        permissions: string[];
     };
     flash: {
         success: string | null;

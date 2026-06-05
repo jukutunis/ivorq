@@ -52,7 +52,7 @@ function PostItemForm({ folio, onSuccess }: { folio: Folio; onSuccess: () => voi
         <form onSubmit={submit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label className="block text-xs text-gray-500 mb-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
                         Item Type <span className="text-red-500">*</span>
                     </label>
                     <select
@@ -68,7 +68,7 @@ function PostItemForm({ folio, onSuccess }: { folio: Folio; onSuccess: () => voi
                     {errors.item_type && <p className="text-red-600 text-xs mt-1">{errors.item_type}</p>}
                 </div>
                 <div>
-                    <label className="block text-xs text-gray-500 mb-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
                         Description <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -82,7 +82,7 @@ function PostItemForm({ folio, onSuccess }: { folio: Folio; onSuccess: () => voi
                     {errors.description && <p className="text-red-600 text-xs mt-1">{errors.description}</p>}
                 </div>
                 <div>
-                    <label className="block text-xs text-gray-500 mb-1">Quantity</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
                     <input
                         type="number"
                         value={data.quantity}
@@ -94,7 +94,7 @@ function PostItemForm({ folio, onSuccess }: { folio: Folio; onSuccess: () => voi
                     {errors.quantity && <p className="text-red-600 text-xs mt-1">{errors.quantity}</p>}
                 </div>
                 <div>
-                    <label className="block text-xs text-gray-500 mb-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
                         Amount <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -256,6 +256,7 @@ export default function FolioShow({ folio }: Props) {
                 {items.length === 0 ? (
                     <div className="px-6 py-8 text-center text-gray-400 text-sm">No items posted yet.</div>
                 ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50">
                             <tr>
@@ -310,6 +311,7 @@ export default function FolioShow({ folio }: Props) {
                             </tr>
                         </tfoot>
                     </table>
+                    </div>
                 )}
             </div>
         </AppLayout>

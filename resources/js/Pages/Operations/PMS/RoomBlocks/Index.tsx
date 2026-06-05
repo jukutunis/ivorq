@@ -34,7 +34,7 @@ export default function RoomBlockIndex({ room_blocks, block_types, filters }: Pr
                     <h1 className="text-2xl font-bold text-gray-900">Room Blocks</h1>
                     <p className="text-sm text-gray-500 mt-1">{room_blocks.total} block{room_blocks.total !== 1 ? 's' : ''} total</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <Link href="/operations/pms" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
                         Dashboard
                     </Link>
@@ -45,7 +45,7 @@ export default function RoomBlockIndex({ room_blocks, block_types, filters }: Pr
             </div>
 
             {/* Filters */}
-            <div className="flex gap-3 mb-4">
+            <div className="flex flex-wrap gap-3 mb-4">
                 <select
                     value={filters.block_type ?? ''}
                     onChange={(e) => applyFilter('block_type', e.target.value)}
@@ -64,6 +64,7 @@ export default function RoomBlockIndex({ room_blocks, block_types, filters }: Pr
                         No room blocks found.
                     </div>
                 ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50 border-b border-gray-200">
                             <tr>
@@ -96,6 +97,7 @@ export default function RoomBlockIndex({ room_blocks, block_types, filters }: Pr
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 )}
 
                 {room_blocks.last_page > 1 && (

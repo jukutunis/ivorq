@@ -20,7 +20,7 @@ export default function RatePlanIndex({ rate_plans, plan_types, filters }: Props
                     <h1 className="text-2xl font-bold text-gray-900">Rate Plans</h1>
                     <p className="text-sm text-gray-500 mt-1">{rate_plans.total} plan{rate_plans.total !== 1 ? 's' : ''} total</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <Link href="/operations/pms" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
                         Dashboard
                     </Link>
@@ -31,7 +31,7 @@ export default function RatePlanIndex({ rate_plans, plan_types, filters }: Props
             </div>
 
             {/* Filters */}
-            <div className="flex gap-3 mb-4">
+            <div className="flex flex-wrap gap-3 mb-4">
                 <select
                     value={filters.plan_type ?? ''}
                     onChange={(e) => applyFilter('plan_type', e.target.value)}
@@ -59,6 +59,7 @@ export default function RatePlanIndex({ rate_plans, plan_types, filters }: Props
                         No rate plans found.
                     </div>
                 ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50 border-b border-gray-200">
                             <tr>
@@ -95,6 +96,7 @@ export default function RatePlanIndex({ rate_plans, plan_types, filters }: Props
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 )}
 
                 {rate_plans.last_page > 1 && (
