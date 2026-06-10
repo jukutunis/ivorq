@@ -5,7 +5,7 @@ use Modules\Foundation\Authentication\Http\Controllers\LoginController;
 use Modules\Foundation\Authentication\Http\Controllers\LogoutController;
 use Modules\Foundation\Authentication\Http\Controllers\PasswordResetController;
 
-Route::prefix('auth')->group(function () {
+Route::prefix('auth')->middleware(['throttle:auth'])->group(function () {
     Route::post('/login', [LoginController::class, 'login'])->name('api.login');
     Route::post('/forgot-password', [PasswordResetController::class, 'sendResetLink']);
     Route::post('/reset-password', [PasswordResetController::class, 'reset']);

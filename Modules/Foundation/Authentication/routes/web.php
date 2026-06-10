@@ -8,7 +8,7 @@ use Modules\Foundation\Authentication\Http\Controllers\PasswordResetController;
 // All authentication web routes need the 'web' middleware group so that
 // StartSession, ShareErrorsFromSession, and VerifyCsrfToken run. Module routes
 // loaded via loadRoutesFrom() are not automatically wrapped in 'web'.
-Route::middleware('web')->group(function () {
+Route::middleware(['web', 'throttle:auth'])->group(function () {
     Route::middleware('guest')->group(function () {
         Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
         Route::post('/login', [LoginController::class, 'login']);

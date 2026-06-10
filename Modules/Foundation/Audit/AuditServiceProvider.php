@@ -21,7 +21,26 @@ class AuditServiceProvider extends ServiceProvider
         \Modules\Foundation\Department\Models\Department::class,
         \Modules\Foundation\Department\Models\Position::class,
         \Modules\Foundation\User\Models\User::class,
+
+        // PMS
+        \Modules\Operations\PMS\Models\Reservation::class,
+        \Modules\Operations\PMS\Models\Guest::class,
+        \Modules\Operations\PMS\Models\Stay::class,
+
+        // Engineering
+        \Modules\Operations\Engineering\Models\WorkOrder::class,
+
+        // Inventory
+        \Modules\Operations\Inventory\Models\InventoryCategory::class,
+        \Modules\Operations\Inventory\Models\InventoryUnit::class,
+        \Modules\Operations\Inventory\Models\InventoryLocation::class,
+        \Modules\Operations\Inventory\Models\InventoryItem::class,
+        \Modules\Operations\Inventory\Models\InventoryReceipt::class,
+        \Modules\Operations\Inventory\Models\InventoryIssue::class,
+        \Modules\Operations\Inventory\Models\InventoryTransfer::class,
+        \Modules\Operations\Inventory\Models\InventoryAdjustment::class,
     ];
+
 
     public function register(): void {}
 

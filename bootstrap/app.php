@@ -25,6 +25,10 @@ return Application::configure(basePath: dirname(__DIR__))
             \Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware::class,
         ]);
 
+        $middleware->api(prepend: [
+            'throttle:api',
+        ]);
+
         // Named alias for API routes: apply AFTER auth:sanctum so the token-resolved
         // user is available. Usage: Route::middleware(['auth:sanctum', 'permission.team'])
         $middleware->alias([
