@@ -4,11 +4,13 @@ namespace Modules\Finance;
 
 use Illuminate\Support\ServiceProvider;
 use Modules\Finance\Payables\PayablesServiceProvider;
+use Modules\Finance\Banking\BankingServiceProvider;
 
 class FinanceServiceProvider extends ServiceProvider
 {
     protected array $providers = [
         PayablesServiceProvider::class,
+        BankingServiceProvider::class,
     ];
 
     public function register(): void

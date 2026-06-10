@@ -61,6 +61,9 @@ class AuditServiceProvider extends ServiceProvider
         \Modules\Finance\Payables\Models\AccountPayable::class,
         \Modules\Finance\Payables\Models\PaymentVoucher::class,
         \Modules\Finance\Payables\Models\PaymentVoucherLine::class,
+
+        // Banking
+        \Modules\Finance\Banking\Models\BankAccount::class,
     ];
 
 
