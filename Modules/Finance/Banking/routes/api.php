@@ -9,4 +9,10 @@ Route::prefix('banking')->group(function () {
     
     Route::apiResource('statements', BankStatementController::class)->only(['index', 'store', 'show']);
     Route::post('statements/{statement}/import', [BankStatementController::class, 'import']);
+
+    Route::apiResource('reconciliations', \Modules\Finance\Banking\Http\Controllers\ReconciliationSessionController::class)
+        ->only(['index', 'store', 'show', 'destroy'])
+        ->parameters(['reconciliations' => 'session']);
+    Route::post('reconciliations/{session}/complete', [\Modules\Finance\Banking\Http\Controllers\ReconciliationSessionController::class, 'complete']);
+    Route::post('reconciliations/{session}/cancel', [\Modules\Finance\Banking\Http\Controllers\ReconciliationSessionController::class, 'cancel']);
 });

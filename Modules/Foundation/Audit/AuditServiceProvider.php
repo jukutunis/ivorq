@@ -66,6 +66,8 @@ class AuditServiceProvider extends ServiceProvider
         \Modules\Finance\Banking\Models\BankAccount::class,
         \Modules\Finance\Banking\Models\BankStatement::class,
         \Modules\Finance\Banking\Models\BankStatementLine::class,
+        \Modules\Finance\Banking\Models\ReconciliationSession::class,
+        \Modules\Finance\Banking\Models\ReconciliationMatch::class,
     ];
 
 

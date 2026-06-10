@@ -18,6 +18,10 @@ class BankingPermissionSeeder extends Seeder
             'banking.statement.view',
             'banking.statement.create',
             'banking.statement.import',
+
+            'banking.reconciliation.view',
+            'banking.reconciliation.create',
+            'banking.reconciliation.manage',
         ];
 
         foreach ($permissions as $permission) {
