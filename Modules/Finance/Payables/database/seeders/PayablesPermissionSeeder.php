@@ -18,6 +18,10 @@ class PayablesPermissionSeeder extends Seeder
             'payables.match.create',
             'payables.ap.view',
             'payables.ap.create',
+            'payables.payment.view',
+            'payables.payment.create',
+            'payables.payment.post',
+            'payables.payment.cancel',
         ];
 
         foreach ($permissions as $permission) {

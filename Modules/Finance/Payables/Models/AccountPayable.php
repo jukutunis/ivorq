@@ -51,4 +51,14 @@ class AccountPayable extends Model
     {
         return $this->belongsTo(VendorInvoice::class);
     }
+
+    public function paymentVoucherLines(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PaymentVoucherLine::class);
+    }
+
+    protected static function newFactory()
+    {
+        return \Modules\Finance\Payables\database\Factories\AccountPayableFactory::new();
+    }
 }
