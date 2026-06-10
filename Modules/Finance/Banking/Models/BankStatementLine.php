@@ -36,6 +36,11 @@ class BankStatementLine extends Model
         return $this->belongsTo(BankStatement::class);
     }
 
+    public function reconciliationMatch(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(ReconciliationMatch::class);
+    }
+
     protected static function newFactory()
     {
         return \Modules\Finance\Banking\database\Factories\BankStatementLineFactory::new();

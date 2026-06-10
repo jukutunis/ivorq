@@ -36,4 +36,14 @@ class PaymentVoucher extends Model
     {
         return $this->hasMany(PaymentVoucherLine::class);
     }
+
+    public function reconciliationMatch(): \Illuminate\Database\Eloquent\Relations\MorphOne
+    {
+        return $this->morphOne(\Modules\Finance\Banking\Models\ReconciliationMatch::class, 'matchable');
+    }
+
+    protected static function newFactory()
+    {
+        return \Modules\Finance\Payables\database\Factories\PaymentVoucherFactory::new();
+    }
 }

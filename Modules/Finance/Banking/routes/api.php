@@ -15,4 +15,7 @@ Route::prefix('banking')->group(function () {
         ->parameters(['reconciliations' => 'session']);
     Route::post('reconciliations/{session}/complete', [\Modules\Finance\Banking\Http\Controllers\ReconciliationSessionController::class, 'complete']);
     Route::post('reconciliations/{session}/cancel', [\Modules\Finance\Banking\Http\Controllers\ReconciliationSessionController::class, 'cancel']);
+
+    Route::get('reconciliations/{session}/auto-match', [\Modules\Finance\Banking\Http\Controllers\AutoMatchingController::class, 'generate']);
+    Route::post('reconciliations/{session}/matches', [\Modules\Finance\Banking\Http\Controllers\ReconciliationMatchController::class, 'store']);
 });
