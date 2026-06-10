@@ -28,6 +28,13 @@ class PurchasingPermissionSeeder extends Seeder
             'purchasing.vendor-contact.create',
             'purchasing.vendor-contact.edit',
             'purchasing.vendor-contact.delete',
+
+            // Purchase Requests
+            'purchasing.purchase-request.view',
+            'purchasing.purchase-request.create',
+            'purchasing.purchase-request.edit',
+            'purchasing.purchase-request.delete',
+            'purchasing.purchase-request.cancel',
         ];
 
         foreach ($permissions as $name) {

@@ -69,4 +69,22 @@ trait CreatesPurchasingData
             'is_primary' => true,
         ], $overrides));
     }
+
+    protected function createPurchaseRequest(Property $property, array $overrides = []): \Modules\Operations\Purchasing\Models\PurchaseRequest
+    {
+        return \Modules\Operations\Purchasing\Models\PurchaseRequest::factory()->create(array_merge([
+            'property_id' => $property->id,
+            'department_id' => $this->createDepartment($property)->id,
+            'requester_id' => $this->createUser($property)->id,
+        ], $overrides));
+    }
+
+    protected function createPurchaseRequestLine(\Modules\Operations\Purchasing\Models\PurchaseRequest $pr, array $overrides = []): \Modules\Operations\Purchasing\Models\PurchaseRequestLine
+    {
+        return \Modules\Operations\Purchasing\Models\PurchaseRequestLine::factory()->create(array_merge([
+            'purchase_request_id' => $pr->id,
+            'unit_id' => \Modules\Operations\Inventory\Models\InventoryUnit::create(['property_id' => $pr->property_id, 'unit_code' => 'PCS', 'name' => 'Pieces', 'abbreviation' => 'PCS', 'is_active' => true])->id,
+            'inventory_item_id' => null,
+        ], $overrides));
+    }
 }

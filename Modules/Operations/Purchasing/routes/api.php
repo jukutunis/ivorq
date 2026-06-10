@@ -13,4 +13,8 @@ Route::middleware(['auth:sanctum', \Illuminate\Routing\Middleware\SubstituteBind
     Route::post('vendors/{vendor}/approve', [VendorController::class, 'approve'])->name('vendors.approve');
     Route::apiResource('vendors', VendorController::class);
 
+    // Purchase Requests
+    Route::post('purchase-requests/{purchase_request}/cancel', [Modules\Operations\Purchasing\Http\Controllers\PurchaseRequestController::class, 'cancel'])->name('purchase-requests.cancel');
+    Route::apiResource('purchase-requests', Modules\Operations\Purchasing\Http\Controllers\PurchaseRequestController::class);
+
 });
