@@ -58,6 +58,7 @@ class AuditServiceProvider extends ServiceProvider
         \Modules\Finance\Payables\Models\VendorInvoiceLine::class,
         \Modules\Finance\Payables\Models\ThreeWayMatch::class,
         \Modules\Finance\Payables\Models\ThreeWayMatchLine::class,
+        \Modules\Finance\Payables\Models\AccountPayable::class,
     ];
 
 

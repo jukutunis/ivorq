@@ -16,6 +16,8 @@ class PayablesPermissionSeeder extends Seeder
             'payables.vendor-invoice.cancel',
             'payables.match.view',
             'payables.match.create',
+            'payables.ap.view',
+            'payables.ap.create',
         ];
 
         foreach ($permissions as $permission) {
