@@ -39,6 +39,11 @@ class AuditServiceProvider extends ServiceProvider
         \Modules\Operations\Inventory\Models\InventoryIssue::class,
         \Modules\Operations\Inventory\Models\InventoryTransfer::class,
         \Modules\Operations\Inventory\Models\InventoryAdjustment::class,
+
+        // Purchasing
+        \Modules\Operations\Purchasing\Models\VendorCategory::class,
+        \Modules\Operations\Purchasing\Models\Vendor::class,
+        \Modules\Operations\Purchasing\Models\VendorContact::class,
     ];
 
 

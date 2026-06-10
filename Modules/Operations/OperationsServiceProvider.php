@@ -8,6 +8,7 @@ use Modules\Operations\Housekeeping\HousekeepingServiceProvider;
 use Modules\Operations\Inventory\InventoryServiceProvider;
 use Modules\Operations\PMS\PMSServiceProvider;
 use Modules\Operations\Zoning\ZoningServiceProvider;
+use Modules\Operations\Purchasing\PurchasingServiceProvider;
 
 class OperationsServiceProvider extends ServiceProvider
 {
@@ -18,6 +19,7 @@ class OperationsServiceProvider extends ServiceProvider
         EngineeringServiceProvider::class,
         PMSServiceProvider::class,
         InventoryServiceProvider::class,
+        PurchasingServiceProvider::class,
     ];
 
     public function register(): void
