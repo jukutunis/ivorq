@@ -44,6 +44,12 @@ class PurchasingPermissionSeeder extends Seeder
             'purchasing.purchase-order.approve',
             'purchasing.purchase-order.issue',
             'purchasing.purchase-order.cancel',
+            // Goods Receipt Notes
+            'goods-receipt.view-any',
+            'goods-receipt.view',
+            'goods-receipt.create',
+            'goods-receipt.edit',
+            'goods-receipt.delete',
         ];
 
         foreach ($permissions as $name) {
