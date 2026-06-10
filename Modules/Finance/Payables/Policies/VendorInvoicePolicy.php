@@ -42,4 +42,10 @@ class VendorInvoicePolicy
                    \Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum::Submitted
                ]);
     }
+
+    public function createMatch(User $user, VendorInvoice $invoice): bool
+    {
+        return $user->hasPermissionTo('payables.match.create') && 
+               $user->property_id === $invoice->property_id;
+    }
 }

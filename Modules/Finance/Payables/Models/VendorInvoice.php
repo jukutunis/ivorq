@@ -51,6 +51,11 @@ class VendorInvoice extends Model
         return $this->belongsTo(GoodsReceipt::class);
     }
 
+    public function threeWayMatch(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(ThreeWayMatch::class);
+    }
+
     protected static function newFactory()
     {
         return \Modules\Finance\Payables\Database\Factories\VendorInvoiceFactory::new();
