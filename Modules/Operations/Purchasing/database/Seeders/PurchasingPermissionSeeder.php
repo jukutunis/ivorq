@@ -35,6 +35,15 @@ class PurchasingPermissionSeeder extends Seeder
             'purchasing.purchase-request.edit',
             'purchasing.purchase-request.delete',
             'purchasing.purchase-request.cancel',
+
+            // Purchase Orders
+            'purchasing.purchase-order.view',
+            'purchasing.purchase-order.create',
+            'purchasing.purchase-order.edit',
+            'purchasing.purchase-order.delete',
+            'purchasing.purchase-order.approve',
+            'purchasing.purchase-order.issue',
+            'purchasing.purchase-order.cancel',
         ];
 
         foreach ($permissions as $name) {

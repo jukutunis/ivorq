@@ -46,6 +46,8 @@ class AuditServiceProvider extends ServiceProvider
         \Modules\Operations\Purchasing\Models\VendorContact::class,
         \Modules\Operations\Purchasing\Models\PurchaseRequest::class,
         \Modules\Operations\Purchasing\Models\PurchaseRequestLine::class,
+        \Modules\Operations\Purchasing\Models\PurchaseOrder::class,
+        \Modules\Operations\Purchasing\Models\PurchaseOrderLine::class,
     ];
 
 
