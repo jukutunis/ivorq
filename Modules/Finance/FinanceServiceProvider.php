@@ -11,6 +11,7 @@ class FinanceServiceProvider extends ServiceProvider
     protected array $providers = [
         PayablesServiceProvider::class,
         BankingServiceProvider::class,
+        \Modules\Finance\GeneralLedger\GeneralLedgerServiceProvider::class,
     ];
 
     public function register(): void
