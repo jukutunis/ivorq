@@ -15,6 +15,9 @@ Route::middleware(['auth:sanctum', \Illuminate\Routing\Middleware\SubstituteBind
 
     // Purchase Requests
     Route::post('purchase-requests/{purchase_request}/cancel', [Modules\Operations\Purchasing\Http\Controllers\PurchaseRequestController::class, 'cancel'])->name('purchase-requests.cancel');
+    Route::post('purchase-requests/{purchase_request}/submit', [Modules\Operations\Purchasing\Http\Controllers\PurchaseRequestController::class, 'submit'])->name('purchase-requests.submit');
+    Route::post('purchase-requests/{purchase_request}/approve', [Modules\Operations\Purchasing\Http\Controllers\PurchaseRequestController::class, 'approve'])->name('purchase-requests.approve');
+    Route::post('purchase-requests/{purchase_request}/reject', [Modules\Operations\Purchasing\Http\Controllers\PurchaseRequestController::class, 'reject'])->name('purchase-requests.reject');
     Route::apiResource('purchase-requests', Modules\Operations\Purchasing\Http\Controllers\PurchaseRequestController::class);
 
 });

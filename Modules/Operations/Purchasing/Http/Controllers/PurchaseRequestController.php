@@ -101,4 +101,42 @@ class PurchaseRequestController extends Controller
             'data' => new PurchaseRequestResource($updatedPr),
         ]);
     }
+
+    public function submit(PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->authorize('submit', $purchaseRequest);
+
+        $updatedPr = $this->service->submit($purchaseRequest->id);
+
+        return response()->json([
+            'message' => 'Purchase Request submitted successfully',
+            'data' => new PurchaseRequestResource($updatedPr),
+        ]);
+    }
+
+    public function approve(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->authorize('approve', $purchaseRequest);
+
+        $remarks = $request->input('remarks');
+        $updatedPr = $this->service->approve($purchaseRequest->id, $request->user(), $remarks);
+
+        return response()->json([
+            'message' => 'Purchase Request approved successfully',
+            'data' => new PurchaseRequestResource($updatedPr),
+        ]);
+    }
+
+    public function reject(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->authorize('reject', $purchaseRequest);
+
+        $remarks = $request->input('remarks');
+        $updatedPr = $this->service->reject($purchaseRequest->id, $request->user(), $remarks);
+
+        return response()->json([
+            'message' => 'Purchase Request rejected successfully',
+            'data' => new PurchaseRequestResource($updatedPr),
+        ]);
+    }
 }

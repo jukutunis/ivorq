@@ -40,4 +40,20 @@ class PurchaseRequestPolicy
         return $user->hasPermissionTo('purchasing.purchase-request.cancel')
             && ($user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id);
     }
+
+    public function submit(User $user, PurchaseRequest $purchaseRequest): bool
+    {
+        return $user->hasPermissionTo('purchasing.purchase-request.edit')
+            && ($user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id);
+    }
+
+    public function approve(User $user, PurchaseRequest $purchaseRequest): bool
+    {
+        return $user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id;
+    }
+
+    public function reject(User $user, PurchaseRequest $purchaseRequest): bool
+    {
+        return $user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id;
+    }
 }

@@ -22,6 +22,7 @@ class FoundationServiceProvider extends ServiceProvider
         AuthorizationServiceProvider::class,
         AuditServiceProvider::class,
         ActivityServiceProvider::class,
+        \Modules\Foundation\Approval\ApprovalServiceProvider::class,
     ];
 
     public function register(): void
