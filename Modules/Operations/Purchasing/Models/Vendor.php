@@ -56,4 +56,14 @@ class Vendor extends Model
     {
         return $this->hasMany(VendorContact::class, 'vendor_id');
     }
+
+    public function purchaseOrders(): HasMany
+    {
+        return $this->hasMany(PurchaseOrder::class);
+    }
+
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(\Modules\Finance\Payables\Models\VendorInvoice::class);
+    }
 }

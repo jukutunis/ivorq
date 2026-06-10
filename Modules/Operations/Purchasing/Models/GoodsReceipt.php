@@ -38,6 +38,11 @@ class GoodsReceipt extends Model
         return $this->hasMany(GoodsReceiptLine::class);
     }
 
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(\Modules\Finance\Payables\Models\VendorInvoice::class);
+    }
+
     protected static function newFactory()
     {
         return \Modules\Operations\Purchasing\Database\Factories\GoodsReceiptFactory::new();

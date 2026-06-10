@@ -9,6 +9,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withProviders([
         Modules\Foundation\FoundationServiceProvider::class,
         Modules\Operations\OperationsServiceProvider::class,
+        Modules\Finance\FinanceServiceProvider::class,
     ])
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

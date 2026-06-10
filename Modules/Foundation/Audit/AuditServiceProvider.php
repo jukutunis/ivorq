@@ -50,6 +50,10 @@ class AuditServiceProvider extends ServiceProvider
         \Modules\Operations\Purchasing\Models\PurchaseOrderLine::class,
         \Modules\Operations\Purchasing\Models\GoodsReceipt::class,
         \Modules\Operations\Purchasing\Models\GoodsReceiptLine::class,
+
+        // Payables
+        \Modules\Finance\Payables\Models\VendorInvoice::class,
+        \Modules\Finance\Payables\Models\VendorInvoiceLine::class,
     ];
 
 

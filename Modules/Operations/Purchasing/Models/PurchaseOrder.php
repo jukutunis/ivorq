@@ -39,6 +39,16 @@ class PurchaseOrder extends Model
         return $this->belongsTo(PurchaseRequest::class);
     }
 
+    public function goodsReceipts(): HasMany
+    {
+        return $this->hasMany(GoodsReceipt::class);
+    }
+
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(\Modules\Finance\Payables\Models\VendorInvoice::class);
+    }
+
     public function lines(): HasMany
     {
         return $this->hasMany(PurchaseOrderLine::class);
