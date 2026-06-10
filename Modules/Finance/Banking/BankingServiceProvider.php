@@ -25,6 +25,7 @@ class BankingServiceProvider extends ServiceProvider
     protected function registerPolicies(): void
     {
         Gate::policy(BankAccount::class, BankAccountPolicy::class);
+        Gate::policy(\Modules\Finance\Banking\Models\BankStatement::class, \Modules\Finance\Banking\Policies\BankStatementPolicy::class);
     }
 
     protected function registerRoutes(): void

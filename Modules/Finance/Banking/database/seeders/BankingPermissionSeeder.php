@@ -14,6 +14,10 @@ class BankingPermissionSeeder extends Seeder
             'banking.bank-account.create',
             'banking.bank-account.edit',
             'banking.bank-account.delete',
+
+            'banking.statement.view',
+            'banking.statement.create',
+            'banking.statement.import',
         ];
 
         foreach ($permissions as $permission) {
