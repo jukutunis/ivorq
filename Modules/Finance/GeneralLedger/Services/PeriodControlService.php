@@ -127,6 +127,12 @@ class PeriodControlService
             if (Cache::supportsTags()) {
                 Cache::tags(["reporting:{$propertyId}"])->flush();
             }
+
+            // BR-014: Reopened periods invalidate snapshots.
+            \Modules\Finance\GeneralLedger\Models\FinancialPackageSnapshot::where('property_id', $propertyId)
+                ->where('period_year', $year)
+                ->where('period_month', $month)
+                ->forceDelete();
         });
     }
 }
