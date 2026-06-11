@@ -12,4 +12,7 @@ Route::prefix('general-ledger')->group(function () {
 
     Route::get('balance-sheet', [\Modules\Finance\GeneralLedger\Http\Controllers\BalanceSheetController::class, 'index'])
         ->middleware(['can:generalledger.balancesheet.view']);
+
+    Route::get('cash-flow', [\Modules\Finance\GeneralLedger\Http\Controllers\CashFlowController::class, 'index'])
+        ->middleware(['can:generalledger.cashflow.view']);
 });
