@@ -9,4 +9,7 @@ Route::prefix('general-ledger')->group(function () {
 
     Route::get('profit-loss', [\Modules\Finance\GeneralLedger\Http\Controllers\ProfitLossController::class, 'index'])
         ->middleware(['can:generalledger.profitloss.view']);
+
+    Route::get('balance-sheet', [\Modules\Finance\GeneralLedger\Http\Controllers\BalanceSheetController::class, 'index'])
+        ->middleware(['can:generalledger.balancesheet.view']);
 });
