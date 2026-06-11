@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Shared\Traits\HasUlid;
 use Shared\Traits\BelongsToProperty;
 
-class InventoryLocation extends Model
+class InventoryTool extends Model
 {
     use HasUlid, BelongsToProperty, SoftDeletes;
 

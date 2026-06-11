@@ -3,39 +3,13 @@
 namespace Modules\Operations\Inventory\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Modules\Foundation\Property\Models\Property;
-use Shared\Traits\BelongsToProperty;
-use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
+use Shared\Traits\BelongsToProperty;
 
 class InventoryCategory extends Model
 {
-    use HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes;
+    use HasUlid, BelongsToProperty, SoftDeletes;
 
-    protected $table = 'inventory_categories';
-
-    protected $fillable = [
-        'property_id',
-        'category_code',
-        'name',
-        'description',
-        'is_active',
-    ];
-
-    protected $casts = [
-        'is_active' => 'boolean',
-    ];
-
-    public function property(): BelongsTo
-    {
-        return $this->belongsTo(Property::class);
-    }
-
-    public function items(): HasMany
-    {
-        return $this->hasMany(InventoryItem::class, 'category_id');
-    }
+    protected $guarded = [];
 }
