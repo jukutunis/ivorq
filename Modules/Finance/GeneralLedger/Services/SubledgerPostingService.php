@@ -55,6 +55,10 @@ class SubledgerPostingService
         string $date, string $reference, string $description, float $amount,
         array $debitRoles, array $creditRoles
     ): ?JournalEntry {
+        $year = (int) date('Y', strtotime($date));
+        $month = (int) date('m', strtotime($date));
+        app(\Modules\Finance\GeneralLedger\Services\PeriodControlService::class)->enforceOpen($propertyId, $year, $month);
+
         try {
             return DB::transaction(function () use (
                 $propertyId, $module, $event, $sourceType, $sourceId, $date, $reference, $description, $amount, $debitRoles, $creditRoles

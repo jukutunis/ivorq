@@ -59,6 +59,8 @@ class GeneralLedgerService
             $year = (int) date('Y', strtotime($entry->transaction_date));
             $month = (int) date('m', strtotime($entry->transaction_date));
 
+            app(\Modules\Finance\GeneralLedger\Services\PeriodControlService::class)->enforceOpen($propertyId, $year, $month);
+
             // Lock Ledger Balances
             $balances = LedgerBalance::where('property_id', $propertyId)
                 ->whereIn('account_id', $accountIds)

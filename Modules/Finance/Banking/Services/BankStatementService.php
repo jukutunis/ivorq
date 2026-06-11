@@ -25,6 +25,10 @@ class BankStatementService
             throw new InvalidArgumentException('Imported closing balance is required.');
         }
 
+        $year = (int) date('Y', strtotime($data['statement_date']));
+        $month = (int) date('m', strtotime($data['statement_date']));
+        app(\Modules\Finance\GeneralLedger\Services\PeriodControlService::class)->enforceOpen($data['property_id'], $year, $month);
+
         // BR-003: No overlapping statement date per account.
         if ($this->repository->existsForDate($data['bank_account_id'], $data['statement_date'], $data['property_id'])) {
             throw new Exception('A statement for this date already exists for the bank account.');
