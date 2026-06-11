@@ -96,7 +96,8 @@ Operations modules have completed their implementation sprints. The Asset Manage
 
 ## 17. Planned Modules
 - **Housekeeping Workspace:** PWA-focused execution dashboard for Room Attendants.
-- **Inventory & Purchasing:** Spare parts management tied to Work Orders.
+- **Legacy Purchasing / Inventory Tests:** Deprecated and Quarantined. Obsolete due to new architecture.
+- **Procurement:** Future Planned Module (To replace legacy Purchasing).
 
 ## 18. Future Modules
 - **HRIS (Human Resources):** Time & Attendance, Roster management.

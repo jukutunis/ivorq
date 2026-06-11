@@ -41,7 +41,7 @@ class AccountsPayableModuleTest extends TestCase
         ]);
 
         $category = $this->createVendorCategory($this->property);
-        $this->vendor = $this->createVendor($this->property, $category, ['is_active' => true, 'is_approved' => true]);
+        $this->vendor = $this->createVendor($this->property, $category, ['is_approved' => true]);
     }
 
     public function test_can_generate_ap_from_matched_invoice()

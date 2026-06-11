@@ -50,8 +50,7 @@ class BankAccountModuleTest extends TestCase
                 'account_number' => '1234567890',
                 'currency_code' => 'IDR',
                 'opening_balance' => 1000000,
-                'is_active' => true,
-            ], ['X-Property-Id' => $this->property->id]);
+                ], ['X-Property-Id' => $this->property->id]);
 
         $response->assertStatus(201)
             ->assertJsonPath('data.bank_name', 'Bank Mandiri')
@@ -99,8 +98,7 @@ class BankAccountModuleTest extends TestCase
                 'account_number' => '1234567890',
                 'currency_code' => 'IDR',
                 'opening_balance' => 1000000,
-                'is_active' => true,
-            ], ['X-Property-Id' => $this->property->id]);
+                ], ['X-Property-Id' => $this->property->id]);
 
         $response->assertStatus(201);
         $bankAccountId = $response->json('data.id');

@@ -105,3 +105,30 @@ This document lists every active and planned module within IVORQ, ensuring clear
 - **Dependents:** Preventive Maintenance, Work Orders, Inventory
 - **Blueprint Location:** `docs/architecture/Asset-Management-Foundation-v2.2A-Revision-Lock.md`
 - **Implementation Location:** `app/Domains/Operations/Asset/`
+
+## 12. Procurement / Purchasing
+- **Domain:** Operations
+- **Status:** Quarantined / Deprecated (Legacy module removed from active testing)
+- **Current Version:** N/A (Future Planned Module)
+- **Dependencies:** Inventory
+- **Dependents:** None currently
+- **Blueprint Location:** Pending
+- **Implementation Location:** `app/Domains/Operations/Purchasing/` (Quarantined)
+
+## 13. Inventory
+- **Domain:** Operations
+- **Status:** Locked (v2.4)
+- **Current Version:** v2.4
+- **Dependencies:** Asset, Location
+- **Dependents:** ContractorPTW, Procurement
+- **Blueprint Location:** `docs/02-operations/foundation/Inventory/Inventory-Foundation-Implementation-Plan-v1.1.md`
+- **Implementation Location:** `Modules/Operations/Inventory/`
+
+## 14. ContractorPTW
+- **Domain:** Operations
+- **Status:** Locked (v2.5)
+- **Current Version:** v2.5
+- **Dependencies:** Asset, Location, Property
+- **Dependents:** Engineering Workspace
+- **Blueprint Location:** `docs/02-operations/foundation/ContractorPTW/Contractor-PTW-Foundation-Implementation-Plan-v1.1.md`
+- **Implementation Location:** `Modules/Operations/ContractorPTW/`

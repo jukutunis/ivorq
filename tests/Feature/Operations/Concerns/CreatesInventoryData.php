@@ -51,10 +51,8 @@ trait CreatesInventoryData
 
         return InventoryCategory::create(array_merge([
             'property_id'   => $property->id,
-            'category_code' => "POL-CAT-{$seq}",
-            'name'          => "Policy Category {$seq}",
-            'is_active'     => true,
-        ], $overrides));
+                        'name'          => "Policy Category {$seq}",
+                    ], $overrides));
     }
 
     protected function makeInventoryUnit(Property $property, array $overrides = []): InventoryUnit
@@ -64,11 +62,9 @@ trait CreatesInventoryData
 
         return InventoryUnit::create(array_merge([
             'property_id'  => $property->id,
-            'unit_code'    => "POL-UNT-{$seq}",
-            'abbreviation' => 'PCS',
-            'name'         => "Policy Unit {$seq}",
-            'is_active'    => true,
-        ], $overrides));
+                                    'code' => "POL-UNT-{$seq}",
+            'name' => "Policy Unit {$seq}",
+                    ], $overrides));
     }
 
     protected function makeInventoryLocation(Property $property, array $overrides = []): InventoryLocation
@@ -78,11 +74,9 @@ trait CreatesInventoryData
 
         return InventoryLocation::create(array_merge([
             'property_id'   => $property->id,
-            'location_code' => "POL-LOC-{$seq}",
-            'name'          => "Policy Location {$seq}",
-            'location_type' => LocationTypeEnum::MainStore->value,
-            'is_active'     => true,
-        ], $overrides));
+                        'name'          => "Policy Location {$seq}",
+            'type' => LocationTypeEnum::MainStore->value,
+                    ], $overrides));
     }
 
     protected function makeInventoryItem(
@@ -96,14 +90,14 @@ trait CreatesInventoryData
 
         return InventoryItem::create(array_merge([
             'property_id'   => $property->id,
-            'item_code'     => "POL-ITM-{$seq}",
+            'sku'     => "POL-ITM-{$seq}",
             'name'          => "Policy Item {$seq}",
+            'inventory_type'  => 'stock',
+            'criticality'     => 'low',
             'category_id'   => $category->id,
             'unit_id'       => $unit->id,
-            'is_active'     => true,
-            'average_cost'  => '0.0000',
-            'reorder_point' => '0.000',
-        ], $overrides));
+                        'weighted_average_cost'  => '0.0000',
+                    ], $overrides));
     }
 
     protected function makeInventoryReceipt(Property $property, array $overrides = []): InventoryReceipt

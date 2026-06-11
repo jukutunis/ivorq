@@ -25,8 +25,8 @@ class InventoryReceiptSeeder extends Seeder
             ->orWhereHas('roles', fn($q) => $q->where('name', 'property-admin'))
             ->first();
 
-        $items     = InventoryItem::where('property_id', $property->id)->pluck('id', 'item_code');
-        $locations = InventoryLocation::where('property_id', $property->id)->pluck('id', 'location_code');
+        $items     = InventoryItem::where('property_id', $property->id)->pluck('id', 'sku');
+        $locations = InventoryLocation::where('property_id', $property->id)->pluck('id', 'name');
 
         $mainStore = $locations['MAIN-STR'] ?? null;
 
@@ -46,10 +46,10 @@ class InventoryReceiptSeeder extends Seeder
                 'posted_at'       => now()->subDays(30),
                 'remarks'         => 'Monthly housekeeping amenities replenishment.',
                 'lines'           => [
-                    ['item_code' => 'HK-SOAP-001',   'qty' => 2000, 'unit_cost' => 1200, 'total_value' => 2400000],
-                    ['item_code' => 'HK-SHAMP-001',  'qty' => 1500, 'unit_cost' => 3500, 'total_value' => 5250000],
-                    ['item_code' => 'HK-COND-001',   'qty' => 1500, 'unit_cost' => 3500, 'total_value' => 5250000],
-                    ['item_code' => 'HK-TISSUE-001', 'qty' =>  500, 'unit_cost' => 8500, 'total_value' => 4250000],
+                    ['sku' => 'HK-SOAP-001',   'qty' => 2000, 'unit_cost' => 1200, 'total_value' => 2400000],
+                    ['sku' => 'HK-SHAMP-001',  'qty' => 1500, 'unit_cost' => 3500, 'total_value' => 5250000],
+                    ['sku' => 'HK-COND-001',   'qty' => 1500, 'unit_cost' => 3500, 'total_value' => 5250000],
+                    ['sku' => 'HK-TISSUE-001', 'qty' =>  500, 'unit_cost' => 8500, 'total_value' => 4250000],
                 ],
             ],
             [
@@ -62,10 +62,10 @@ class InventoryReceiptSeeder extends Seeder
                 'posted_at'       => now()->subDays(20),
                 'remarks'         => 'Engineering spares restock.',
                 'lines'           => [
-                    ['item_code' => 'ENG-BULB-LED01', 'qty' => 50, 'unit_cost' => 25000,  'total_value' => 1250000],
-                    ['item_code' => 'ENG-FILT-AC01',  'qty' => 20, 'unit_cost' => 45000,  'total_value' =>  900000],
-                    ['item_code' => 'ENG-TAPE-PTFE',  'qty' => 60, 'unit_cost' =>  5000,  'total_value' =>  300000],
-                    ['item_code' => 'ENG-BATT-AA',    'qty' => 30, 'unit_cost' => 22000,  'total_value' =>  660000],
+                    ['sku' => 'ENG-BULB-LED01', 'qty' => 50, 'unit_cost' => 25000,  'total_value' => 1250000],
+                    ['sku' => 'ENG-FILT-AC01',  'qty' => 20, 'unit_cost' => 45000,  'total_value' =>  900000],
+                    ['sku' => 'ENG-TAPE-PTFE',  'qty' => 60, 'unit_cost' =>  5000,  'total_value' =>  300000],
+                    ['sku' => 'ENG-BATT-AA',    'qty' => 30, 'unit_cost' => 22000,  'total_value' =>  660000],
                 ],
             ],
             [
@@ -78,9 +78,9 @@ class InventoryReceiptSeeder extends Seeder
                 'posted_at'       => null,
                 'remarks'         => 'Laundry chemicals Q4 order — pending receipt confirmation.',
                 'lines'           => [
-                    ['item_code' => 'LDY-DET-001',    'qty' => 10, 'unit_cost' => 185000, 'total_value' => 1850000],
-                    ['item_code' => 'LDY-SOFT-001',   'qty' =>  6, 'unit_cost' => 220000, 'total_value' => 1320000],
-                    ['item_code' => 'LDY-STARCH-001', 'qty' => 12, 'unit_cost' =>  35000, 'total_value' =>  420000],
+                    ['sku' => 'LDY-DET-001',    'qty' => 10, 'unit_cost' => 185000, 'total_value' => 1850000],
+                    ['sku' => 'LDY-SOFT-001',   'qty' =>  6, 'unit_cost' => 220000, 'total_value' => 1320000],
+                    ['sku' => 'LDY-STARCH-001', 'qty' => 12, 'unit_cost' =>  35000, 'total_value' =>  420000],
                 ],
             ],
         ];
@@ -99,7 +99,7 @@ class InventoryReceiptSeeder extends Seeder
 
             if ($receipt->wasRecentlyCreated) {
                 foreach ($lines as $line) {
-                    $itemId = $items[$line['item_code']] ?? null;
+                    $itemId = $items[$line['sku']] ?? null;
                     if (! $itemId) {
                         continue;
                     }

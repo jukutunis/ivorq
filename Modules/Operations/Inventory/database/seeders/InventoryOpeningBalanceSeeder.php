@@ -25,19 +25,19 @@ class InventoryOpeningBalanceSeeder extends Seeder
 
         // Map location codes → IDs
         $locations = InventoryLocation::where('property_id', $property->id)
-            ->pluck('id', 'location_code');
+            ->pluck('id', 'name');
 
         // Map item codes → items
         $items = InventoryItem::where('property_id', $property->id)
             ->get()
-            ->keyBy('item_code');
+            ->keyBy('sku');
 
         if ($locations->isEmpty() || $items->isEmpty()) {
             $this->command->warn('InventoryOpeningBalanceSeeder: locations or items missing — run location/item seeders first.');
             return;
         }
 
-        // Opening stock: [item_code, location_code, quantity, average_cost]
+        // Opening stock: [sku, name, quantity, average_cost]
         $openingStock = [
             // Main Storeroom bulk stock
             ['HK-SOAP-001',    'MAIN-STR',   2000, '1200.0000'],

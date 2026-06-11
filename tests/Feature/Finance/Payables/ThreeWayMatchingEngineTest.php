@@ -56,26 +56,24 @@ class ThreeWayMatchingEngineTest extends TestCase
         ]);
 
         $category = $this->createVendorCategory($this->property);
-        $this->vendor = $this->createVendor($this->property, $category, ['is_active' => true, 'is_approved' => true]);
+        $this->vendor = $this->createVendor($this->property, $category, ['is_approved' => true]);
 
-        $unit = InventoryUnit::firstOrCreate(['property_id' => $this->property->id, 'unit_code' => 'PCS'], ['name' => 'Pieces', 'abbreviation' => 'PCS']);
-        $invCat = InventoryCategory::create(['property_id' => $this->property->id, 'category_code' => 'CAT1', 'name' => 'CAT1', 'type' => 'Goods']);
+        $unit = InventoryUnit::firstOrCreate(['property_id' => $this->property->id, 'code' => 'PCS'], ['name' => 'Pieces']);
+        $invCat = InventoryCategory::create(['property_id' => $this->property->id, 'name' => 'CAT1']);
         
         $this->item = InventoryItem::create([
             'property_id' => $this->property->id,
             'category_id' => $invCat->id,
-            'unit_id' => $unit->id,
-            'item_code' => 'ITM-01',
+            'sku' => 'ITM-01',
             'name' => 'Item 1',
+            'inventory_type' => 'stock',
+            'criticality' => 'medium',
         ]);
 
         $this->location = InventoryLocation::create([
             'property_id' => $this->property->id,
-            'location_code' => 'LOC-01',
             'name' => 'Store',
-            'location_type' => 'main_store',
-            'is_active' => true,
-        ]);
+            'type' => 'storeroom', ]);
 
         $pr = $this->createPurchaseRequest($this->property);
 

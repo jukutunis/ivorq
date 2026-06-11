@@ -27,8 +27,8 @@ class InventoryAdjustmentSeeder extends Seeder
             ->orWhereHas('roles', fn($q) => $q->where('name', 'property-admin'))
             ->first();
 
-        $items     = InventoryItem::where('property_id', $property->id)->pluck('id', 'item_code');
-        $locations = InventoryLocation::where('property_id', $property->id)->pluck('id', 'location_code');
+        $items     = InventoryItem::where('property_id', $property->id)->pluck('id', 'sku');
+        $locations = InventoryLocation::where('property_id', $property->id)->pluck('id', 'name');
 
         $mainStore = $locations['MAIN-STR'] ?? null;
         $hkStore   = $locations['HK-STORE'] ?? null;
@@ -59,9 +59,9 @@ class InventoryAdjustmentSeeder extends Seeder
                 'approved_at'       => now()->subDays(14),
                 'lines'             => [
                     // Minor variance found during physical count
-                    ['item_code' => 'HK-SOAP-001',    'sys' => 2000, 'actual' => 1985, 'var' => -15],
-                    ['item_code' => 'HK-SHAMP-001',   'sys' => 1500, 'actual' => 1492, 'var' =>  -8],
-                    ['item_code' => 'ENG-BULB-LED01', 'sys' =>   50, 'actual' =>   48, 'var' =>  -2],
+                    ['sku' => 'HK-SOAP-001',    'sys' => 2000, 'actual' => 1985, 'var' => -15],
+                    ['sku' => 'HK-SHAMP-001',   'sys' => 1500, 'actual' => 1492, 'var' =>  -8],
+                    ['sku' => 'ENG-BULB-LED01', 'sys' =>   50, 'actual' =>   48, 'var' =>  -2],
                 ],
             ],
             [
@@ -75,7 +75,7 @@ class InventoryAdjustmentSeeder extends Seeder
                 'approved_by'       => null,
                 'approved_at'       => null,
                 'lines'             => [
-                    ['item_code' => 'HK-TOWEL-001', 'sys' => 60, 'actual' => 57, 'var' => -3],
+                    ['sku' => 'HK-TOWEL-001', 'sys' => 60, 'actual' => 57, 'var' => -3],
                 ],
             ],
             [
@@ -89,7 +89,7 @@ class InventoryAdjustmentSeeder extends Seeder
                 'approved_by'       => null,
                 'approved_at'       => null,
                 'lines'             => [
-                    ['item_code' => 'HK-LINEN-001', 'sys' => 160, 'actual' => 158, 'var' => -2],
+                    ['sku' => 'HK-LINEN-001', 'sys' => 160, 'actual' => 158, 'var' => -2],
                 ],
             ],
         ];
@@ -108,7 +108,7 @@ class InventoryAdjustmentSeeder extends Seeder
 
             if ($adjustment->wasRecentlyCreated) {
                 foreach ($lines as $line) {
-                    $itemId = $items[$line['item_code']] ?? null;
+                    $itemId = $items[$line['sku']] ?? null;
                     if (! $itemId) {
                         continue;
                     }

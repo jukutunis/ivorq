@@ -25,8 +25,8 @@ class InventoryTransferSeeder extends Seeder
             ->orWhereHas('roles', fn($q) => $q->where('name', 'property-admin'))
             ->first();
 
-        $items     = InventoryItem::where('property_id', $property->id)->pluck('id', 'item_code');
-        $locations = InventoryLocation::where('property_id', $property->id)->pluck('id', 'location_code');
+        $items     = InventoryItem::where('property_id', $property->id)->pluck('id', 'sku');
+        $locations = InventoryLocation::where('property_id', $property->id)->pluck('id', 'name');
 
         $mainStore  = $locations['MAIN-STR']     ?? null;
         $hkStore    = $locations['HK-STORE']     ?? null;
@@ -51,12 +51,12 @@ class InventoryTransferSeeder extends Seeder
                 'completed_at'     => now()->subDays(22),
                 'notes'            => 'Weekly housekeeping sub-store replenishment.',
                 'lines'            => [
-                    ['item_code' => 'HK-SOAP-001',   'qty' => 400],
-                    ['item_code' => 'HK-SHAMP-001',  'qty' => 300],
-                    ['item_code' => 'HK-COND-001',   'qty' => 300],
-                    ['item_code' => 'HK-TOWEL-001',  'qty' =>  60],
-                    ['item_code' => 'HK-LINEN-001',  'qty' =>  40],
-                    ['item_code' => 'HK-TISSUE-001', 'qty' => 100],
+                    ['sku' => 'HK-SOAP-001',   'qty' => 400],
+                    ['sku' => 'HK-SHAMP-001',  'qty' => 300],
+                    ['sku' => 'HK-COND-001',   'qty' => 300],
+                    ['sku' => 'HK-TOWEL-001',  'qty' =>  60],
+                    ['sku' => 'HK-LINEN-001',  'qty' =>  40],
+                    ['sku' => 'HK-TISSUE-001', 'qty' => 100],
                 ],
             ],
             [
@@ -71,10 +71,10 @@ class InventoryTransferSeeder extends Seeder
                 'completed_at'     => now()->subDays(18),
                 'notes'            => 'Engineering workshop restocking.',
                 'lines'            => [
-                    ['item_code' => 'ENG-BULB-LED01', 'qty' => 15],
-                    ['item_code' => 'ENG-FILT-AC01',  'qty' =>  8],
-                    ['item_code' => 'ENG-TAPE-PTFE',  'qty' => 20],
-                    ['item_code' => 'ENG-BATT-AA',    'qty' => 10],
+                    ['sku' => 'ENG-BULB-LED01', 'qty' => 15],
+                    ['sku' => 'ENG-FILT-AC01',  'qty' =>  8],
+                    ['sku' => 'ENG-TAPE-PTFE',  'qty' => 20],
+                    ['sku' => 'ENG-BATT-AA',    'qty' => 10],
                 ],
             ],
             [
@@ -89,9 +89,9 @@ class InventoryTransferSeeder extends Seeder
                 'completed_at'     => null,
                 'notes'            => 'Minibar replenishment — pending approval.',
                 'lines'            => [
-                    ['item_code' => 'MB-WATER-001', 'qty' => 200],
-                    ['item_code' => 'MB-COLA-001',  'qty' => 100],
-                    ['item_code' => 'MB-PNUT-001',  'qty' => 120],
+                    ['sku' => 'MB-WATER-001', 'qty' => 200],
+                    ['sku' => 'MB-COLA-001',  'qty' => 100],
+                    ['sku' => 'MB-PNUT-001',  'qty' => 120],
                 ],
             ],
         ];
@@ -110,7 +110,7 @@ class InventoryTransferSeeder extends Seeder
 
             if ($transfer->wasRecentlyCreated) {
                 foreach ($lines as $line) {
-                    $itemId = $items[$line['item_code']] ?? null;
+                    $itemId = $items[$line['sku']] ?? null;
                     if (! $itemId) {
                         continue;
                     }

@@ -19,7 +19,7 @@ class InventoryUnit extends Model
 
     protected $fillable = [
         'property_id',
-        'unit_code',
+        'code',
         'abbreviation',
         'name',
         'is_active',

@@ -25,8 +25,8 @@ class InventoryIssueSeeder extends Seeder
             ->orWhereHas('roles', fn($q) => $q->where('name', 'property-admin'))
             ->first();
 
-        $items     = InventoryItem::where('property_id', $property->id)->pluck('id', 'item_code');
-        $locations = InventoryLocation::where('property_id', $property->id)->pluck('id', 'location_code');
+        $items     = InventoryItem::where('property_id', $property->id)->pluck('id', 'sku');
+        $locations = InventoryLocation::where('property_id', $property->id)->pluck('id', 'name');
 
         $hkStore  = $locations['HK-STORE']   ?? null;
         $engStore = $locations['ENG-STORE']  ?? null;
@@ -47,10 +47,10 @@ class InventoryIssueSeeder extends Seeder
                 'remarks'        => 'Daily housekeeping amenity issue — Floor 1–5.',
                 'location_id'    => $hkStore,
                 'lines'          => [
-                    ['item_code' => 'HK-SOAP-001',  'qty' => 120],
-                    ['item_code' => 'HK-SHAMP-001', 'qty' =>  80],
-                    ['item_code' => 'HK-COND-001',  'qty' =>  80],
-                    ['item_code' => 'HK-TISSUE-001', 'qty' => 40],
+                    ['sku' => 'HK-SOAP-001',  'qty' => 120],
+                    ['sku' => 'HK-SHAMP-001', 'qty' =>  80],
+                    ['sku' => 'HK-COND-001',  'qty' =>  80],
+                    ['sku' => 'HK-TISSUE-001', 'qty' => 40],
                 ],
             ],
             [
@@ -63,9 +63,9 @@ class InventoryIssueSeeder extends Seeder
                 'remarks'        => 'Engineering — corrective maintenance materials.',
                 'location_id'    => $engStore,
                 'lines'          => [
-                    ['item_code' => 'ENG-BULB-LED01', 'qty' =>  6],
-                    ['item_code' => 'ENG-TAPE-PTFE',  'qty' =>  5],
-                    ['item_code' => 'ENG-BATT-AA',    'qty' =>  4],
+                    ['sku' => 'ENG-BULB-LED01', 'qty' =>  6],
+                    ['sku' => 'ENG-TAPE-PTFE',  'qty' =>  5],
+                    ['sku' => 'ENG-BATT-AA',    'qty' =>  4],
                 ],
             ],
             [
@@ -78,8 +78,8 @@ class InventoryIssueSeeder extends Seeder
                 'remarks'        => 'Laundry supply issue — pending supervisor approval.',
                 'location_id'    => $locations['LAUNDRY-STR'] ?? null,
                 'lines'          => [
-                    ['item_code' => 'LDY-DET-001',    'qty' => 2],
-                    ['item_code' => 'LDY-STARCH-001', 'qty' => 3],
+                    ['sku' => 'LDY-DET-001',    'qty' => 2],
+                    ['sku' => 'LDY-STARCH-001', 'qty' => 3],
                 ],
             ],
         ];
@@ -99,7 +99,7 @@ class InventoryIssueSeeder extends Seeder
 
             if ($issue->wasRecentlyCreated && $locationId) {
                 foreach ($lines as $line) {
-                    $itemId = $items[$line['item_code']] ?? null;
+                    $itemId = $items[$line['sku']] ?? null;
                     if (! $itemId) {
                         continue;
                     }

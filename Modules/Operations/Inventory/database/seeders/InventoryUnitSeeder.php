@@ -17,32 +17,33 @@ class InventoryUnitSeeder extends Seeder
         }
 
         $units = [
-            ['unit_code' => 'PCS',  'name' => 'Piece',      'abbreviation' => 'pcs'],
-            ['unit_code' => 'BOX',  'name' => 'Box',        'abbreviation' => 'box'],
-            ['unit_code' => 'CTN',  'name' => 'Carton',     'abbreviation' => 'ctn'],
-            ['unit_code' => 'KG',   'name' => 'Kilogram',   'abbreviation' => 'kg'],
-            ['unit_code' => 'G',    'name' => 'Gram',       'abbreviation' => 'g'],
-            ['unit_code' => 'L',    'name' => 'Litre',      'abbreviation' => 'L'],
-            ['unit_code' => 'ML',   'name' => 'Millilitre', 'abbreviation' => 'mL'],
-            ['unit_code' => 'ROLL', 'name' => 'Roll',       'abbreviation' => 'roll'],
-            ['unit_code' => 'PKT',  'name' => 'Packet',     'abbreviation' => 'pkt'],
-            ['unit_code' => 'BTL',  'name' => 'Bottle',     'abbreviation' => 'btl'],
-            ['unit_code' => 'CAN',  'name' => 'Can',        'abbreviation' => 'can'],
-            ['unit_code' => 'SET',  'name' => 'Set',        'abbreviation' => 'set'],
-            ['unit_code' => 'PR',   'name' => 'Pair',       'abbreviation' => 'pr'],
-            ['unit_code' => 'M',    'name' => 'Metre',      'abbreviation' => 'm'],
+            ['code' => 'PCS',  'name' => 'Piece'],
+            ['code' => 'BOX',  'name' => 'Box'],
+            ['code' => 'CTN',  'name' => 'Carton'],
+            ['code' => 'KG',   'name' => 'Kilogram'],
+            ['code' => 'G',    'name' => 'Gram'],
+            ['code' => 'L',    'name' => 'Litre'],
+            ['code' => 'ML',   'name' => 'Millilitre'],
+            ['code' => 'ROLL', 'name' => 'Roll'],
+            ['code' => 'PKT',  'name' => 'Packet'],
+            ['code' => 'BTL',  'name' => 'Bottle'],
+            ['code' => 'CAN',  'name' => 'Can'],
+            ['code' => 'SET',  'name' => 'Set'],
+            ['code' => 'PR',   'name' => 'Pair'],
+            ['code' => 'M',    'name' => 'Metre'],
         ];
 
         foreach ($units as $data) {
             InventoryUnit::firstOrCreate(
                 [
                     'property_id' => $property->id,
-                    'unit_code'   => $data['unit_code'],
+                    'code'        => $data['code'],
                 ],
-                array_merge($data, [
+                [
                     'property_id' => $property->id,
-                    'is_active'   => true,
-                ])
+                    'code'        => $data['code'],
+                    'name'        => $data['name'],
+                ]
             );
         }
     }
