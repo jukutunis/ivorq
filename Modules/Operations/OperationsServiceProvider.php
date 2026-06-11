@@ -21,6 +21,7 @@ class OperationsServiceProvider extends ServiceProvider
         InventoryServiceProvider::class,
         PurchasingServiceProvider::class,
         \Modules\Operations\AssetManagement\AssetManagementServiceProvider::class,
+        \Modules\Operations\Maintenance\Providers\MaintenanceServiceProvider::class,
     ];
 
     public function register(): void

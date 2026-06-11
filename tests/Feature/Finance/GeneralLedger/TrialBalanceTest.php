@@ -9,6 +9,7 @@ use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Finance\GeneralLedger\Models\LedgerBalance;
 use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\NormalBalanceEnum;
+use Modules\Finance\GeneralLedger\Enums\AccountCategoryEnum;
 use Modules\Finance\GeneralLedger\Services\TrialBalanceService;
 
 class TrialBalanceTest extends TestCase
@@ -27,12 +28,24 @@ class TrialBalanceTest extends TestCase
 
     protected function createAccount(string $code, NormalBalanceEnum $balance, AccountTypeEnum $type, string $propertyId = null): Account
     {
+        $category = match ($type) {
+            AccountTypeEnum::Asset => AccountCategoryEnum::CurrentAsset,
+            AccountTypeEnum::Liability => AccountCategoryEnum::CurrentLiability,
+            AccountTypeEnum::Equity => AccountCategoryEnum::Equity,
+            AccountTypeEnum::Revenue => AccountCategoryEnum::Revenue,
+            AccountTypeEnum::CostOfSales => AccountCategoryEnum::CostOfSales,
+            AccountTypeEnum::Expense => AccountCategoryEnum::Expense,
+            AccountTypeEnum::Statistical => AccountCategoryEnum::Statistical,
+            default => AccountCategoryEnum::Expense,
+        };
+
         return Account::create([
             'property_id' => $propertyId ?? $this->propertyId,
             'code' => $code,
             'name' => "Account $code",
             'normal_balance' => $balance,
             'account_type' => $type,
+            'account_category' => $category,
         ]);
     }
 

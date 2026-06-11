@@ -10,6 +10,7 @@ use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\GeneralLedger\Models\LedgerBalance;
 use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\NormalBalanceEnum;
+use Modules\Finance\GeneralLedger\Enums\AccountCategoryEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Services\GeneralLedgerService;
 use Exception;
@@ -35,6 +36,7 @@ class GeneralLedgerTest extends TestCase
             'name' => 'Cash',
             'normal_balance' => NormalBalanceEnum::Debit,
             'account_type' => AccountTypeEnum::Asset,
+            'account_category' => AccountCategoryEnum::CurrentAsset,
         ]);
 
         $this->assertDatabaseHas('gl_accounts', [
@@ -51,6 +53,9 @@ class GeneralLedgerTest extends TestCase
             'property_id' => $propertyId,
             'code' => '1000',
             'name' => 'Cash',
+            'normal_balance' => NormalBalanceEnum::Debit,
+            'account_type' => AccountTypeEnum::Asset,
+            'account_category' => AccountCategoryEnum::CurrentAsset,
         ]);
 
         $this->expectException(\Illuminate\Database\QueryException::class);
@@ -59,6 +64,9 @@ class GeneralLedgerTest extends TestCase
             'property_id' => $propertyId,
             'code' => '1000',
             'name' => 'Bank',
+            'normal_balance' => NormalBalanceEnum::Debit,
+            'account_type' => AccountTypeEnum::Asset,
+            'account_category' => AccountCategoryEnum::CurrentAsset,
         ]);
     }
 
@@ -82,8 +90,8 @@ class GeneralLedgerTest extends TestCase
     {
         $propertyId = (string) Str::ulid();
         
-        $account1 = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash']);
-        $account2 = Account::create(['property_id' => $propertyId, 'code' => '4000', 'name' => 'Revenue']);
+        $account1 = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash', 'normal_balance' => NormalBalanceEnum::Debit, 'account_type' => AccountTypeEnum::Asset, 'account_category' => AccountCategoryEnum::CurrentAsset]);
+        $account2 = Account::create(['property_id' => $propertyId, 'code' => '4000', 'name' => 'Revenue', 'normal_balance' => NormalBalanceEnum::Credit, 'account_type' => AccountTypeEnum::Revenue, 'account_category' => AccountCategoryEnum::Revenue]);
 
         $journal = JournalEntry::create(['property_id' => $propertyId, 'transaction_date' => '2026-06-11']);
         
@@ -100,8 +108,8 @@ class GeneralLedgerTest extends TestCase
     {
         $propertyId = (string) Str::ulid();
         
-        $account1 = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash', 'normal_balance' => NormalBalanceEnum::Debit, 'account_type' => AccountTypeEnum::Asset]);
-        $account2 = Account::create(['property_id' => $propertyId, 'code' => '4000', 'name' => 'Revenue', 'normal_balance' => NormalBalanceEnum::Credit, 'account_type' => AccountTypeEnum::Revenue]);
+        $account1 = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash', 'normal_balance' => NormalBalanceEnum::Debit, 'account_type' => AccountTypeEnum::Asset, 'account_category' => AccountCategoryEnum::CurrentAsset]);
+        $account2 = Account::create(['property_id' => $propertyId, 'code' => '4000', 'name' => 'Revenue', 'normal_balance' => NormalBalanceEnum::Credit, 'account_type' => AccountTypeEnum::Revenue, 'account_category' => AccountCategoryEnum::Revenue]);
 
         $journal = JournalEntry::create(['property_id' => $propertyId, 'transaction_date' => '2026-06-11']);
         
@@ -118,7 +126,7 @@ class GeneralLedgerTest extends TestCase
     {
         $propertyId = (string) Str::ulid();
         
-        $account1 = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash']);
+        $account1 = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash', 'normal_balance' => NormalBalanceEnum::Debit, 'account_type' => AccountTypeEnum::Asset, 'account_category' => AccountCategoryEnum::CurrentAsset]);
         $journal = JournalEntry::create(['property_id' => $propertyId, 'transaction_date' => '2026-06-11']);
         
         $journal->lines()->create(['property_id' => $propertyId, 'account_id' => $account1->id, 'debit_amount' => 100, 'credit_amount' => 100]); // balanced
@@ -135,8 +143,8 @@ class GeneralLedgerTest extends TestCase
     {
         $propertyId = (string) Str::ulid();
         
-        $account1 = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash', 'normal_balance' => NormalBalanceEnum::Debit, 'account_type' => AccountTypeEnum::Asset]);
-        $account2 = Account::create(['property_id' => $propertyId, 'code' => '4000', 'name' => 'Revenue', 'normal_balance' => NormalBalanceEnum::Credit, 'account_type' => AccountTypeEnum::Revenue]);
+        $account1 = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash', 'normal_balance' => NormalBalanceEnum::Debit, 'account_type' => AccountTypeEnum::Asset, 'account_category' => AccountCategoryEnum::CurrentAsset]);
+        $account2 = Account::create(['property_id' => $propertyId, 'code' => '4000', 'name' => 'Revenue', 'normal_balance' => NormalBalanceEnum::Credit, 'account_type' => AccountTypeEnum::Revenue, 'account_category' => AccountCategoryEnum::Revenue]);
 
         $journal = JournalEntry::create(['property_id' => $propertyId, 'transaction_date' => '2026-06-11']);
         
@@ -161,7 +169,7 @@ class GeneralLedgerTest extends TestCase
     {
         $propertyId = (string) Str::ulid();
         
-        $accountStat = Account::create(['property_id' => $propertyId, 'code' => 'STAT1', 'name' => 'Rooms', 'account_type' => AccountTypeEnum::Statistical]);
+        $accountStat = Account::create(['property_id' => $propertyId, 'code' => 'STAT1', 'name' => 'Rooms', 'normal_balance' => NormalBalanceEnum::Debit, 'account_type' => AccountTypeEnum::Statistical, 'account_category' => AccountCategoryEnum::Statistical]);
 
         $journal = JournalEntry::create(['property_id' => $propertyId, 'transaction_date' => '2026-06-11']);
         
@@ -178,8 +186,8 @@ class GeneralLedgerTest extends TestCase
         $propertyId1 = (string) Str::ulid();
         $propertyId2 = (string) Str::ulid();
         
-        $account1 = Account::create(['property_id' => $propertyId1, 'code' => '1000', 'name' => 'Cash']);
-        $account2 = Account::create(['property_id' => $propertyId2, 'code' => '4000', 'name' => 'Revenue']);
+        $account1 = Account::create(['property_id' => $propertyId1, 'code' => '1000', 'name' => 'Cash', 'normal_balance' => NormalBalanceEnum::Debit, 'account_type' => AccountTypeEnum::Asset, 'account_category' => AccountCategoryEnum::CurrentAsset]);
+        $account2 = Account::create(['property_id' => $propertyId2, 'code' => '4000', 'name' => 'Revenue', 'normal_balance' => NormalBalanceEnum::Credit, 'account_type' => AccountTypeEnum::Revenue, 'account_category' => AccountCategoryEnum::Revenue]);
 
         $journal = JournalEntry::create(['property_id' => $propertyId1, 'transaction_date' => '2026-06-11']);
         
@@ -198,7 +206,7 @@ class GeneralLedgerTest extends TestCase
         // Simple assertion that created_by or updated_by is fillable/tracked.
         // Assuming traits handle it, we just test if models exist with IDs.
         $propertyId = (string) Str::ulid();
-        $account = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash']);
+        $account = Account::create(['property_id' => $propertyId, 'code' => '1000', 'name' => 'Cash', 'normal_balance' => NormalBalanceEnum::Debit, 'account_type' => AccountTypeEnum::Asset, 'account_category' => AccountCategoryEnum::CurrentAsset]);
         
         $this->assertNotNull($account->id);
         $this->assertTrue(in_array('created_by', $account->getFillable()) || in_array('created_by', \Illuminate\Support\Facades\Schema::getColumnListing('gl_accounts')));
