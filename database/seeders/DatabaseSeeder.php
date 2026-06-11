@@ -46,6 +46,7 @@ class DatabaseSeeder extends Seeder
             InventoryPermissionSeeder::class,
             \Modules\Operations\Purchasing\Database\Seeders\PurchasingPermissionSeeder::class,
             \Modules\Finance\Payables\Database\Seeders\PayablesPermissionSeeder::class,
+            \Modules\Operations\AssetManagement\Database\Seeders\AssetPermissionSeeder::class,
 
             // Roles — must run after all permission seeders (syncPermissions uses Permission::all())
             RoleSeeder::class,

@@ -2,7 +2,7 @@
 
 namespace Modules\Operations\AssetManagement\Policies;
 
-use App\Models\User;
+use Modules\Foundation\User\Models\User;
 use Modules\Operations\AssetManagement\Models\Asset;
 use Modules\Operations\AssetManagement\Enums\AssetStatusEnum;
 use Illuminate\Auth\Access\HandlesAuthorization;
