@@ -25,6 +25,7 @@ class OperationsServiceProvider extends ServiceProvider
         \Modules\Operations\WorkOrder\Providers\WorkOrderServiceProvider::class,
         \Modules\Operations\EngineeringWorkspace\Providers\EngineeringWorkspaceServiceProvider::class,
         \Modules\Operations\Inventory\Providers\InventoryServiceProvider::class,
+        \Modules\Operations\ContractorPTW\Providers\ContractorPTWServiceProvider::class,
     ];
 
     public function register(): void
