@@ -251,6 +251,7 @@ export interface PageProps {
         success: string | null;
         error: string | null;
     };
+    [key: string]: unknown;
 }
 
 // ── Engineering ─────────────────────────────────────────────────────────────

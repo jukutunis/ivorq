@@ -2,8 +2,8 @@ import { FormEvent } from 'react';
 import { useForm } from '@inertiajs/react';
 import AuthLayout from '@/Layouts/AuthLayout';
 
-export default function ForgotPassword() {
-    const { data, setData, post, processing, errors, status } = useForm({ email: '' });
+export default function ForgotPassword({ status }: { status?: string }) {
+    const { data, setData, post, processing, errors } = useForm({ email: '' });
 
     function handleSubmit(e: FormEvent) {
         e.preventDefault();

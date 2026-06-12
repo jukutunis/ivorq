@@ -8,10 +8,8 @@
         "strict": true,
         "esModuleInterop": true,
         "skipLibCheck": true,
-        "baseUrl": ".",
-        "ignoreDeprecations": "6.0",
         "paths": {
-            "@/*": ["resources/js/*"]
+            "@/*": ["./resources/js/*"]
         }
     },
     "include": ["resources/js/**/*"]

@@ -8,7 +8,7 @@ interface Props {
     out_of_stock_count:  number;
 }
 
-function movementBadge(type: { value: string; label: string }) {
+function movementBadge(type: { value: string | number; label: string }) {
     const map: Record<string, string> = {
         receipt:    'bg-green-100 text-green-700',
         issue:      'bg-red-100 text-red-700',
@@ -17,7 +17,7 @@ function movementBadge(type: { value: string; label: string }) {
         adjustment: 'bg-purple-100 text-purple-700',
         opening:    'bg-gray-100 text-gray-600',
     };
-    const cls = map[type.value] ?? 'bg-gray-100 text-gray-600';
+    const cls = map[String(type.value)] ?? 'bg-gray-100 text-gray-600';
     return (
         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
             {type.label}
