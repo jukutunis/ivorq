@@ -6,26 +6,21 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 
-class RoomInspection extends Model
+class HousekeepingChecklist extends Model
 {
     use SoftDeletes, HasUlids;
 
-    protected $table = 'room_inspections';
+    protected $table = 'housekeeping_checklists';
 
     protected $fillable = [
         'property_id',
-        'room_id',
-        'cleaning_task_id',
-        'supervisor_id',
-        'score',
-        'max_score',
-        'is_passed',
-        'notes',
-        'results',
+        'name',
+        'task_type',
+        'total_points',
+        'is_active',
     ];
 
     protected $casts = [
-        'is_passed' => 'boolean',
-        'results' => 'array',
+        'is_active' => 'boolean',
     ];
 }

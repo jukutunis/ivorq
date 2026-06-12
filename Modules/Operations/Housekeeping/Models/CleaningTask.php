@@ -3,76 +3,49 @@
 namespace Modules\Operations\Housekeeping\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Modules\Foundation\Property\Models\Property;
-use Modules\Foundation\User\Models\User;
-use Modules\Operations\Housekeeping\Enums\TaskStatusEnum;
-use Modules\Operations\Housekeeping\Enums\TaskTypeEnum;
-use Modules\Operations\Zoning\Models\Zone;
-use Shared\Traits\BelongsToProperty;
-use Shared\Traits\HasAuditColumns;
-use Shared\Traits\HasUlid;
+use Illuminate\Database\Eloquent\Concerns\HasUlids;
 
 class CleaningTask extends Model
 {
-    use HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes;
+    use SoftDeletes, HasUlids;
+
+    protected $table = 'cleaning_tasks';
 
     protected $fillable = [
         'property_id',
         'room_id',
         'zone_id',
-        'task_code',
-        'title',
-        'description',
         'task_type',
         'status',
         'priority',
-        'estimated_duration_minutes',
-        'due_date',
+        'credits',
+        'scheduled_at',
         'started_at',
         'completed_at',
-        'completed_by',
+        'verified_at',
+        'sla_minutes_target',
+        'sla_breached',
+        'notes',
+        'created_by',
     ];
 
     protected $casts = [
-        'task_type'                  => TaskTypeEnum::class,
-        'status'                     => TaskStatusEnum::class,
-        'priority'                   => 'integer',
-        'estimated_duration_minutes' => 'integer',
-        'due_date'                   => 'datetime',
-        'started_at'                 => 'datetime',
-        'completed_at'               => 'datetime',
+        'scheduled_at' => 'datetime',
+        'started_at' => 'datetime',
+        'completed_at' => 'datetime',
+        'verified_at' => 'datetime',
+        'sla_breached' => 'boolean',
+        'credits' => 'decimal:2',
     ];
 
-    public function property(): BelongsTo
-    {
-        return $this->belongsTo(Property::class);
-    }
-
-    public function room(): BelongsTo
+    public function room()
     {
         return $this->belongsTo(Room::class);
     }
-
-    public function zone(): BelongsTo
-    {
-        return $this->belongsTo(Zone::class);
-    }
-
-    public function completedBy(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'completed_by');
-    }
-
-    public function assignments(): HasMany
+    
+    public function assignments()
     {
         return $this->hasMany(TaskAssignment::class);
-    }
-
-    public function inspections(): HasMany
-    {
-        return $this->hasMany(RoomInspection::class);
     }
 }

@@ -6,26 +6,26 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 
-class RoomInspection extends Model
+class LostAndFoundItem extends Model
 {
     use SoftDeletes, HasUlids;
 
-    protected $table = 'room_inspections';
+    protected $table = 'lost_and_found_items';
 
     protected $fillable = [
         'property_id',
+        'reference_number',
         'room_id',
-        'cleaning_task_id',
-        'supervisor_id',
-        'score',
-        'max_score',
-        'is_passed',
-        'notes',
-        'results',
+        'location_description',
+        'found_by_user_id',
+        'category_id',
+        'status',
+        'description',
+        'chain_of_custody',
+        'supervisor_approval_id',
     ];
 
     protected $casts = [
-        'is_passed' => 'boolean',
-        'results' => 'array',
+        'chain_of_custody' => 'array',
     ];
 }

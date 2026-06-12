@@ -17,10 +17,19 @@ return new class extends Migration
             $table->string('room_type', 30);
             $table->string('floor', 10)->nullable();
             $table->string('building', 100)->nullable();
-
-            // v1.1: two independent status dimensions
-            $table->string('cleanliness_status', 30)->default('dirty');
-            $table->string('occupancy_status', 30)->nullable(); // null = untracked (PMS not yet active)
+            
+            // Housekeeping Operational States
+            $table->string('cleanliness_status', 30)->default('dirty'); // clean, dirty, inspected, pickup, ooo, oos
+            $table->string('readiness_state', 30)->default('waiting_inspection'); // ready_for_sale, ready_for_arrival, ready_for_vip, waiting_inspection, waiting_engineering, waiting_amenities, blocked
+            
+            // Guest-centric Modifiers
+            $table->string('occupancy_status', 30)->nullable(); // arrival, stayover, departure, vacant
+            $table->boolean('is_dnd')->default(false);
+            $table->boolean('turndown_required')->default(false);
+            $table->boolean('is_vip')->default(false);
+            
+            // Workload
+            $table->decimal('credits', 5, 2)->default(1.0);
 
             $table->boolean('is_active')->default(true);
             $table->text('notes')->nullable();
@@ -29,14 +38,10 @@ return new class extends Migration
             $table->timestamps();
             $table->softDeletes();
 
-            $table->foreign('property_id')->references('id')->on('properties')->restrictOnDelete();
-            $table->foreign('zone_id')->references('id')->on('zones')->restrictOnDelete();
-
             $table->unique(['property_id', 'room_number']);
             $table->index(['property_id', 'cleanliness_status']);
+            $table->index(['property_id', 'readiness_state']);
             $table->index(['property_id', 'occupancy_status']);
-            $table->index(['property_id', 'zone_id']);
-            $table->index(['property_id', 'room_type']);
         });
     }
 

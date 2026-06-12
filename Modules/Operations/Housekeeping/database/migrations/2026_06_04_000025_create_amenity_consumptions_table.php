@@ -8,20 +8,19 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('task_assignments', function (Blueprint $table) {
+        Schema::create('amenity_consumptions', function (Blueprint $table) {
             $table->char('id', 26)->primary();
+            $table->char('property_id', 26);
             $table->char('cleaning_task_id', 26);
-            $table->char('attendant_id', 26);
-            $table->timestamp('assigned_at');
-            $table->timestamp('accepted_at')->nullable();
+            $table->char('inventory_item_id', 26); // Links to Inventory Foundation
+            $table->integer('quantity');
+            $table->string('type', 30)->default('standard'); // standard, extra, damaged
             $table->timestamps();
-            
-            $table->index(['attendant_id', 'assigned_at']);
         });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('task_assignments');
+        Schema::dropIfExists('amenity_consumptions');
     }
 };
