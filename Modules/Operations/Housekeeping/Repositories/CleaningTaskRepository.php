@@ -14,6 +14,10 @@ class CleaningTaskRepository
     {
         $query = CleaningTask::with(['room', 'zone'])->latest();
 
+        if ($propertyId = app(\Shared\Services\CurrentPropertyService::class)->getId()) {
+            $query->where('property_id', $propertyId);
+        }
+
         if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }

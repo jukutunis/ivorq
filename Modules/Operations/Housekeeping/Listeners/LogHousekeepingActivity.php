@@ -103,10 +103,13 @@ class LogHousekeepingActivity
 
     private function onInspectionCompleted(InspectionCompleted $event): void
     {
-        $outcome  = ucfirst($event->inspection->status->value);
+        $outcomeStatus = $event->inspection->status instanceof \UnitEnum ? $event->inspection->status->value : $event->inspection->status;
+        $outcome  = ucfirst($outcomeStatus);
         $roomRef  = $event->inspection->room_id;
+        
+        $severityValue = $event->inspection->inspection_severity instanceof \UnitEnum ? $event->inspection->inspection_severity->value : $event->inspection->inspection_severity;
         $severity = $event->inspection->inspection_severity
-            ? " (severity: {$event->inspection->inspection_severity->value})"
+            ? " (severity: {$severityValue})"
             : '';
 
         $this->activityService->log(

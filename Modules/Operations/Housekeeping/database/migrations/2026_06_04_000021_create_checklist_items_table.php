@@ -10,10 +10,15 @@ return new class extends Migration
     {
         Schema::create('checklist_items', function (Blueprint $table) {
             $table->char('id', 26)->primary();
+            $table->char('property_id', 26)->nullable();
             $table->char('checklist_id', 26);
-            $table->string('description');
+            $table->string('item_text')->nullable();
+            $table->string('description')->nullable();
+            $table->boolean('is_required')->default(true);
             $table->integer('weight')->default(1);
             $table->integer('sort_order')->default(0);
+            $table->char('created_by', 26)->nullable();
+            $table->char('updated_by', 26)->nullable();
             $table->timestamps();
         });
     }

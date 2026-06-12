@@ -13,9 +13,11 @@ class RoomRepository
 {
     public function paginate(int $perPage = 15): LengthAwarePaginator
     {
-        return Room::with('zone')
-            ->orderBy('room_number')
-            ->paginate($perPage);
+        $query = Room::with('zone')->orderBy('room_number');
+        if ($propertyId = app(\Shared\Services\CurrentPropertyService::class)->getId()) {
+            $query->where('property_id', $propertyId);
+        }
+        return $query->paginate($perPage);
     }
 
     public function find(string $id): Room

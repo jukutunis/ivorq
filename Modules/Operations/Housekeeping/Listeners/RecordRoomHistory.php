@@ -25,7 +25,7 @@ class RecordRoomHistory
             'room_id'      => $event->room->id,
             'status_field' => 'cleanliness',
             'from_status'  => null,
-            'to_status'    => $event->room->cleanliness_status->value,
+            'to_status'    => $event->room->cleanliness_status instanceof \UnitEnum ? $event->room->cleanliness_status->value : $event->room->cleanliness_status,
             'action'       => 'room_created',
             'performed_by' => auth()->id(),
             'remarks'      => null,

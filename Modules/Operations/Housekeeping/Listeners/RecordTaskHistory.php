@@ -45,8 +45,8 @@ class RecordTaskHistory
             properties: [
                 'action'    => 'task_created',
                 'task_code' => $event->task->task_code,
-                'task_type' => $event->task->task_type->value,
-                'status'    => $event->task->status->value,
+                'task_type' => $event->task->task_type instanceof \UnitEnum ? $event->task->task_type->value : $event->task->task_type,
+                'status'    => $event->task->status instanceof \UnitEnum ? $event->task->status->value : $event->task->status,
                 'room_id'   => $event->task->room_id,
                 'zone_id'   => $event->task->zone_id,
             ],
@@ -61,7 +61,7 @@ class RecordTaskHistory
             properties: [
                 'action'        => 'task_assigned',
                 'task_code'     => $event->task->task_code,
-                'status'        => $event->task->status->value,
+                'status'        => $event->task->status instanceof \UnitEnum ? $event->task->status->value : $event->task->status,
                 'assigned_to'   => $event->assignment->user_id,
                 'department_id' => $event->assignment->department_id,
             ],
@@ -76,7 +76,7 @@ class RecordTaskHistory
             properties: [
                 'action'     => 'task_started',
                 'task_code'  => $event->task->task_code,
-                'status'     => $event->task->status->value,
+                'status'     => $event->task->status instanceof \UnitEnum ? $event->task->status->value : $event->task->status,
                 'started_at' => $event->task->started_at?->toIso8601String(),
             ],
         );
@@ -90,7 +90,7 @@ class RecordTaskHistory
             properties: [
                 'action'        => 'task_completed',
                 'task_code'     => $event->task->task_code,
-                'status'        => $event->task->status->value,
+                'status'        => $event->task->status instanceof \UnitEnum ? $event->task->status->value : $event->task->status,
                 'completed_by'  => $event->task->completed_by,
                 'completed_at'  => $event->task->completed_at?->toIso8601String(),
             ],
@@ -105,7 +105,7 @@ class RecordTaskHistory
             properties: [
                 'action'    => 'task_cancelled',
                 'task_code' => $event->task->task_code,
-                'status'    => $event->task->status->value,
+                'status'    => $event->task->status instanceof \UnitEnum ? $event->task->status->value : $event->task->status,
                 'reason'    => $event->reason,
             ],
         );

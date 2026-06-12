@@ -8,16 +8,21 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::dropIfExists('room_status_histories');
+        
         Schema::create('room_status_histories', function (Blueprint $table) {
             $table->char('id', 26)->primary();
-            $table->char('room_id', 26);
-            $table->string('old_status')->nullable();
-            $table->string('new_status');
-            $table->string('reason')->nullable();
-            $table->char('changed_by', 26)->nullable();
-            $table->timestamps();
+            $table->char('property_id', 26);
+            $table->char('room_id', 26)->nullable();
+            $table->string('status_field', 50); // cleanliness, occupancy
+            $table->string('from_status')->nullable();
+            $table->string('to_status');
+            $table->string('action');
+            $table->char('performed_by', 26)->nullable();
+            $table->string('remarks')->nullable();
+            $table->timestamp('created_at');
             
-            $table->index(['room_id', 'created_at']);
+            $table->index(['property_id', 'room_id']);
         });
     }
 

@@ -2,39 +2,27 @@
 
 namespace Modules\Operations\Housekeeping\Services;
 
-use Modules\Operations\Housekeeping\Enums\AssignmentStatusEnum;
 use Modules\Operations\Housekeeping\Models\TaskAssignment;
-use Modules\Operations\Housekeeping\Repositories\TaskAssignmentRepository;
+use Modules\Operations\Housekeeping\Enums\AssignmentStatusEnum;
 
 class TaskAssignmentService
 {
-    public function __construct(
-        private TaskAssignmentRepository $repository
-    ) {}
-
-    public function find(string $id): TaskAssignment
+    public function complete(string $assignmentId): TaskAssignment
     {
-        return $this->repository->find($id);
-    }
-
-    /**
-     * Mark an assignment as completed and record the completion timestamp.
-     */
-    public function complete(string $id): TaskAssignment
-    {
-        return $this->repository->update($id, [
-            'status'       => AssignmentStatusEnum::Completed->value,
+        $assignment = TaskAssignment::findOrFail($assignmentId);
+        $assignment->update([
+            'status' => AssignmentStatusEnum::Completed,
             'completed_at' => now(),
         ]);
+        return $assignment;
     }
 
-    /**
-     * Cancel an assignment.
-     */
-    public function cancel(string $id): TaskAssignment
+    public function cancel(string $assignmentId): TaskAssignment
     {
-        return $this->repository->update($id, [
-            'status' => AssignmentStatusEnum::Cancelled->value,
+        $assignment = TaskAssignment::findOrFail($assignmentId);
+        $assignment->update([
+            'status' => AssignmentStatusEnum::Cancelled,
         ]);
+        return $assignment;
     }
 }
