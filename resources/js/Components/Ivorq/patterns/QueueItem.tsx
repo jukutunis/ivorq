@@ -4,11 +4,12 @@ interface QueueItemProps {
   title: React.ReactNode;
   meta: React.ReactNode;
   actions?: React.ReactNode;
+  style?: React.CSSProperties;
 }
 
-export default function QueueItem({ title, meta, actions }: QueueItemProps) {
+export default function QueueItem({ title, meta, actions, style }: QueueItemProps) {
   return (
-    <div className="queue-item">
+    <div className="queue-item" style={style}>
       <div className="qi-info">
         <div className="qi-title">{title}</div>
         <div className="qi-meta">{meta}</div>
