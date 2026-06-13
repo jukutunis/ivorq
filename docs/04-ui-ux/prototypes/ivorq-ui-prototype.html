@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IVORQ — Hotel Operations Workspace</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════════════════════
+   IVORQ DESIGN SYSTEM TOKENS
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --navy-900: #1A2356;
+  --navy-800: #212C6A;
+  --primary-500: #4F6BED;
+  --primary-100: #DDE5FF;
+  --primary-50: #EEF2FF;
+
+  --surface-page: #F4F6F8;
+  --surface-card: #FFFFFF;
+
+  --text-primary: #1F2937;
+  --text-secondary: #6B7685;
+  --text-muted: #9CA3AF;
+
+  --border-default: #E8ECF0;
+  --border-subtle: #F0F2F5;
+
+  --success: #059669;
+  --success-bg: #ECFDF5;
+  --warning: #D97706;
+  --warning-bg: #FFFBEB;
+  --danger: #DC2626;
+  --danger-bg: #FEF2F2;
+  --info: #2563EB;
+  --info-bg: #EFF6FF;
+
+  --radius: 8px;
+  --radius-sm: 4px;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TOP NAVIGATION
+   ══════════════════════════════════════════════════════════════ */
+.topbar {
+  height: 56px;
+  background: var(--navy-900);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+}
+.topbar-brand {
+  color: white;
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: 2px;
+  margin-right: 40px;
+}
+.topbar-nav { display: flex; height: 100%; gap: 2px; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  color: rgba(255,255,255,0.65);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+.nav-item:hover { color: rgba(255,255,255,0.9); background: var(--navy-800); }
+.nav-item.active { color: white; border-bottom-color: var(--primary-500); background: var(--navy-800); }
+
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: rgba(255,255,255,0.8);
+  font-size: 12px;
+}
+.topbar-avatar {
+  width: 30px; height: 30px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-weight: 600; font-size: 12px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   WORKSPACE
+   ══════════════════════════════════════════════════════════════ */
+.workspace {
+  margin-top: 56px;
+  min-height: calc(100vh - 56px);
+  padding: 24px;
+}
+.module-view { display: none; }
+.module-view.active { display: block; animation: fadeIn 0.25s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+.workspace-header { margin-bottom: 20px; }
+.workspace-title { font-size: 20px; font-weight: 600; color: var(--navy-900); }
+
+.module-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-default);
+  margin-bottom: 24px;
+}
+.tab {
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.tab:hover { color: var(--text-primary); }
+.tab.active { color: var(--primary-500); border-bottom-color: var(--primary-500); font-weight: 600; }
+.tab-badge {
+  background: var(--primary-50);
+  color: var(--primary-500);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: 6px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SPLIT LAYOUT
+   ══════════════════════════════════════════════════════════════ */
+.split-layout { display: flex; gap: 24px; align-items: flex-start; }
+
+.quick-filter-panel {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  padding: 20px;
+  position: sticky;
+  top: 80px;
+}
+.filter-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.filter-reset { font-size: 12px; font-weight: 400; color: var(--primary-500); cursor: pointer; text-decoration: none; }
+.filter-group { margin-bottom: 16px; }
+.filter-group:last-child { margin-bottom: 0; }
+.filter-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 6px;
+}
+.filter-input {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+  color: var(--text-primary);
+  background: white;
+}
+.filter-input:focus { border-color: var(--primary-500); box-shadow: 0 0 0 3px var(--primary-50); }
+
+.main-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   OPERATIONAL SNAPSHOT
+   ══════════════════════════════════════════════════════════════ */
+.op-snapshot { display: flex; gap: 16px; }
+.snap-card {
+  flex: 1;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-top: 3px solid var(--border-default);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  box-shadow: var(--shadow-sm);
+}
+.snap-val { font-size: 24px; font-weight: 700; margin-bottom: 2px; font-variant-numeric: tabular-nums; }
+.snap-lbl { font-size: 11px; color: var(--text-secondary); font-weight: 500; text-transform: uppercase; letter-spacing: 0.3px; }
+
+/* ══════════════════════════════════════════════════════════════
+   ATTENTION AREA
+   ══════════════════════════════════════════════════════════════ */
+.attention-area {
+  background: var(--danger-bg);
+  border: 1px solid #FECACA;
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.attention-area.warning { background: var(--warning-bg); border-color: #FDE68A; }
+.attention-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.attention-title { font-size: 14px; font-weight: 600; color: var(--danger); }
+.attention-area.warning .attention-title { color: var(--warning); }
+.attention-card {
+  background: white;
+  border: 1px solid #FECACA;
+  border-radius: 6px;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.attention-card:last-child { margin-bottom: 0; }
+.attention-area.warning .attention-card { border-color: #FDE68A; }
+
+/* ══════════════════════════════════════════════════════════════
+   WORK BOARD (KANBAN)
+   ══════════════════════════════════════════════════════════════ */
+.board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.board-title { font-size: 16px; font-weight: 600; }
+
+.work-board { display: flex; gap: 16px; overflow-x: auto; }
+.board-column {
+  flex: 1;
+  min-width: 240px;
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-page);
+  border: 1px solid var(--border-default);
+}
+.board-col-header {
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border-default);
+  background: white;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.col-count {
+  background: var(--border-default);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.board-col-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 180px;
+}
+
+.work-card {
+  background: white;
+  border: 1px solid var(--border-default);
+  border-left: 4px solid var(--primary-500);
+  border-radius: 6px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.15s;
+}
+.work-card:hover { box-shadow: var(--shadow-card); }
+.wc-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.wc-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.wc-detail { font-size: 12px; color: var(--text-secondary); }
+.wc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   QUEUE LIST
+   ══════════════════════════════════════════════════════════════ */
+.queue-list {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.queue-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-default);
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.queue-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background 0.1s;
+}
+.queue-item:hover { background: var(--primary-50); }
+.queue-item:last-child { border-bottom: none; }
+.qi-info { display: flex; flex-direction: column; gap: 2px; }
+.qi-title { font-size: 14px; font-weight: 600; }
+.qi-meta { font-size: 12px; color: var(--text-secondary); }
+.qi-right { display: flex; align-items: center; gap: 12px; }
+
+/* ══════════════════════════════════════════════════════════════
+   SHARED UTILITIES
+   ══════════════════════════════════════════════════════════════ */
+.badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.b-success { background: var(--success-bg); color: var(--success); }
+.b-warning { background: var(--warning-bg); color: var(--warning); }
+.b-danger { background: var(--danger-bg); color: var(--danger); }
+.b-info { background: var(--info-bg); color: var(--info); }
+
+.btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-primary { background: var(--primary-500); color: white; }
+.btn-primary:hover { background: #4059D0; }
+.btn-secondary { background: white; border-color: var(--border-default); color: var(--text-primary); }
+.btn-secondary:hover { background: var(--surface-page); }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+
+/* ══════════════════════════════════════════════════════════════
+   HOME COMMAND CENTER
+   ══════════════════════════════════════════════════════════════ */
+.home-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.home-grid-wide { grid-column: 1 / -1; }
+.home-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.hc-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-default);
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.hc-body { padding: 16px 20px; }
+.hc-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13px;
+}
+.hc-item:last-child { border-bottom: none; }
+
+.launcher-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.launcher {
+  background: var(--surface-page);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.launcher:hover { background: var(--primary-50); border-color: var(--primary-500); color: var(--primary-500); }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════
+     TOP NAVIGATION
+     ══════════════════════════════════════════════════════════════ -->
+<header class="topbar">
+  <div class="topbar-brand">IVORQ</div>
+  <nav class="topbar-nav">
+    <div class="nav-item active" onclick="nav('home')">Home</div>
+    <div class="nav-item" onclick="nav('frontdesk')">Front Desk</div>
+    <div class="nav-item" onclick="nav('housekeeping')">Housekeeping</div>
+    <div class="nav-item" onclick="nav('engineering')">Engineering</div>
+    <div class="nav-item" onclick="nav('inventory')">Inventory</div>
+    <div class="nav-item" onclick="nav('procurement')">Procurement</div>
+    <div class="nav-item" onclick="nav('hris')">HRIS</div>
+    <div class="nav-item" onclick="nav('finance')">Finance</div>
+    <div class="nav-item" onclick="nav('reports')">Reports</div>
+    <div class="nav-item" onclick="nav('ai')">AI Assistant</div>
+  </nav>
+  <div class="topbar-right">
+    <span>The Grand Resort &amp; Spa</span>
+    <div class="topbar-avatar">MS</div>
+  </div>
+</header>
+
+<div class="workspace">
+
+<!-- ══════════════════════════════════════════════════════════════
+     HOME — OPERATIONAL COMMAND CENTER
+     ══════════════════════════════════════════════════════════════ -->
+<div id="home" class="module-view active">
+  <div class="workspace-header"><div class="workspace-title">Operational Command Center</div></div>
+
+  <!-- Operational Snapshot -->
+  <div class="op-snapshot" style="margin-bottom: 24px;">
+    <div class="snap-card" style="border-top-color: var(--primary-500);"><div class="snap-val" style="color: var(--primary-500);">82%</div><div class="snap-lbl">Occupancy</div></div>
+    <div class="snap-card" style="border-top-color: var(--success);"><div class="snap-val" style="color: var(--success);">142</div><div class="snap-lbl">In-House Guests</div></div>
+    <div class="snap-card" style="border-top-color: var(--warning);"><div class="snap-val" style="color: var(--warning);">24</div><div class="snap-lbl">Arrivals Today</div></div>
+    <div class="snap-card" style="border-top-color: var(--info);"><div class="snap-val" style="color: var(--info);">18</div><div class="snap-lbl">Departures Today</div></div>
+    <div class="snap-card" style="border-top-color: var(--danger);"><div class="snap-val" style="color: var(--danger);">3</div><div class="snap-lbl">Critical Items</div></div>
+  </div>
+
+  <div class="home-grid">
+    <!-- MOD + Shift -->
+    <div class="home-card">
+      <div class="hc-header"><div>Shift Status</div><div class="badge b-info">Afternoon Shift</div></div>
+      <div class="hc-body">
+        <div class="hc-item"><span style="font-weight: 500;">Manager On Duty</span><span style="font-weight: 700;">Made Surya</span></div>
+        <div class="hc-item"><span style="font-weight: 500;">Shift Start</span><span>15:00</span></div>
+        <div class="hc-item"><span style="font-weight: 500;">Handover Due</span><span style="color: var(--warning); font-weight: 600;">In 2 Hours</span></div>
+      </div>
+    </div>
+
+    <!-- Staff On Duty -->
+    <div class="home-card">
+      <div class="hc-header"><div>Staff On Duty</div><div class="badge b-info">25 Active</div></div>
+      <div class="hc-body">
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+          <div style="background: var(--surface-page); padding: 12px; border-radius: 6px; text-align: center;">
+            <div style="font-size: 20px; font-weight: 700;">6</div><div class="snap-lbl">Front Office</div>
+          </div>
+          <div style="background: var(--surface-page); padding: 12px; border-radius: 6px; text-align: center;">
+            <div style="font-size: 20px; font-weight: 700;">12</div><div class="snap-lbl">Housekeeping</div>
+          </div>
+          <div style="background: var(--surface-page); padding: 12px; border-radius: 6px; text-align: center;">
+            <div style="font-size: 20px; font-weight: 700;">4</div><div class="snap-lbl">Engineering</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Critical Attention -->
+    <div class="home-card">
+      <div class="hc-header" style="border-bottom-color: #FECACA;"><div style="color: var(--danger);">Critical Attention</div><div class="badge b-danger">3 Actions</div></div>
+      <div class="hc-item" style="padding: 14px 20px;">
+        <div class="qi-info"><span class="qi-title" style="font-size: 13px;">VIP Arrival — No Room Assigned</span><span class="qi-meta">Smith, James • ETA 14:00</span></div>
+        <button class="btn btn-secondary btn-sm">Assign Room</button>
+      </div>
+      <div class="hc-item" style="padding: 14px 20px;">
+        <div class="qi-info"><span class="qi-title" style="font-size: 13px;">SLA Breach — Chiller B Overdue</span><span class="qi-meta">Engineering • Open 3 hours</span></div>
+        <button class="btn btn-secondary btn-sm">Escalate</button>
+      </div>
+      <div class="hc-item" style="padding: 14px 20px;">
+        <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Guest Complaint — Room 201 Noise</span><span class="qi-meta">Front Desk • 10 min ago</span></div>
+        <button class="btn btn-secondary btn-sm">Handle</button>
+      </div>
+    </div>
+
+    <!-- VIP Arrivals -->
+    <div class="home-card">
+      <div class="hc-header"><div>VIP Arrivals Today</div><div class="badge b-warning">3 VIPs</div></div>
+      <div class="hc-item" style="padding: 14px 20px;">
+        <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Smith, James</span><span class="qi-meta">Suite • 2 Nights • ETA 14:00</span></div>
+        <div class="badge b-danger">No Room</div>
+      </div>
+      <div class="hc-item" style="padding: 14px 20px;">
+        <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Chen, Wei Lin</span><span class="qi-meta">Deluxe King • 4 Nights • ETA 16:00</span></div>
+        <div class="badge b-success">Room 601 Ready</div>
+      </div>
+    </div>
+
+    <!-- Log Book -->
+    <div class="home-card">
+      <div class="hc-header"><div>Today's Log Book</div><button class="btn btn-secondary btn-sm">+ New Entry</button></div>
+      <div class="hc-item" style="padding: 14px 20px; align-items: flex-start;">
+        <div class="qi-info"><span class="qi-meta">14:30 — Front Desk</span><span style="font-size: 13px;">Guest complaint regarding AC in Room 412. Engineering dispatched. Resolved.</span></div>
+      </div>
+      <div class="hc-item" style="padding: 14px 20px; align-items: flex-start;">
+        <div class="qi-info"><span class="qi-meta">11:15 — Security</span><span style="font-size: 13px;">Health inspector routine visit completed. All areas passed.</span></div>
+      </div>
+      <div class="hc-item" style="padding: 14px 20px; align-items: flex-start;">
+        <div class="qi-info"><span class="qi-meta">08:00 — Front Office</span><span style="font-size: 13px;">Shift handover from Night to Morning. No outstanding items.</span></div>
+      </div>
+    </div>
+
+    <!-- Quick Launchers -->
+    <div class="home-card">
+      <div class="hc-header"><div>Quick Launchers</div></div>
+      <div class="hc-body">
+        <div class="launcher-grid">
+          <div class="launcher">New Reservation</div>
+          <div class="launcher">Walk-In</div>
+          <div class="launcher">Create Work Order</div>
+          <div class="launcher">Start Handover</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     FRONT DESK
+     ══════════════════════════════════════════════════════════════ -->
+<div id="frontdesk" class="module-view">
+  <div class="workspace-header"><div class="workspace-title">Front Desk</div></div>
+  <div class="module-tabs">
+    <div class="tab active">Arrivals <span class="tab-badge">24</span></div>
+    <div class="tab">Departures <span class="tab-badge">18</span></div>
+    <div class="tab">In House <span class="tab-badge">142</span></div>
+    <div class="tab">Reservations</div>
+    <div class="tab">Room Rack</div>
+  </div>
+  <div class="split-layout">
+    <div class="quick-filter-panel">
+      <div class="filter-panel-title">Quick Filters <a class="filter-reset">Reset</a></div>
+      <div class="filter-group"><label class="filter-label">Search</label><input type="text" class="filter-input" placeholder="Guest, Res #, Room..."></div>
+      <div class="filter-group"><label class="filter-label">Arrival Date</label><input type="date" class="filter-input" value="2026-06-14"></div>
+      <div class="filter-group"><label class="filter-label">Departure Date</label><input type="date" class="filter-input"></div>
+      <div class="filter-group"><label class="filter-label">Status</label><select class="filter-input"><option>All</option><option>Due In</option><option>Checked In</option><option>No-Show</option></select></div>
+      <div class="filter-group"><label class="filter-label">Room Type</label><select class="filter-input"><option>All Types</option><option>Suite</option><option>Deluxe King</option><option>Superior Twin</option></select></div>
+      <div class="filter-group"><label class="filter-label">OTA Source</label><select class="filter-input"><option>All Sources</option><option>Direct</option><option>Booking.com</option><option>Expedia</option></select></div>
+    </div>
+    <div class="main-content">
+      <div class="op-snapshot">
+        <div class="snap-card"><div class="snap-val">24</div><div class="snap-lbl">Arrivals</div></div>
+        <div class="snap-card"><div class="snap-val" style="color: var(--warning);">3</div><div class="snap-lbl">VIP Due In</div></div>
+        <div class="snap-card"><div class="snap-val" style="color: var(--danger);">2</div><div class="snap-lbl">No Room Assigned</div></div>
+      </div>
+      <div class="attention-area">
+        <div class="attention-header"><div class="attention-title">Pre-Arrival Attention</div><div class="badge b-danger">2 Issues</div></div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">VIP — No Room Assigned</span><span class="qi-meta">Smith, James • RES-9981 • Suite • ETA 14:00</span></div>
+          <button class="btn btn-secondary btn-sm">Assign Room</button>
+        </div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Missing Payment Guarantee</span><span class="qi-meta">Williams, Sarah • RES-9984 • Deluxe King • ETA 16:00</span></div>
+          <button class="btn btn-secondary btn-sm">Send Link</button>
+        </div>
+      </div>
+      <div class="queue-list">
+        <div class="queue-header"><div>Check-In Queue</div><div style="display: flex; gap: 8px;"><button class="btn btn-secondary btn-sm">Walk-In</button><button class="btn btn-primary btn-sm">New Reservation</button></div></div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Anderson, James <span class="badge b-warning">VIP</span></div><div class="qi-meta">RES-9981 • King Suite • Room 412 • 2 Nights</div></div>
+          <div class="qi-right"><div class="badge b-success">Room Ready</div><button class="btn btn-primary btn-sm">Start Check-In</button></div>
+        </div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Tanaka, Yuki</div><div class="qi-meta">RES-9983 • Superior Twin • Room 305 • 3 Nights</div></div>
+          <div class="qi-right"><div class="badge b-warning">Room Dirty</div><button class="btn btn-secondary btn-sm" disabled style="opacity: 0.5;">Waiting</button></div>
+        </div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Mueller, Hans</div><div class="qi-meta">RES-9985 • Deluxe King • Room 508 • 1 Night</div></div>
+          <div class="qi-right"><div class="badge b-success">Room Ready</div><button class="btn btn-primary btn-sm">Start Check-In</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     HOUSEKEEPING
+     ══════════════════════════════════════════════════════════════ -->
+<div id="housekeeping" class="module-view">
+  <div class="workspace-header"><div class="workspace-title">Housekeeping</div></div>
+  <div class="module-tabs">
+    <div class="tab active">Room Board</div><div class="tab">Assignments</div><div class="tab">Inspections <span class="tab-badge">15</span></div><div class="tab">Lost &amp; Found</div>
+  </div>
+  <div class="split-layout">
+    <div class="quick-filter-panel">
+      <div class="filter-panel-title">Quick Filters <a class="filter-reset">Reset</a></div>
+      <div class="filter-group"><label class="filter-label">Floor / Zone</label><select class="filter-input"><option>All Floors</option><option>Floor 1</option><option>Floor 2</option><option>Floor 3</option><option>Floor 4</option><option>Floor 5</option><option>Floor 6</option></select></div>
+      <div class="filter-group"><label class="filter-label">Room Status</label><select class="filter-input"><option>All</option><option>Dirty</option><option>Clean</option><option>Inspected</option><option>OOO</option></select></div>
+      <div class="filter-group"><label class="filter-label">Attendant</label><select class="filter-input"><option>All Attendants</option><option>Ni Luh Sari</option><option>Wayan Darma</option><option>Ketut Ari</option></select></div>
+      <div class="filter-group"><label class="filter-label">Due Time</label><select class="filter-input"><option>All</option><option>Overdue</option><option>Next 1 Hour</option></select></div>
+      <div class="filter-group"><label class="filter-label">Priority</label><select class="filter-input"><option>All</option><option>VIP / Rush</option><option>Standard</option></select></div>
+    </div>
+    <div class="main-content">
+      <div class="op-snapshot">
+        <div class="snap-card" style="border-top-color: var(--danger);"><div class="snap-val" style="color: var(--danger);">38</div><div class="snap-lbl">Dirty</div></div>
+        <div class="snap-card" style="border-top-color: var(--warning);"><div class="snap-val" style="color: var(--warning);">15</div><div class="snap-lbl">Pending Inspection</div></div>
+        <div class="snap-card" style="border-top-color: var(--success);"><div class="snap-val" style="color: var(--success);">120</div><div class="snap-lbl">Clean / Ready</div></div>
+        <div class="snap-card" style="border-top-color: var(--info);"><div class="snap-val" style="color: var(--info);">8</div><div class="snap-lbl">Rush / VIP</div></div>
+      </div>
+      <div class="board-header">
+        <div class="board-title">Room Task Board</div>
+        <button class="btn btn-primary btn-sm">Auto-Assign Attendants</button>
+      </div>
+      <div class="work-board">
+        <div class="board-column">
+          <div class="board-col-header"><div>Dirty / Unassigned</div><div class="col-count">12</div></div>
+          <div class="board-col-body">
+            <div class="work-card" style="border-left-color: var(--danger);">
+              <div class="wc-meta"><span class="badge b-danger">Rush — VIP Due</span><span>Floor 4</span></div>
+              <div class="wc-title">Room 412 — Suite</div>
+              <div class="wc-detail">Checkout 11:00 • VIP arriving 14:00</div>
+              <div class="wc-actions"><button class="btn btn-primary btn-sm">Assign Task</button></div>
+            </div>
+            <div class="work-card" style="border-left-color: var(--warning);">
+              <div class="wc-meta"><span>Standard</span><span>Floor 3</span></div>
+              <div class="wc-title">Room 301 — Superior</div>
+              <div class="wc-detail">Checkout 12:00 • No arrival today</div>
+              <div class="wc-actions"><button class="btn btn-secondary btn-sm">Assign Task</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="board-column">
+          <div class="board-col-header"><div>In Progress</div><div class="col-count">5</div></div>
+          <div class="board-col-body">
+            <div class="work-card" style="border-left-color: var(--info);">
+              <div class="wc-meta"><span>Ni Luh Sari</span><span>Floor 3</span></div>
+              <div class="wc-title">Room 305 — Deluxe</div>
+              <div class="wc-detail">Started 15 min ago</div>
+            </div>
+            <div class="work-card" style="border-left-color: var(--info);">
+              <div class="wc-meta"><span>Wayan Darma</span><span>Floor 2</span></div>
+              <div class="wc-title">Room 208 — Twin</div>
+              <div class="wc-detail">Started 35 min ago</div>
+            </div>
+          </div>
+        </div>
+        <div class="board-column">
+          <div class="board-col-header"><div>Pending Inspection</div><div class="col-count">3</div></div>
+          <div class="board-col-body">
+            <div class="work-card" style="border-left-color: var(--warning);">
+              <div class="wc-meta"><span>Cleaned by: Ketut</span><span>Floor 2</span></div>
+              <div class="wc-title">Room 201 — Superior</div>
+              <div class="wc-actions"><button class="btn btn-primary btn-sm">Inspect</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="board-column">
+          <div class="board-col-header"><div>Clean / Ready</div><div class="col-count">120</div></div>
+          <div class="board-col-body">
+            <div class="work-card" style="border-left-color: var(--success);">
+              <div class="wc-meta"><span>Inspected</span><span>Floor 6</span></div>
+              <div class="wc-title">Room 601 — Deluxe King</div>
+              <div class="wc-detail">VIP Chen arriving 16:00</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     ENGINEERING
+     ══════════════════════════════════════════════════════════════ -->
+<div id="engineering" class="module-view">
+  <div class="workspace-header"><div class="workspace-title">Engineering</div></div>
+  <div class="module-tabs">
+    <div class="tab active">Work Orders <span class="tab-badge">12</span></div><div class="tab">PM Schedule <span class="tab-badge">5</span></div><div class="tab">Assets</div><div class="tab">Incidents</div>
+  </div>
+  <div class="split-layout">
+    <div class="quick-filter-panel">
+      <div class="filter-panel-title">Quick Filters <a class="filter-reset">Reset</a></div>
+      <div class="filter-group"><label class="filter-label">Priority</label><select class="filter-input"><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></div>
+      <div class="filter-group"><label class="filter-label">Location</label><select class="filter-input"><option>All</option><option>Guest Rooms</option><option>Public Areas</option><option>Back of House</option></select></div>
+      <div class="filter-group"><label class="filter-label">Asset</label><input type="text" class="filter-input" placeholder="Search asset..."></div>
+      <div class="filter-group"><label class="filter-label">Technician</label><select class="filter-input"><option>All</option><option>Wayan Bayu</option><option>Ketut Adi</option></select></div>
+      <div class="filter-group"><label class="filter-label">Status</label><select class="filter-input"><option>All Open</option><option>Unassigned</option><option>In Progress</option><option>On Hold</option></select></div>
+    </div>
+    <div class="main-content">
+      <div class="op-snapshot">
+        <div class="snap-card" style="border-top-color: var(--danger);"><div class="snap-val" style="color: var(--danger);">2</div><div class="snap-lbl">SLA Breached</div></div>
+        <div class="snap-card"><div class="snap-val">12</div><div class="snap-lbl">Open Work Orders</div></div>
+        <div class="snap-card" style="border-top-color: var(--warning);"><div class="snap-val" style="color: var(--warning);">5</div><div class="snap-lbl">PM Due This Week</div></div>
+      </div>
+      <div class="attention-area">
+        <div class="attention-header"><div class="attention-title">SLA Attention Required</div><div class="badge b-danger">2 Overdue</div></div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">AC Compressor — Room 412</span><span class="qi-meta">Critical • Overdue by 45 min • Assigned: Wayan Bayu</span></div>
+          <div style="display: flex; gap: 6px;"><button class="btn btn-secondary btn-sm">Reassign</button><button class="btn btn-primary btn-sm">Escalate</button></div>
+        </div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Pool Pump Motor — Pool Area</span><span class="qi-meta">High • Overdue by 2 hours • Unassigned</span></div>
+          <div style="display: flex; gap: 6px;"><button class="btn btn-primary btn-sm">Assign Now</button></div>
+        </div>
+      </div>
+      <div class="queue-list">
+        <div class="queue-header"><div>Work Order Pipeline</div><button class="btn btn-primary btn-sm">Create Work Order</button></div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Broken Chair Leg — Lobby Restaurant</div><div class="qi-meta">Medium Priority • Reported by F&B • 1 hour ago</div></div>
+          <div class="qi-right"><span class="badge b-warning">Unassigned</span><button class="btn btn-secondary btn-sm">Assign</button></div>
+        </div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Flickering Lights — Corridor Floor 3</div><div class="qi-meta">Low Priority • Reported by HK • 3 hours ago</div></div>
+          <div class="qi-right"><span class="badge b-info">Ketut Adi</span><span class="badge b-success">On Track</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     INVENTORY
+     ══════════════════════════════════════════════════════════════ -->
+<div id="inventory" class="module-view">
+  <div class="workspace-header"><div class="workspace-title">Inventory</div></div>
+  <div class="module-tabs">
+    <div class="tab active">Stock Health</div><div class="tab">Transfers</div><div class="tab">Receiving <span class="tab-badge">4</span></div><div class="tab">Adjustments</div>
+  </div>
+  <div class="split-layout">
+    <div class="quick-filter-panel">
+      <div class="filter-panel-title">Quick Filters</div>
+      <div class="filter-group"><label class="filter-label">Store</label><select class="filter-input"><option>Main Store</option><option>Kitchen Store</option><option>HK Store</option></select></div>
+      <div class="filter-group"><label class="filter-label">Category</label><select class="filter-input"><option>All</option><option>Linen</option><option>Amenities</option><option>F&B Dry Goods</option></select></div>
+      <div class="filter-group"><label class="filter-label">Stock Status</label><select class="filter-input"><option>All</option><option>Below PAR</option><option>Critical</option><option>Healthy</option></select></div>
+      <div class="filter-group"><label class="filter-label">Supplier</label><select class="filter-input"><option>All</option></select></div>
+      <div class="filter-group"><label class="filter-label">Movement Type</label><select class="filter-input"><option>All</option><option>Issue</option><option>Receipt</option><option>Transfer</option></select></div>
+    </div>
+    <div class="main-content">
+      <div class="op-snapshot">
+        <div class="snap-card" style="border-top-color: var(--danger);"><div class="snap-val" style="color: var(--danger);">8</div><div class="snap-lbl">Below PAR</div></div>
+        <div class="snap-card" style="border-top-color: var(--warning);"><div class="snap-val" style="color: var(--warning);">4</div><div class="snap-lbl">Pending Receiving</div></div>
+        <div class="snap-card"><div class="snap-val">3</div><div class="snap-lbl">Pending Transfers</div></div>
+      </div>
+      <div class="attention-area">
+        <div class="attention-header"><div class="attention-title">Critical Stock Shortages</div><div class="badge b-danger">3 Items</div></div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Bath Towel Premium</span><span class="qi-meta">Current: 45 / PAR: 100 — Main Store</span></div>
+          <button class="btn btn-primary btn-sm">Generate PR</button>
+        </div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Shampoo Bottle 50ml</span><span class="qi-meta">Current: 30 / PAR: 200 — HK Store</span></div>
+          <button class="btn btn-primary btn-sm">Generate PR</button>
+        </div>
+      </div>
+      <div class="queue-list">
+        <div class="queue-header"><div>Pending Receiving</div></div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">PO-26-0012 — Linen Supply Co.</div><div class="qi-meta">Expected today • 120 Bath Towels</div></div>
+          <div class="qi-right"><button class="btn btn-primary btn-sm">Receive</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     PROCUREMENT
+     ══════════════════════════════════════════════════════════════ -->
+<div id="procurement" class="module-view">
+  <div class="workspace-header"><div class="workspace-title">Procurement</div></div>
+  <div class="module-tabs">
+    <div class="tab active">Approval Queue <span class="tab-badge">5</span></div><div class="tab">PR Pipeline</div><div class="tab">PO Status</div><div class="tab">Receiving</div>
+  </div>
+  <div class="split-layout">
+    <div class="quick-filter-panel">
+      <div class="filter-panel-title">Quick Filters</div>
+      <div class="filter-group"><label class="filter-label">Department</label><select class="filter-input"><option>All</option><option>Housekeeping</option><option>F&B</option><option>Engineering</option></select></div>
+      <div class="filter-group"><label class="filter-label">Vendor</label><select class="filter-input"><option>All</option></select></div>
+      <div class="filter-group"><label class="filter-label">PR Status</label><select class="filter-input"><option>Pending Approval</option><option>Approved</option><option>Rejected</option></select></div>
+      <div class="filter-group"><label class="filter-label">Approval Status</label><select class="filter-input"><option>All</option><option>Awaiting My Review</option></select></div>
+      <div class="filter-group"><label class="filter-label">Amount Range</label><input type="text" class="filter-input" placeholder="Min – Max"></div>
+    </div>
+    <div class="main-content">
+      <div class="op-snapshot">
+        <div class="snap-card" style="border-top-color: var(--warning);"><div class="snap-val" style="color: var(--warning);">5</div><div class="snap-lbl">Awaiting Approval</div></div>
+        <div class="snap-card"><div class="snap-val">14</div><div class="snap-lbl">Open PRs</div></div>
+        <div class="snap-card"><div class="snap-val">8</div><div class="snap-lbl">Active POs</div></div>
+      </div>
+      <div class="board-header">
+        <div class="board-title">Procurement Pipeline</div>
+        <button class="btn btn-primary btn-sm">Create PR</button>
+      </div>
+      <div class="work-board">
+        <div class="board-column">
+          <div class="board-col-header"><div>Needs Approval</div><div class="col-count">5</div></div>
+          <div class="board-col-body">
+            <div class="work-card" style="border-left-color: var(--warning);">
+              <div class="wc-meta"><span>Housekeeping</span><span style="font-weight: 600;">$1,240</span></div>
+              <div class="wc-title">PR-26-0045</div>
+              <div class="wc-detail">Linen Replenishment • Submitted today</div>
+              <div class="wc-actions"><button class="btn btn-secondary btn-sm">Reject</button><button class="btn btn-primary btn-sm">Approve</button></div>
+            </div>
+            <div class="work-card" style="border-left-color: var(--warning);">
+              <div class="wc-meta"><span>F&B</span><span style="font-weight: 600;">$680</span></div>
+              <div class="wc-title">PR-26-0046</div>
+              <div class="wc-detail">Kitchen Supplies • Submitted yesterday</div>
+              <div class="wc-actions"><button class="btn btn-secondary btn-sm">Reject</button><button class="btn btn-primary btn-sm">Approve</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="board-column">
+          <div class="board-col-header"><div>Approved / Sourcing</div><div class="col-count">3</div></div>
+          <div class="board-col-body">
+            <div class="work-card" style="border-left-color: var(--info);">
+              <div class="wc-meta"><span>Engineering</span><span style="font-weight: 600;">$2,100</span></div>
+              <div class="wc-title">PR-26-0042</div>
+              <div class="wc-detail">Spare Parts — Awaiting vendor quote</div>
+              <div class="wc-actions"><button class="btn btn-secondary btn-sm">Convert to PO</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="board-column">
+          <div class="board-col-header"><div>PO Issued</div><div class="col-count">8</div></div>
+          <div class="board-col-body">
+            <div class="work-card" style="border-left-color: var(--success);">
+              <div class="wc-meta"><span>Linen Supply Co.</span><span style="font-weight: 600;">$4,500</span></div>
+              <div class="wc-title">PO-26-0012</div>
+              <div class="wc-detail">Delivery expected today</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     HRIS
+     ══════════════════════════════════════════════════════════════ -->
+<div id="hris" class="module-view">
+  <div class="workspace-header"><div class="workspace-title">HRIS</div></div>
+  <div class="module-tabs">
+    <div class="tab active">Attendance</div><div class="tab">Shift Coverage</div><div class="tab">Leave Requests <span class="tab-badge">3</span></div><div class="tab">Payroll</div>
+  </div>
+  <div class="split-layout">
+    <div class="quick-filter-panel">
+      <div class="filter-panel-title">Quick Filters</div>
+      <div class="filter-group"><label class="filter-label">Department</label><select class="filter-input"><option>All</option><option>Front Office</option><option>Housekeeping</option><option>Engineering</option><option>F&B</option></select></div>
+      <div class="filter-group"><label class="filter-label">Position</label><select class="filter-input"><option>All</option></select></div>
+      <div class="filter-group"><label class="filter-label">Shift</label><select class="filter-input"><option>Current Shift</option><option>Morning</option><option>Afternoon</option><option>Night</option></select></div>
+      <div class="filter-group"><label class="filter-label">Employment Status</label><select class="filter-input"><option>Active</option><option>Probation</option><option>On Leave</option></select></div>
+    </div>
+    <div class="main-content">
+      <div class="op-snapshot">
+        <div class="snap-card"><div class="snap-val">34</div><div class="snap-lbl">Clocked In</div></div>
+        <div class="snap-card" style="border-top-color: var(--danger);"><div class="snap-val" style="color: var(--danger);">2</div><div class="snap-lbl">Late / No-Show</div></div>
+        <div class="snap-card" style="border-top-color: var(--warning);"><div class="snap-val" style="color: var(--warning);">3</div><div class="snap-lbl">Leave Requests</div></div>
+      </div>
+      <div class="attention-area warning">
+        <div class="attention-header"><div class="attention-title">Leave Approvals Needed</div><div class="badge b-warning">3 Pending</div></div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Ni Luh Sari — Annual Leave</span><span class="qi-meta">Housekeeping • Jun 20 – Jun 24 (5 days)</span></div>
+          <div style="display: flex; gap: 6px;"><button class="btn btn-secondary btn-sm">Decline</button><button class="btn btn-primary btn-sm">Approve</button></div>
+        </div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Ketut Ari — Sick Leave</span><span class="qi-meta">Housekeeping • Jun 14 (1 day)</span></div>
+          <div style="display: flex; gap: 6px;"><button class="btn btn-secondary btn-sm">Decline</button><button class="btn btn-primary btn-sm">Approve</button></div>
+        </div>
+      </div>
+      <div class="queue-list">
+        <div class="queue-header"><div>Workforce Status — Afternoon Shift</div><button class="btn btn-secondary btn-sm">Manage Roster</button></div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Made Surya</div><div class="qi-meta">Duty Manager • Front Office</div></div>
+          <div class="qi-right"><span class="badge b-success">Clocked In 15:00</span></div>
+        </div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Wayan Darma</div><div class="qi-meta">Room Attendant • Housekeeping</div></div>
+          <div class="qi-right"><span class="badge b-danger">Late — Not Clocked In</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     FINANCE
+     ══════════════════════════════════════════════════════════════ -->
+<div id="finance" class="module-view">
+  <div class="workspace-header"><div class="workspace-title">Finance</div></div>
+  <div class="module-tabs">
+    <div class="tab active">Revenue Today</div><div class="tab">AP Attention</div><div class="tab">AR Attention</div><div class="tab">Budget Watch</div><div class="tab">Cashbook</div>
+  </div>
+  <div class="split-layout">
+    <div class="quick-filter-panel">
+      <div class="filter-panel-title">Quick Filters</div>
+      <div class="filter-group"><label class="filter-label">Business Date</label><input type="date" class="filter-input" value="2026-06-14"></div>
+      <div class="filter-group"><label class="filter-label">Cost Center</label><select class="filter-input"><option>All</option><option>Rooms Division</option><option>F&B</option><option>Spa</option></select></div>
+      <div class="filter-group"><label class="filter-label">Department</label><select class="filter-input"><option>All</option></select></div>
+      <div class="filter-group"><label class="filter-label">Period</label><select class="filter-input"><option>Current Month</option><option>Previous Month</option><option>YTD</option></select></div>
+      <div class="filter-group"><label class="filter-label">Status</label><select class="filter-input"><option>All</option><option>Posted</option><option>Unposted</option></select></div>
+    </div>
+    <div class="main-content">
+      <div class="op-snapshot">
+        <div class="snap-card" style="border-top-color: var(--success);"><div class="snap-val" style="color: var(--success);">$14,250</div><div class="snap-lbl">Revenue Today</div></div>
+        <div class="snap-card" style="border-top-color: var(--warning);"><div class="snap-val" style="color: var(--warning);">$8,400</div><div class="snap-lbl">AP Pending</div></div>
+        <div class="snap-card" style="border-top-color: var(--danger);"><div class="snap-val" style="color: var(--danger);">$12,000</div><div class="snap-lbl">AR Outstanding</div></div>
+      </div>
+      <div class="attention-area warning">
+        <div class="attention-header"><div class="attention-title">AP Attention — Overdue Payments</div><div class="badge b-warning">2 Overdue</div></div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Linen Supply Co. — Invoice #LS-2045</span><span class="qi-meta">Due today • $1,200.00</span></div>
+          <button class="btn btn-primary btn-sm">Authorize Payment</button>
+        </div>
+        <div class="attention-card">
+          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Fresh Foods Ltd. — Invoice #FF-1892</span><span class="qi-meta">Overdue 3 days • $2,450.00</span></div>
+          <button class="btn btn-primary btn-sm">Authorize Payment</button>
+        </div>
+      </div>
+      <div class="queue-list">
+        <div class="queue-header"><div>Budget Watch — Cost Control Signals</div></div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">F&B Cost of Goods</div><div class="qi-meta">MTD Actual: $18,200 vs Budget: $15,000</div></div>
+          <div class="qi-right"><span class="badge b-danger">121% of Budget</span></div>
+        </div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Rooms Division Labor</div><div class="qi-meta">MTD Actual: $22,400 vs Budget: $24,000</div></div>
+          <div class="qi-right"><span class="badge b-success">93% of Budget</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     REPORTS
+     ══════════════════════════════════════════════════════════════ -->
+<div id="reports" class="module-view">
+  <div class="workspace-header"><div class="workspace-title">Reports Center</div></div>
+  <div class="module-tabs">
+    <div class="tab active">Operational</div><div class="tab">Financial</div><div class="tab">Saved Reports</div><div class="tab">Scheduled</div><div class="tab">Export Center</div>
+  </div>
+  <div class="split-layout">
+    <div class="quick-filter-panel">
+      <div class="filter-panel-title">Report Context</div>
+      <div class="filter-group"><label class="filter-label">Category</label><select class="filter-input"><option>All</option><option>Front Desk</option><option>Housekeeping</option><option>Engineering</option><option>Finance</option></select></div>
+      <div class="filter-group"><label class="filter-label">Date Range</label><input type="date" class="filter-input"></div>
+    </div>
+    <div class="main-content">
+      <div class="queue-list">
+        <div class="queue-header"><div>Available Reports</div></div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Daily Manager Report</div><div class="qi-meta">Front Desk • Auto-generated at EOD</div></div>
+          <div class="qi-right"><button class="btn btn-secondary btn-sm">Preview</button><button class="btn btn-primary btn-sm">Generate</button></div>
+        </div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Arrival / Departure List</div><div class="qi-meta">Front Desk • Today's operational list</div></div>
+          <div class="qi-right"><button class="btn btn-secondary btn-sm">Preview</button><button class="btn btn-primary btn-sm">Generate</button></div>
+        </div>
+        <div class="queue-item">
+          <div class="qi-info"><div class="qi-title">Housekeeping Assignment Sheet</div><div class="qi-meta">Housekeeping • Current shift</div></div>
+          <div class="qi-right"><button class="btn btn-secondary btn-sm">Preview</button><button class="btn btn-primary btn-sm">Generate</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     AI ASSISTANT
+     ══════════════════════════════════════════════════════════════ -->
+<div id="ai" class="module-view">
+  <div class="workspace-header"><div class="workspace-title">AI Assistant</div></div>
+  <div class="module-tabs">
+    <div class="tab active">Ask IVORQ</div><div class="tab">Operational Insights</div><div class="tab">SOP Assistant</div><div class="tab">Knowledge Search</div>
+  </div>
+  <div class="split-layout">
+    <div class="quick-filter-panel">
+      <div class="filter-panel-title">Context</div>
+      <div class="filter-group"><label class="filter-label">Scope</label><select class="filter-input"><option>Entire Property</option><option>Front Desk</option><option>Housekeeping</option><option>Engineering</option></select></div>
+    </div>
+    <div class="main-content" style="padding: 40px; align-items: center; text-align: center;">
+      <div style="margin-bottom: 24px;">
+        <div style="font-size: 20px; font-weight: 600; margin-bottom: 8px;">How can I help with your operations today?</div>
+        <div style="font-size: 13px; color: var(--text-secondary);">Ask me about occupancy forecasts, SOP procedures, operational recommendations, or anything else.</div>
+      </div>
+      <input type="text" class="filter-input" placeholder="e.g., 'What's the projected occupancy for next weekend?'" style="max-width: 560px; padding: 14px 16px; font-size: 14px;">
+      <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+        <span class="badge b-info" style="padding: 8px 14px; cursor: pointer; font-size: 12px; text-transform: none;">Show today's VIP arrivals</span>
+        <span class="badge b-info" style="padding: 8px 14px; cursor: pointer; font-size: 12px; text-transform: none;">Draft shift handover note</span>
+        <span class="badge b-info" style="padding: 8px 14px; cursor: pointer; font-size: 12px; text-transform: none;">SOP for lost & found</span>
+        <span class="badge b-info" style="padding: 8px 14px; cursor: pointer; font-size: 12px; text-transform: none;">F&B cost analysis</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     JAVASCRIPT
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+  var modules = ['home','frontdesk','housekeeping','engineering','inventory','procurement','hris','finance','reports','ai'];
+
+  function nav(id) {
+    // Hide all modules
+    modules.forEach(function(m) {
+      document.getElementById(m).classList.remove('active');
+    });
+    // Deactivate all nav items
+    var items = document.querySelectorAll('.nav-item');
+    items.forEach(function(el) { el.classList.remove('active'); });
+    // Activate target
+    document.getElementById(id).classList.add('active');
+    var idx = modules.indexOf(id);
+    if (idx > -1) items[idx].classList.add('active');
+    // Scroll workspace to top
+    document.querySelector('.workspace').scrollTop = 0;
+  }
+</script>
+
+</body>
+</html>

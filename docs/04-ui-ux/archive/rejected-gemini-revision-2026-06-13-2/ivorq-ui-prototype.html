@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IVORQ — Operations Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy-900: #1A2356;
+    --navy-800: #212C6A;
+    --primary-500: #4F6BED;
+    --primary-50: #EEF2FF;
+    
+    --surface-page: #F4F6F8;
+    --surface-card: #FFFFFF;
+    
+    --text-primary: #1F2937;
+    --text-secondary: #6B7685;
+    
+    --border-light: #E8ECF0;
+    
+    --success: #10B981;
+    --success-bg: #ECFDF5;
+    --warning: #F59E0B;
+    --warning-bg: #FFFBEB;
+    --danger: #EF4444;
+    --danger-bg: #FEF2F2;
+    --info: #3B82F6;
+    --info-bg: #EFF6FF;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--surface-page);
+    color: var(--text-primary);
+    overflow: hidden;
+  }
+
+  /* TOP NAVIGATION */
+  .topbar {
+    height: 56px;
+    background-color: var(--navy-900);
+    color: white;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+  }
+  .topbar-brand {
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: 1px;
+    margin-right: 48px;
+  }
+  .topbar-nav {
+    display: flex;
+    height: 100%;
+    gap: 8px;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    color: rgba(255,255,255,0.7);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .nav-item:hover {
+    color: white;
+    background-color: var(--navy-800);
+  }
+  .nav-item.active {
+    color: white;
+    border-bottom-color: var(--primary-500);
+    background-color: var(--navy-800);
+  }
+  .nav-item svg { margin-right: 8px; width: 18px; height: 18px; }
+  
+  .topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    font-size: 13px;
+  }
+
+  /* MAIN WORKSPACE */
+  .workspace {
+    margin-top: 56px;
+    height: calc(100vh - 56px);
+    overflow-y: auto;
+    padding: 24px;
+  }
+  
+  .module-view { display: none; }
+  .module-view.active { display: block; animation: fadeIn 0.3s; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  /* COMMON COMPONENTS */
+  .card {
+    background: var(--surface-card);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .card-title { font-weight: 600; font-size: 15px; }
+  .card-body { padding: 20px; }
+
+  .badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .badge-success { background: var(--success-bg); color: var(--success); }
+  .badge-warning { background: var(--warning-bg); color: var(--warning); }
+  .badge-danger { background: var(--danger-bg); color: var(--danger); }
+  .badge-info { background: var(--info-bg); color: var(--info); }
+
+  .btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-primary { background: var(--primary-500); color: white; }
+  .btn-secondary { background: white; border-color: var(--border-light); color: var(--text-primary); }
+  
+  .snapshot-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .snapshot-card {
+    flex: 1;
+    background: white;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 20px;
+    border-top: 3px solid var(--border-light);
+  }
+  .snapshot-val { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+  .snapshot-lbl { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+
+  /* FILTER BAR */
+  .filter-bar {
+    background: white;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  .filter-group { display: flex; gap: 12px; align-items: center; }
+  .filter-input {
+    border: 1px solid var(--border-light);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+  }
+
+  /* DATA GRID */
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th {
+    background: var(--surface-page);
+    padding: 12px 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border-light);
+  }
+  td {
+    padding: 12px 20px;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  tr:hover td { background-color: var(--primary-50); }
+
+  /* HOME DASHBOARD SPECIFIC */
+  .home-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 24px;
+  }
+  .metric-list { display: flex; flex-direction: column; gap: 12px; }
+  .metric-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; background: var(--surface-page); border-radius: 6px; }
+
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-brand">IVORQ</div>
+  <nav class="topbar-nav">
+    <div class="nav-item active" data-target="home" onclick="nav('home')">Home</div>
+    <div class="nav-item" data-target="frontdesk" onclick="nav('frontdesk')">Front Desk</div>
+    <div class="nav-item" data-target="housekeeping" onclick="nav('housekeeping')">Housekeeping</div>
+    <div class="nav-item" data-target="engineering" onclick="nav('engineering')">Engineering</div>
+    <div class="nav-item" data-target="inventory" onclick="nav('inventory')">Inventory</div>
+    <div class="nav-item" data-target="procurement" onclick="nav('procurement')">Procurement</div>
+    <div class="nav-item" data-target="hris" onclick="nav('hris')">HRIS</div>
+    <div class="nav-item" data-target="finance" onclick="nav('finance')">Finance</div>
+  </nav>
+  <div class="topbar-right">
+    <div>Property: The Grand Resort</div>
+    <div>Hello, Manager</div>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <!-- HOME MODULE -->
+  <div id="home" class="module-view active">
+    <h2 style="margin-bottom: 24px;">Hospitality Operations Command Center</h2>
+    
+    <div class="snapshot-row">
+      <div class="snapshot-card" style="border-top-color: var(--primary-500);">
+        <div class="snapshot-val" style="color: var(--primary-500);">82%</div>
+        <div class="snapshot-lbl">Occupancy</div>
+      </div>
+      <div class="snapshot-card" style="border-top-color: var(--success);">
+        <div class="snapshot-val" style="color: var(--success);">142</div>
+        <div class="snapshot-lbl">In-House Guests</div>
+      </div>
+      <div class="snapshot-card" style="border-top-color: var(--warning);">
+        <div class="snapshot-val" style="color: var(--warning);">24</div>
+        <div class="snapshot-lbl">VIP Arrivals</div>
+      </div>
+      <div class="snapshot-card" style="border-top-color: var(--danger);">
+        <div class="snapshot-val" style="color: var(--danger);">3</div>
+        <div class="snapshot-lbl">Critical Incidents</div>
+      </div>
+    </div>
+
+    <div class="home-grid">
+      <!-- Left Col -->
+      <div style="display: flex; flex-direction: column; gap: 24px;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Staff On Duty (Current Shift: Afternoon)</div>
+            <div class="badge badge-info">MOD: Made Surya</div>
+          </div>
+          <div class="card-body">
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+              <div class="metric-item"><div>Front Office</div><strong>6</strong></div>
+              <div class="metric-item"><div>Housekeeping</div><strong>12</strong></div>
+              <div class="metric-item"><div>Engineering</div><strong>4</strong></div>
+              <div class="metric-item"><div>Security</div><strong>3</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Critical Attention Needed</div>
+          </div>
+          <div class="card-body">
+            <div class="metric-list">
+              <div class="metric-item">
+                <span style="color: var(--danger); font-weight: 500;">VIP Arrival - No Room Assigned</span>
+                <button class="btn btn-secondary">Resolve</button>
+              </div>
+              <div class="metric-item">
+                <span style="color: var(--warning); font-weight: 500;">Chiller B Maintenance Overdue</span>
+                <button class="btn btn-secondary">Resolve</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Col -->
+      <div style="display: flex; flex-direction: column; gap: 24px;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Next Shift Handover</div>
+            <div class="badge badge-warning">In 2 Hours</div>
+          </div>
+          <div class="card-body">
+            <div class="metric-list">
+              <div class="metric-item">Prepare Night Audit</div>
+              <div class="metric-item">Review Outstanding VIPs</div>
+              <button class="btn btn-primary" style="justify-content: center; margin-top: 12px;">Start Handover</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Today's Log Book</div>
+          </div>
+          <div class="card-body">
+             <div class="metric-list">
+               <div style="font-size: 13px; color: var(--text-secondary);">14:30 - Guest complaint regarding AC in Room 412. Resolved.</div>
+               <div style="font-size: 13px; color: var(--text-secondary);">11:15 - Health inspector routine visit completed.</div>
+             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FRONT DESK MODULE -->
+  <div id="frontdesk" class="module-view">
+    <h2 style="margin-bottom: 24px;">Front Desk Operations</h2>
+    
+    <div class="snapshot-row">
+      <div class="snapshot-card"><div class="snapshot-val">24</div><div class="snapshot-lbl">Arrivals</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">12</div><div class="snapshot-lbl">Departures</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">142</div><div class="snapshot-lbl">In House</div></div>
+    </div>
+
+    <div class="filter-bar">
+      <div class="filter-group">
+        <input type="text" class="filter-input" placeholder="Search guests, rooms..." style="width: 250px;">
+        <select class="filter-input"><option>All Status</option><option>Due In</option><option>Checked In</option></select>
+      </div>
+      <div class="filter-group">
+        <button class="btn btn-secondary">Print List</button>
+        <button class="btn btn-secondary">Walk-In</button>
+        <button class="btn btn-primary">New Reservation</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Guest Name</th><th>Conf #</th><th>Room</th><th>Type</th><th>Status</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Anderson, James <span class="badge badge-warning">VIP</span></td><td>RES-9981</td><td>412</td><td>King Suite</td><td><span class="badge badge-warning">Due In</span></td><td><button class="btn btn-primary">Check In</button></td></tr>
+          <tr><td>Smith, Robert</td><td>RES-9982</td><td>305</td><td>Deluxe Twin</td><td><span class="badge badge-success">Checked In</span></td><td><button class="btn btn-secondary">View</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- HOUSEKEEPING MODULE -->
+  <div id="housekeeping" class="module-view">
+    <h2 style="margin-bottom: 24px;">Housekeeping Board</h2>
+
+    <div class="snapshot-row">
+      <div class="snapshot-card" style="border-top-color: var(--danger);"><div class="snapshot-val" style="color: var(--danger);">38</div><div class="snapshot-lbl">Dirty Rooms</div></div>
+      <div class="snapshot-card" style="border-top-color: var(--warning);"><div class="snapshot-val" style="color: var(--warning);">15</div><div class="snapshot-lbl">Pending Inspection</div></div>
+      <div class="snapshot-card" style="border-top-color: var(--success);"><div class="snapshot-val" style="color: var(--success);">142</div><div class="snapshot-lbl">Clean Rooms</div></div>
+    </div>
+
+    <div class="filter-bar">
+      <div class="filter-group">
+        <select class="filter-input"><option>Floor 1</option><option>Floor 2</option></select>
+        <select class="filter-input"><option>All Attendants</option></select>
+      </div>
+      <button class="btn btn-primary">Auto-Assign Rooms</button>
+    </div>
+
+    <div class="card" style="padding: 20px;">
+      <h3 style="margin-bottom: 16px;">Floor 1</h3>
+      <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+        <div style="width: 120px; height: 100px; border: 2px solid var(--danger); border-radius: 8px; padding: 12px; background: var(--danger-bg);">
+          <div style="font-weight: 700; font-size: 18px; color: var(--danger);">101</div>
+          <div style="font-size: 12px; color: var(--danger); margin-top: 4px; font-weight: 600;">DIRTY</div>
+        </div>
+        <div style="width: 120px; height: 100px; border: 2px solid var(--success); border-radius: 8px; padding: 12px; background: var(--success-bg);">
+          <div style="font-weight: 700; font-size: 18px; color: var(--success);">102</div>
+          <div style="font-size: 12px; color: var(--success); margin-top: 4px; font-weight: 600;">CLEAN</div>
+        </div>
+        <div style="width: 120px; height: 100px; border: 2px solid var(--warning); border-radius: 8px; padding: 12px; background: var(--warning-bg);">
+          <div style="font-weight: 700; font-size: 18px; color: var(--warning);">103</div>
+          <div style="font-size: 12px; color: var(--warning); margin-top: 4px; font-weight: 600;">INSPECT</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ENGINEERING MODULE -->
+  <div id="engineering" class="module-view">
+    <h2 style="margin-bottom: 24px;">Engineering Work Orders</h2>
+
+    <div class="snapshot-row">
+      <div class="snapshot-card"><div class="snapshot-val">12</div><div class="snapshot-lbl">Open WO</div></div>
+      <div class="snapshot-card" style="border-top-color: var(--danger);"><div class="snapshot-val" style="color: var(--danger);">2</div><div class="snapshot-lbl">SLA Breached</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">5</div><div class="snapshot-lbl">Preventive Tasks Due</div></div>
+    </div>
+
+    <div class="filter-bar">
+      <input type="text" class="filter-input" placeholder="Search work orders...">
+      <button class="btn btn-primary">New Work Order</button>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>WO #</th><th>Description</th><th>Location</th><th>Priority</th><th>SLA Status</th><th>Assignee</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>WO-1042</td><td>AC not cooling</td><td>Room 412</td><td><span class="badge badge-danger">High</span></td><td><span style="color: var(--danger); font-weight: 600;">Overdue</span></td><td>Wayan</td></tr>
+          <tr><td>WO-1043</td><td>Leaking faucet</td><td>Room 205</td><td><span class="badge badge-warning">Medium</span></td><td>Within SLA</td><td>Unassigned</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- INVENTORY MODULE -->
+  <div id="inventory" class="module-view">
+    <h2 style="margin-bottom: 24px;">Inventory Control</h2>
+    
+    <div class="snapshot-row">
+      <div class="snapshot-card" style="border-top-color: var(--success);"><div class="snapshot-val" style="color: var(--success);">94%</div><div class="snapshot-lbl">Overall Stock Health</div></div>
+      <div class="snapshot-card" style="border-top-color: var(--danger);"><div class="snapshot-val" style="color: var(--danger);">8</div><div class="snapshot-lbl">Items Below PAR</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">3</div><div class="snapshot-lbl">Pending Issues</div></div>
+    </div>
+
+    <div class="filter-bar">
+      <div class="filter-group">
+        <select class="filter-input"><option>Main Store</option><option>Kitchen Store</option></select>
+        <select class="filter-input"><option>All Items</option><option>Below PAR</option></select>
+      </div>
+      <button class="btn btn-primary">Stock Transfer</button>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead><tr><th>Item Code</th><th>Item Name</th><th>Category</th><th>Current Stock</th><th>PAR Level</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>INV-001</td><td>Bath Towel Premium</td><td>Linen</td><td>45</td><td>100</td><td><span class="badge badge-danger">Below PAR</span></td></tr>
+          <tr><td>INV-002</td><td>Shampoo 50ml</td><td>Amenities</td><td>450</td><td>200</td><td><span class="badge badge-success">Healthy</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- PROCUREMENT MODULE -->
+  <div id="procurement" class="module-view">
+    <h2 style="margin-bottom: 24px;">Procurement & Purchasing</h2>
+    
+    <div class="snapshot-row">
+      <div class="snapshot-card"><div class="snapshot-val">14</div><div class="snapshot-lbl">Pending PRs</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">5</div><div class="snapshot-lbl">Pending Approvals</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">8</div><div class="snapshot-lbl">Active POs</div></div>
+    </div>
+
+    <div class="filter-bar">
+      <input type="text" class="filter-input" placeholder="Search PR/PO...">
+      <button class="btn btn-primary">Create PR</button>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead><tr><th>Document</th><th>Department</th><th>Amount</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td>PR-26-0045</td><td>Housekeeping</td><td>$1,240.00</td><td>Today</td><td><span class="badge badge-warning">Pending Approval</span></td><td><button class="btn btn-primary">Review</button></td></tr>
+          <tr><td>PO-26-0012</td><td>F&B</td><td>$4,500.00</td><td>Yesterday</td><td><span class="badge badge-info">Sent to Vendor</span></td><td><button class="btn btn-secondary">View</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- HRIS MODULE -->
+  <div id="hris" class="module-view">
+    <h2 style="margin-bottom: 24px;">Human Resources (HRIS)</h2>
+    
+    <div class="snapshot-row">
+      <div class="snapshot-card"><div class="snapshot-val">124</div><div class="snapshot-lbl">Total Employees</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">34</div><div class="snapshot-lbl">On Duty Now</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">3</div><div class="snapshot-lbl">Pending Leave Requests</div></div>
+    </div>
+
+    <div class="filter-bar">
+      <select class="filter-input"><option>All Departments</option><option>Front Office</option></select>
+      <button class="btn btn-primary">Manage Roster</button>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead><tr><th>Employee Name</th><th>Position</th><th>Department</th><th>Current Status</th><th>Shift</th></tr></thead>
+        <tbody>
+          <tr><td>Made Surya</td><td>Duty Manager</td><td>Front Office</td><td><span class="badge badge-success">Clocked In</span></td><td>15:00 - 23:00</td></tr>
+          <tr><td>Ni Luh Sari</td><td>Room Attendant</td><td>Housekeeping</td><td><span class="badge badge-warning">On Leave</span></td><td>-</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- FINANCE MODULE -->
+  <div id="finance" class="module-view">
+    <h2 style="margin-bottom: 24px;">Financial Operations</h2>
+    
+    <div class="snapshot-row">
+      <div class="snapshot-card"><div class="snapshot-val">$14,250</div><div class="snapshot-lbl">Revenue Today</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">$8,400</div><div class="snapshot-lbl">AP Pending</div></div>
+      <div class="snapshot-card"><div class="snapshot-val">$12,000</div><div class="snapshot-lbl">AR Outstanding</div></div>
+    </div>
+
+    <div class="filter-bar">
+      <select class="filter-input"><option>Today</option><option>This Month</option></select>
+      <button class="btn btn-primary">Process Payments</button>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title">Recent Transactions</div></div>
+      <table>
+        <thead><tr><th>Date</th><th>Reference</th><th>Description</th><th>Type</th><th>Amount</th></tr></thead>
+        <tbody>
+          <tr><td>Today, 14:00</td><td>REC-9001</td><td>Payment for RES-9981</td><td><span class="badge badge-success">Income</span></td><td>$450.00</td></tr>
+          <tr><td>Today, 10:30</td><td>PAY-4002</td><td>Vendor Payment: Linen Supply Co</td><td><span class="badge badge-danger">Expense</span></td><td>$1,200.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function nav(targetId) {
+    document.querySelectorAll('.module-view').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    
+    document.getElementById(targetId).classList.add('active');
+    document.querySelector('.nav-item[data-target="' + targetId + '"]').classList.add('active');
+  }
+</script>
+
+</body>
+</html>
