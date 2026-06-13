@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import '../../../../css/ivorq-prototype.css';
 
 import { housekeepingData } from '../../../data/ivorq/housekeeping';
+import IvorqLayout from '../../../Layouts/IvorqLayout';
 
 import AppTopbar from '../../../Components/Ivorq/shell/AppTopbar';
 import WorkspaceHeader from '../../../Components/Ivorq/workspace/WorkspaceHeader';
@@ -21,7 +22,7 @@ import Button from '../../../Components/Ivorq/primitives/Button';
 import Icon from '../../../Components/Ivorq/primitives/Icon';
 import StatusBadge from '../../../Components/Ivorq/primitives/StatusBadge';
 
-export default function HousekeepingWorkspace() {
+const HousekeepingWorkspace = () => {
   const [activeTab, setActiveTab] = useState('room_board');
 
   const tabs = [
@@ -33,7 +34,6 @@ export default function HousekeepingWorkspace() {
 
   return (
     <>
-      <AppTopbar />
       <div className="workspace">
         <WorkspaceHeader title="Housekeeping">
           <Button variant="secondary">
@@ -162,4 +162,7 @@ export default function HousekeepingWorkspace() {
       </div>
     </>
   );
-}
+};
+
+HousekeepingWorkspace.layout = (page: React.ReactNode) => <IvorqLayout children={page} />;
+export default HousekeepingWorkspace;

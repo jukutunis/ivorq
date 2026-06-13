@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import '../../../../css/ivorq-prototype.css';
 
 import { frontDeskData } from '../../../data/ivorq/frontDesk';
-import AppTopbar from '../../../Components/Ivorq/shell/AppTopbar';
+import IvorqLayout from '../../../Layouts/IvorqLayout';
 import WorkspaceHeader from '../../../Components/Ivorq/workspace/WorkspaceHeader';
 import ModuleTabs from '../../../Components/Ivorq/workspace/ModuleTabs';
 import SplitLayout from '../../../Components/Ivorq/workspace/SplitLayout';
@@ -18,7 +18,7 @@ import Button from '../../../Components/Ivorq/primitives/Button';
 import StatusBadge from '../../../Components/Ivorq/primitives/StatusBadge';
 import Icon from '../../../Components/Ivorq/primitives/Icon';
 
-export default function FrontDeskWorkspace() {
+const FrontDeskWorkspace = () => {
   const [activeTab, setActiveTab] = useState('arrivals');
 
   const tabs = [
@@ -31,7 +31,6 @@ export default function FrontDeskWorkspace() {
 
   return (
     <>
-      <AppTopbar />
       <div className="workspace">
         <WorkspaceHeader title="Guest Arrival Operations">
           <Button variant="secondary">
@@ -160,4 +159,7 @@ export default function FrontDeskWorkspace() {
       </div>
     </>
   );
-}
+};
+
+FrontDeskWorkspace.layout = (page: React.ReactNode) => <IvorqLayout children={page} />;
+export default FrontDeskWorkspace;

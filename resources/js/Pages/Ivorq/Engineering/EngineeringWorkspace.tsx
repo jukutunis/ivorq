@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import '../../../../css/ivorq-prototype.css';
 
 import { engineeringData } from '../../../data/ivorq/engineering';
-
-import AppTopbar from '../../../Components/Ivorq/shell/AppTopbar';
+import IvorqLayout from '../../../Layouts/IvorqLayout';
 import WorkspaceHeader from '../../../Components/Ivorq/workspace/WorkspaceHeader';
 import ModuleTabs from '../../../Components/Ivorq/workspace/ModuleTabs';
 import SplitLayout from '../../../Components/Ivorq/workspace/SplitLayout';
@@ -20,7 +19,7 @@ import Button from '../../../Components/Ivorq/primitives/Button';
 import Icon from '../../../Components/Ivorq/primitives/Icon';
 import StatusBadge, { BadgeStatus } from '../../../Components/Ivorq/primitives/StatusBadge';
 
-export default function EngineeringWorkspace() {
+const EngineeringWorkspace = () => {
   const [activeTab, setActiveTab] = useState('work_orders');
 
   const tabs = [
@@ -32,7 +31,6 @@ export default function EngineeringWorkspace() {
 
   return (
     <>
-      <AppTopbar />
       <div className="workspace">
         <WorkspaceHeader title="Engineering">
           <Button variant="secondary">
@@ -163,4 +161,7 @@ export default function EngineeringWorkspace() {
       </div>
     </>
   );
-}
+};
+
+EngineeringWorkspace.layout = (page: React.ReactNode) => <IvorqLayout children={page} />;
+export default EngineeringWorkspace;

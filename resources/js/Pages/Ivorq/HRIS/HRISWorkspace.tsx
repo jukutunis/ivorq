@@ -3,7 +3,7 @@ import '../../../../css/ivorq-prototype.css';
 
 import { hrisData } from '../../../data/ivorq/hris';
 
-import AppTopbar from '../../../Components/Ivorq/shell/AppTopbar';
+import IvorqLayout from '../../../Layouts/IvorqLayout';
 import WorkspaceHeader from '../../../Components/Ivorq/workspace/WorkspaceHeader';
 import ModuleTabs from '../../../Components/Ivorq/workspace/ModuleTabs';
 import SplitLayout from '../../../Components/Ivorq/workspace/SplitLayout';
@@ -20,7 +20,7 @@ import Button from '../../../Components/Ivorq/primitives/Button';
 import StatusBadge, { BadgeStatus } from '../../../Components/Ivorq/primitives/StatusBadge';
 import Avatar from '../../../Components/Ivorq/primitives/Avatar';
 
-export default function HRISWorkspace() {
+const HRISWorkspace = () => {
   const [activeTab, setActiveTab] = useState('attendance');
 
   const tabs = [
@@ -32,7 +32,6 @@ export default function HRISWorkspace() {
 
   return (
     <>
-      <AppTopbar />
       <div className="workspace">
         <WorkspaceHeader title="HRIS" />
 
@@ -163,4 +162,7 @@ export default function HRISWorkspace() {
       </div>
     </>
   );
-}
+};
+
+HRISWorkspace.layout = (page: React.ReactNode) => <IvorqLayout children={page} />;
+export default HRISWorkspace;

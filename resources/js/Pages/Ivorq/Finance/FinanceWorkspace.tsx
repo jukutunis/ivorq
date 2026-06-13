@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import '../../../../css/ivorq-prototype.css';
 
 import { financeData } from '../../../data/ivorq/finance';
+import IvorqLayout from '../../../Layouts/IvorqLayout';
 
-import AppTopbar from '../../../Components/Ivorq/shell/AppTopbar';
 import WorkspaceHeader from '../../../Components/Ivorq/workspace/WorkspaceHeader';
 import ModuleTabs from '../../../Components/Ivorq/workspace/ModuleTabs';
 import SplitLayout from '../../../Components/Ivorq/workspace/SplitLayout';
@@ -23,7 +23,7 @@ import Icon from '../../../Components/Ivorq/primitives/Icon';
 
 import ProgressBarCard from '../../../Components/Ivorq/finance/ProgressBarCard';
 
-export default function FinanceWorkspace() {
+const FinanceWorkspace = () => {
   const [activeTab, setActiveTab] = useState('revenue_cash');
 
   const tabs = [
@@ -35,7 +35,6 @@ export default function FinanceWorkspace() {
 
   return (
     <>
-      <AppTopbar />
       <div className="workspace">
         <WorkspaceHeader title="Operational Finance">
           <Button variant="secondary">
@@ -177,4 +176,7 @@ export default function FinanceWorkspace() {
       </div>
     </>
   );
-}
+};
+
+FinanceWorkspace.layout = (page: React.ReactNode) => <IvorqLayout children={page} />;
+export default FinanceWorkspace;
