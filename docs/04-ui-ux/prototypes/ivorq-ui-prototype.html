@@ -269,15 +269,17 @@ body {
    ══════════════════════════════════════════════════════════════ */
 .op-snapshot { display: flex; gap: 16px; }
 .snap-card {
-  flex: 1; background: var(--surface-card); border: 1px solid var(--border-default); border-top: 3px solid var(--border-default); border-radius: var(--radius); padding: 16px 20px; box-shadow: var(--shadow-sm);
+  flex: 1; background: var(--surface-card); border: 1px solid var(--border-default); border-top: 3px solid var(--border-default); border-radius: var(--radius); padding: 16px 20px; box-shadow: var(--shadow-sm); cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+.snap-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-dropdown); }
+.snap-card:active { transform: translateY(0); }
 .snap-val { font-size: 24px; font-weight: 700; margin-bottom: 2px; font-variant-numeric: tabular-nums; }
 .snap-lbl { font-size: 11px; color: var(--text-secondary); font-weight: 500; text-transform: uppercase; letter-spacing: 0.3px; }
 
 .attention-area { background: var(--danger-bg); border: 1px solid #FECACA; border-radius: var(--radius); padding: 16px; }
 .attention-area.warning { background: var(--warning-amber-bg); border-color: #FDE68A; }
 .attention-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.attention-title { font-size: 14px; font-weight: 600; color: var(--critical-red); }
+.attention-title { font-size: 14px; font-weight: 600; color: var(--critical-red); display: flex; align-items: center; gap: 6px; }
 .attention-area.warning .attention-title { color: var(--warning-amber); }
 .attention-card { background: white; border: 1px solid #FECACA; border-radius: 6px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .attention-card:last-child { margin-bottom: 0; }
@@ -303,8 +305,8 @@ body {
 .queue-item { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--border-subtle); transition: background 0.1s; }
 .queue-item:hover { background: var(--primary-50); }
 .queue-item:last-child { border-bottom: none; }
-.qi-info { display: flex; flex-direction: column; gap: 2px; }
-.qi-title { font-size: 14px; font-weight: 600; }
+.qi-info { display: flex; flex-direction: column; gap: 4px; }
+.qi-title { font-size: 15px; font-weight: 700; color: var(--navy-900); display: flex; align-items: center; gap: 8px; }
 .qi-meta { font-size: 12px; color: var(--text-secondary); display: flex; gap: 8px; align-items: center; }
 .qi-right { display: flex; align-items: center; gap: 12px; }
 
@@ -515,22 +517,22 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
         <div class="queue-header"><div>Check-In Queue</div></div>
         <div class="queue-item">
           <div class="qi-info">
-            <div class="qi-title">Anderson, James <span class="badge b-vip">VIP</span></div>
-            <div class="qi-meta"><span>RES-9981</span> • <span>King Suite</span> • <span style="color: var(--ready-green); font-weight: 500;">Room 412 Ready</span></div>
+            <div class="qi-title">Anderson, James <span class="badge b-vip" style="font-size: 11px; padding: 2px 6px;">VIP</span></div>
+            <div class="qi-meta"><span style="color: var(--text-primary); font-weight: 500;">King Suite</span> • <span style="color: var(--ready-green); font-weight: 600;">Room 412 Ready</span> • <span style="font-size: 11px; opacity: 0.7;">RES-9981</span></div>
           </div>
           <div class="qi-right"><button class="btn btn-primary btn-sm">Start Check-In</button></div>
         </div>
         <div class="queue-item">
           <div class="qi-info">
             <div class="qi-title">Mueller, Hans</div>
-            <div class="qi-meta"><span>RES-9985</span> • <span>Deluxe King</span> • <span style="color: var(--warning-amber); font-weight: 500;">Room 508 Late Check-Out conflict</span></div>
+            <div class="qi-meta"><span style="color: var(--text-primary); font-weight: 500;">Deluxe King</span> • <span style="color: var(--warning-amber); font-weight: 600;">Room 508 Late Check-Out</span> • <span style="font-size: 11px; opacity: 0.7;">RES-9985</span></div>
           </div>
           <div class="qi-right"><button class="btn btn-secondary btn-sm">Resolve Conflict</button></div>
         </div>
         <div class="queue-item">
           <div class="qi-info">
             <div class="qi-title">Chen, Wei Lin</div>
-            <div class="qi-meta"><span>RES-9986</span> • <span>Superior Twin</span> • <span style="color: var(--critical-red); font-weight: 500;">No Room Assigned</span></div>
+            <div class="qi-meta"><span style="color: var(--text-primary); font-weight: 500;">Superior Twin</span> • <span style="color: var(--critical-red); font-weight: 600;">No Room Assigned</span> • <span style="font-size: 11px; opacity: 0.7;">RES-9986</span></div>
           </div>
           <div class="qi-right"><button class="btn btn-secondary btn-sm">Assign Room</button></div>
         </div>
@@ -699,40 +701,45 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
         <div class="board-column">
           <div class="board-col-header"><div>Dirty / Unassigned</div><div class="col-count">12</div></div>
           <div class="board-col-body">
-            <div class="work-card" style="border-left-color: var(--vip-gold);">
-              <div class="wc-meta"><span class="badge b-vip">Rush — VIP Due</span><span>Floor 4</span></div>
-              <div class="wc-title">Room 412 — Suite</div>
-              <div class="wc-detail">Checkout 11:00 • VIP arriving 14:00</div>
-              <div class="wc-actions"><button class="btn btn-primary btn-sm">Assign Task</button></div>
-            </div>
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin: 4px 0 6px 4px; letter-spacing: 0.5px;">Floor 3</div>
             <div class="work-card" style="border-left-color: var(--warning-amber);">
-              <div class="wc-meta"><span>Standard</span><span>Floor 3</span></div>
+              <div class="wc-meta"><span>Standard</span></div>
               <div class="wc-title">Room 301 — Superior</div>
               <div class="wc-detail">Checkout 12:00 • No arrival today</div>
               <div class="wc-actions"><button class="btn btn-secondary btn-sm">Assign Task</button></div>
+            </div>
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin: 12px 0 6px 4px; letter-spacing: 0.5px;">Floor 4</div>
+            <div class="work-card" style="border-left-color: var(--vip-gold);">
+              <div class="wc-meta"><span class="badge b-vip">Rush — VIP Due</span></div>
+              <div class="wc-title">Room 412 — Suite</div>
+              <div class="wc-detail">Checkout 11:00 • VIP arriving 14:00</div>
+              <div class="wc-actions"><button class="btn btn-primary btn-sm">Assign Task</button></div>
             </div>
           </div>
         </div>
         <div class="board-column">
           <div class="board-col-header"><div>In Progress</div><div class="col-count">5</div></div>
           <div class="board-col-body">
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin: 4px 0 6px 4px; letter-spacing: 0.5px;">Floor 2</div>
             <div class="work-card" style="border-left-color: var(--inspection-blue);">
-              <div class="wc-meta"><span>Ni Luh Sari</span><span>Floor 3</span></div>
-              <div class="wc-title">Room 305 — Deluxe</div>
-              <div class="wc-detail">Started 15 min ago</div>
-            </div>
-            <div class="work-card" style="border-left-color: var(--inspection-blue);">
-              <div class="wc-meta"><span>Wayan Darma</span><span>Floor 2</span></div>
+              <div class="wc-meta"><span>Wayan Darma</span></div>
               <div class="wc-title">Room 208 — Twin</div>
               <div class="wc-detail">Started 35 min ago</div>
+            </div>
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin: 12px 0 6px 4px; letter-spacing: 0.5px;">Floor 3</div>
+            <div class="work-card" style="border-left-color: var(--inspection-blue);">
+              <div class="wc-meta"><span>Ni Luh Sari</span></div>
+              <div class="wc-title">Room 305 — Deluxe</div>
+              <div class="wc-detail">Started 15 min ago</div>
             </div>
           </div>
         </div>
         <div class="board-column">
           <div class="board-col-header"><div>Pending Inspection</div><div class="col-count">3</div></div>
           <div class="board-col-body">
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin: 4px 0 6px 4px; letter-spacing: 0.5px;">Floor 2</div>
             <div class="work-card" style="border-left-color: var(--warning-amber);">
-              <div class="wc-meta"><span>Cleaned by: Ketut</span><span>Floor 2</span></div>
+              <div class="wc-meta"><span>Cleaned by: Ketut</span></div>
               <div class="wc-title">Room 201 — Superior</div>
               <div class="wc-actions"><button class="btn btn-primary btn-sm">Inspect</button></div>
             </div>
@@ -793,14 +800,29 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
           <div style="display: flex; gap: 6px;"><button class="btn btn-primary btn-sm">Assign Now</button></div>
         </div>
       </div>
+      <div class="queue-list" style="margin-bottom: 20px; border-color: #FECACA;">
+        <div class="queue-header" style="background: var(--critical-red-bg); border-bottom-color: #FECACA; color: var(--critical-red);">
+          <div style="display: flex; align-items: center; gap: 8px;"><svg class="icon" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>Guest Impact Work</div>
+          <button class="btn btn-primary btn-sm">Create Work Order</button>
+        </div>
+        <div class="queue-item" style="background: white;">
+          <div class="qi-info"><div class="qi-title">Guest Room AC Failure — Room 412</div><div class="qi-meta">Guest Complaint • Reported by Front Desk • 10 mins ago</div></div>
+          <div class="qi-right"><span class="badge b-critical">Unassigned</span><button class="btn btn-secondary btn-sm">Assign</button></div>
+        </div>
+        <div class="queue-item" style="background: white; border-bottom: none;">
+          <div class="qi-info"><div class="qi-title">Guest Water Leak — Room 305</div><div class="qi-meta">Guest Complaint • Reported by HK • 30 mins ago</div></div>
+          <div class="qi-right"><span class="badge b-critical">Unassigned</span><button class="btn btn-secondary btn-sm">Assign</button></div>
+        </div>
+      </div>
+
       <div class="queue-list">
-        <div class="queue-header"><div>Work Order Pipeline</div><button class="btn btn-primary btn-sm">Create Work Order</button></div>
+        <div class="queue-header"><div>Back Of House Work</div><button class="btn btn-secondary btn-sm">Create PM Task</button></div>
         <div class="queue-item">
-          <div class="qi-info"><div class="qi-title">Broken Chair Leg — Lobby Restaurant</div><div class="qi-meta">Medium Priority • Reported by F&B • 1 hour ago</div></div>
+          <div class="qi-info"><div class="qi-title">Pump Maintenance — Pool Plant Room</div><div class="qi-meta">Standard PM • Overdue by 2 hours</div></div>
           <div class="qi-right"><span class="badge b-warning">Unassigned</span><button class="btn btn-secondary btn-sm">Assign</button></div>
         </div>
         <div class="queue-item">
-          <div class="qi-info"><div class="qi-title">Flickering Lights — Corridor Floor 3</div><div class="qi-meta">Low Priority • Reported by HK • 3 hours ago</div></div>
+          <div class="qi-info"><div class="qi-title">Generator Inspection — Basement</div><div class="qi-meta">Standard PM • Due Today</div></div>
           <div class="qi-right"><span class="badge b-inspection">Ketut Adi</span><span class="badge b-ready">On Track</span></div>
         </div>
       </div>
@@ -838,9 +860,17 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
       </div>
       <div class="attention-area">
         <div class="attention-header"><div class="attention-title">Critical Stock Shortages</div><div class="badge b-critical">3 Items</div></div>
-        <div class="attention-card">
-          <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Bath Towel Premium</span><span class="qi-meta">Current: 45 / PAR: 100 — Main Store</span></div>
-          <button class="btn btn-primary btn-sm">Generate PR</button>
+        <div class="attention-card" style="align-items: flex-start;">
+          <div class="qi-info">
+            <span class="qi-title" style="font-size: 13px;">Bath Towel Premium</span>
+            <span class="qi-meta" style="margin-bottom: 8px;">Current: 45 / PAR: 100 — Main Store</span>
+            <div style="display: inline-flex; gap: 8px; align-items: center; font-size: 11px; background: var(--surface-page); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-default);">
+              <span style="color: var(--ready-green); font-weight: 600;">PR Approved</span> <span style="color: var(--border-default);">→</span>
+              <span style="color: var(--inspection-blue); font-weight: 600;">PO Issued</span> <span style="color: var(--border-default);">→</span>
+              <span style="color: var(--text-primary); font-weight: 500;">ETA Tomorrow</span>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" style="margin-top: 4px;">View PO</button>
         </div>
         <div class="attention-card">
           <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Shampoo Bottle 50ml</span><span class="qi-meta">Current: 30 / PAR: 200 — HK Store</span></div>
