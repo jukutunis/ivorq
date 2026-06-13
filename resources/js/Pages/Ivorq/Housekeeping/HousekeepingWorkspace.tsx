@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import '../../../../css/ivorq-prototype.css';
 
 import { housekeepingData } from '../../../data/ivorq/housekeeping';
@@ -22,14 +22,12 @@ import Button from '../../../Components/Ivorq/primitives/Button';
 import Icon from '../../../Components/Ivorq/primitives/Icon';
 import StatusBadge from '../../../Components/Ivorq/primitives/StatusBadge';
 
-const HousekeepingWorkspace = () => {
-  const [activeTab, setActiveTab] = useState('room_board');
-
+const HousekeepingWorkspace = ({ activeTab = 'room_board' }: { activeTab?: string }) => {
   const tabs = [
-    { id: 'room_board', label: 'Room Board' },
-    { id: 'assignments', label: 'Assignments' },
-    { id: 'inspections', label: 'Inspections', badge: 15 },
-    { id: 'lost_found', label: 'Lost & Found' },
+    { href: '/housekeeping/room-board', label: 'Room Board', badge: 142 },
+    { href: '/housekeeping/attendant-status', label: 'Attendant Status' },
+    { href: '/housekeeping/inspections', label: 'Inspections', badge: 12 },
+    { href: '/housekeeping/lost-found', label: 'Lost & Found' },
   ];
 
   return (
@@ -44,7 +42,7 @@ const HousekeepingWorkspace = () => {
           </Button>
         </WorkspaceHeader>
 
-        <ModuleTabs tabs={tabs} activeTabId={activeTab} onTabChange={setActiveTab} />
+        <ModuleTabs tabs={tabs} />
 
         <SplitLayout>
           <QuickFilterPanel>

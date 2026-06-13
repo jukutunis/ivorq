@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import '../../../../css/ivorq-prototype.css';
 
 import { financeData } from '../../../data/ivorq/finance';
@@ -23,14 +23,12 @@ import Icon from '../../../Components/Ivorq/primitives/Icon';
 
 import ProgressBarCard from '../../../Components/Ivorq/finance/ProgressBarCard';
 
-const FinanceWorkspace = () => {
-  const [activeTab, setActiveTab] = useState('revenue_cash');
-
+const FinanceWorkspace = ({ activeTab = 'revenue_cash' }: { activeTab?: string }) => {
   const tabs = [
-    { id: 'revenue_cash', label: 'Revenue & Cash' },
-    { id: 'ap_pending', label: 'AP Pending', badge: 12 },
-    { id: 'ar_follow_up', label: 'AR Follow-Up', badge: 4 },
-    { id: 'budget_watch', label: 'Budget Watch' },
+    { href: '/finance/revenue-cash', label: 'Revenue & Cash', badge: 3 },
+    { href: '/finance/accounts-payable', label: 'Accounts Payable', badge: 12 },
+    { href: '/finance/accounts-receivable', label: 'Accounts Receivable', badge: 8 },
+    { href: '/finance/budget-watch', label: 'Budget Watch' },
   ];
 
   return (
@@ -45,7 +43,7 @@ const FinanceWorkspace = () => {
           </Button>
         </WorkspaceHeader>
 
-        <ModuleTabs tabs={tabs} activeTabId={activeTab} onTabChange={setActiveTab} />
+        <ModuleTabs tabs={tabs} />
 
         <SplitLayout>
           <QuickFilterPanel>

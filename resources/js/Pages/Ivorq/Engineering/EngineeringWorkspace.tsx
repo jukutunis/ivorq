@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import '../../../../css/ivorq-prototype.css';
 
 import { engineeringData } from '../../../data/ivorq/engineering';
@@ -19,14 +19,12 @@ import Button from '../../../Components/Ivorq/primitives/Button';
 import Icon from '../../../Components/Ivorq/primitives/Icon';
 import StatusBadge, { BadgeStatus } from '../../../Components/Ivorq/primitives/StatusBadge';
 
-const EngineeringWorkspace = () => {
-  const [activeTab, setActiveTab] = useState('work_orders');
-
+const EngineeringWorkspace = ({ activeTab = 'work_orders' }: { activeTab?: string }) => {
   const tabs = [
-    { id: 'work_orders', label: 'Work Orders', badge: 12 },
-    { id: 'pm_schedule', label: 'PM Schedule', badge: 5 },
-    { id: 'assets', label: 'Assets' },
-    { id: 'incidents', label: 'Incidents' },
+    { href: '/engineering/work-orders', label: 'Work Orders', badge: 8 },
+    { href: '/engineering/preventive-maintenance', label: 'Preventive Maintenance' },
+    { href: '/engineering/asset-registry', label: 'Asset Registry' },
+    { href: '/engineering/technician-schedule', label: 'Technician Schedule' },
   ];
 
   return (
@@ -41,7 +39,7 @@ const EngineeringWorkspace = () => {
           </Button>
         </WorkspaceHeader>
 
-        <ModuleTabs tabs={tabs} activeTabId={activeTab} onTabChange={setActiveTab} />
+        <ModuleTabs tabs={tabs} />
 
         <SplitLayout>
           <QuickFilterPanel>

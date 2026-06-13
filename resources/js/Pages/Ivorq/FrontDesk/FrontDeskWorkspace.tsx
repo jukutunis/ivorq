@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import '../../../../css/ivorq-prototype.css';
 
 import { frontDeskData } from '../../../data/ivorq/frontDesk';
@@ -18,15 +18,13 @@ import Button from '../../../Components/Ivorq/primitives/Button';
 import StatusBadge from '../../../Components/Ivorq/primitives/StatusBadge';
 import Icon from '../../../Components/Ivorq/primitives/Icon';
 
-const FrontDeskWorkspace = () => {
-  const [activeTab, setActiveTab] = useState('arrivals');
-
+const FrontDeskWorkspace = ({ activeTab = 'arrivals' }: { activeTab?: string }) => {
   const tabs = [
-    { id: 'arrivals', label: 'Arrivals', badge: 24 },
-    { id: 'departures', label: 'Departures', badge: 18 },
-    { id: 'in_house', label: 'In House', badge: 142 },
-    { id: 'room_readiness', label: 'Room Readiness' },
-    { id: 'reservation_board', label: 'Reservation Board' },
+    { href: '/frontdesk/arrivals', label: 'Arrivals', badge: 24 },
+    { href: '/frontdesk/departures', label: 'Departures', badge: 18 },
+    { href: '/frontdesk/in-house', label: 'In House', badge: 142 },
+    { href: '/frontdesk/room-readiness', label: 'Room Readiness' },
+    { href: '/frontdesk/reservation-board', label: 'Reservation Board' },
   ];
 
   return (
@@ -53,7 +51,7 @@ const FrontDeskWorkspace = () => {
           </Button>
         </WorkspaceHeader>
 
-        <ModuleTabs tabs={tabs} activeTabId={activeTab} onTabChange={setActiveTab} />
+        <ModuleTabs tabs={tabs} />
 
         <SplitLayout>
           <QuickFilterPanel>

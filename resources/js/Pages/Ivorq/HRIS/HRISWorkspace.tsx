@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import '../../../../css/ivorq-prototype.css';
 
 import { hrisData } from '../../../data/ivorq/hris';
@@ -20,14 +20,12 @@ import Button from '../../../Components/Ivorq/primitives/Button';
 import StatusBadge, { BadgeStatus } from '../../../Components/Ivorq/primitives/StatusBadge';
 import Avatar from '../../../Components/Ivorq/primitives/Avatar';
 
-const HRISWorkspace = () => {
-  const [activeTab, setActiveTab] = useState('attendance');
-
+const HRISWorkspace = ({ activeTab = 'attendance' }: { activeTab?: string }) => {
   const tabs = [
-    { id: 'attendance', label: 'Attendance' },
-    { id: 'shift_coverage', label: 'Shift Coverage' },
-    { id: 'leave_requests', label: 'Leave Requests', badge: 3 },
-    { id: 'payroll', label: 'Payroll' },
+    { href: '/hris/attendance', label: 'Attendance', badge: 3 },
+    { href: '/hris/shift-coverage', label: 'Shift Coverage', badge: 1 },
+    { href: '/hris/leave-requests', label: 'Leave Requests', badge: 8 },
+    { href: '/hris/payroll', label: 'Payroll' },
   ];
 
   return (
@@ -35,7 +33,7 @@ const HRISWorkspace = () => {
       <div className="workspace">
         <WorkspaceHeader title="HRIS" />
 
-        <ModuleTabs tabs={tabs} activeTabId={activeTab} onTabChange={setActiveTab} />
+        <ModuleTabs tabs={tabs} />
 
         <SplitLayout>
           <QuickFilterPanel>
