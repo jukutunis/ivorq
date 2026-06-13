@@ -84,7 +84,7 @@ body {
   display: flex;
   align-items: center;
   padding: 0 12px;
-  color: rgba(255,255,255,0.65);
+  color: rgba(255,255,255,0.82);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -110,7 +110,8 @@ body {
   color: white;
   padding: 6px 12px 6px 32px;
   font-size: 13px;
-  width: 220px;
+  width: 280px;
+  max-width: 280px;
   font-family: inherit;
 }
 .global-search-input::placeholder { color: rgba(255,255,255,0.5); }
@@ -276,7 +277,7 @@ body {
 .snap-val { font-size: 24px; font-weight: 700; margin-bottom: 2px; font-variant-numeric: tabular-nums; }
 .snap-lbl { font-size: 11px; color: var(--text-secondary); font-weight: 500; text-transform: uppercase; letter-spacing: 0.3px; }
 
-.attention-area { background: var(--danger-bg); border: 1px solid #FECACA; border-radius: var(--radius); padding: 16px; }
+.attention-area { background: var(--critical-red-bg); border: 1px solid #FECACA; border-radius: var(--radius); padding: 16px; }
 .attention-area.warning { background: var(--warning-amber-bg); border-color: #FDE68A; }
 .attention-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .attention-title { font-size: 14px; font-weight: 600; color: var(--critical-red); display: flex; align-items: center; gap: 6px; }
@@ -289,8 +290,8 @@ body {
 .board-title { font-size: 16px; font-weight: 600; }
 .work-board { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 8px;}
 .board-column { flex: 1; min-width: 240px; border-radius: var(--radius); display: flex; flex-direction: column; background: var(--surface-page); border: 1px solid var(--border-default); }
-.board-col-header { padding: 12px 16px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-default); background: white; border-radius: var(--radius) var(--radius) 0 0; }
-.col-count { background: var(--border-default); padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+.board-col-header { padding: 12px 16px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-default); background: #1A2356; color: white; border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; }
+.col-count { background: rgba(255,255,255,0.20); padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; color: white; }
 .board-col-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 180px; }
 
 .work-card { background: white; border: 1px solid var(--border-default); border-left: 4px solid var(--neutral-slate); border-radius: 6px; padding: 12px 14px; box-shadow: var(--shadow-sm); transition: box-shadow 0.15s; }
@@ -301,7 +302,7 @@ body {
 .wc-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
 
 .queue-list { background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
-.queue-header { padding: 14px 20px; border-bottom: 1px solid var(--border-default); font-size: 14px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+.queue-header { padding: 14px 20px; border-bottom: 1px solid var(--border-default); font-size: 14px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; background: #1A2356; color: white; border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; }
 .queue-item { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--border-subtle); transition: background 0.1s; }
 .queue-item:hover { background: var(--primary-50); }
 .queue-item:last-child { border-bottom: none; }
@@ -343,7 +344,7 @@ body {
 .launcher:hover { background: var(--primary-50); border-color: var(--primary-500); color: var(--primary-500); }
 
 /* SVG Icon Helper */
-svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: text-bottom; }
+svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vertical-align: text-bottom; }
 
 </style>
 </head>
@@ -355,22 +356,22 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
 <header class="topbar">
   <div class="topbar-brand">IVORQ</div>
   <nav class="topbar-nav">
-    <div class="nav-item active" onclick="nav('home')">Home</div>
-    <div class="nav-item" onclick="nav('frontdesk')">Front Desk</div>
-    <div class="nav-item" onclick="nav('housekeeping')">Housekeeping</div>
-    <div class="nav-item" onclick="nav('engineering')">Engineering</div>
-    <div class="nav-item" onclick="nav('inventory')">Inventory</div>
-    <div class="nav-item" onclick="nav('procurement')">Procurement</div>
-    <div class="nav-item" onclick="nav('hris')">HRIS</div>
-    <div class="nav-item" onclick="nav('finance')">Finance</div>
-    <div class="nav-item" onclick="nav('reports')">Reports</div>
-    <div class="nav-item" onclick="nav('ai')">AI Assistant</div>
+    <div class="nav-item active" onclick="nav('home')"><svg class="icon" style="color: #94A3B8; margin-right: 6px;" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Home</div>
+    <div class="nav-item" onclick="nav('frontdesk')"><svg class="icon" style="color: #3B82F6; margin-right: 6px;" viewBox="0 0 24 24"><path d="M2 18h20"/><path d="M12 2v4"/><path d="M12 6a8 8 0 0 0-8 8v4h16v-4a8 8 0 0 0-8-8Z"/></svg>Front Desk</div>
+    <div class="nav-item" onclick="nav('housekeeping')"><svg class="icon" style="color: #10B981; margin-right: 6px;" viewBox="0 0 24 24"><path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>Housekeeping</div>
+    <div class="nav-item" onclick="nav('engineering')"><svg class="icon" style="color: #F97316; margin-right: 6px;" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Engineering</div>
+    <div class="nav-item" onclick="nav('inventory')"><svg class="icon" style="color: #6366F1; margin-right: 6px;" viewBox="0 0 24 24"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Inventory</div>
+    <div class="nav-item" onclick="nav('procurement')"><svg class="icon" style="color: #F59E0B; margin-right: 6px;" viewBox="0 0 24 24"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>Procurement</div>
+    <div class="nav-item" onclick="nav('hris')"><svg class="icon" style="color: #8B5CF6; margin-right: 6px;" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>HRIS</div>
+    <div class="nav-item" onclick="nav('finance')"><svg class="icon" style="color: #22C55E; margin-right: 6px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></svg>Finance</div>
+    <div class="nav-item" onclick="nav('reports')"><svg class="icon" style="color: #06B6D4; margin-right: 6px;" viewBox="0 0 24 24"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Reports</div>
+    <div class="nav-item" onclick="nav('ai')"><svg class="icon" style="color: #A855F7; margin-right: 6px;" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3l1.9 5.8 1.9-5.8a2 2 0 0 1 1.3-1.3l5.8-1.9-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>AI Assistant</div>
   </nav>
 
   <!-- Global Search -->
   <div class="global-search-container">
     <svg class="icon global-search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-    <input type="text" class="global-search-input" placeholder="Search guests, rooms, WOs...">
+    <input type="text" class="global-search-input" placeholder="Search guests, rooms, work orders, inventory...">
     <div class="global-search-shortcut">⌘K</div>
   </div>
 
@@ -472,10 +473,12 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
   <div class="workspace-header">
     <div class="workspace-title">Guest Arrival Operations</div>
     <div class="workspace-actions">
-      <button class="btn btn-secondary"><svg class="icon"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg> Print</button>
-      <button class="btn btn-secondary"><svg class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Export XLSX</button>
-      <button class="btn btn-secondary">Walk-In</button>
-      <button class="btn btn-primary">New Reservation</button>
+      <button class="btn btn-secondary"><svg class="icon"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M22 14l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg> Refresh</button>
+      <button class="btn btn-secondary"><svg class="icon" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg> Print</button>
+      <button class="btn btn-secondary"><svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg> Export PDF</button>
+      <button class="btn btn-secondary"><svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m8 13 4 4"/><path d="m8 17 4-4"/></svg> Export XLSX</button>
+      <button class="btn btn-secondary"><svg class="icon" viewBox="0 0 24 24"><path d="M15 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M18 8v6"/><path d="M21 11h-6"/></svg> Walk-In</button>
+      <button class="btn btn-primary"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M12 14v4"/><path d="M10 16h4"/></svg> New Reservation</button>
     </div>
   </div>
   <div class="module-tabs">
@@ -530,7 +533,7 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
 
       <!-- Main Work Queue -->
       <div class="queue-list">
-        <div class="queue-header"><div>Check-In Queue</div></div>
+        <div class="queue-header"><div>Check-In Queue</div><div class="col-count">24</div></div>
         <div class="queue-item">
           <div class="qi-info">
             <div class="qi-title">Anderson, James <span class="badge b-vip" style="font-size: 11px; padding: 2px 6px;">VIP</span></div>
@@ -939,7 +942,7 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
         </div>
       </div>
       <div class="queue-list">
-        <div class="queue-header"><div>Pending Receiving</div></div>
+        <div class="queue-header"><div>Pending Receiving</div><div class="col-count">4</div></div>
         <div class="queue-item">
           <div class="qi-info"><div class="qi-title">PO-26-0012 — Linen Supply Co.</div><div class="qi-meta">Expected today • 120 Bath Towels</div></div>
           <div class="qi-right"><button class="btn btn-primary btn-sm">Receive</button></div>
@@ -1115,7 +1118,7 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
     </div>
     <div class="main-content">
       <div class="queue-list">
-        <div class="queue-header"><div>Available Reports</div></div>
+        <div class="queue-header"><div>Available Reports</div><div class="col-count">3</div></div>
         <div class="queue-item">
           <div class="qi-info"><div class="qi-title">Daily Manager Report</div><div class="qi-meta">Front Desk • Auto-generated at EOD</div></div>
           <div class="qi-right"><button class="btn btn-secondary btn-sm">Preview</button><button class="btn btn-primary btn-sm">Generate</button></div>
