@@ -427,13 +427,29 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
     <div class="snap-card" style="border-top-color: var(--critical-red);"><div class="snap-val" style="color: var(--critical-red);">3</div><div class="snap-lbl">Critical Items</div></div>
   </div>
 
+  <div class="attention-area" style="margin-bottom: 24px;">
+    <div class="attention-header"><div class="attention-title" style="color: var(--navy-900);">Critical Operations Panel</div><div class="badge b-critical">4 Escalations</div></div>
+    <div class="attention-card" style="border-left: 4px solid var(--critical-red);">
+      <div class="qi-info"><span class="qi-title" style="font-size: 13px;"><span class="badge b-vip">VIP</span> Arrival / No Room Assigned</span><span class="qi-meta">Smith, James • ETA 14:00 • Front Office</span></div>
+      <button class="btn btn-primary btn-sm">Assign Room</button>
+    </div>
+    <div class="attention-card" style="border-left: 4px solid var(--critical-red);">
+      <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Room 305 AC SLA Breached</span><span class="qi-meta">Guest Complaint > 2 Hours • Engineering</span></div>
+      <button class="btn btn-primary btn-sm">Escalate</button>
+    </div>
+    <div class="attention-card" style="border-left: 4px solid var(--critical-red);">
+      <div class="qi-info"><span class="qi-title" style="font-size: 13px;">Bath Towel Below PAR</span><span class="qi-meta">Critical Stock Shortage • Inventory</span></div>
+      <button class="btn btn-primary btn-sm">Draft PR</button>
+    </div>
+  </div>
+
   <div class="home-grid">
     <div class="home-card">
-      <div class="hc-header"><div>Shift Status</div><div class="badge b-inspection">Afternoon Shift</div></div>
+      <div class="hc-header"><div>MOD Shift Handover Summary</div><div class="badge b-inspection">Afternoon Shift</div></div>
       <div class="hc-body">
         <div class="hc-item"><span style="font-weight: 500;">Manager On Duty</span><span style="font-weight: 700;">Made Surya</span></div>
-        <div class="hc-item"><span style="font-weight: 500;">Shift Start</span><span>15:00</span></div>
-        <div class="hc-item"><span style="font-weight: 500;">Handover Due</span><span style="color: var(--warning-amber); font-weight: 600;">In 2 Hours</span></div>
+        <div class="hc-item"><span style="font-weight: 500;">Shift Status</span><span style="color: var(--ready-green); font-weight: 600;">On Track</span></div>
+        <div class="hc-item"><span style="font-weight: 500;">Pending Handover Notes</span><span style="color: var(--warning-amber); font-weight: 600;">3 Critical Notes</span></div>
       </div>
     </div>
     <div class="home-card">
@@ -566,27 +582,58 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
     </div>
     <div class="main-content">
       <div class="op-snapshot">
-        <div class="snap-card" style="border-top-color: var(--ready-green);"><div class="snap-val" style="color: var(--ready-green);">$14,250</div><div class="snap-lbl">Revenue Today</div></div>
-        <div class="snap-card" style="border-top-color: var(--inspection-blue);"><div class="snap-val" style="color: var(--inspection-blue);">$45,800</div><div class="snap-lbl">Cash Position</div></div>
+        <div class="snap-card" style="border-top-color: var(--ready-green);">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div class="snap-val" style="color: var(--ready-green);">$14,250</div>
+            <span style="color: var(--ready-green); font-size: 11px; font-weight: 600;">▲ +12%</span>
+          </div>
+          <div class="snap-lbl">Revenue Today</div>
+        </div>
+        <div class="snap-card" style="border-top-color: var(--inspection-blue);">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div class="snap-val" style="color: var(--inspection-blue);">$45,800</div>
+            <span style="color: var(--critical-red); font-size: 11px; font-weight: 600;">▼ -8%</span>
+          </div>
+          <div class="snap-lbl">Cash Position</div>
+        </div>
         <div class="snap-card" style="border-top-color: var(--warning-amber);"><div class="snap-val" style="color: var(--warning-amber);">$8,400</div><div class="snap-lbl">AP Pending Approval</div></div>
         <div class="snap-card" style="border-top-color: var(--critical-red);"><div class="snap-val" style="color: var(--critical-red);">$12,000</div><div class="snap-lbl">AR Overdue</div></div>
       </div>
       
       <div class="attention-area warning">
-        <div class="attention-header"><div class="attention-title">Budget Watch &amp; Cost Control</div><div class="badge b-warning">2 Signals</div></div>
-        <div class="attention-card">
-          <div class="qi-info">
-            <span class="qi-title" style="font-size: 13px;">F&B Cost of Goods — Exceeding Budget</span>
-            <span class="qi-meta">MTD Actual: $18,200 vs Budget: $15,000 (121%)</span>
+        <div class="attention-header"><div class="attention-title">Budget Watch &amp; Cost Control</div><div class="badge b-warning">3 Indicators</div></div>
+        <div class="attention-card" style="flex-direction: column; align-items: stretch;">
+          <div class="qi-info" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+              <span class="qi-title" style="font-size: 13px;">Payroll</span>
+              <span style="font-size: 13px; font-weight: 600; color: var(--critical-red);">103% <span style="font-size: 11px;">▲ +12%</span></span>
+            </div>
+            <div style="height: 6px; background: var(--border-default); border-radius: 3px; overflow: hidden; display: flex;">
+              <div style="width: 100%; height: 100%; background: var(--critical-red);"></div>
+            </div>
           </div>
-          <button class="btn btn-secondary btn-sm">Analyze Variance</button>
         </div>
-        <div class="attention-card">
-          <div class="qi-info">
-            <span class="qi-title" style="font-size: 13px;">Overtime Alert — Housekeeping</span>
-            <span class="qi-meta">Projected OT exceeds weekly threshold by 15%</span>
+        <div class="attention-card" style="flex-direction: column; align-items: stretch;">
+          <div class="qi-info" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+              <span class="qi-title" style="font-size: 13px;">Rooms Revenue</span>
+              <span style="font-size: 13px; font-weight: 600; color: var(--ready-green);">82% <span style="font-size: 11px;">▼ -8%</span></span>
+            </div>
+            <div style="height: 6px; background: var(--border-default); border-radius: 3px; overflow: hidden; display: flex;">
+              <div style="width: 82%; height: 100%; background: var(--ready-green);"></div>
+            </div>
           </div>
-          <button class="btn btn-secondary btn-sm">View Roster Cost</button>
+        </div>
+        <div class="attention-card" style="flex-direction: column; align-items: stretch;">
+          <div class="qi-info" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+              <span class="qi-title" style="font-size: 13px;">Utilities</span>
+              <span style="font-size: 13px; font-weight: 600; color: var(--warning-amber);">61%</span>
+            </div>
+            <div style="height: 6px; background: var(--border-default); border-radius: 3px; overflow: hidden; display: flex;">
+              <div style="width: 61%; height: 100%; background: var(--warning-amber);"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -651,12 +698,26 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
       <div style="margin-top: 32px; width: 100%; max-width: 600px; text-align: left;">
         <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.5px;">Suggested Actions</div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-          <div class="work-card" style="border-left-color: var(--primary-500); cursor: pointer;"><div class="wc-title" style="font-size: 13px;">Show overdue PM</div><div class="wc-detail">Engineering • Find SLA breaches</div></div>
-          <div class="work-card" style="border-left-color: var(--vip-gold); cursor: pointer;"><div class="wc-title" style="font-size: 13px;">Show VIP arrivals today</div><div class="wc-detail">Front Desk • Cross-reference room status</div></div>
-          <div class="work-card" style="border-left-color: var(--ready-green); cursor: pointer;"><div class="wc-title" style="font-size: 13px;">Generate room status report</div><div class="wc-detail">Housekeeping • Export to PDF</div></div>
-          <div class="work-card" style="border-left-color: var(--warning-amber); cursor: pointer;"><div class="wc-title" style="font-size: 13px;">Find stock below PAR</div><div class="wc-detail">Inventory • Draft purchase requests</div></div>
-          <div class="work-card" style="border-left-color: var(--inspection-blue); cursor: pointer;"><div class="wc-title" style="font-size: 13px;">Summarize MOD handover</div><div class="wc-detail">Home • Compile shift events</div></div>
-          <div class="work-card" style="border-left-color: var(--pending-purple); cursor: pointer;"><div class="wc-title" style="font-size: 13px;">Create follow-up tasks</div><div class="wc-detail">Cross-module • Assign from complaints</div></div>
+          <div class="work-card" style="border: 1px solid var(--pending-purple); border-left: 4px solid var(--pending-purple); background: linear-gradient(to right, #F3E8FF, white); cursor: pointer;">
+            <div class="wc-meta"><span style="color: var(--pending-purple); font-weight: 600; display: flex; align-items: center; gap: 4px;">✨ AI Recommendation</span></div>
+            <div class="wc-title" style="font-size: 13px;">Increase Room 412 priority</div>
+            <div class="wc-detail">VIP arrival expected in 2 hours. Cross-reference shows room not ready.</div>
+          </div>
+          <div class="work-card" style="border: 1px solid var(--pending-purple); border-left: 4px solid var(--pending-purple); background: linear-gradient(to right, #F3E8FF, white); cursor: pointer;">
+            <div class="wc-meta"><span style="color: var(--pending-purple); font-weight: 600; display: flex; align-items: center; gap: 4px;">✨ AI Suggestion</span></div>
+            <div class="wc-title" style="font-size: 13px;">Follow-up on Guest Complaint</div>
+            <div class="wc-detail">Room 305 AC leak unresolved after 2 hours. Suggest escalating.</div>
+          </div>
+          <div class="work-card" style="border: 1px solid var(--pending-purple); border-left: 4px solid var(--pending-purple); background: linear-gradient(to right, #F3E8FF, white); cursor: pointer;">
+            <div class="wc-meta"><span style="color: var(--pending-purple); font-weight: 600; display: flex; align-items: center; gap: 4px;">✨ Data Insight</span></div>
+            <div class="wc-title" style="font-size: 13px;">Generate Handover Report</div>
+            <div class="wc-detail">Compile 4 critical tasks and 2 VIP arrivals for evening shift.</div>
+          </div>
+          <div class="work-card" style="border: 1px solid var(--pending-purple); border-left: 4px solid var(--pending-purple); background: linear-gradient(to right, #F3E8FF, white); cursor: pointer;">
+            <div class="wc-meta"><span style="color: var(--pending-purple); font-weight: 600; display: flex; align-items: center; gap: 4px;">✨ Stock Alert</span></div>
+            <div class="wc-title" style="font-size: 13px;">Draft Purchase Request</div>
+            <div class="wc-detail">Bath towels are below PAR. I can draft a PR for 200 items.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -994,13 +1055,39 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
       </div>
       <div class="queue-list">
         <div class="queue-header"><div>Workforce Status — Afternoon Shift</div><button class="btn btn-secondary btn-sm">Manage Roster</button></div>
+        
+        <div style="padding: 12px 20px; background: var(--surface-page); border-bottom: 1px solid var(--border-subtle); font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Front Office</div>
         <div class="queue-item">
-          <div class="qi-info"><div class="qi-title">Made Surya</div><div class="qi-meta">Duty Manager • Front Office</div></div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--primary-100); color: var(--primary-500); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;">MS</div>
+            <div class="qi-info">
+              <div class="qi-title" style="margin-bottom: 0;">Made Surya <div style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ready-green); margin-left: 4px; vertical-align: middle;"></div></div>
+              <div class="qi-meta">Duty Manager</div>
+            </div>
+          </div>
           <div class="qi-right"><span class="badge b-ready">Clocked In 15:00</span></div>
         </div>
+
+        <div style="padding: 12px 20px; background: var(--surface-page); border-bottom: 1px solid var(--border-subtle); font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Housekeeping</div>
         <div class="queue-item">
-          <div class="qi-info"><div class="qi-title">Wayan Darma</div><div class="qi-meta">Room Attendant • Housekeeping</div></div>
-          <div class="qi-right"><span class="badge b-critical">Late — Not Clocked In</span></div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--warning-amber-bg); color: var(--warning-amber); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;">WD</div>
+            <div class="qi-info">
+              <div class="qi-title" style="margin-bottom: 0;">Wayan Darma <div style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warning-amber); margin-left: 4px; vertical-align: middle;"></div></div>
+              <div class="qi-meta">Room Attendant</div>
+            </div>
+          </div>
+          <div class="qi-right"><span class="badge b-warning">Late — Not Clocked In</span></div>
+        </div>
+        <div class="queue-item">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--critical-red-bg); color: var(--critical-red); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;">KA</div>
+            <div class="qi-info">
+              <div class="qi-title" style="margin-bottom: 0;">Ketut Arini <div style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--critical-red); margin-left: 4px; vertical-align: middle;"></div></div>
+              <div class="qi-meta">Room Attendant</div>
+            </div>
+          </div>
+          <div class="qi-right"><span class="badge b-critical">Absent — Sick Leave</span></div>
         </div>
       </div>
     </div>
@@ -1018,7 +1105,7 @@ svg.icon { width: 1em; height: 1em; display: inline-block; fill: none; stroke: c
     </div>
   </div>
   <div class="module-tabs">
-    <div class="tab active">Operational</div><div class="tab">Financial</div><div class="tab">Saved Reports</div><div class="tab">Scheduled</div><div class="tab">Export Center</div>
+    <div class="tab active">Operational</div><div class="tab">Financial</div><div class="tab">Scheduled</div><div class="tab">Favorites</div><div class="tab">Export Center</div>
   </div>
   <div class="split-layout">
     <div class="quick-filter-panel">
