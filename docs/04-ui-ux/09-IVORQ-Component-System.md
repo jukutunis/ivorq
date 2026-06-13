@@ -44,9 +44,16 @@ A vertical list of actionable items (alternative to kanban when items flow linea
 ## Secondary Components
 
 ### Status Badge (`<StatusBadge>`)
-Pill-shaped inline indicator. Variants: success, warning, danger, info.
+Pill-shaped inline indicator. Variants:
+- `vip` (Gold)
+- `critical` (Red)
+- `warning` (Amber)
+- `ready` (Green)
+- `inspection` (Blue)
+- `pending` (Purple)
+- `neutral` (Slate)
 - `11px`, `600` weight, uppercase
-- Low-opacity semantic background with high-contrast text
+- Low-opacity semantic background with high-contrast text and subtle border.
 
 ### Action Button (`<Button>`)
 - **Primary**: `--primary-500` background, white text — for main actions

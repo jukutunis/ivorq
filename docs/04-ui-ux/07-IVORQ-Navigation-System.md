@@ -11,7 +11,7 @@ There is no left sidebar menu. There is no hamburger menu. There is no secondary
 ### Structure
 
 ```
-[ IVORQ ]  [ Home ] [ Front Desk ] [ Housekeeping ] [ Engineering ] [ Inventory ] [ Procurement ] [ HRIS ] [ Finance ] [ Reports ] [ AI Assistant ]     [ Property ] [ User ]
+[ IVORQ ]  [ Home ] [ Front Desk ] ... [ AI Assistant ]    [ ⌘K Search ] [ 🔔 Notifs ] [ Property ] [ User ]
 ```
 
 ### Behavior
@@ -20,6 +20,12 @@ There is no left sidebar menu. There is no hamburger menu. There is no secondary
 - Inactive modules display at 70% white opacity
 - Hover reveals full white text with subtle background transition
 - Clicking a module replaces the entire workspace container content
+
+### Global Utilities
+
+- **Universal Search (⌘K)**: Quick lookup for Guests, Rooms, WOs, PRs, Employees, etc.
+- **Notification Center**: Dropdown bell showing cross-module alerts (VIP arrivals, SLA breaches, stock shortages).
+
 
 ### Module Count
 

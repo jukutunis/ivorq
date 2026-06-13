@@ -35,12 +35,15 @@
 
 ## Semantic Colors (Operational Status)
 
-| Status | Foreground | Background | Usage |
-|--------|-----------|------------|-------|
-| Success | `#059669` | `#ECFDF5` | Clean, Checked In, Approved, On Track |
-| Warning | `#D97706` | `#FFFBEB` | Dirty, Due In, Pending, SLA Warning |
-| Danger | `#DC2626` | `#FEF2F2` | OOO, Critical, Overdue, SLA Breach |
-| Info | `#2563EB` | `#EFF6FF` | Assigned, In Progress, Informational |
+| Status | Name | Foreground | Background | Usage |
+|--------|------|-----------|------------|-------|
+| VIP | Gold | `#D97706` | `#FEF3C7` | VIP guests, high-value items |
+| Critical | Red | `#DC2626` | `#FEF2F2` | OOO, SLA Breach, Unresolved Complaints |
+| Warning | Amber | `#F59E0B` | `#FFFBEB` | Dirty, Due In, SLA Warning, Late |
+| Ready | Green | `#059669` | `#ECFDF5` | Clean, Checked In, Approved, On Track |
+| Inspection | Blue | `#2563EB` | `#EFF6FF` | Pending Inspection, Assigned, Informational |
+| Pending | Purple | `#7C3AED` | `#F5F3FF` | Pending Approval, Sourcing, Awaiting Action |
+| Neutral | Slate | `#64748B` | `#F8FAFC` | Departed, Closed, Standard Status |
 
 ## Design Rule
 
