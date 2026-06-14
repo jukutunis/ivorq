@@ -22,6 +22,7 @@ class OperationalIdentityValidationService
             OperationalIdentityEnum::VENDOR_PREPAYMENT->value => [AccountTypeEnum::Asset],
             OperationalIdentityEnum::CASH_AND_BANK->value => [AccountTypeEnum::Asset],
             OperationalIdentityEnum::AP_DEBIT_NOTE_RECEIVABLE->value => [AccountTypeEnum::Asset],
+            OperationalIdentityEnum::VENDOR_TAX->value => [AccountTypeEnum::Asset, AccountTypeEnum::Liability],
 
             // LIABILITY
             OperationalIdentityEnum::GRNI_ACCRUAL->value => [AccountTypeEnum::Liability],

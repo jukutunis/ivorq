@@ -22,6 +22,7 @@ enum OperationalIdentityEnum: string
     case AP_WRITEOFF_GAIN = 'AP_WRITEOFF_GAIN';
     case AP_DEBIT_NOTE_RECEIVABLE = 'AP_DEBIT_NOTE_RECEIVABLE';
     case GRNI_ACCRUAL_REVISED = 'GRNI_ACCRUAL_REVISED';
+    case VENDOR_TAX = 'VENDOR_TAX';
 
     // Extended Identities
     case PURCHASE_COMMITMENT = 'PURCHASE_COMMITMENT';
