@@ -7,6 +7,7 @@ enum OperationalIdentityEnum: string
     // Foundation Identities V1
     case INVENTORY = 'INVENTORY';
     case GRNI_ACCRUAL = 'GRNI_ACCRUAL';
+    case GRNI_RECEIPT = 'GRNI_RECEIPT';
     case AP_CONTROL = 'AP_CONTROL';
     case ACCRUED_EXPENSE = 'ACCRUED_EXPENSE';
     case VENDOR_PREPAYMENT = 'VENDOR_PREPAYMENT';

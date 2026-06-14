@@ -25,6 +25,7 @@ class OperationalIdentityValidationService
 
             // LIABILITY
             OperationalIdentityEnum::GRNI_ACCRUAL->value => [AccountTypeEnum::Liability],
+            OperationalIdentityEnum::GRNI_RECEIPT->value => [AccountTypeEnum::Liability],
             OperationalIdentityEnum::GRNI_ACCRUAL_REVISED->value => [AccountTypeEnum::Liability],
             OperationalIdentityEnum::AP_CONTROL->value => [AccountTypeEnum::Liability],
             OperationalIdentityEnum::ACCRUED_EXPENSE->value => [AccountTypeEnum::Liability],

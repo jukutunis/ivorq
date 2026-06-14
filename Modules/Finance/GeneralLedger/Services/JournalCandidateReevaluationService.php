@@ -8,10 +8,13 @@ use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Operations\Inventory\Models\InventoryTransaction;
 
+use Modules\Operations\Inventory\Models\InventoryReceipt;
+
 class JournalCandidateReevaluationService
 {
     public function __construct(
-        private VariancePostingEngine $varianceEngine
+        private VariancePostingEngine $varianceEngine,
+        private GrniPostingEngine $grniEngine
     ) {}
 
     public function reevaluate(string $candidateId, ?string $userId = null): JournalCandidate
@@ -39,6 +42,23 @@ class JournalCandidateReevaluationService
             $this->varianceEngine->process($transaction);
 
             // Refresh to see if it recovered or remained in error
+            $candidate->refresh();
+
+            if ($candidate->status === JournalCandidateStatusEnum::CONFIGURATION_ERROR) {
+                $error = $candidate->metadata['mapping_error'] ?? null;
+                $candidate->update([
+                    'last_reevaluation_error' => $error ? json_encode($error) : 'Unknown error'
+                ]);
+            } else {
+                $candidate->update([
+                    'last_reevaluation_error' => null
+                ]);
+            }
+        } elseif ($candidate->source_type === 'InventoryReceipt' && $candidate->posting_event === 'InventoryReceiptAccrual') {
+            $receipt = InventoryReceipt::findOrFail($candidate->source_id);
+            
+            $this->grniEngine->process($receipt);
+
             $candidate->refresh();
 
             if ($candidate->status === JournalCandidateStatusEnum::CONFIGURATION_ERROR) {

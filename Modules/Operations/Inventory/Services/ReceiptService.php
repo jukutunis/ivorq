@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Operations\Inventory\Enums\ReceiptStatusEnum;
 use Modules\Operations\Inventory\Models\InventoryReceipt;
+use Modules\Operations\Inventory\Events\InventoryReceiptPosted;
 use Modules\Operations\Inventory\Repositories\InventoryItemRepository;
 use Modules\Operations\Inventory\Repositories\InventoryReceiptRepository;
 use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
@@ -97,6 +98,10 @@ class ReceiptService
             ]);
         });
 
-        return $this->receiptRepository->find($id);
+        $postedReceipt = $this->receiptRepository->find($id);
+
+        InventoryReceiptPosted::dispatch($postedReceipt);
+
+        return $postedReceipt;
     }
 }
