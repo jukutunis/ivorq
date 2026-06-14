@@ -51,7 +51,7 @@ class ApprovalEngineService
             $request->update(['current_step_id' => $firstStep->id]);
             
             // Dispatch Events (which triggers Notifications)
-            // event(new ApprovalRequested($request));
+            event(new \Modules\Foundation\Approval\Events\ApprovalRequested($request));
             
             return $request;
         });
@@ -126,7 +126,7 @@ class ApprovalEngineService
             ]);
 
             $request->approvable->markAsRejected($notes);
-            // event(new ApprovalRejected($request));
+            event(new \Modules\Foundation\Approval\Events\ApprovalRejected($request));
         });
     }
 
@@ -144,7 +144,7 @@ class ApprovalEngineService
                 'current_step_id' => $nextStep['id'],
                 'status' => 'Pending',
             ]);
-            // event(new ApprovalRequested($request));
+            event(new \Modules\Foundation\Approval\Events\ApprovalRequested($request));
         } else {
             $request->update([
                 'status' => 'Approved',
@@ -152,7 +152,7 @@ class ApprovalEngineService
                 'current_step_id' => null,
             ]);
             $request->approvable->markAsApproved();
-            // event(new ApprovalApproved($request));
+            event(new \Modules\Foundation\Approval\Events\ApprovalApproved($request));
         }
     }
 }

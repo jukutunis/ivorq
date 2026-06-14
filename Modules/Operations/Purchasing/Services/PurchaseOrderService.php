@@ -13,12 +13,15 @@ use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Repositories\PurchaseOrderRepository;
 use Modules\Operations\Purchasing\Repositories\PurchaseRequestRepository;
 use Shared\Exceptions\BusinessLogicException;
+use Modules\Foundation\Task\Services\TaskService;
+use Modules\Foundation\Notification\Models\AppNotification;
 
 class PurchaseOrderService
 {
     public function __construct(
         protected PurchaseOrderRepository $repository,
-        protected PurchaseRequestRepository $prRepository
+        protected PurchaseRequestRepository $prRepository,
+        protected TaskService $taskService
     ) {
     }
 
@@ -165,7 +168,31 @@ class PurchaseOrderService
             'updated_by' => $user->id,
         ]);
 
-        return $po->fresh();
+        $po = $po->fresh();
+
+        $this->taskService->create([
+            'property_id' => $po->property_id,
+            'task_type' => 'Action',
+            'source_module' => 'purchasing',
+            'taskable_type' => get_class($po),
+            'taskable_id' => $po->id,
+            'title' => "PO Issued: {$po->po_no}",
+            'description' => "Purchase Order has been issued to the vendor.",
+            'priority' => \Shared\Enums\PriorityEnum::Normal->value,
+            'status' => \Modules\Foundation\Task\Enums\TaskStatusEnum::Open->value,
+            'due_date' => $po->expected_delivery_date,
+        ]);
+
+        AppNotification::create([
+            'property_id' => $po->property_id,
+            'user_id' => $po->created_by,
+            'type' => 'purchasing.po_issued',
+            'priority' => 'normal',
+            'title' => "PO Issued",
+            'body' => "Purchase Order {$po->po_no} has been issued.",
+        ]);
+
+        return $po;
     }
 
     public function cancel(string $id, User $user): PurchaseOrder

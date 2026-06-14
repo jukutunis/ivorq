@@ -14,8 +14,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
+use Modules\Foundation\Approval\Contracts\ApprovableContract;
 
-class PurchaseRequest extends Model
+class PurchaseRequest extends Model implements ApprovableContract
 {
     use HasFactory, HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes;
 
@@ -64,5 +65,44 @@ class PurchaseRequest extends Model
     protected static function newFactory()
     {
         return \Modules\Operations\Purchasing\Database\Factories\PurchaseRequestFactory::new();
+    }
+
+    // ApprovableContract Implementation
+
+    public function getApprovableType(): string
+    {
+        return static::class;
+    }
+
+    public function getApprovableId(): string
+    {
+        return $this->id;
+    }
+
+    public function getPropertyId(): string
+    {
+        return $this->property_id;
+    }
+
+    public function getDepartmentId(): ?string
+    {
+        return $this->department_id;
+    }
+
+    public function getApprovalAmount(): float
+    {
+        return (float) $this->estimated_total;
+    }
+
+    public function markAsApproved(): void
+    {
+        $this->update(['status' => PurchaseRequestStatusEnum::Approved]);
+    }
+
+    public function markAsRejected(?string $reason = null): void
+    {
+        // Could store rejection reason in remarks if needed
+        $remarks = $reason ? ($this->remarks . "\nRejected: " . $reason) : $this->remarks;
+        $this->update(['status' => PurchaseRequestStatusEnum::Rejected, 'remarks' => $remarks]);
     }
 }

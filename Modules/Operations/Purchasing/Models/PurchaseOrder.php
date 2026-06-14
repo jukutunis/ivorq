@@ -11,8 +11,9 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
+use Modules\Foundation\Approval\Contracts\ApprovableContract;
 
-class PurchaseOrder extends Model
+class PurchaseOrder extends Model implements ApprovableContract
 {
     use HasFactory, HasUlids, SoftDeletes, BelongsToProperty, HasAuditColumns;
 
@@ -57,5 +58,43 @@ class PurchaseOrder extends Model
     protected static function newFactory()
     {
         return \Modules\Operations\Purchasing\Database\Factories\PurchaseOrderFactory::new();
+    }
+
+    // ApprovableContract Implementation
+
+    public function getApprovableType(): string
+    {
+        return static::class;
+    }
+
+    public function getApprovableId(): string
+    {
+        return $this->id;
+    }
+
+    public function getPropertyId(): string
+    {
+        return $this->property_id;
+    }
+
+    public function getDepartmentId(): ?string
+    {
+        // PO might not have a direct department, check PR
+        return $this->purchaseRequest?->department_id;
+    }
+
+    public function getApprovalAmount(): float
+    {
+        return (float) $this->total_amount;
+    }
+
+    public function markAsApproved(): void
+    {
+        $this->update(['status' => PurchaseOrderStatusEnum::Approved]);
+    }
+
+    public function markAsRejected(?string $reason = null): void
+    {
+        $this->update(['status' => PurchaseOrderStatusEnum::Rejected, 'remarks' => $reason]);
     }
 }
