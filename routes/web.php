@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/', fn() => redirect()->route('dashboard'));
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/notifications', [\Modules\Foundation\Notification\Http\Controllers\NotificationController::class, 'index'])->name('notifications.index');
 });
 
 use App\Http\Controllers\Ivorq\WorkspaceController;

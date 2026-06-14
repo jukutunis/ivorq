@@ -1,7 +1,7 @@
 import React from 'react';
 import TopNav from '../navigation/TopNav';
 import GlobalSearch from '../navigation/GlobalSearch';
-import NotificationCenter from './NotificationCenter';
+import NotificationBell from '../navigation/NotificationBell';
 
 export default function AppTopbar() {
   return (
@@ -11,7 +11,7 @@ export default function AppTopbar() {
       <GlobalSearch />
       
       <div className="topbar-right">
-        <NotificationCenter />
+        <NotificationBell />
         <span>The Grand Resort &amp; Spa</span>
         <div className="topbar-avatar">MS</div>
       </div>
