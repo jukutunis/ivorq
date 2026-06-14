@@ -21,7 +21,7 @@ class InventoryReceiptLine extends Model
         'location_id',
         'quantity',
         'unit_cost',
-        'total_cost',
+        'line_total',
         'expiry_date',
         'invoiced_quantity',
         'invoiced_amount',
@@ -30,7 +30,7 @@ class InventoryReceiptLine extends Model
     protected $casts = [
         'quantity'    => 'decimal:3',
         'unit_cost'   => 'decimal:3',
-        'total_cost'  => 'decimal:3',
+        'line_total'  => 'decimal:3',
         'expiry_date' => 'date',
         'invoiced_quantity' => 'decimal:3',
         'invoiced_amount' => 'decimal:3',

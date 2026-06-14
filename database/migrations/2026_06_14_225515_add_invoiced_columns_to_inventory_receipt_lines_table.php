@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::table('inventory_receipt_lines', function (Blueprint $table) {
             $table->decimal('invoiced_quantity', 15, 3)->default(0)->after('quantity');
-            $table->decimal('invoiced_amount', 15, 3)->default(0)->after('total_cost');
+            $table->decimal('invoiced_amount', 15, 3)->default(0)->after('line_total');
         });
     }
 
