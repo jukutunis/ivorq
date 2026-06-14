@@ -90,6 +90,9 @@ class DatabaseSeeder extends Seeder
             InventoryIssueSeeder::class,
             InventoryTransferSeeder::class,
             InventoryAdjustmentSeeder::class,
+            
+            // Approval sample data
+            \Modules\Foundation\Approval\Database\Seeders\ApprovalSeeder::class,
         ]);
     }
 }

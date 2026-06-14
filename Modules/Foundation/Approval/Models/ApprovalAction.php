@@ -4,12 +4,11 @@ namespace Modules\Foundation\Approval\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Shared\Traits\HasUlid;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
 
-class ApprovalStep extends Model
+class ApprovalAction extends Model
 {
     use HasUlid, LogsActivity;
 
@@ -22,13 +21,13 @@ class ApprovalStep extends Model
             ->logOnlyDirty();
     }
 
-    public function workflow(): BelongsTo
+    public function request(): BelongsTo
     {
-        return $this->belongsTo(ApprovalWorkflow::class, 'workflow_id');
+        return $this->belongsTo(ApprovalRequest::class, 'approval_request_id');
     }
 
-    public function assignees(): HasMany
+    public function step(): BelongsTo
     {
-        return $this->hasMany(ApprovalStepAssignee::class, 'step_id');
+        return $this->belongsTo(ApprovalStep::class, 'approval_step_id');
     }
 }

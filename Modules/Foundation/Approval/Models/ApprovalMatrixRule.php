@@ -3,22 +3,21 @@
 namespace Modules\Foundation\Approval\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Shared\Traits\HasUlid;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\BelongsToProperty;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
 
-class ApprovalWorkflow extends Model
+class ApprovalMatrixRule extends Model
 {
     use HasUlid, HasAuditColumns, BelongsToProperty, LogsActivity;
 
     protected $guarded = [];
 
     protected $casts = [
-        'is_active' => 'boolean',
-        'trigger_condition' => 'json',
+        'min_amount' => 'decimal:2',
+        'max_amount' => 'decimal:2',
     ];
 
     public function getActivitylogOptions(): LogOptions
@@ -26,15 +25,5 @@ class ApprovalWorkflow extends Model
         return LogOptions::defaults()
             ->logUnguarded()
             ->logOnlyDirty();
-    }
-
-    public function steps(): HasMany
-    {
-        return $this->hasMany(ApprovalStep::class, 'workflow_id')->orderBy('sequence', 'asc');
-    }
-    
-    public function requests(): HasMany
-    {
-        return $this->hasMany(ApprovalRequest::class, 'workflow_id');
     }
 }

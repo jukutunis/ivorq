@@ -28,5 +28,18 @@ class AppServiceProvider extends ServiceProvider
         });
 
         \Illuminate\Support\Facades\Event::subscribe(\Modules\Foundation\Notification\Listeners\TaskEventListener::class);
+        
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\Foundation\Approval\Events\ApprovalRequested::class,
+            [\Modules\Foundation\Approval\Listeners\ApprovalNotificationListener::class, 'handleApprovalRequested']
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\Foundation\Approval\Events\ApprovalApproved::class,
+            [\Modules\Foundation\Approval\Listeners\ApprovalNotificationListener::class, 'handleApprovalApproved']
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\Foundation\Approval\Events\ApprovalRejected::class,
+            [\Modules\Foundation\Approval\Listeners\ApprovalNotificationListener::class, 'handleApprovalRejected']
+        );
     }
 }
