@@ -7,8 +7,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
+use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
 use Modules\Finance\GeneralLedger\Repositories\JournalCandidateLineRepository;
 use Modules\Finance\GeneralLedger\Repositories\JournalCandidateRepository;
+use Modules\Finance\GeneralLedger\Exceptions\JournalCandidateBalanceException;
 
 class JournalCandidateService
 {
@@ -59,6 +61,8 @@ class JournalCandidateService
             ]);
         }
 
+        $this->validateBalance($candidate);
+
         return $this->candidateRepository->update($id, [
             'status' => JournalCandidateStatusEnum::APPROVED->value,
             'approved_at' => now(),
@@ -66,7 +70,7 @@ class JournalCandidateService
         ]);
     }
 
-    public function reject(string $id): JournalCandidate
+    public function reject(string $id, string $reason, ?string $userId = null): JournalCandidate
     {
         $candidate = $this->candidateRepository->find($id);
 
@@ -76,8 +80,17 @@ class JournalCandidateService
             ]);
         }
 
+        if (empty(trim($reason))) {
+            throw ValidationException::withMessages([
+                'rejection_reason' => ['A rejection reason is mandatory.']
+            ]);
+        }
+
         return $this->candidateRepository->update($id, [
             'status' => JournalCandidateStatusEnum::REJECTED->value,
+            'rejected_by' => $userId ?? auth()->id(),
+            'rejected_at' => now(),
+            'rejection_reason' => $reason,
         ]);
     }
 
@@ -91,8 +104,33 @@ class JournalCandidateService
             ]);
         }
 
+        $this->validateBalance($candidate);
+
         return $this->candidateRepository->update($id, [
             'status' => JournalCandidateStatusEnum::POSTED->value,
         ]);
+    }
+
+    public function markPostingFailed(string $id, string $reason): JournalCandidate
+    {
+        return $this->candidateRepository->update($id, [
+            'status' => JournalCandidateStatusEnum::POSTING_FAILED->value,
+            'metadata' => array_merge($this->candidateRepository->find($id)->metadata ?? [], [
+                'posting_error' => $reason
+            ])
+        ]);
+    }
+
+    private function validateBalance(JournalCandidate $candidate): void
+    {
+        $debits = $candidate->lines->where('entry_type', EntryTypeEnum::DEBIT)->sum('amount');
+        $credits = $candidate->lines->where('entry_type', EntryTypeEnum::CREDIT)->sum('amount');
+
+        // Allow a tiny float precision variance
+        if (abs($debits - $credits) > 0.001) {
+            throw new JournalCandidateBalanceException(
+                "Candidate is unbalanced. Total Debits: {$debits}, Total Credits: {$credits}"
+            );
+        }
     }
 }
