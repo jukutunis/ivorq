@@ -21,14 +21,19 @@ class InventoryReceiptLine extends Model
         'location_id',
         'quantity',
         'unit_cost',
-        'total_value',
-        'notes',
+        'total_cost',
+        'expiry_date',
+        'invoiced_quantity',
+        'invoiced_amount',
     ];
 
     protected $casts = [
         'quantity'    => 'decimal:3',
-        'unit_cost'   => 'decimal:4',
-        'total_value' => 'decimal:4',
+        'unit_cost'   => 'decimal:3',
+        'total_cost'  => 'decimal:3',
+        'expiry_date' => 'date',
+        'invoiced_quantity' => 'decimal:3',
+        'invoiced_amount' => 'decimal:3',
     ];
 
     public function property(): BelongsTo
