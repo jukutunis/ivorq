@@ -29,6 +29,10 @@ class JournalCandidate extends Model
         'rejected_by',
         'rejected_at',
         'rejection_reason',
+        'reevaluated_by',
+        'reevaluated_at',
+        'reevaluation_count',
+        'last_reevaluation_error',
         'metadata',
     ];
 
@@ -37,6 +41,8 @@ class JournalCandidate extends Model
         'candidate_date' => 'date',
         'approved_at' => 'datetime',
         'rejected_at' => 'datetime',
+        'reevaluated_at' => 'datetime',
+        'reevaluation_count' => 'integer',
         'metadata' => 'array',
     ];
 
@@ -63,5 +69,10 @@ class JournalCandidate extends Model
     public function rejector(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rejected_by');
+    }
+
+    public function reevaluator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reevaluated_by');
     }
 }
