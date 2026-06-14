@@ -12,9 +12,9 @@ class PositionService
         private PositionRepository $positionRepository
     ) {}
 
-    public function allForDepartment(string $departmentId): Collection
+    public function all(): Collection
     {
-        return $this->positionRepository->allForDepartment($departmentId);
+        return $this->positionRepository->all();
     }
 
     public function find(string $id): Position

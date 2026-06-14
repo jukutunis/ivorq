@@ -77,14 +77,12 @@ trait CreatesFoundationData
         ], $overrides));
     }
 
-    protected function createPosition(Property $property, Department $department, array $overrides = []): Position
+    protected function createPosition(array $overrides = []): Position
     {
         static $sequence = 0;
         $sequence++;
 
         return Position::create(array_merge([
-            'property_id'   => $property->id,
-            'department_id' => $department->id,
             'name'          => "Position {$sequence}",
             'code'          => "P{$sequence}",
             'level'         => 2,

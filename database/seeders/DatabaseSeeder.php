@@ -54,7 +54,10 @@ class DatabaseSeeder extends Seeder
 
             // Business data
             FoundationSeeder::class,
+            \Modules\Foundation\Department\Database\Seeders\PositionSeeder::class,
             DepartmentSeeder::class,
+            \Modules\Foundation\Department\Database\Seeders\JobTitleSeeder::class,
+            \Modules\Foundation\Department\Database\Seeders\ShiftSeeder::class,
 
             // Housekeeping sample data
             RoomSeeder::class,

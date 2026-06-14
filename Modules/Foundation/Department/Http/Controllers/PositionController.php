@@ -9,41 +9,40 @@ use Inertia\Response;
 use Modules\Foundation\Department\Http\Requests\StorePositionRequest;
 use Modules\Foundation\Department\Http\Requests\UpdatePositionRequest;
 use Modules\Foundation\Department\Http\Resources\PositionResource;
-use Modules\Foundation\Department\Services\DepartmentService;
 use Modules\Foundation\Department\Services\PositionService;
+use Modules\Foundation\Department\Models\Position;
 
 class PositionController extends Controller
 {
     public function __construct(
-        private PositionService $positionService,
-        private DepartmentService $departmentService
+        private PositionService $positionService
     ) {}
 
-    public function index(string $departmentId): Response
+    public function index(): Response
     {
-        $this->authorize('viewAny', \Modules\Foundation\Department\Models\Department::class);
+        $this->authorize('viewAny', Position::class);
 
-        $department = $this->departmentService->find($departmentId);
-        $positions  = $this->positionService->allForDepartment($departmentId);
+        $positions = $this->positionService->all();
 
         return Inertia::render('Foundation/Position/Index', [
-            'department' => $department,
-            'positions'  => PositionResource::collection($positions),
+            'positions' => PositionResource::collection($positions),
         ]);
     }
 
     public function store(StorePositionRequest $request): RedirectResponse
     {
-        $position = $this->positionService->create($request->validated());
+        $this->authorize('create', Position::class);
 
-        return redirect()->route('departments.show', $position->department_id)
+        $this->positionService->create($request->validated());
+
+        return redirect()->route('positions.index')
             ->with('success', 'Position created successfully.');
     }
 
     public function show(string $id): Response
     {
         $position = $this->positionService->find($id);
-        $this->authorize('view', $position->department);
+        $this->authorize('view', $position);
 
         return Inertia::render('Foundation/Position/Show', [
             'position' => new PositionResource($position),
@@ -52,21 +51,23 @@ class PositionController extends Controller
 
     public function update(UpdatePositionRequest $request, string $id): RedirectResponse
     {
-        $position = $this->positionService->update($id, $request->validated());
+        $position = $this->positionService->find($id);
+        $this->authorize('update', $position);
 
-        return redirect()->route('departments.show', $position->department_id)
+        $this->positionService->update($id, $request->validated());
+
+        return redirect()->route('positions.index')
             ->with('success', 'Position updated successfully.');
     }
 
     public function destroy(string $id): RedirectResponse
     {
         $position = $this->positionService->find($id);
-        $this->authorize('delete', $position->department);
+        $this->authorize('delete', $position);
 
-        $departmentId = $position->department_id;
         $this->positionService->delete($id);
 
-        return redirect()->route('departments.show', $departmentId)
+        return redirect()->route('positions.index')
             ->with('success', 'Position deleted successfully.');
     }
 }

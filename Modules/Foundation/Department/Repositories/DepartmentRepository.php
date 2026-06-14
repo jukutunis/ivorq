@@ -11,17 +11,17 @@ class DepartmentRepository
 {
     public function all(): Collection
     {
-        return Department::with('positions')->get();
+        return Department::with('jobTitles')->get();
     }
 
     public function paginate(int $perPage = 15): LengthAwarePaginator
     {
-        return Department::withCount('positions')->latest()->paginate($perPage);
+        return Department::withCount('jobTitles')->latest()->paginate($perPage);
     }
 
     public function find(string $id): Department
     {
-        $department = Department::with('positions')->find($id);
+        $department = Department::with('jobTitles')->find($id);
 
         throw_if(!$department, new NotFoundException('Department'));
 

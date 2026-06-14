@@ -4,8 +4,8 @@ namespace Modules\Foundation\Department\Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Modules\Foundation\Department\Models\Department;
-use Modules\Foundation\Department\Models\Position;
 use Modules\Foundation\Property\Models\Property;
+use Shared\Enums\DepartmentTypeEnum;
 
 class DepartmentSeeder extends Seeder
 {
@@ -18,40 +18,24 @@ class DepartmentSeeder extends Seeder
         }
 
         $departments = [
-            ['code' => 'FO',  'name' => 'Front Office'],
-            ['code' => 'HK',  'name' => 'Housekeeping'],
-            ['code' => 'ENG', 'name' => 'Engineering'],
-            ['code' => 'FB',  'name' => 'Food & Beverage'],
-            ['code' => 'FIN', 'name' => 'Finance'],
-            ['code' => 'HR',  'name' => 'Human Resources'],
-            ['code' => 'SEC', 'name' => 'Security'],
-            ['code' => 'IT',  'name' => 'Information Technology'],
+            ['code' => 'FO',  'name' => 'Front Office', 'type' => DepartmentTypeEnum::Operational, 'cost_center' => 'FO-001'],
+            ['code' => 'HK',  'name' => 'Housekeeping', 'type' => DepartmentTypeEnum::Operational, 'cost_center' => 'HSKP-001'],
+            ['code' => 'ENG', 'name' => 'Engineering', 'type' => DepartmentTypeEnum::Operational, 'cost_center' => 'ENG-001'],
+            ['code' => 'FB',  'name' => 'Food & Beverage', 'type' => DepartmentTypeEnum::Operational, 'cost_center' => 'FB-001'],
+            ['code' => 'FIN', 'name' => 'Finance', 'type' => DepartmentTypeEnum::Administrative, 'cost_center' => 'FIN-001'],
+            ['code' => 'HR',  'name' => 'Human Resources', 'type' => DepartmentTypeEnum::Administrative, 'cost_center' => 'HR-001'],
+            ['code' => 'SEC', 'name' => 'Security', 'type' => DepartmentTypeEnum::Support, 'cost_center' => 'SEC-001'],
+            ['code' => 'IT',  'name' => 'Information Technology', 'type' => DepartmentTypeEnum::Support, 'cost_center' => 'IT-001'],
         ];
 
         foreach ($departments as $data) {
-            $dept = Department::create([
+            Department::create([
                 'property_id' => $property->id,
                 'name'        => $data['name'],
                 'code'        => $data['code'],
+                'type'        => $data['type'],
+                'cost_center_code' => $data['cost_center'],
                 'is_active'   => true,
-            ]);
-
-            Position::create([
-                'property_id'   => $property->id,
-                'department_id' => $dept->id,
-                'name'          => $data['name'] . ' Manager',
-                'code'          => $data['code'] . '-MGR',
-                'level'         => 4,
-                'is_active'     => true,
-            ]);
-
-            Position::create([
-                'property_id'   => $property->id,
-                'department_id' => $dept->id,
-                'name'          => $data['name'] . ' Staff',
-                'code'          => $data['code'] . '-STAFF',
-                'level'         => 2,
-                'is_active'     => true,
             ]);
         }
     }

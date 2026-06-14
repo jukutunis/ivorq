@@ -8,16 +8,14 @@ use Shared\Exceptions\NotFoundException;
 
 class PositionRepository
 {
-    public function allForDepartment(string $departmentId): Collection
+    public function all(): Collection
     {
-        return Position::where('department_id', $departmentId)
-            ->orderBy('level')
-            ->get();
+        return Position::orderBy('level')->get();
     }
 
     public function find(string $id): Position
     {
-        $position = Position::with('department')->find($id);
+        $position = Position::find($id);
 
         throw_if(!$position, new NotFoundException('Position'));
 

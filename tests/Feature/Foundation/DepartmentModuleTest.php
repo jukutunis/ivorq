@@ -154,23 +154,17 @@ class DepartmentModuleTest extends TestCase
 
     // ─── Positions ─────────────────────────────────────────────────────────
 
-    public function test_admin_can_create_position_in_department(): void
+    public function test_super_admin_can_create_global_position(): void
     {
-        $company = $this->createCompany();
-        $prop    = $this->createProperty($company);
-        $admin   = $this->createPropertyAdmin($prop);
-        $dept    = $this->createDepartment($prop);
+        $admin = $this->createSuperAdmin();
 
         $this->actingAs($admin)->post('/positions', [
-            'department_id' => $dept->id,
             'name'          => 'Housekeeper',
             'code'          => 'HKR',
             'level'         => 2,
         ])->assertRedirect();
 
         $this->assertDatabaseHas('positions', [
-            'department_id' => $dept->id,
-            'property_id'   => $prop->id,
             'code'          => 'HKR',
         ]);
     }
@@ -238,13 +232,10 @@ class DepartmentModuleTest extends TestCase
 
     // ─── Positions: additional coverage ────────────────────────────────────────
 
-    public function test_admin_can_update_position(): void
+    public function test_super_admin_can_update_global_position(): void
     {
-        $company  = $this->createCompany();
-        $prop     = $this->createProperty($company);
-        $admin    = $this->createPropertyAdmin($prop);
-        $dept     = $this->createDepartment($prop);
-        $position = $this->createPosition($prop, $dept);
+        $admin    = $this->createSuperAdmin();
+        $position = $this->createPosition();
 
         $this->actingAs($admin)
             ->put("/positions/{$position->id}", ['name' => 'Senior Housekeeper'])
@@ -253,13 +244,10 @@ class DepartmentModuleTest extends TestCase
         $this->assertDatabaseHas('positions', ['id' => $position->id, 'name' => 'Senior Housekeeper']);
     }
 
-    public function test_admin_can_delete_position(): void
+    public function test_super_admin_can_delete_global_position(): void
     {
-        $company  = $this->createCompany();
-        $prop     = $this->createProperty($company);
-        $admin    = $this->createPropertyAdmin($prop);
-        $dept     = $this->createDepartment($prop);
-        $position = $this->createPosition($prop, $dept);
+        $admin    = $this->createSuperAdmin();
+        $position = $this->createPosition();
 
         $this->actingAs($admin)
             ->delete("/positions/{$position->id}")
@@ -270,13 +258,9 @@ class DepartmentModuleTest extends TestCase
 
     public function test_creating_position_generates_audit_log(): void
     {
-        $company = $this->createCompany();
-        $prop    = $this->createProperty($company);
-        $admin   = $this->createPropertyAdmin($prop);
-        $dept    = $this->createDepartment($prop);
+        $admin   = $this->createSuperAdmin();
 
         $this->actingAs($admin)->post('/positions', [
-            'department_id' => $dept->id,
             'name'          => 'Audit Position',
             'code'          => 'AP1',
             'level'         => 2,
