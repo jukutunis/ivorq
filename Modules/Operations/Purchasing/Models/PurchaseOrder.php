@@ -80,7 +80,11 @@ class PurchaseOrder extends Model implements ApprovableContract
 
     public function markAsApproved(): void
     {
-        $this->update(['status' => PurchaseOrderStatusEnum::Approved]);
+        $this->update([
+            'status' => PurchaseOrderStatusEnum::Approved,
+            'approved_by' => auth()->id(),
+            'approved_at' => now(),
+        ]);
     }
 
     public function markAsRejected(?string $reason = null): void

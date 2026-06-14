@@ -18,11 +18,18 @@ class PurchaseOrderLine extends Model
     protected $guarded = ['id'];
 
     protected $casts = [
-        'quantity_ordered' => 'decimal:3',
-        'quantity_received' => 'decimal:3',
+        'ordered_quantity' => 'decimal:3',
+        'received_quantity' => 'decimal:3',
+        'invoiced_quantity' => 'decimal:3',
+        'receiving_tolerance_percent' => 'decimal:2',
         'unit_cost' => 'decimal:2',
         'line_total' => 'decimal:2',
     ];
+
+    public function getRemainingQuantityAttribute(): float
+    {
+        return max(0, $this->ordered_quantity - $this->received_quantity);
+    }
 
     public function purchaseOrder(): BelongsTo
     {

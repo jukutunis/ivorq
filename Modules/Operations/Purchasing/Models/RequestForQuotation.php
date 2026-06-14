@@ -53,6 +53,12 @@ class RequestForQuotation extends Model
         // Select the winner
         $winningQuotation->update(['is_winner' => true, 'status' => \Modules\Operations\Purchasing\Enums\VendorQuotationStatusEnum::Selected]);
         
-        $this->update(['status' => RequestForQuotationStatusEnum::Awarded]);
+        $this->update([
+            'status' => RequestForQuotationStatusEnum::Awarded,
+            'awarded_vendor_id' => $winningQuotation->vendor_id,
+            'awarded_quotation_id' => $winningQuotation->id,
+            'awarded_at' => now(),
+            'awarded_by' => auth()->id(),
+        ]);
     }
 }
