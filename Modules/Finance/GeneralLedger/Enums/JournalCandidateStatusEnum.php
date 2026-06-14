@@ -9,4 +9,5 @@ enum JournalCandidateStatusEnum: string
     case APPROVED = 'APPROVED';
     case REJECTED = 'REJECTED';
     case POSTED = 'POSTED';
+    case CONFIGURATION_ERROR = 'CONFIGURATION_ERROR';
 }

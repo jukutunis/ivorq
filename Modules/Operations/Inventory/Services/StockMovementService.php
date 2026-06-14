@@ -9,6 +9,7 @@ use Modules\Operations\Inventory\Models\InventoryTransaction;
 use Modules\Operations\Inventory\Repositories\InventoryItemRepository;
 use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
 use Modules\Operations\Inventory\Repositories\InventoryTransactionRepository;
+use Modules\Operations\Inventory\Events\InventoryAdjustmentPosted;
 
 class StockMovementService
 {
@@ -189,7 +190,7 @@ class StockMovementService
         $totalCost = ($costToUse !== null) ? $change * (float) $costToUse : null;
 
         // Immutable Ledger Append
-        return $this->transactionRepository->create([
+        $transaction = $this->transactionRepository->create([
             'property_id'      => $propertyId,
             'item_id'          => $itemId,
             'location_id'      => $locationId,
@@ -205,5 +206,11 @@ class StockMovementService
             'posted_at'        => now(),
             'posted_by'        => $userId ?? auth()->id(),
         ]);
+
+        if (in_array($movementType, [TransactionTypeEnum::AdjustmentIn, TransactionTypeEnum::AdjustmentOut])) {
+            InventoryAdjustmentPosted::dispatch($transaction);
+        }
+
+        return $transaction;
     }
 }
