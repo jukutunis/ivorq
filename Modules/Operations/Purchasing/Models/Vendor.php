@@ -25,6 +25,12 @@ class Vendor extends Model
         'vendor_code',
         'name',
         'tax_id',
+        'tax_number',
+        'contact_person',
+        'email',
+        'phone',
+        'payment_term_days',
+        'credit_limit',
         'default_currency_code',
         'is_active',
         'is_approved',
@@ -35,6 +41,8 @@ class Vendor extends Model
         'is_active' => 'boolean',
         'is_approved' => 'boolean',
         'performance_score' => 'decimal:2',
+        'payment_term_days' => 'integer',
+        'credit_limit' => 'decimal:2',
     ];
 
     public function property(): BelongsTo
@@ -60,10 +68,5 @@ class Vendor extends Model
     public function purchaseOrders(): HasMany
     {
         return $this->hasMany(PurchaseOrder::class);
-    }
-
-    public function invoices(): HasMany
-    {
-        return $this->hasMany(\Modules\Finance\Payables\Models\VendorInvoice::class);
     }
 }

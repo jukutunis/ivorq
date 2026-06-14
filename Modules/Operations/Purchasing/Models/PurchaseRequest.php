@@ -33,6 +33,11 @@ class PurchaseRequest extends Model implements ApprovableContract
         'estimated_total',
         'status',
         'remarks',
+        'approved_by',
+        'approved_at',
+        'rejected_by',
+        'rejected_at',
+        'rejection_reason',
     ];
 
     protected $casts = [
@@ -40,6 +45,8 @@ class PurchaseRequest extends Model implements ApprovableContract
         'exchange_rate' => 'decimal:4',
         'estimated_total' => 'decimal:2',
         'status' => PurchaseRequestStatusEnum::class,
+        'approved_at' => 'datetime',
+        'rejected_at' => 'datetime',
     ];
 
     public function property(): BelongsTo
@@ -96,13 +103,20 @@ class PurchaseRequest extends Model implements ApprovableContract
 
     public function markAsApproved(): void
     {
-        $this->update(['status' => PurchaseRequestStatusEnum::Approved]);
+        $this->update([
+            'status' => PurchaseRequestStatusEnum::Approved,
+            'approved_by' => auth()->id(),
+            'approved_at' => now(),
+        ]);
     }
 
     public function markAsRejected(?string $reason = null): void
     {
-        // Could store rejection reason in remarks if needed
-        $remarks = $reason ? ($this->remarks . "\nRejected: " . $reason) : $this->remarks;
-        $this->update(['status' => PurchaseRequestStatusEnum::Rejected, 'remarks' => $remarks]);
+        $this->update([
+            'status' => PurchaseRequestStatusEnum::Rejected,
+            'rejected_by' => auth()->id(),
+            'rejected_at' => now(),
+            'rejection_reason' => $reason,
+        ]);
     }
 }

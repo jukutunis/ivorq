@@ -49,13 +49,7 @@ class AuditServiceProvider extends ServiceProvider
         \Modules\Operations\Purchasing\Models\PurchaseOrder::class,
         \Modules\Operations\Purchasing\Models\PurchaseOrderLine::class,
 
-        // Receiving
-        \Modules\Operations\Purchasing\Models\GoodsReceipt::class,
-        \Modules\Operations\Purchasing\Models\GoodsReceiptLine::class,
-
         // Payables
-        \Modules\Finance\Payables\Models\VendorInvoice::class,
-        \Modules\Finance\Payables\Models\VendorInvoiceLine::class,
         \Modules\Finance\Payables\Models\ThreeWayMatch::class,
         \Modules\Finance\Payables\Models\ThreeWayMatchLine::class,
         \Modules\Finance\Payables\Models\AccountPayable::class,

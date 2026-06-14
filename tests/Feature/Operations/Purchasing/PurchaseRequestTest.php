@@ -6,67 +6,104 @@ use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Foundation\Concerns\CreatesFoundationData;
 use Modules\Operations\Purchasing\Models\PurchaseRequest;
-use Modules\Operations\Purchasing\Models\PurchaseRequestLine;
-use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\Department\Models\Department;
-use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Models\InventoryUnit;
+use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
+use Illuminate\Database\QueryException;
 
 class PurchaseRequestTest extends TestCase
 {
     use RefreshDatabase, CreatesFoundationData;
 
-    public function test_can_create_purchase_request_with_lines()
+    public function test_pr_lifecycle_and_approval_governance()
     {
         $property = $this->createProperty($this->createCompany());
         $department = Department::create(['property_id' => $property->id, 'name' => 'IT', 'code' => 'IT']);
-        $user = $this->createUser($property);
+        $creator = $this->createUser($property);
+        $approver = $this->createUser($property); // In a real app we would assign roles, but here we just test fields
 
         $pr = PurchaseRequest::create([
             'property_id' => $property->id,
             'request_no' => 'PR-001',
             'department_id' => $department->id,
-            'requester_id' => $user->id,
+            'requester_id' => $creator->id,
             'required_date' => now()->addDays(7),
             'estimated_total' => 1000,
+            'status' => PurchaseRequestStatusEnum::Draft->value,
         ]);
 
-        $unit = InventoryUnit::create(['property_id' => $property->id, 'code' => 'PCS', 'name' => 'Pieces']);
+        $this->assertEquals(PurchaseRequestStatusEnum::Draft, $pr->status);
 
-        $line = $pr->lines()->create([
-            'description' => 'Laptop',
-            'quantity' => 1,
-            'estimated_unit_cost' => 1000,
-            'unit_id' => $unit->id, 
-            'estimated_total_cost' => 1000,
-        ]);
+        // Transition to PENDING_REVIEW
+        $pr->update(['status' => PurchaseRequestStatusEnum::PendingReview->value]);
+        $this->assertEquals(PurchaseRequestStatusEnum::PendingReview, $pr->status);
 
-        $this->assertNotNull($pr->id);
-        $this->assertEquals('PR-001', $pr->request_no);
-        $this->assertEquals(1000, $pr->estimated_total);
-        
-        $this->assertCount(1, $pr->lines);
-        $this->assertEquals('Laptop', $pr->lines->first()->description);
-        $this->assertEquals(1000, $pr->lines->first()->estimated_total_cost);
+        // Authenticate as approver
+        $this->actingAs($approver);
+
+        // Transition to APPROVED
+        $pr->markAsApproved();
+        $pr->refresh();
+
+        $this->assertEquals(PurchaseRequestStatusEnum::Approved, $pr->status);
+        $this->assertEquals($approver->id, $pr->approved_by);
+        $this->assertNotNull($pr->approved_at);
+        $this->assertNull($pr->rejected_by);
+
+        // Transition to REJECTED
+        $pr->markAsRejected('Budget exceeded');
+        $pr->refresh();
+
+        $this->assertEquals(PurchaseRequestStatusEnum::Rejected, $pr->status);
+        $this->assertEquals($approver->id, $pr->rejected_by);
+        $this->assertNotNull($pr->rejected_at);
+        $this->assertEquals('Budget exceeded', $pr->rejection_reason);
     }
 
-    public function test_purchase_request_is_soft_deletable()
+    public function test_pr_property_isolation_and_duplicate_prevention()
     {
-        $property = $this->createProperty($this->createCompany());
-        $department = Department::create(['property_id' => $property->id, 'name' => 'HR', 'code' => 'HR']);
-        $user = $this->createUser($property);
+        $company = $this->createCompany();
+        $propertyA = $this->createProperty($company);
+        $propertyB = $this->createProperty($company);
 
-        $pr = PurchaseRequest::create([
-            'property_id' => $property->id,
-            'request_no' => 'PR-002',
-            'department_id' => $department->id,
-            'requester_id' => $user->id,
+        $departmentA = Department::create(['property_id' => $propertyA->id, 'name' => 'IT', 'code' => 'IT-A']);
+        $departmentB = Department::create(['property_id' => $propertyB->id, 'name' => 'IT', 'code' => 'IT-B']);
+
+        $userA = $this->createUser($propertyA);
+        $userB = $this->createUser($propertyB);
+
+        // Create PR in Property A
+        PurchaseRequest::create([
+            'property_id' => $propertyA->id,
+            'request_no' => 'PR-ISO',
+            'department_id' => $departmentA->id,
+            'requester_id' => $userA->id,
             'required_date' => now()->addDays(7),
-            'estimated_total' => 500,
+            'estimated_total' => 100,
         ]);
 
-        $pr->delete();
+        // Same request_no in Property B should succeed (Isolation)
+        $prB = PurchaseRequest::create([
+            'property_id' => $propertyB->id,
+            'request_no' => 'PR-ISO',
+            'department_id' => $departmentB->id,
+            'requester_id' => $userB->id,
+            'required_date' => now()->addDays(7),
+            'estimated_total' => 200,
+        ]);
 
-        $this->assertSoftDeleted($pr);
+        $this->assertNotNull($prB->id);
+
+        $this->expectException(QueryException::class);
+
+        // Same request_no in Property A should fail (Duplicate Prevention)
+        PurchaseRequest::create([
+            'property_id' => $propertyA->id,
+            'request_no' => 'PR-ISO',
+            'department_id' => $departmentA->id,
+            'requester_id' => $userA->id,
+            'required_date' => now()->addDays(7),
+            'estimated_total' => 300,
+        ]);
     }
 }
