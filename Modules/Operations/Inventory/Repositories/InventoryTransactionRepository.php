@@ -4,13 +4,13 @@ namespace Modules\Operations\Inventory\Repositories;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
-use Modules\Operations\Inventory\Models\InventoryStockCard;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
 
-class InventoryStockCardRepository
+class InventoryTransactionRepository
 {
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = InventoryStockCard::with(['item.unit', 'location'])
+        $query = InventoryTransaction::with(['item.unit', 'location'])
             ->orderBy('posted_at', 'desc');
 
         if (! empty($filters['item_id'])) {
@@ -21,8 +21,8 @@ class InventoryStockCardRepository
             $query->where('location_id', $filters['location_id']);
         }
 
-        if (! empty($filters['movement_type'])) {
-            $query->where('movement_type', $filters['movement_type']);
+        if (! empty($filters['transaction_type'])) {
+            $query->where('transaction_type', $filters['transaction_type']);
         }
 
         if (! empty($filters['date_from'])) {
@@ -38,7 +38,7 @@ class InventoryStockCardRepository
 
     public function forItem(string $itemId, int $limit = 20): Collection
     {
-        return InventoryStockCard::where('item_id', $itemId)
+        return InventoryTransaction::where('item_id', $itemId)
             ->with(['location', 'postedBy'])
             ->orderBy('posted_at', 'desc')
             ->limit($limit)
@@ -47,21 +47,17 @@ class InventoryStockCardRepository
 
     public function recent(int $limit = 20): Collection
     {
-        return InventoryStockCard::with(['item.unit', 'location', 'postedBy'])
+        return InventoryTransaction::with(['item.unit', 'location', 'postedBy'])
             ->orderBy('posted_at', 'desc')
             ->limit($limit)
             ->get();
     }
 
-    // Append-only: the model guards against mass assignment.
-    // forceFill() is used here because only StockMovementService is the
-    // sanctioned writer — guarding at the model layer prevents accidental
-    // writes elsewhere in the codebase.
-    public function create(array $data): InventoryStockCard
+    public function create(array $data): InventoryTransaction
     {
-        $card = (new InventoryStockCard())->forceFill($data);
-        $card->save();
+        $transaction = (new InventoryTransaction())->forceFill($data);
+        $transaction->save();
 
-        return $card;
+        return $transaction;
     }
 }

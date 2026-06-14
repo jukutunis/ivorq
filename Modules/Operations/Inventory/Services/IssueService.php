@@ -43,18 +43,14 @@ class IssueService
 
         DB::transaction(function () use ($issue, $userId) {
             foreach ($issue->lines as $line) {
-                $item       = $this->itemRepository->find($line->item_id);
-                $currentWac = (string) $item->average_cost;
-                $quantityChange = -1 * (float) $line->quantity;
+                $item = $this->itemRepository->find($line->item_id);
 
                 // BR-018: stamp current WAC as unit_cost on the stock card
-                $this->stockMovementService->move(
+                $this->stockMovementService->issue(
                     $issue->property_id,
                     $line->item_id,
                     $line->location_id,
-                    (string) $quantityChange,
-                    TransactionTypeEnum::Issue,
-                    $currentWac,
+                    (string) $line->quantity,
                     $issue->id,
                     $issue->issue_number,
                     $userId

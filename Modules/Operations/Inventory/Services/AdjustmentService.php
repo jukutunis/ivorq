@@ -9,7 +9,7 @@ use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Modules\Operations\Inventory\Models\InventoryAdjustment;
 use Modules\Operations\Inventory\Repositories\InventoryAdjustmentRepository;
 use Modules\Operations\Inventory\Repositories\InventoryItemRepository;
-use Modules\Operations\Inventory\Repositories\InventoryStockBalanceRepository;
+use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
 
 class AdjustmentService
 {
@@ -17,7 +17,7 @@ class AdjustmentService
         private InventoryAdjustmentRepository $adjustmentRepository,
         private StockMovementService $stockMovementService,
         private InventoryItemRepository $itemRepository,
-        private InventoryStockBalanceRepository $balanceRepository
+        private InventoryStockRepository $stockRepository
     ) {}
 
     public function create(array $data): InventoryAdjustment
@@ -65,8 +65,8 @@ class AdjustmentService
                 // BR-065: staleness check — lock balance row for this item at the
                 // adjustment header location (adjustment lines always share the
                 // header location_id by design; no per-line location override).
-                $balance    = $this->balanceRepository->lockForUpdate($line->item_id, $adjustment->location_id);
-                $currentQty = $balance ? (float) $balance->quantity : 0.0;
+                $balance    = $this->stockRepository->findOrCreateLocked($line->item_id, $adjustment->location_id, $adjustment->property_id);
+                $currentQty = (float) $balance->physical_quantity;
 
                 if ($currentQty !== (float) $line->quantity_system) {
                     throw ValidationException::withMessages([
@@ -83,23 +83,18 @@ class AdjustmentService
 
                 $item = $this->itemRepository->find($line->item_id);
 
-                // BR-067: cost stamped at approval time using item.average_cost.
+                // BR-067: cost stamped at approval time using item.weighted_average_cost.
                 // positive adjustment may use unit_cost from the line if provided;
-                // negative adjustment always uses the item's average_cost.
+                // negative adjustment always uses the item's weighted_average_cost.
                 $unitCost = $variance > 0 && $line->unit_cost
                     ? (string) $line->unit_cost
-                    : (string) $item->average_cost;
+                    : (string) $item->weighted_average_cost;
 
-                $movementType = $variance > 0
-                    ? TransactionTypeEnum::AdjustmentIn
-                    : TransactionTypeEnum::AdjustmentOut;
-
-                $this->stockMovementService->move(
+                $this->stockMovementService->adjust(
                     $adjustment->property_id,
                     $line->item_id,
                     $adjustment->location_id,
                     (string) $variance,
-                    $movementType,
                     $unitCost,
                     $adjustment->id,
                     $adjustment->adjustment_number,

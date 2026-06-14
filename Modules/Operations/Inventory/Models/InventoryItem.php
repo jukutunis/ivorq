@@ -12,4 +12,25 @@ class InventoryItem extends Model
     use HasUlid, BelongsToProperty, SoftDeletes;
 
     protected $guarded = [];
+
+    public function getIsActiveAttribute(): bool
+    {
+        // Treat as active if not deleted
+        return ! $this->trashed();
+    }
+
+    public function category()
+    {
+        return $this->belongsTo(InventoryCategory::class, 'category_id');
+    }
+
+    public function unit()
+    {
+        return $this->belongsTo(InventoryUnit::class, 'unit_id');
+    }
+
+    public function stockBalances()
+    {
+        return $this->hasMany(InventoryStock::class, 'item_id');
+    }
 }

@@ -5,11 +5,10 @@ namespace Modules\Operations\Inventory\Services;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Operations\Inventory\Enums\ReceiptStatusEnum;
-use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Modules\Operations\Inventory\Models\InventoryReceipt;
 use Modules\Operations\Inventory\Repositories\InventoryItemRepository;
 use Modules\Operations\Inventory\Repositories\InventoryReceiptRepository;
-use Modules\Operations\Inventory\Repositories\InventoryStockBalanceRepository;
+use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
 
 class ReceiptService
 {
@@ -17,7 +16,7 @@ class ReceiptService
         private InventoryReceiptRepository $receiptRepository,
         private StockMovementService $stockMovementService,
         private InventoryItemRepository $itemRepository,
-        private InventoryStockBalanceRepository $balanceRepository
+        private InventoryStockRepository $stockRepository
     ) {}
 
     public function create(array $data): InventoryReceipt
@@ -36,7 +35,6 @@ class ReceiptService
             ]);
         }
 
-        // BR-031: at least one line required
         if ($receipt->lines->isEmpty()) {
             throw ValidationException::withMessages([
                 'lines' => ['A receipt must have at least one line before it can be posted.'],
@@ -44,29 +42,14 @@ class ReceiptService
         }
 
         DB::transaction(function () use ($receipt, $userId) {
-            // ----------------------------------------------------------------
-            // C-01 + C-03 fix: Aggregate all lines per item BEFORE touching
-            // balances or WAC.  Then lock and read qty_on_hand for each unique
-            // item exactly once, inside the transaction.
-            //
-            // BR-017: new_wac = (old_qty * old_wac + Σ(line.qty * line.cost))
-            //                   / (old_qty + Σ(line.qty))
-            // ----------------------------------------------------------------
-
-            // Group lines by item_id for WAC aggregation
             $linesByItem = $receipt->lines->groupBy('item_id');
 
-            // Snapshot old WAC and locked old total-qty for each unique item
-            // BEFORE any balance mutations occur.
+            // Lock and read old state for AVCO
             $itemSnapshots = [];
             foreach ($linesByItem as $itemId => $lines) {
-                $item    = $this->itemRepository->find($itemId);
-                $oldWac  = (float) $item->average_cost;
-
-                // C-03 fix: lock all balance rows for this item so the SUM is
-                // consistent within our transaction (no concurrent write can
-                // change the total between this read and our own updates).
-                $oldQty = (float) $this->balanceRepository->totalQuantityForItemLocked($itemId);
+                $item   = $this->itemRepository->find($itemId);
+                $oldWac = (float) $item->weighted_average_cost;
+                $oldQty = (float) $this->stockRepository->totalQuantityForItemLocked($itemId);
 
                 $itemSnapshots[$itemId] = [
                     'item'   => $item,
@@ -75,14 +58,13 @@ class ReceiptService
                 ];
             }
 
-            // Post each individual line's stock movement
+            // Post movements into Ledger
             foreach ($receipt->lines as $line) {
-                $this->stockMovementService->move(
+                $this->stockMovementService->receive(
                     $receipt->property_id,
                     $line->item_id,
                     $line->location_id,
                     (string) $line->quantity,
-                    TransactionTypeEnum::PurchaseReceipt,
                     (string) $line->unit_cost,
                     $receipt->id,
                     $receipt->receipt_number,
@@ -90,23 +72,22 @@ class ReceiptService
                 );
             }
 
-            // Now compute and save one WAC update per unique item
+            // Compute AVCO exactly to formula: 
+            // new_avco = ((old_qty * old_cost) + (receipt_qty * receipt_cost)) / (old_qty + receipt_qty)
             foreach ($linesByItem as $itemId => $lines) {
                 ['item' => $item, 'oldWac' => $oldWac, 'oldQty' => $oldQty] = $itemSnapshots[$itemId];
 
-                // Aggregate this receipt's contribution for this item
-                $receiptQty  = $lines->sum(fn ($l) => (float) $l->quantity);
+                $receiptQty   = $lines->sum(fn ($l) => (float) $l->quantity);
                 $receiptValue = $lines->sum(fn ($l) => (float) $l->quantity * (float) $l->unit_cost);
 
                 $newTotalQty = $oldQty + $receiptQty;
-
+                
                 $newWac = 0.0;
                 if ($newTotalQty > 0) {
-                    // Standard WAC formula
                     $newWac = (($oldQty * $oldWac) + $receiptValue) / $newTotalQty;
                 }
 
-                $this->itemRepository->update($item->id, ['average_cost' => $newWac]);
+                $this->itemRepository->update($item->id, ['weighted_average_cost' => $newWac]);
             }
 
             $this->receiptRepository->update($receipt->id, [

@@ -22,6 +22,8 @@ class ReceivingWorkflowTest extends TestCase
     public function test_can_create_draft_and_submit()
     {
         $property = Property::first();
+        $user = \Modules\Foundation\User\Models\User::first();
+        $this->actingAs($user);
         app(CurrentPropertyService::class)->setPropertyId($property->id);
         $vendor = Vendor::where('property_id', $property->id)->first();
         if (!$vendor) {
@@ -29,11 +31,21 @@ class ReceivingWorkflowTest extends TestCase
             $vendor = Vendor::create(['property_id' => $property->id, 'vendor_category_id' => $category->id, 'name' => 'Test', 'vendor_code' => 'T', 'status' => 'active']);
         }
 
-        $service = new ReceivingService(
-            new ReceivingRepository(),
-            new ReceivingLineRepository(),
-            new ReceivingValidationService()
-        );
+        // Setup Approval Workflow so submitForApproval succeeds
+        $workflow = \Modules\Foundation\Approval\Models\ApprovalWorkflow::create([
+            'property_id' => $property->id,
+            'name' => 'Receiving Approval',
+            'approvable_type' => ReceivingDocument::class,
+            'is_active' => true,
+        ]);
+        \Modules\Foundation\Approval\Models\ApprovalStep::create([
+            'workflow_id' => $workflow->id,
+            'name' => 'First Step',
+            'sequence' => 1,
+            'required_approvals' => 1,
+        ]);
+
+        $service = app(ReceivingService::class);
 
         $document = $service->createDraft([
             'property_id' => $property->id,

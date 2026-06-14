@@ -65,7 +65,9 @@ class ReceivingApprovalListener
                     'title' => 'Receiving Approved',
                     'body' => "Receiving Document {$approvable->grn_number} has been approved."
                 ]);
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+                Log::error('Failed to create receiving notification: ' . $e->getMessage());
+            }
         }
     }
 

@@ -61,6 +61,11 @@ class ReceivingLine extends Model
         return $this->belongsTo(PurchaseOrderLine::class);
     }
 
+    public function inventoryItem(): BelongsTo
+    {
+        return $this->belongsTo(\Modules\Operations\Inventory\Models\InventoryItem::class, 'inventory_item_id');
+    }
+
     public function discrepancies(): HasMany
     {
         return $this->hasMany(ReceivingDiscrepancy::class);

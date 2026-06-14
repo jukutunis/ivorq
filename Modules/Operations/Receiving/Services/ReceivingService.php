@@ -12,7 +12,8 @@ class ReceivingService
     public function __construct(
         protected ReceivingRepository $receivingRepository,
         protected ReceivingLineRepository $receivingLineRepository,
-        protected ReceivingValidationService $validationService
+        protected ReceivingValidationService $validationService,
+        protected ReceivingApprovalIntegrationService $approvalIntegrationService
     ) {}
 
     public function createDraft(array $data): \Modules\Operations\Receiving\Models\ReceivingDocument
@@ -47,7 +48,7 @@ class ReceivingService
             
             $document->update(['status' => \Modules\Operations\Receiving\Enums\ReceivingDocumentStatusEnum::Submitted->value]);
             
-            // Integrate with Approval Engine & Notifications here...
+            $this->approvalIntegrationService->submitForApproval($document);
         });
     }
 

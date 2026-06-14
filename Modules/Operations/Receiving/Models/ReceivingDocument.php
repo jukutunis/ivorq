@@ -107,7 +107,7 @@ class ReceivingDocument extends Model implements ApprovableContract
 
     public function getApprovableType(): string
     {
-        return 'receiving_document';
+        return static::class;
     }
 
     public function getPropertyId(): string

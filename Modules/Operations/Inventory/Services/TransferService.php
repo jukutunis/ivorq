@@ -4,7 +4,6 @@ namespace Modules\Operations\Inventory\Services;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Modules\Operations\Inventory\Enums\TransferStatusEnum;
 use Modules\Operations\Inventory\Models\InventoryTransfer;
 use Modules\Operations\Inventory\Repositories\InventoryItemRepository;
@@ -44,31 +43,12 @@ class TransferService
         DB::transaction(function () use ($transfer, $userId) {
             foreach ($transfer->lines as $line) {
                 $quantity = (float) $line->quantity_requested;
-
-                // V1: transfer movements carry null unit_cost / null total_value (BR-019, BR-055).
-                // Adjustment lines always use the header location_id (by design — no per-line location).
-
-                // Stock out from source location
-                $this->stockMovementService->move(
+                $this->stockMovementService->transfer(
                     $transfer->property_id,
                     $line->item_id,
                     $transfer->from_location_id,
-                    (string) (-1 * $quantity),
-                    TransactionTypeEnum::TransferOut,
-                    null,  // BR-019: no cost tracking on transfers in V1
-                    $transfer->id,
-                    $transfer->transfer_number,
-                    $userId
-                );
-
-                // Stock in to destination location
-                $this->stockMovementService->move(
-                    $transfer->property_id,
-                    $line->item_id,
                     $transfer->to_location_id,
                     (string) $quantity,
-                    TransactionTypeEnum::TransferIn,
-                    null,  // BR-019: no cost tracking on transfers in V1
                     $transfer->id,
                     $transfer->transfer_number,
                     $userId

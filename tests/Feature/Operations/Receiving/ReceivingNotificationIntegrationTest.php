@@ -40,7 +40,7 @@ class ReceivingNotificationIntegrationTest extends TestCase
         $workflow = ApprovalWorkflow::create([
             'property_id' => $property->id,
             'name' => 'Receiving Approval',
-            'approvable_type' => 'receiving_document',
+            'approvable_type' => ReceivingDocument::class,
             'is_active' => true,
         ]);
 
