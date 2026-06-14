@@ -50,7 +50,7 @@ class TaskAssignmentModuleTest extends TestCase
         $this->assertInstanceOf(TaskAssignment::class, $assignment);
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
         $this->assertNotNull($assignment->assigned_at);
-        $this->assertDatabaseHas('task_assignments', [
+        $this->assertDatabaseHas('housekeeping_task_assignments', [
             'cleaning_task_id' => $task->id,
             'user_id'          => $admin->id,
             'department_id'    => $department->id,
@@ -80,7 +80,7 @@ class TaskAssignmentModuleTest extends TestCase
 
         $this->assertSame(AssignmentStatusEnum::Completed, $completed->status);
         $this->assertNotNull($completed->completed_at);
-        $this->assertDatabaseHas('task_assignments', [
+        $this->assertDatabaseHas('housekeeping_task_assignments', [
             'id'     => $assignment->id,
             'status' => 'completed',
         ]);
@@ -107,7 +107,7 @@ class TaskAssignmentModuleTest extends TestCase
         $cancelled = app(TaskAssignmentService::class)->cancel($assignment->id);
 
         $this->assertSame(AssignmentStatusEnum::Cancelled, $cancelled->status);
-        $this->assertDatabaseHas('task_assignments', [
+        $this->assertDatabaseHas('housekeeping_task_assignments', [
             'id'     => $assignment->id,
             'status' => 'cancelled',
         ]);

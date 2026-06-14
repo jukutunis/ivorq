@@ -9,7 +9,7 @@ class TaskAssignment extends Model
 {
     use HasUlids, \Illuminate\Database\Eloquent\SoftDeletes;
 
-    protected $table = 'task_assignments';
+    protected $table = 'housekeeping_task_assignments';
 
     protected $fillable = [
         'cleaning_task_id',

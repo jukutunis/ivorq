@@ -59,6 +59,9 @@ class DatabaseSeeder extends Seeder
             \Modules\Foundation\Department\Database\Seeders\JobTitleSeeder::class,
             \Modules\Foundation\Department\Database\Seeders\ShiftSeeder::class,
 
+            // Task sample data
+            \Modules\Foundation\Task\Database\Seeders\TaskSeeder::class,
+
             // Housekeeping sample data
             RoomSeeder::class,
             CleaningChecklistSeeder::class,

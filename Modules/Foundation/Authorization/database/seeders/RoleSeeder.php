@@ -38,6 +38,8 @@ class RoleSeeder extends Seeder
             'user.view', 'user.create', 'user.edit',
             'role.view',
             'audit.view', 'activity.view',
+            // Task
+            'task.view', 'task.create', 'task.assign', 'task.complete', 'task.cancel', 'task.delete',
             // Zoning
             'zone.view', 'zone.create', 'zone.edit', 'zone.assign', 'zone.archive',
             // Housekeeping — Room
@@ -84,6 +86,8 @@ class RoleSeeder extends Seeder
         ]);
         $staff->syncPermissions([
             'activity.view',
+            'task.view',
+            'task.complete',
             'zone.view',
             // Housekeeping — Room
             'housekeeping.room.view',

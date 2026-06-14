@@ -25,6 +25,9 @@ class PermissionSeeder extends Seeder
             // Audit
             'audit.view',
 
+            // Task
+            'task.view', 'task.create', 'task.assign', 'task.complete', 'task.cancel', 'task.delete',
+
             // Activity
             'activity.view',
         ];

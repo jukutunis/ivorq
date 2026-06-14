@@ -44,7 +44,7 @@ class HousekeepingModelTest extends TestCase
         $this->assertSame('rooms',                 (new Room())->getTable());
         $this->assertSame('room_status_histories', (new RoomStatusHistory())->getTable());
         $this->assertSame('cleaning_tasks',        (new CleaningTask())->getTable());
-        $this->assertSame('task_assignments',      (new TaskAssignment())->getTable());
+        $this->assertSame('housekeeping_task_assignments',      (new TaskAssignment())->getTable());
         $this->assertSame('cleaning_checklists',   (new CleaningChecklist())->getTable());
         $this->assertSame('checklist_items',       (new ChecklistItem())->getTable());
         $this->assertSame('room_inspections',      (new RoomInspection())->getTable());

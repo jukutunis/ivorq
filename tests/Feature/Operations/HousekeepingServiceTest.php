@@ -328,7 +328,7 @@ class HousekeepingServiceTest extends TestCase
         ]);
 
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
-        $this->assertDatabaseHas('task_assignments', [
+        $this->assertDatabaseHas('housekeeping_task_assignments', [
             'cleaning_task_id' => $task->id,
             'user_id'          => $admin->id,
         ]);
