@@ -93,6 +93,9 @@ class DatabaseSeeder extends Seeder
             
             // Approval sample data
             \Modules\Foundation\Approval\Database\Seeders\ApprovalSeeder::class,
+            
+            // Receiving sample data
+            \Modules\Operations\Receiving\Database\Seeders\DemoReceivingSeeder::class,
         ]);
     }
 }

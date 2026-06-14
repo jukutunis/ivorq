@@ -20,6 +20,7 @@ class OperationsServiceProvider extends ServiceProvider
         PMSServiceProvider::class,
         InventoryServiceProvider::class,
         PurchasingServiceProvider::class,
+        \Modules\Operations\Receiving\Providers\ReceivingServiceProvider::class,
         \Modules\Operations\AssetManagement\AssetManagementServiceProvider::class,
         \Modules\Operations\Maintenance\Providers\MaintenanceServiceProvider::class,
         \Modules\Operations\WorkOrder\Providers\WorkOrderServiceProvider::class,
