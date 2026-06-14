@@ -16,8 +16,8 @@ use Modules\Operations\Engineering\Models\PreventiveMaintenance;
 use Modules\Operations\Engineering\Models\WorkOrder;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
+use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Authorization\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
 trait CreatesEngineeringData

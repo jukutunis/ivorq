@@ -15,7 +15,7 @@ class ChecklistPolicy
     public function view(User $user, CleaningChecklist $checklist): bool
     {
         return $user->hasPermissionTo('housekeeping.checklist.view')
-            && ($user->isSuperAdmin() || $user->property_id === $checklist->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $checklist->property_id);
     }
 
     public function create(User $user): bool
@@ -26,12 +26,12 @@ class ChecklistPolicy
     public function update(User $user, CleaningChecklist $checklist): bool
     {
         return $user->hasPermissionTo('housekeeping.checklist.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $checklist->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $checklist->property_id);
     }
 
     public function delete(User $user, CleaningChecklist $checklist): bool
     {
         return $user->hasPermissionTo('housekeeping.checklist.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $checklist->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $checklist->property_id);
     }
 }

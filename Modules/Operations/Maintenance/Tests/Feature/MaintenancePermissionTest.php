@@ -4,7 +4,7 @@ namespace Modules\Operations\Maintenance\Tests\Feature;
 
 use Tests\TestCase;
 use Modules\Foundation\User\Models\User;
-use Spatie\Permission\Models\Permission;
+use Modules\Foundation\Authorization\Models\Permission;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Modules\Operations\Maintenance\Database\Seeders\MaintenancePermissionSeeder;
 

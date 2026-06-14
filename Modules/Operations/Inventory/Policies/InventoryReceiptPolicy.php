@@ -15,7 +15,7 @@ class InventoryReceiptPolicy
     public function view(User $user, InventoryReceipt $receipt): bool
     {
         return $user->hasPermissionTo('inventory.receipt.view')
-            && ($user->isSuperAdmin() || $user->property_id === $receipt->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $receipt->property_id);
     }
 
     public function create(User $user): bool
@@ -26,13 +26,13 @@ class InventoryReceiptPolicy
     public function update(User $user, InventoryReceipt $receipt): bool
     {
         return $user->hasPermissionTo('inventory.receipt.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $receipt->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $receipt->property_id);
     }
 
     public function delete(User $user, InventoryReceipt $receipt): bool
     {
         return $user->hasPermissionTo('inventory.receipt.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $receipt->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $receipt->property_id);
     }
 
     /**
@@ -43,7 +43,7 @@ class InventoryReceiptPolicy
     public function post(User $user, InventoryReceipt $receipt): bool
     {
         return $user->hasPermissionTo('inventory.receipt.post')
-            && ($user->isSuperAdmin() || $user->property_id === $receipt->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $receipt->property_id);
     }
 
     /**
@@ -53,6 +53,6 @@ class InventoryReceiptPolicy
     public function cancel(User $user, InventoryReceipt $receipt): bool
     {
         return $user->hasPermissionTo('inventory.receipt.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $receipt->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $receipt->property_id);
     }
 }

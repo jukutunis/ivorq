@@ -16,7 +16,7 @@ class PermissionController extends Controller
 
     public function index(): Response
     {
-        $this->authorize('viewAny', \Spatie\Permission\Models\Role::class);
+        $this->authorize('viewAny', \Modules\Foundation\Authorization\Models\Role::class);
 
         $permissions = $this->permissionService->all();
 

@@ -3,6 +3,7 @@
 namespace Modules\Foundation\User\Models;
 
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -11,16 +12,19 @@ use Laravel\Sanctum\HasApiTokens;
 use Modules\Foundation\Department\Models\Department;
 use Modules\Foundation\Department\Models\Position;
 use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\Property\Models\PropertyUser;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
 use Spatie\Permission\Traits\HasRoles;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, HasUlid, HasAuditColumns, HasRoles, Notifiable, SoftDeletes;
+    use HasApiTokens, HasUlid, HasAuditColumns, HasRoles, Notifiable, SoftDeletes, LogsActivity;
 
     protected $fillable = [
-        'property_id',
+        'is_system_admin',
         'name',
         'email',
         'password',
@@ -40,12 +44,23 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'is_active'         => 'boolean',
+        'is_system_admin'   => 'boolean',
         'password'          => 'hashed',
     ];
 
-    public function property(): BelongsTo
+    public function getActivitylogOptions(): LogOptions
     {
-        return $this->belongsTo(Property::class);
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
+    }
+
+    public function properties(): BelongsToMany
+    {
+        return $this->belongsToMany(Property::class, 'property_user')
+            ->using(PropertyUser::class)
+            ->withPivot(['is_default', 'status', 'joined_at'])
+            ->withTimestamps();
     }
 
     public function department(): BelongsTo
@@ -70,6 +85,17 @@ class User extends Authenticatable
 
     public function isSuperAdmin(): bool
     {
-        return is_null($this->property_id);
+        return $this->is_system_admin === true;
+    }
+
+    public function defaultProperty(): ?Property
+    {
+        return $this->properties()
+            ->wherePivot('is_default', true)
+            ->wherePivot('status', 'active')
+            ->first() 
+            ?? $this->properties()
+            ->wherePivot('status', 'active')
+            ->first();
     }
 }

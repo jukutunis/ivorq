@@ -14,7 +14,7 @@ class UserPolicy
     public function view(User $user, User $model): bool
     {
         return $user->hasPermissionTo('user.view')
-            && ($user->isSuperAdmin() || $user->property_id === $model->property_id);
+            && ($user->isSuperAdmin() || $user->properties->pluck('id')->intersect($model->properties->pluck('id'))->isNotEmpty());
     }
 
     public function create(User $user): bool
@@ -29,13 +29,13 @@ class UserPolicy
         }
 
         return $user->hasPermissionTo('user.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $model->property_id);
+            && ($user->isSuperAdmin() || $user->properties->pluck('id')->intersect($model->properties->pluck('id'))->isNotEmpty());
     }
 
     public function delete(User $user, User $model): bool
     {
         return $user->hasPermissionTo('user.delete')
             && $user->id !== $model->id
-            && ($user->isSuperAdmin() || $user->property_id === $model->property_id);
+            && ($user->isSuperAdmin() || $user->properties->pluck('id')->intersect($model->properties->pluck('id'))->isNotEmpty());
     }
 }

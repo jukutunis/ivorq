@@ -100,13 +100,18 @@ trait CreatesFoundationData
         $this->seedPermissionsAndRoles();
 
         $user = User::create(array_merge([
-            'property_id'       => $property->id,
             'name'              => "User {$sequence}",
             'email'             => "user{$sequence}@test.com",
             'password'          => 'password',
             'is_active'         => true,
             'email_verified_at' => now(),
         ], $overrides));
+
+        $user->properties()->attach($property->id, [
+            'is_default' => true,
+            'status'     => 'active',
+            'joined_at'  => now(),
+        ]);
 
         setPermissionsTeamId($property->id);
         $user->assignRole($role);
@@ -123,7 +128,7 @@ trait CreatesFoundationData
         $this->seedPermissionsAndRoles();
 
         $user = User::create(array_merge([
-            'property_id'       => null,
+            'is_system_admin'   => true,
             'name'              => "Super Admin {$sequence}",
             'email'             => "superadmin{$sequence}@test.com",
             'password'          => 'password',

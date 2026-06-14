@@ -42,7 +42,7 @@ class VendorController extends Controller
     public function store(StoreVendorRequest $request): JsonResponse
     {
         $data = $request->validated();
-        $data['property_id'] = $request->user()->property_id;
+        $data['property_id'] = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         
         $contacts = $data['contacts'] ?? [];
         unset($data['contacts']);

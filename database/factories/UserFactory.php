@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Modules\Foundation\User\Models\User;
+use Modules\Foundation\Property\Models\Property;
 
 /**
  * @extends Factory<User>
@@ -41,5 +42,19 @@ class UserFactory extends Factory
         return $this->state(fn (array $attributes) => [
             'email_verified_at' => null,
         ]);
+    }
+
+    /**
+     * Attach the user to a property.
+     */
+    public function withProperty(Property $property, array $pivotData = []): static
+    {
+        return $this->afterCreating(function (User $user) use ($property, $pivotData) {
+            $user->properties()->attach($property->id, array_merge([
+                'is_default' => true,
+                'status'     => 'active',
+                'joined_at'  => now(),
+            ], $pivotData));
+        });
     }
 }

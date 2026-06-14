@@ -8,7 +8,8 @@ class UpdateCompanyRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->can('update', $this->route('company'));
+        $company = \Modules\Foundation\Property\Models\Company::findOrFail($this->route('company'));
+        return $this->user()->can('update', $company);
     }
 
     public function rules(): array

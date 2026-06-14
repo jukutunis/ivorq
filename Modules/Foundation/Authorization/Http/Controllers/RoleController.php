@@ -22,7 +22,7 @@ class RoleController extends Controller
 
     public function index(): Response
     {
-        $this->authorize('viewAny', \Spatie\Permission\Models\Role::class);
+        $this->authorize('viewAny', \Modules\Foundation\Authorization\Models\Role::class);
 
         $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getId();
         $roles      = $this->roleService->allForProperty($propertyId);
@@ -34,7 +34,7 @@ class RoleController extends Controller
 
     public function create(): Response
     {
-        $this->authorize('create', \Spatie\Permission\Models\Role::class);
+        $this->authorize('create', \Modules\Foundation\Authorization\Models\Role::class);
 
         return Inertia::render('Foundation/Role/Create', [
             'permissions' => PermissionResource::collection(
@@ -56,9 +56,9 @@ class RoleController extends Controller
             ->with('success', 'Role created successfully.');
     }
 
-    public function edit(int $id): Response
+    public function edit(string $id): Response
     {
-        $this->authorize('update', \Spatie\Permission\Models\Role::class);
+        $this->authorize('update', \Modules\Foundation\Authorization\Models\Role::class);
 
         return Inertia::render('Foundation/Role/Edit', [
             'role'        => new RoleResource($this->roleService->find($id)),
@@ -68,7 +68,7 @@ class RoleController extends Controller
         ]);
     }
 
-    public function update(UpdateRoleRequest $request, int $id): RedirectResponse
+    public function update(UpdateRoleRequest $request, string $id): RedirectResponse
     {
         $this->roleService->syncPermissions($id, $request->permissions);
 
@@ -76,9 +76,9 @@ class RoleController extends Controller
             ->with('success', 'Role permissions updated successfully.');
     }
 
-    public function destroy(int $id): RedirectResponse
+    public function destroy(string $id): RedirectResponse
     {
-        $this->authorize('delete', \Spatie\Permission\Models\Role::class);
+        $this->authorize('delete', \Modules\Foundation\Authorization\Models\Role::class);
 
         $this->roleService->delete($id);
 

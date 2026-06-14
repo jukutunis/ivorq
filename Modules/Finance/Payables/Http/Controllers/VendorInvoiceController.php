@@ -24,7 +24,7 @@ class VendorInvoiceController extends Controller
         $this->authorize('viewAny', VendorInvoice::class);
 
         $query = $this->repository->query()
-            ->where('property_id', $request->user()->property_id)
+            ->where('property_id', app(\Shared\Services\CurrentPropertyService::class)->getPropertyId())
             ->with(['vendor', 'lines'])
             ->latest();
 

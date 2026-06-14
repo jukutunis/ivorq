@@ -53,9 +53,8 @@ class DatabaseSeeder extends Seeder
             RoleSeeder::class,
 
             // Business data
-            PropertySeeder::class,
+            FoundationSeeder::class,
             DepartmentSeeder::class,
-            SuperAdminSeeder::class,
 
             // Housekeeping sample data
             RoomSeeder::class,

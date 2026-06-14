@@ -7,8 +7,8 @@ use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
 use Modules\Operations\Purchasing\Models\VendorContact;
 use Modules\Foundation\Property\Models\Property;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
+use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Authorization\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
 trait CreatesPurchasingData

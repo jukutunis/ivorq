@@ -145,7 +145,7 @@ class HousekeepingPolicyTest extends TestCase
         $company  = $this->createCompany();
         $property = $this->createProperty($company);
         $staff    = $this->createUser($property, 'staff');
-        $manager  = $this->createUser($property, 'manager');
+        $manager  = $this->createUser($property, 'general-manager');
 
         $this->seedPermissionsAndRoles();
         app(CurrentPropertyService::class)->setId($property->id);
@@ -191,7 +191,7 @@ class HousekeepingPolicyTest extends TestCase
         $company  = $this->createCompany();
         $property = $this->createProperty($company);
         $staff    = $this->createUser($property, 'staff');
-        $manager  = $this->createUser($property, 'manager');
+        $manager  = $this->createUser($property, 'general-manager');
 
         $this->seedPermissionsAndRoles();
         app(CurrentPropertyService::class)->setId($property->id);

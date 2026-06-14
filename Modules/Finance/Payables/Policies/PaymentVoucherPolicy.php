@@ -17,7 +17,7 @@ class PaymentVoucherPolicy
 
     public function view(User $user, PaymentVoucher $paymentVoucher): bool
     {
-        if ($user->property_id !== $paymentVoucher->property_id && !$user->isSuperAdmin()) {
+        if (app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() !== $paymentVoucher->property_id && !$user->isSuperAdmin()) {
             return false;
         }
 
@@ -31,7 +31,7 @@ class PaymentVoucherPolicy
 
     public function post(User $user, PaymentVoucher $paymentVoucher): bool
     {
-        if ($user->property_id !== $paymentVoucher->property_id && !$user->isSuperAdmin()) {
+        if (app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() !== $paymentVoucher->property_id && !$user->isSuperAdmin()) {
             return false;
         }
 
@@ -40,7 +40,7 @@ class PaymentVoucherPolicy
 
     public function cancel(User $user, PaymentVoucher $paymentVoucher): bool
     {
-        if ($user->property_id !== $paymentVoucher->property_id && !$user->isSuperAdmin()) {
+        if (app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() !== $paymentVoucher->property_id && !$user->isSuperAdmin()) {
             return false;
         }
 

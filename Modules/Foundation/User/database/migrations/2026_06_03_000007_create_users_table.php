@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('users', function (Blueprint $table) {
             $table->char('id', 26)->primary();
-            $table->char('property_id', 26)->nullable();
+            $table->boolean('is_system_admin')->default(false);
             $table->string('name');
             $table->string('email')->unique();
             $table->string('password');
@@ -27,10 +27,9 @@ return new class extends Migration
             $table->timestamps();
             $table->softDeletes();
 
-            $table->foreign('property_id')->references('id')->on('properties')->nullOnDelete();
             $table->foreign('department_id')->references('id')->on('departments')->nullOnDelete();
             $table->foreign('position_id')->references('id')->on('positions')->nullOnDelete();
-            $table->index(['property_id', 'is_active']);
+            $table->index('is_active');
             $table->index('department_id');
         });
     }

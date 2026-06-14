@@ -44,7 +44,7 @@ class PurchaseOrderService
 
         // Generate PO Number (BR-004)
         $year = now()->format('Y');
-        $lastPo = PurchaseOrder::where('property_id', $user->property_id)
+        $lastPo = PurchaseOrder::where('property_id', app(\Shared\Services\CurrentPropertyService::class)->getPropertyId())
             ->whereYear('created_at', $year)
             ->latest('id')
             ->first();
@@ -61,7 +61,7 @@ class PurchaseOrderService
             $totalAmount = 0;
 
             $po = $this->repository->create([
-                'property_id' => $user->property_id,
+                'property_id' => app(\Shared\Services\CurrentPropertyService::class)->getPropertyId(),
                 'po_no' => $poNo,
                 'vendor_id' => $vendor->id,
                 'purchase_request_id' => $pr->id,

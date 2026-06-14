@@ -3,7 +3,7 @@
 namespace Modules\Foundation\Authorization\Policies;
 
 use Modules\Foundation\User\Models\User;
-use Spatie\Permission\Models\Role;
+use Modules\Foundation\Authorization\Models\Role;
 
 class RolePolicy
 {

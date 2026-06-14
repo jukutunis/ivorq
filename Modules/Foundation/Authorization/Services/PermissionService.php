@@ -3,7 +3,7 @@
 namespace Modules\Foundation\Authorization\Services;
 
 use Illuminate\Database\Eloquent\Collection;
-use Spatie\Permission\Models\Permission;
+use Modules\Foundation\Authorization\Models\Permission;
 
 class PermissionService
 {
@@ -25,7 +25,7 @@ class PermissionService
         return Permission::create(['name' => $name, 'guard_name' => 'web']);
     }
 
-    public function delete(int $id): bool
+    public function delete(string $id): bool
     {
         return Permission::findOrFail($id)->delete();
     }

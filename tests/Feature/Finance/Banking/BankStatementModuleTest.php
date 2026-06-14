@@ -9,7 +9,7 @@ use Modules\Finance\Banking\Models\BankStatement;
 use Modules\Finance\Banking\Enums\BankStatementStatusEnum;
 use Modules\Foundation\Audit\Models\AuditLog;
 use Modules\Foundation\User\Models\User;
-use Spatie\Permission\Models\Permission;
+use Modules\Foundation\Authorization\Models\Permission;
 use Tests\TestCase;
 
 class BankStatementModuleTest extends TestCase

@@ -4,7 +4,7 @@ namespace Modules\Foundation\Authorization\Services;
 
 use Illuminate\Database\Eloquent\Collection;
 use Modules\Foundation\Authorization\Repositories\RoleRepository;
-use Spatie\Permission\Models\Role;
+use Modules\Foundation\Authorization\Models\Role;
 
 class RoleService
 {
@@ -17,7 +17,7 @@ class RoleService
         return $this->roleRepository->allForProperty($propertyId);
     }
 
-    public function find(int $id): Role
+    public function find(string $id): Role
     {
         return $this->roleRepository->find($id);
     }
@@ -29,18 +29,18 @@ class RoleService
         return $this->roleRepository->create([
             'name'       => $name,
             'guard_name' => 'web',
-            'team_id'    => $propertyId,
+            'property_id'    => $propertyId,
         ]);
     }
 
-    public function syncPermissions(int $roleId, array $permissions): Role
+    public function syncPermissions(string $roleId, array $permissions): Role
     {
         $role = $this->find($roleId);
 
         return $this->roleRepository->syncPermissions($role, $permissions);
     }
 
-    public function delete(int $id): bool
+    public function delete(string $id): bool
     {
         return $this->roleRepository->delete($id);
     }

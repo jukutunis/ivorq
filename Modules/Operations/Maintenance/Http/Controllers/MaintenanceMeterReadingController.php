@@ -24,7 +24,7 @@ class MaintenanceMeterReadingController extends Controller
         ]);
 
         $dto = new MaintenanceMeterReadingDTO(
-            property_id: $request->user()->property_id,
+            property_id: app(\Shared\Services\CurrentPropertyService::class)->getPropertyId(),
             asset_id: $validated['asset_id'],
             meter_type: $validated['meter_type'],
             reading_value: $validated['reading_value'],

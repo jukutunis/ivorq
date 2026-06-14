@@ -15,7 +15,7 @@ class WorkOrderPolicy
     public function view(User $user, WorkOrder $workOrder): bool
     {
         return $user->hasPermissionTo('engineering.work-order.view')
-            && ($user->isSuperAdmin() || $user->property_id === $workOrder->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $workOrder->property_id);
     }
 
     public function create(User $user): bool
@@ -26,25 +26,25 @@ class WorkOrderPolicy
     public function update(User $user, WorkOrder $workOrder): bool
     {
         return $user->hasPermissionTo('engineering.work-order.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $workOrder->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $workOrder->property_id);
     }
 
     public function delete(User $user, WorkOrder $workOrder): bool
     {
         return $user->hasPermissionTo('engineering.work-order.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $workOrder->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $workOrder->property_id);
     }
 
     public function assign(User $user, WorkOrder $workOrder): bool
     {
         return $user->hasPermissionTo('engineering.work-order.assign')
-            && ($user->isSuperAdmin() || $user->property_id === $workOrder->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $workOrder->property_id);
     }
 
     public function approve(User $user, WorkOrder $workOrder): bool
     {
         return $user->hasPermissionTo('engineering.work-order.approve')
-            && ($user->isSuperAdmin() || $user->property_id === $workOrder->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $workOrder->property_id);
     }
 
     /**
@@ -55,6 +55,6 @@ class WorkOrderPolicy
     public function changeStatus(User $user, WorkOrder $workOrder): bool
     {
         return $user->hasPermissionTo('engineering.work-order.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $workOrder->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $workOrder->property_id);
     }
 }

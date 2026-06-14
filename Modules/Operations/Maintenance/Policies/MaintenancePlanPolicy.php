@@ -17,7 +17,7 @@ class MaintenancePlanPolicy
 
     public function view(User $user, MaintenancePlan $plan): bool
     {
-        return $user->hasPermissionTo('maintenance.view') && $user->property_id === $plan->property_id;
+        return $user->hasPermissionTo('maintenance.view') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $plan->property_id;
     }
 
     public function create(User $user): bool
@@ -27,6 +27,6 @@ class MaintenancePlanPolicy
 
     public function update(User $user, MaintenancePlan $plan): bool
     {
-        return $user->hasPermissionTo('maintenance.update') && $user->property_id === $plan->property_id;
+        return $user->hasPermissionTo('maintenance.update') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $plan->property_id;
     }
 }

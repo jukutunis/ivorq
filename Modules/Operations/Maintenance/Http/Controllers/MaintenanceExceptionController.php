@@ -25,7 +25,7 @@ class MaintenanceExceptionController extends Controller
         ]);
 
         $dto = new MaintenanceExceptionDTO(
-            property_id: $request->user()->property_id,
+            property_id: app(\Shared\Services\CurrentPropertyService::class)->getPropertyId(),
             asset_id: $validated['asset_id'],
             exception_type: $validated['exception_type'],
             status: $validated['status'],

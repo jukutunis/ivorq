@@ -15,7 +15,7 @@ class InventoryAdjustmentPolicy
     public function view(User $user, InventoryAdjustment $adjustment): bool
     {
         return $user->hasPermissionTo('inventory.adjustment.view')
-            && ($user->isSuperAdmin() || $user->property_id === $adjustment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $adjustment->property_id);
     }
 
     public function create(User $user): bool
@@ -26,13 +26,13 @@ class InventoryAdjustmentPolicy
     public function update(User $user, InventoryAdjustment $adjustment): bool
     {
         return $user->hasPermissionTo('inventory.adjustment.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $adjustment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $adjustment->property_id);
     }
 
     public function delete(User $user, InventoryAdjustment $adjustment): bool
     {
         return $user->hasPermissionTo('inventory.adjustment.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $adjustment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $adjustment->property_id);
     }
 
     /**
@@ -42,7 +42,7 @@ class InventoryAdjustmentPolicy
     public function submit(User $user, InventoryAdjustment $adjustment): bool
     {
         return $user->hasPermissionTo('inventory.adjustment.create')
-            && ($user->isSuperAdmin() || $user->property_id === $adjustment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $adjustment->property_id);
     }
 
     /**
@@ -52,7 +52,7 @@ class InventoryAdjustmentPolicy
     public function approve(User $user, InventoryAdjustment $adjustment): bool
     {
         return $user->hasPermissionTo('inventory.adjustment.approve')
-            && ($user->isSuperAdmin() || $user->property_id === $adjustment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $adjustment->property_id);
     }
 
     /**
@@ -61,7 +61,7 @@ class InventoryAdjustmentPolicy
     public function reject(User $user, InventoryAdjustment $adjustment): bool
     {
         return $user->hasPermissionTo('inventory.adjustment.approve')
-            && ($user->isSuperAdmin() || $user->property_id === $adjustment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $adjustment->property_id);
     }
 
     /**
@@ -70,6 +70,6 @@ class InventoryAdjustmentPolicy
     public function cancel(User $user, InventoryAdjustment $adjustment): bool
     {
         return $user->hasPermissionTo('inventory.adjustment.create')
-            && ($user->isSuperAdmin() || $user->property_id === $adjustment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $adjustment->property_id);
     }
 }

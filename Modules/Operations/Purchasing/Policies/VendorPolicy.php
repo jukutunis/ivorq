@@ -15,7 +15,7 @@ class VendorPolicy
     public function view(User $user, Vendor $vendor): bool
     {
         return $user->hasPermissionTo('purchasing.vendor.view')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || $user->property_id === $vendor->property_id);
+            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
     }
 
     public function create(User $user): bool
@@ -26,18 +26,18 @@ class VendorPolicy
     public function update(User $user, Vendor $vendor): bool
     {
         return $user->hasPermissionTo('purchasing.vendor.edit')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || $user->property_id === $vendor->property_id);
+            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
     }
 
     public function delete(User $user, Vendor $vendor): bool
     {
         return $user->hasPermissionTo('purchasing.vendor.delete')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || $user->property_id === $vendor->property_id);
+            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
     }
 
     public function approve(User $user, Vendor $vendor): bool
     {
         return $user->hasPermissionTo('purchasing.vendor.approve')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || $user->property_id === $vendor->property_id);
+            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
     }
 }

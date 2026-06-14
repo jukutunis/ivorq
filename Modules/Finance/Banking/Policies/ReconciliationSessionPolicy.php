@@ -17,7 +17,7 @@ class ReconciliationSessionPolicy
 
     public function view(User $user, ReconciliationSession $session): bool
     {
-        if ($user->property_id !== $session->property_id && method_exists($user, 'isSuperAdmin') && !$user->isSuperAdmin()) {
+        if (app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() !== $session->property_id && method_exists($user, 'isSuperAdmin') && !$user->isSuperAdmin()) {
             return false;
         }
 
@@ -31,7 +31,7 @@ class ReconciliationSessionPolicy
 
     public function manage(User $user, ReconciliationSession $session): bool
     {
-        if ($user->property_id !== $session->property_id && method_exists($user, 'isSuperAdmin') && !$user->isSuperAdmin()) {
+        if (app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() !== $session->property_id && method_exists($user, 'isSuperAdmin') && !$user->isSuperAdmin()) {
             return false;
         }
 

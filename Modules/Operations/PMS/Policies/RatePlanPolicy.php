@@ -15,7 +15,7 @@ class RatePlanPolicy
     public function view(User $user, RatePlan $ratePlan): bool
     {
         return $user->hasPermissionTo('pms.rate-plan.view')
-            && ($user->isSuperAdmin() || $user->property_id === $ratePlan->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $ratePlan->property_id);
     }
 
     /**
@@ -29,12 +29,12 @@ class RatePlanPolicy
     public function update(User $user, RatePlan $ratePlan): bool
     {
         return $user->hasPermissionTo('pms.rate-plan.manage')
-            && ($user->isSuperAdmin() || $user->property_id === $ratePlan->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $ratePlan->property_id);
     }
 
     public function delete(User $user, RatePlan $ratePlan): bool
     {
         return $user->hasPermissionTo('pms.rate-plan.manage')
-            && ($user->isSuperAdmin() || $user->property_id === $ratePlan->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $ratePlan->property_id);
     }
 }

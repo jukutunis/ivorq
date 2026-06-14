@@ -10,7 +10,7 @@ class TechnicianAssignmentPolicy
     public function view(User $user, TechnicianAssignment $assignment): bool
     {
         return $user->hasPermissionTo('engineering.work-order.view')
-            && ($user->isSuperAdmin() || $user->property_id === $assignment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $assignment->property_id);
     }
 
     public function create(User $user): bool
@@ -21,12 +21,12 @@ class TechnicianAssignmentPolicy
     public function update(User $user, TechnicianAssignment $assignment): bool
     {
         return $user->hasPermissionTo('engineering.work-order.assign')
-            && ($user->isSuperAdmin() || $user->property_id === $assignment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $assignment->property_id);
     }
 
     public function delete(User $user, TechnicianAssignment $assignment): bool
     {
         return $user->hasPermissionTo('engineering.work-order.assign')
-            && ($user->isSuperAdmin() || $user->property_id === $assignment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $assignment->property_id);
     }
 }

@@ -13,6 +13,6 @@ class ThreeWayMatchPolicy
     public function view(User $user, ThreeWayMatch $match): bool
     {
         return $user->hasPermissionTo('payables.match.view') && 
-               $user->property_id === $match->property_id;
+               app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $match->property_id;
     }
 }

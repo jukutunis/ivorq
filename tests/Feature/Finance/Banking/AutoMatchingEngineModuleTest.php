@@ -10,7 +10,7 @@ use Modules\Finance\Banking\Models\BankStatement;
 use Modules\Finance\Payables\Models\PaymentVoucher;
 use Modules\Finance\Banking\Enums\ReconciliationSessionStatusEnum;
 use Modules\Foundation\User\Models\User;
-use Spatie\Permission\Models\Permission;
+use Modules\Foundation\Authorization\Models\Permission;
 use Tests\TestCase;
 
 class AutoMatchingEngineModuleTest extends TestCase

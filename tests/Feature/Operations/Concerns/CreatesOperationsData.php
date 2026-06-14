@@ -72,6 +72,6 @@ trait CreatesOperationsData
 
     protected function createManager(Property $property, array $overrides = []): User
     {
-        return $this->createUser($property, 'manager', $overrides);
+        return $this->createUser($property, 'general-manager', $overrides);
     }
 }

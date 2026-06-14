@@ -31,7 +31,7 @@ class TokenService
     {
         UserSession::create([
             'user_id'       => $user->id,
-            'property_id'   => $user->property_id,
+            'property_id'   => app(\Shared\Services\CurrentPropertyService::class)->getPropertyId(),
             'token_id'      => $token->accessToken->id,
             'device_name'   => $deviceName,
             'ip_address'    => request()->ip(),

@@ -17,6 +17,6 @@ class WorkOrderClosurePolicy
 
     public function view(User $user, WorkOrderClosure $closure)
     {
-        return $user->can('workorder.view') && $user->property_id === $closure->workOrder->property_id;
+        return $user->can('workorder.view') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $closure->workOrder->property_id;
     }
 }

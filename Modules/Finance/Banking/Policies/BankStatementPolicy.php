@@ -18,7 +18,7 @@ class BankStatementPolicy
     public function view(User $user, BankStatement $statement): bool
     {
         return $user->hasPermissionTo('banking.statement.view') && 
-               $user->property_id === $statement->property_id;
+               app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $statement->property_id;
     }
 
     public function create(User $user): bool
@@ -29,6 +29,6 @@ class BankStatementPolicy
     public function import(User $user, BankStatement $statement): bool
     {
         return $user->hasPermissionTo('banking.statement.import') && 
-               $user->property_id === $statement->property_id;
+               app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $statement->property_id;
     }
 }

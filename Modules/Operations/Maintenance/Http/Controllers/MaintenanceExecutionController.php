@@ -16,7 +16,7 @@ class MaintenanceExecutionController extends Controller
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', MaintenanceExecution::class);
-        $executions = MaintenanceExecution::where('property_id', $request->user()->property_id)
+        $executions = MaintenanceExecution::where('property_id', app(\Shared\Services\CurrentPropertyService::class)->getPropertyId())
             ->with(['plan', 'asset'])
             ->cursorPaginate(100);
 
@@ -34,7 +34,7 @@ class MaintenanceExecutionController extends Controller
         ]);
 
         $dto = new MaintenanceExecutionDTO(
-            property_id: $request->user()->property_id,
+            property_id: app(\Shared\Services\CurrentPropertyService::class)->getPropertyId(),
             maintenance_plan_id: $validated['maintenance_plan_id'],
             asset_id: $validated['asset_id'],
             status: $validated['status'],

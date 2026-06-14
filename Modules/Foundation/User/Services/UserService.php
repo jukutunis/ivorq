@@ -24,7 +24,20 @@ class UserService
 
     public function create(array $data): User
     {
-        return $this->userRepository->create($data);
+        $propertyId = $data['property_id'] ?? null;
+        unset($data['property_id']);
+
+        $user = $this->userRepository->create($data);
+
+        if ($propertyId) {
+            $user->properties()->attach($propertyId, [
+                'is_default' => true,
+                'status'     => 'active',
+                'joined_at'  => now(),
+            ]);
+        }
+
+        return $user;
     }
 
     public function update(string $id, array $data): User
@@ -42,7 +55,7 @@ class UserService
     public function assignRole(string $userId, string $role, ?string $propertyId = null): void
     {
         $user = $this->find($userId);
-        $teamId = $propertyId ?? $user->property_id;
+        $teamId = $propertyId ?? $user->defaultProperty()?->id;
 
         setPermissionsTeamId($teamId);
         $user->assignRole($role);

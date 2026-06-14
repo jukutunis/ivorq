@@ -23,8 +23,8 @@ use Modules\Operations\PMS\Models\Reservation;
 use Modules\Operations\PMS\Models\RoomBlock;
 use Modules\Operations\PMS\Models\Stay;
 use Modules\Foundation\Property\Models\Property;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
+use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Authorization\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
 trait CreatesPmsData

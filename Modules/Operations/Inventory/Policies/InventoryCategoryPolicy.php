@@ -15,7 +15,7 @@ class InventoryCategoryPolicy
     public function view(User $user, InventoryCategory $category): bool
     {
         return $user->hasPermissionTo('inventory.category.view')
-            && ($user->isSuperAdmin() || $user->property_id === $category->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $category->property_id);
     }
 
     public function create(User $user): bool
@@ -26,12 +26,12 @@ class InventoryCategoryPolicy
     public function update(User $user, InventoryCategory $category): bool
     {
         return $user->hasPermissionTo('inventory.category.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $category->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $category->property_id);
     }
 
     public function delete(User $user, InventoryCategory $category): bool
     {
         return $user->hasPermissionTo('inventory.category.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $category->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $category->property_id);
     }
 }

@@ -8,7 +8,7 @@ class UpdateRoleRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->can('update', \Spatie\Permission\Models\Role::class);
+        return $this->user()->can('update', \Modules\Foundation\Authorization\Models\Role::class);
     }
 
     public function rules(): array

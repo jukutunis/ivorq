@@ -15,7 +15,7 @@ class EngineeringChecklistPolicy
     public function view(User $user, EngineeringChecklist $checklist): bool
     {
         return $user->hasPermissionTo('engineering.checklist.view')
-            && ($user->isSuperAdmin() || $user->property_id === $checklist->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $checklist->property_id);
     }
 
     public function create(User $user): bool
@@ -26,12 +26,12 @@ class EngineeringChecklistPolicy
     public function update(User $user, EngineeringChecklist $checklist): bool
     {
         return $user->hasPermissionTo('engineering.checklist.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $checklist->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $checklist->property_id);
     }
 
     public function delete(User $user, EngineeringChecklist $checklist): bool
     {
         return $user->hasPermissionTo('engineering.checklist.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $checklist->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $checklist->property_id);
     }
 }

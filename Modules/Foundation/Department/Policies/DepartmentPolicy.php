@@ -15,7 +15,7 @@ class DepartmentPolicy
     public function view(User $user, Department $department): bool
     {
         return $user->hasPermissionTo('department.view')
-            && $user->property_id === $department->property_id;
+            && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $department->property_id;
     }
 
     public function create(User $user): bool
@@ -26,12 +26,12 @@ class DepartmentPolicy
     public function update(User $user, Department $department): bool
     {
         return $user->hasPermissionTo('department.edit')
-            && $user->property_id === $department->property_id;
+            && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $department->property_id;
     }
 
     public function delete(User $user, Department $department): bool
     {
         return $user->hasPermissionTo('department.delete')
-            && $user->property_id === $department->property_id;
+            && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $department->property_id;
     }
 }

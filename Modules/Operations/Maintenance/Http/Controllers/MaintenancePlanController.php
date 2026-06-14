@@ -16,7 +16,7 @@ class MaintenancePlanController extends Controller
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', MaintenancePlan::class);
-        $plans = MaintenancePlan::where('property_id', $request->user()->property_id)
+        $plans = MaintenancePlan::where('property_id', app(\Shared\Services\CurrentPropertyService::class)->getPropertyId())
             ->with(['asset'])
             ->cursorPaginate(100);
 
@@ -37,7 +37,7 @@ class MaintenancePlanController extends Controller
         ]);
 
         $dto = new MaintenancePlanDTO(
-            property_id: $request->user()->property_id,
+            property_id: app(\Shared\Services\CurrentPropertyService::class)->getPropertyId(),
             asset_id: $validated['asset_id'],
             title: $validated['title'],
             maintenance_type: $validated['maintenance_type'],

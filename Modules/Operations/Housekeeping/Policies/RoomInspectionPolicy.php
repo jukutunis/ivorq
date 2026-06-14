@@ -15,7 +15,7 @@ class RoomInspectionPolicy
     public function view(User $user, RoomInspection $inspection): bool
     {
         return $user->hasPermissionTo('housekeeping.inspection.view')
-            && ($user->isSuperAdmin() || $user->property_id === $inspection->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $inspection->property_id);
     }
 
     public function create(User $user): bool
@@ -26,18 +26,18 @@ class RoomInspectionPolicy
     public function update(User $user, RoomInspection $inspection): bool
     {
         return $user->hasPermissionTo('housekeeping.inspection.create')
-            && ($user->isSuperAdmin() || $user->property_id === $inspection->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $inspection->property_id);
     }
 
     public function delete(User $user, RoomInspection $inspection): bool
     {
         return $user->hasPermissionTo('housekeeping.inspection.create')
-            && ($user->isSuperAdmin() || $user->property_id === $inspection->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $inspection->property_id);
     }
 
     public function conduct(User $user, RoomInspection $inspection): bool
     {
         return $user->hasPermissionTo('housekeeping.inspection.conduct')
-            && ($user->isSuperAdmin() || $user->property_id === $inspection->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $inspection->property_id);
     }
 }

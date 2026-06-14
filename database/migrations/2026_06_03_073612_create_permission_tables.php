@@ -20,11 +20,8 @@ return new class extends Migration
         throw_if(empty($tableNames), 'Error: config/permission.php not loaded. Run [php artisan config:clear] and try again.');
         throw_if($teams && empty($columnNames['team_foreign_key'] ?? null), 'Error: team_foreign_key on config/permission.php not loaded. Run [php artisan config:clear] and try again.');
 
-        /**
-         * See `docs/prerequisites.md` for suggested lengths on 'name' and 'guard_name' if "1071 Specified key was too long" errors are encountered.
-         */
         Schema::create($tableNames['permissions'], static function (Blueprint $table) {
-            $table->id(); // permission id
+            $table->char('id', 26)->primary();
             $table->string('name');
             $table->string('guard_name');
             $table->timestamps();
@@ -32,22 +29,16 @@ return new class extends Migration
             $table->unique(['name', 'guard_name']);
         });
 
-        /**
-         * See `docs/prerequisites.md` for suggested lengths on 'name' and 'guard_name' if "1071 Specified key was too long" errors are encountered.
-         */
         Schema::create($tableNames['roles'], static function (Blueprint $table) use ($teams, $columnNames) {
-            $table->id(); // role id
-            if ($teams || config('permission.testing')) { // permission.testing is a fix for sqlite testing
-                $table->string($columnNames['team_foreign_key'])->nullable();
+            $table->char('id', 26)->primary();
+            if ($teams || config('permission.testing')) {
+                $table->char($columnNames['team_foreign_key'], 26)->nullable();
                 $table->index($columnNames['team_foreign_key'], 'roles_team_foreign_key_index');
             }
             $table->string('name');
             $table->string('guard_name');
             $table->timestamps();
             if ($teams || config('permission.testing')) {
-                // Standard unique() treats NULLs as distinct — two (null, same-name, same-guard)
-                // rows would be allowed. We rely on application-level idempotency (firstOrCreate)
-                // to prevent duplicates, so a plain index is sufficient here.
                 $table->index([$columnNames['team_foreign_key'], 'name', 'guard_name'], 'roles_team_name_guard_index');
             } else {
                 $table->unique(['name', 'guard_name']);
@@ -55,22 +46,18 @@ return new class extends Migration
         });
 
         Schema::create($tableNames['model_has_permissions'], static function (Blueprint $table) use ($tableNames, $columnNames, $pivotPermission, $teams) {
-            $table->unsignedBigInteger($pivotPermission);
+            $table->char($pivotPermission, 26);
 
             $table->string('model_type');
-            $table->string($columnNames['model_morph_key']);
+            $table->char($columnNames['model_morph_key'], 26);
             $table->index([$columnNames['model_morph_key'], 'model_type'], 'model_has_permissions_model_id_model_type_index');
 
             $table->foreign($pivotPermission)
-                ->references('id') // permission id
+                ->references('id')
                 ->on($tableNames['permissions'])
                 ->cascadeOnDelete();
             if ($teams) {
-                // team_id is nullable (null = global/super-admin context).
-                // Excluded from the primary key because PostgreSQL disallows NULL
-                // in PK columns. Users are scoped to one property so cross-team
-                // permission conflicts cannot occur in practice.
-                $table->string($columnNames['team_foreign_key'])->nullable();
+                $table->char($columnNames['team_foreign_key'], 26)->nullable();
                 $table->index($columnNames['team_foreign_key'], 'model_has_permissions_team_foreign_key_index');
             }
 
@@ -79,22 +66,18 @@ return new class extends Migration
         });
 
         Schema::create($tableNames['model_has_roles'], static function (Blueprint $table) use ($tableNames, $columnNames, $pivotRole, $teams) {
-            $table->unsignedBigInteger($pivotRole);
+            $table->char($pivotRole, 26);
 
             $table->string('model_type');
-            $table->string($columnNames['model_morph_key']);
+            $table->char($columnNames['model_morph_key'], 26);
             $table->index([$columnNames['model_morph_key'], 'model_type'], 'model_has_roles_model_id_model_type_index');
 
             $table->foreign($pivotRole)
-                ->references('id') // role id
+                ->references('id')
                 ->on($tableNames['roles'])
                 ->cascadeOnDelete();
             if ($teams) {
-                // team_id is nullable (null = global/super-admin context).
-                // Excluded from the primary key because PostgreSQL disallows NULL
-                // in PK columns. Users are scoped to one property so cross-team
-                // role conflicts cannot occur in practice.
-                $table->string($columnNames['team_foreign_key'])->nullable();
+                $table->char($columnNames['team_foreign_key'], 26)->nullable();
                 $table->index($columnNames['team_foreign_key'], 'model_has_roles_team_foreign_key_index');
             }
 
@@ -103,16 +86,16 @@ return new class extends Migration
         });
 
         Schema::create($tableNames['role_has_permissions'], static function (Blueprint $table) use ($tableNames, $pivotRole, $pivotPermission) {
-            $table->unsignedBigInteger($pivotPermission);
-            $table->unsignedBigInteger($pivotRole);
+            $table->char($pivotPermission, 26);
+            $table->char($pivotRole, 26);
 
             $table->foreign($pivotPermission)
-                ->references('id') // permission id
+                ->references('id')
                 ->on($tableNames['permissions'])
                 ->cascadeOnDelete();
 
             $table->foreign($pivotRole)
-                ->references('id') // role id
+                ->references('id')
                 ->on($tableNames['roles'])
                 ->cascadeOnDelete();
 

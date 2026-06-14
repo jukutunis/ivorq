@@ -42,7 +42,7 @@ class PurchaseRequestController extends Controller
     public function store(StorePurchaseRequestRequest $request): JsonResponse
     {
         $data = $request->validated();
-        $data['property_id'] = $request->user()->property_id;
+        $data['property_id'] = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         
         $lines = $data['lines'];
         unset($data['lines']);

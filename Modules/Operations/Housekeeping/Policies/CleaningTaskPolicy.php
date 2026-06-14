@@ -15,7 +15,7 @@ class CleaningTaskPolicy
     public function view(User $user, CleaningTask $task): bool
     {
         return $user->hasPermissionTo('housekeeping.task.view')
-            && ($user->isSuperAdmin() || $user->property_id === $task->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
     }
 
     public function create(User $user): bool
@@ -26,19 +26,19 @@ class CleaningTaskPolicy
     public function update(User $user, CleaningTask $task): bool
     {
         return $user->hasPermissionTo('housekeeping.task.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $task->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
     }
 
     public function delete(User $user, CleaningTask $task): bool
     {
         return $user->hasPermissionTo('housekeeping.task.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $task->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
     }
 
     public function assign(User $user, CleaningTask $task): bool
     {
         return $user->hasPermissionTo('housekeeping.task.assign')
-            && ($user->isSuperAdmin() || $user->property_id === $task->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
     }
 
     public function changeStatus(User $user, CleaningTask $task): bool
@@ -48,6 +48,6 @@ class CleaningTaskPolicy
             'housekeeping.task.start',
             'housekeeping.task.complete',
             'housekeeping.task.cancel',
-        ]) && ($user->isSuperAdmin() || $user->property_id === $task->property_id);
+        ]) && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
     }
 }

@@ -3,7 +3,7 @@
 namespace Modules\Foundation\Authorization\Repositories;
 
 use Illuminate\Database\Eloquent\Collection;
-use Spatie\Permission\Models\Role;
+use Modules\Foundation\Authorization\Models\Role;
 
 class RoleRepository
 {
@@ -11,12 +11,12 @@ class RoleRepository
     {
         return Role::when(
             $propertyId,
-            fn($q) => $q->where('team_id', $propertyId),
-            fn($q) => $q->whereNull('team_id')
+            fn($q) => $q->where('property_id', $propertyId),
+            fn($q) => $q->whereNull('property_id')
         )->with('permissions')->get();
     }
 
-    public function find(int $id): Role
+    public function find(string $id): Role
     {
         return Role::with('permissions')->findOrFail($id);
     }
@@ -33,7 +33,7 @@ class RoleRepository
         return $role->fresh('permissions');
     }
 
-    public function delete(int $id): bool
+    public function delete(string $id): bool
     {
         return Role::findOrFail($id)->delete();
     }

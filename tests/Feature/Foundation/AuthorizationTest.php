@@ -3,8 +3,8 @@
 namespace Tests\Feature\Foundation;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
+use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Authorization\Models\Role;
 use Tests\Feature\Foundation\Concerns\CreatesFoundationData;
 use Tests\TestCase;
 

@@ -17,21 +17,21 @@ class MaintenanceExecutionPolicy
 
     public function view(User $user, MaintenanceExecution $execution): bool
     {
-        return $user->hasPermissionTo('maintenance.view') && $user->property_id === $execution->property_id;
+        return $user->hasPermissionTo('maintenance.view') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $execution->property_id;
     }
 
     public function update(User $user, MaintenanceExecution $execution): bool
     {
-        return $user->hasPermissionTo('maintenance.execute') && $user->property_id === $execution->property_id;
+        return $user->hasPermissionTo('maintenance.execute') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $execution->property_id;
     }
 
     public function complete(User $user, MaintenanceExecution $execution): bool
     {
-        return $user->hasPermissionTo('maintenance.complete') && $user->property_id === $execution->property_id;
+        return $user->hasPermissionTo('maintenance.complete') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $execution->property_id;
     }
 
     public function cancel(User $user, MaintenanceExecution $execution): bool
     {
-        return $user->hasPermissionTo('maintenance.cancel') && $user->property_id === $execution->property_id;
+        return $user->hasPermissionTo('maintenance.cancel') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $execution->property_id;
     }
 }

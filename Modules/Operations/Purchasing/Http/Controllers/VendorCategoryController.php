@@ -40,7 +40,7 @@ class VendorCategoryController extends Controller
     public function store(StoreVendorCategoryRequest $request): JsonResponse
     {
         $data = $request->validated();
-        $data['property_id'] = $request->user()->property_id;
+        $data['property_id'] = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
 
         $category = $this->repository->create($data);
 

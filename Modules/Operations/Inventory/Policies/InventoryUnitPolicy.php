@@ -15,7 +15,7 @@ class InventoryUnitPolicy
     public function view(User $user, InventoryUnit $unit): bool
     {
         return $user->hasPermissionTo('inventory.unit.view')
-            && ($user->isSuperAdmin() || $user->property_id === $unit->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $unit->property_id);
     }
 
     public function create(User $user): bool
@@ -26,12 +26,12 @@ class InventoryUnitPolicy
     public function update(User $user, InventoryUnit $unit): bool
     {
         return $user->hasPermissionTo('inventory.unit.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $unit->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $unit->property_id);
     }
 
     public function delete(User $user, InventoryUnit $unit): bool
     {
         return $user->hasPermissionTo('inventory.unit.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $unit->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $unit->property_id);
     }
 }

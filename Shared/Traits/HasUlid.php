@@ -15,6 +15,12 @@ trait HasUlid
         });
     }
 
+    public function initializeHasUlid(): void
+    {
+        $this->incrementing = false;
+        $this->keyType = 'string';
+    }
+
     public function getIncrementing(): bool
     {
         return false;

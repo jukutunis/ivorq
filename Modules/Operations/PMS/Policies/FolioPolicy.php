@@ -15,7 +15,7 @@ class FolioPolicy
     public function view(User $user, Folio $folio): bool
     {
         return $user->hasPermissionTo('pms.folio.view')
-            && ($user->isSuperAdmin() || $user->property_id === $folio->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $folio->property_id);
     }
 
     /**
@@ -24,7 +24,7 @@ class FolioPolicy
     public function manage(User $user, Folio $folio): bool
     {
         return $user->hasPermissionTo('pms.folio.manage')
-            && ($user->isSuperAdmin() || $user->property_id === $folio->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $folio->property_id);
     }
 
     public function create(User $user): bool

@@ -12,7 +12,7 @@ class WorkOrderApprovalPolicy
 
     public function view(User $user, WorkOrderApproval $approval)
     {
-        return $user->can('workorder.view') && $user->property_id === $approval->workOrder->property_id;
+        return $user->can('workorder.view') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $approval->workOrder->property_id;
     }
 
     public function create(User $user)

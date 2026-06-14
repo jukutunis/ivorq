@@ -15,7 +15,7 @@ class PreventiveMaintenancePolicy
     public function view(User $user, PreventiveMaintenance $pm): bool
     {
         return $user->hasPermissionTo('engineering.pm.view')
-            && ($user->isSuperAdmin() || $user->property_id === $pm->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $pm->property_id);
     }
 
     public function create(User $user): bool
@@ -26,13 +26,13 @@ class PreventiveMaintenancePolicy
     public function update(User $user, PreventiveMaintenance $pm): bool
     {
         return $user->hasPermissionTo('engineering.pm.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $pm->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $pm->property_id);
     }
 
     public function delete(User $user, PreventiveMaintenance $pm): bool
     {
         return $user->hasPermissionTo('engineering.pm.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $pm->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $pm->property_id);
     }
 
     /**
@@ -42,6 +42,6 @@ class PreventiveMaintenancePolicy
     public function generateTask(User $user, PreventiveMaintenance $pm): bool
     {
         return $user->hasPermissionTo('engineering.pm.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $pm->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $pm->property_id);
     }
 }

@@ -26,7 +26,7 @@ class TrialBalanceTest extends TestCase
         $this->propertyId = (string) Str::ulid();
     }
 
-    protected function createAccount(string $code, NormalBalanceEnum $balance, AccountTypeEnum $type, string $propertyId = null): Account
+    protected function createAccount(string $code, NormalBalanceEnum $balance, AccountTypeEnum $type, ?string $propertyId = null): Account
     {
         $category = match ($type) {
             AccountTypeEnum::Asset => AccountCategoryEnum::CurrentAsset,
@@ -49,7 +49,7 @@ class TrialBalanceTest extends TestCase
         ]);
     }
 
-    protected function createBalance(string $accountId, int $year, int $month, float $debit, float $credit, string $propertyId = null): LedgerBalance
+    protected function createBalance(string $accountId, int $year, int $month, float $debit, float $credit, ?string $propertyId = null): LedgerBalance
     {
         return LedgerBalance::create([
             'property_id' => $propertyId ?? $this->propertyId,

@@ -3,7 +3,7 @@
 namespace Modules\Finance\Banking\database\seeders;
 
 use Illuminate\Database\Seeder;
-use Spatie\Permission\Models\Permission;
+use Modules\Foundation\Authorization\Models\Permission;
 
 class BankingPermissionSeeder extends Seeder
 {

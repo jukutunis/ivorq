@@ -3,8 +3,8 @@
 namespace Modules\Foundation\Authorization\Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
+use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Authorization\Models\Role;
 
 class RoleSeeder extends Seeder
 {
@@ -14,7 +14,7 @@ class RoleSeeder extends Seeder
         $superAdmin = Role::firstOrCreate([
             'name'       => 'super-admin',
             'guard_name' => 'web',
-            'team_id'    => null,
+            'property_id'    => null,
         ]);
         $superAdmin->syncPermissions(Permission::all());
 
@@ -22,17 +22,17 @@ class RoleSeeder extends Seeder
         $propertyAdmin = Role::firstOrCreate([
             'name'       => 'property-admin',
             'guard_name' => 'web',
-            'team_id'    => null,
+            'property_id'    => null,
         ]);
         $propertyAdmin->syncPermissions(Permission::all());
 
-        // Manager — operational management permissions
-        $manager = Role::firstOrCreate([
-            'name'       => 'manager',
+        // General Manager — operational management permissions
+        $generalManager = Role::firstOrCreate([
+            'name'       => 'general-manager',
             'guard_name' => 'web',
-            'team_id'    => null,
+            'property_id'    => null,
         ]);
-        $manager->syncPermissions([
+        $generalManager->syncPermissions([
             // Foundation
             'department.view', 'department.create', 'department.edit',
             'user.view', 'user.create', 'user.edit',
@@ -80,7 +80,7 @@ class RoleSeeder extends Seeder
         $staff = Role::firstOrCreate([
             'name'       => 'staff',
             'guard_name' => 'web',
-            'team_id'    => null,
+            'property_id'    => null,
         ]);
         $staff->syncPermissions([
             'activity.view',
@@ -99,5 +99,23 @@ class RoleSeeder extends Seeder
             // Engineering — no access for staff role
             // (engineering.work-order.view etc. are manager-level and above)
         ]);
+
+        // Department Head — department level management
+        $departmentHead = Role::firstOrCreate([
+            'name'       => 'department-head',
+            'guard_name' => 'web',
+            'property_id'    => null,
+        ]);
+        // Give same permissions as general-manager for demo
+        $departmentHead->syncPermissions($generalManager->permissions);
+
+        // Supervisor — supervisory roles
+        $supervisor = Role::firstOrCreate([
+            'name'       => 'supervisor',
+            'guard_name' => 'web',
+            'property_id'    => null,
+        ]);
+        // Give staff permissions plus some extras for demo
+        $supervisor->syncPermissions($staff->permissions);
     }
 }

@@ -7,14 +7,17 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class Company extends Model
 {
-    use HasUlid, HasAuditColumns, SoftDeletes;
+    use HasUlid, HasAuditColumns, SoftDeletes, LogsActivity;
 
     protected $fillable = [
         'name',
         'slug',
+        'code',
         'email',
         'phone',
         'address',
@@ -25,6 +28,13 @@ class Company extends Model
     protected $casts = [
         'is_active' => 'boolean',
     ];
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
+    }
 
     public function properties(): HasMany
     {

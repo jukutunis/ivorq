@@ -15,7 +15,7 @@ class GuestPolicy
     public function view(User $user, Guest $guest): bool
     {
         return $user->hasPermissionTo('pms.guest.view')
-            && ($user->isSuperAdmin() || $user->property_id === $guest->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $guest->property_id);
     }
 
     public function create(User $user): bool
@@ -26,12 +26,12 @@ class GuestPolicy
     public function update(User $user, Guest $guest): bool
     {
         return $user->hasPermissionTo('pms.guest.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $guest->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $guest->property_id);
     }
 
     public function delete(User $user, Guest $guest): bool
     {
         return $user->hasPermissionTo('pms.guest.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $guest->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $guest->property_id);
     }
 }

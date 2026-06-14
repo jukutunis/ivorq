@@ -15,7 +15,7 @@ class InventoryIssuePolicy
     public function view(User $user, InventoryIssue $issue): bool
     {
         return $user->hasPermissionTo('inventory.issue.view')
-            && ($user->isSuperAdmin() || $user->property_id === $issue->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $issue->property_id);
     }
 
     public function create(User $user): bool
@@ -26,13 +26,13 @@ class InventoryIssuePolicy
     public function update(User $user, InventoryIssue $issue): bool
     {
         return $user->hasPermissionTo('inventory.issue.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $issue->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $issue->property_id);
     }
 
     public function delete(User $user, InventoryIssue $issue): bool
     {
         return $user->hasPermissionTo('inventory.issue.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $issue->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $issue->property_id);
     }
 
     /**
@@ -42,7 +42,7 @@ class InventoryIssuePolicy
     public function post(User $user, InventoryIssue $issue): bool
     {
         return $user->hasPermissionTo('inventory.issue.post')
-            && ($user->isSuperAdmin() || $user->property_id === $issue->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $issue->property_id);
     }
 
     /**
@@ -51,6 +51,6 @@ class InventoryIssuePolicy
     public function cancel(User $user, InventoryIssue $issue): bool
     {
         return $user->hasPermissionTo('inventory.issue.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $issue->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $issue->property_id);
     }
 }

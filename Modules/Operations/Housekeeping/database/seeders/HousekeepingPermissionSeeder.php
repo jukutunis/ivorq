@@ -3,7 +3,7 @@
 namespace Modules\Operations\Housekeeping\Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use Spatie\Permission\Models\Permission;
+use Modules\Foundation\Authorization\Models\Permission;
 
 class HousekeepingPermissionSeeder extends Seeder
 {

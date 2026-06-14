@@ -17,7 +17,7 @@ class BankAccountPolicy
 
     public function view(User $user, BankAccount $bankAccount): bool
     {
-        if ($user->property_id !== $bankAccount->property_id && !$user->isSuperAdmin()) {
+        if (app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() !== $bankAccount->property_id && !$user->isSuperAdmin()) {
             return false;
         }
 
@@ -31,7 +31,7 @@ class BankAccountPolicy
 
     public function update(User $user, BankAccount $bankAccount): bool
     {
-        if ($user->property_id !== $bankAccount->property_id && !$user->isSuperAdmin()) {
+        if (app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() !== $bankAccount->property_id && !$user->isSuperAdmin()) {
             return false;
         }
 
@@ -40,7 +40,7 @@ class BankAccountPolicy
 
     public function delete(User $user, BankAccount $bankAccount): bool
     {
-        if ($user->property_id !== $bankAccount->property_id && !$user->isSuperAdmin()) {
+        if (app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() !== $bankAccount->property_id && !$user->isSuperAdmin()) {
             return false;
         }
 

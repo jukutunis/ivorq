@@ -17,7 +17,7 @@ class WorkOrderPolicy
 
     public function view(User $user, WorkOrder $workOrder)
     {
-        return $user->can('workorder.view') && $user->property_id === $workOrder->property_id;
+        return $user->can('workorder.view') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $workOrder->property_id;
     }
 
     public function create(User $user)
@@ -27,12 +27,12 @@ class WorkOrderPolicy
 
     public function update(User $user, WorkOrder $workOrder)
     {
-        return $user->can('workorder.update') && $user->property_id === $workOrder->property_id;
+        return $user->can('workorder.update') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $workOrder->property_id;
     }
 
     public function assign(User $user, WorkOrder $workOrder)
     {
-        return $user->can('workorder.assign') && $user->property_id === $workOrder->property_id;
+        return $user->can('workorder.assign') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $workOrder->property_id;
     }
 
     public function delete(User $user, WorkOrder $workOrder)

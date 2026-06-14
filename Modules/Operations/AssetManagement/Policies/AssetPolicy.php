@@ -18,7 +18,7 @@ class AssetPolicy
 
     public function view(User $user, Asset $asset): bool
     {
-        return $user->hasPermissionTo('asset.view') && $user->property_id === $asset->property_id;
+        return $user->hasPermissionTo('asset.view') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $asset->property_id;
     }
 
     public function create(User $user): bool
@@ -32,7 +32,7 @@ class AssetPolicy
             return false; // Disposed/Retired assets are immutable
         }
 
-        return $user->hasPermissionTo('asset.update') && $user->property_id === $asset->property_id;
+        return $user->hasPermissionTo('asset.update') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $asset->property_id;
     }
 
     public function delete(User $user, Asset $asset): bool
@@ -41,6 +41,6 @@ class AssetPolicy
             return false; // Already disposed/retired cannot be deleted
         }
 
-        return $user->hasPermissionTo('asset.delete') && $user->property_id === $asset->property_id;
+        return $user->hasPermissionTo('asset.delete') && app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $asset->property_id;
     }
 }

@@ -5,7 +5,7 @@ namespace Modules\Foundation\Authorization;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Modules\Foundation\Authorization\Policies\RolePolicy;
-use Spatie\Permission\Models\Role;
+use Modules\Foundation\Authorization\Models\Role;
 
 class AuthorizationServiceProvider extends ServiceProvider
 {

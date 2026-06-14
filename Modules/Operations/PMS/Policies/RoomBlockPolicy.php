@@ -15,7 +15,7 @@ class RoomBlockPolicy
     public function view(User $user, RoomBlock $roomBlock): bool
     {
         return $user->hasPermissionTo('pms.room-block.view')
-            && ($user->isSuperAdmin() || $user->property_id === $roomBlock->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $roomBlock->property_id);
     }
 
     public function create(User $user): bool
@@ -26,13 +26,13 @@ class RoomBlockPolicy
     public function update(User $user, RoomBlock $roomBlock): bool
     {
         return $user->hasPermissionTo('pms.room-block.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $roomBlock->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $roomBlock->property_id);
     }
 
     public function delete(User $user, RoomBlock $roomBlock): bool
     {
         return $user->hasPermissionTo('pms.room-block.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $roomBlock->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $roomBlock->property_id);
     }
 
     /**
@@ -41,6 +41,6 @@ class RoomBlockPolicy
     public function changeStatus(User $user, RoomBlock $roomBlock): bool
     {
         return $user->hasPermissionTo('pms.room-block.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $roomBlock->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $roomBlock->property_id);
     }
 }

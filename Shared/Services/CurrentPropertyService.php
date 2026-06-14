@@ -32,9 +32,9 @@ class CurrentPropertyService
             // Session not available in this context (e.g., console/queue)
         }
 
-        // Tier 3: authenticated user property_id
-        if (auth()->check() && auth()->user()->property_id) {
-            return auth()->user()->property_id;
+        // Tier 3: authenticated user default property
+        if (auth()->check() && auth()->user()->defaultProperty()?->id) {
+            return auth()->user()->defaultProperty()->id;
         }
 
         return null;

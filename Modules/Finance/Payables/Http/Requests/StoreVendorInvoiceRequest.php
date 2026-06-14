@@ -24,7 +24,7 @@ class StoreVendorInvoiceRequest extends FormRequest
                 'string',
                 Rule::unique('vendor_invoices')->where(function ($query) {
                     return $query->where('vendor_id', $this->vendor_id)
-                        ->where('property_id', request()->user()->property_id);
+                        ->where('property_id', app(\Shared\Services\CurrentPropertyService::class)->getPropertyId());
                 })
             ],
             'invoice_date' => ['required', 'date'],

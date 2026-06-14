@@ -15,7 +15,7 @@ class ZoneAssignmentPolicy
     public function view(User $user, ZoneAssignment $assignment): bool
     {
         return $user->hasPermissionTo('zone.view')
-            && ($user->isSuperAdmin() || $user->property_id === $assignment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $assignment->property_id);
     }
 
     public function create(User $user): bool
@@ -26,12 +26,12 @@ class ZoneAssignmentPolicy
     public function update(User $user, ZoneAssignment $assignment): bool
     {
         return $user->hasPermissionTo('zone.assign')
-            && ($user->isSuperAdmin() || $user->property_id === $assignment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $assignment->property_id);
     }
 
     public function delete(User $user, ZoneAssignment $assignment): bool
     {
         return $user->hasPermissionTo('zone.assign')
-            && ($user->isSuperAdmin() || $user->property_id === $assignment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $assignment->property_id);
     }
 }

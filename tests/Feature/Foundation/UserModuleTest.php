@@ -81,8 +81,11 @@ class UserModuleTest extends TestCase
             'password_confirmation' => 'password1234',
         ])->assertRedirect();
 
-        $this->assertDatabaseHas('users', [
-            'email'       => 'newstaff@test.com',
+        $user = User::where('email', 'newstaff@test.com')->first();
+        $this->assertNotNull($user);
+        
+        $this->assertDatabaseHas('property_user', [
+            'user_id'     => $user->id,
             'property_id' => $prop->id,
         ]);
     }

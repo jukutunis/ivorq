@@ -26,7 +26,7 @@ class UpdateVendorInvoiceRequest extends FormRequest
                 Rule::unique('vendor_invoices')->ignore($invoiceId)->where(function ($query) use ($invoice) {
                     $vendorId = is_string($invoice) ? VendorInvoice::find($invoice)->vendor_id : $invoice?->vendor_id;
                     return $query->where('vendor_id', $vendorId)
-                        ->where('property_id', request()->user()->property_id);
+                        ->where('property_id', app(\Shared\Services\CurrentPropertyService::class)->getPropertyId());
                 })
             ],
             'invoice_date' => ['nullable', 'date'],

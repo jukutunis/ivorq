@@ -15,7 +15,7 @@ class RoomPolicy
     public function view(User $user, Room $room): bool
     {
         return $user->hasPermissionTo('housekeeping.room.view')
-            && ($user->isSuperAdmin() || $user->property_id === $room->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $room->property_id);
     }
 
     public function create(User $user): bool
@@ -26,24 +26,24 @@ class RoomPolicy
     public function update(User $user, Room $room): bool
     {
         return $user->hasPermissionTo('housekeeping.room.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $room->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $room->property_id);
     }
 
     public function delete(User $user, Room $room): bool
     {
         return $user->hasPermissionTo('housekeeping.room.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $room->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $room->property_id);
     }
 
     public function changeStatus(User $user, Room $room): bool
     {
         return $user->hasPermissionTo('housekeeping.room.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $room->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $room->property_id);
     }
 
     public function assignZone(User $user, Room $room): bool
     {
         return $user->hasPermissionTo('housekeeping.room.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $room->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $room->property_id);
     }
 }

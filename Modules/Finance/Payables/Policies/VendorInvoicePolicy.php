@@ -18,7 +18,7 @@ class VendorInvoicePolicy
     public function view(User $user, VendorInvoice $invoice): bool
     {
         return $user->hasPermissionTo('payables.vendor-invoice.view') &&
-               $user->property_id === $invoice->property_id;
+               app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $invoice->property_id;
     }
 
     public function create(User $user): bool
@@ -29,14 +29,14 @@ class VendorInvoicePolicy
     public function update(User $user, VendorInvoice $invoice): bool
     {
         return $user->hasPermissionTo('payables.vendor-invoice.edit') &&
-               $user->property_id === $invoice->property_id &&
+               app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $invoice->property_id &&
                $invoice->status === \Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum::Draft;
     }
 
     public function cancel(User $user, VendorInvoice $invoice): bool
     {
         return $user->hasPermissionTo('payables.vendor-invoice.cancel') &&
-               $user->property_id === $invoice->property_id &&
+               app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $invoice->property_id &&
                in_array($invoice->status, [
                    \Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum::Draft,
                    \Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum::Submitted
@@ -46,6 +46,6 @@ class VendorInvoicePolicy
     public function createMatch(User $user, VendorInvoice $invoice): bool
     {
         return $user->hasPermissionTo('payables.match.create') && 
-               $user->property_id === $invoice->property_id;
+               app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $invoice->property_id;
     }
 }

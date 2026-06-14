@@ -17,7 +17,7 @@ class VendorContactPolicy
         // Depends on the vendor's property
         $vendor = $contact->vendor;
         return $user->hasPermissionTo('purchasing.vendor-contact.view')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || $user->property_id === $vendor->property_id);
+            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
     }
 
     public function create(User $user): bool
@@ -29,13 +29,13 @@ class VendorContactPolicy
     {
         $vendor = $contact->vendor;
         return $user->hasPermissionTo('purchasing.vendor-contact.edit')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || $user->property_id === $vendor->property_id);
+            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
     }
 
     public function delete(User $user, VendorContact $contact): bool
     {
         $vendor = $contact->vendor;
         return $user->hasPermissionTo('purchasing.vendor-contact.delete')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || $user->property_id === $vendor->property_id);
+            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
     }
 }

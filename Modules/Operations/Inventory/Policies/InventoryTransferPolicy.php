@@ -15,7 +15,7 @@ class InventoryTransferPolicy
     public function view(User $user, InventoryTransfer $transfer): bool
     {
         return $user->hasPermissionTo('inventory.transfer.view')
-            && ($user->isSuperAdmin() || $user->property_id === $transfer->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $transfer->property_id);
     }
 
     public function create(User $user): bool
@@ -26,13 +26,13 @@ class InventoryTransferPolicy
     public function update(User $user, InventoryTransfer $transfer): bool
     {
         return $user->hasPermissionTo('inventory.transfer.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $transfer->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $transfer->property_id);
     }
 
     public function delete(User $user, InventoryTransfer $transfer): bool
     {
         return $user->hasPermissionTo('inventory.transfer.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $transfer->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $transfer->property_id);
     }
 
     /**
@@ -42,7 +42,7 @@ class InventoryTransferPolicy
     public function complete(User $user, InventoryTransfer $transfer): bool
     {
         return $user->hasPermissionTo('inventory.transfer.complete')
-            && ($user->isSuperAdmin() || $user->property_id === $transfer->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $transfer->property_id);
     }
 
     /**
@@ -51,6 +51,6 @@ class InventoryTransferPolicy
     public function cancel(User $user, InventoryTransfer $transfer): bool
     {
         return $user->hasPermissionTo('inventory.transfer.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $transfer->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $transfer->property_id);
     }
 }

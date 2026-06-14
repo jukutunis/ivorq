@@ -15,7 +15,7 @@ class PurchaseRequestPolicy
     public function view(User $user, PurchaseRequest $purchaseRequest): bool
     {
         return $user->hasPermissionTo('purchasing.purchase-request.view')
-            && ($user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $purchaseRequest->property_id);
     }
 
     public function create(User $user): bool
@@ -26,34 +26,34 @@ class PurchaseRequestPolicy
     public function update(User $user, PurchaseRequest $purchaseRequest): bool
     {
         return $user->hasPermissionTo('purchasing.purchase-request.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $purchaseRequest->property_id);
     }
 
     public function delete(User $user, PurchaseRequest $purchaseRequest): bool
     {
         return $user->hasPermissionTo('purchasing.purchase-request.delete')
-            && ($user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $purchaseRequest->property_id);
     }
 
     public function cancel(User $user, PurchaseRequest $purchaseRequest): bool
     {
         return $user->hasPermissionTo('purchasing.purchase-request.cancel')
-            && ($user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $purchaseRequest->property_id);
     }
 
     public function submit(User $user, PurchaseRequest $purchaseRequest): bool
     {
         return $user->hasPermissionTo('purchasing.purchase-request.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $purchaseRequest->property_id);
     }
 
     public function approve(User $user, PurchaseRequest $purchaseRequest): bool
     {
-        return $user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id;
+        return $user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $purchaseRequest->property_id;
     }
 
     public function reject(User $user, PurchaseRequest $purchaseRequest): bool
     {
-        return $user->isSuperAdmin() || $user->property_id === $purchaseRequest->property_id;
+        return $user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $purchaseRequest->property_id;
     }
 }

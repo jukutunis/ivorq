@@ -15,7 +15,7 @@ class AssetRequestPolicy
     public function view(User $user, AssetRequest $request): bool
     {
         return $user->hasPermissionTo('engineering.asset-request.view')
-            && ($user->isSuperAdmin() || $user->property_id === $request->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $request->property_id);
     }
 
     public function create(User $user): bool
@@ -26,13 +26,13 @@ class AssetRequestPolicy
     public function update(User $user, AssetRequest $request): bool
     {
         return $user->hasPermissionTo('engineering.asset-request.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $request->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $request->property_id);
     }
 
     public function delete(User $user, AssetRequest $request): bool
     {
         return $user->hasPermissionTo('engineering.asset-request.edit')
-            && ($user->isSuperAdmin() || $user->property_id === $request->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $request->property_id);
     }
 
     /**
@@ -42,18 +42,18 @@ class AssetRequestPolicy
     public function approve(User $user, AssetRequest $request): bool
     {
         return $user->hasPermissionTo('engineering.asset-request.approve')
-            && ($user->isSuperAdmin() || $user->property_id === $request->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $request->property_id);
     }
 
     public function reject(User $user, AssetRequest $request): bool
     {
         return $user->hasPermissionTo('engineering.asset-request.approve')
-            && ($user->isSuperAdmin() || $user->property_id === $request->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $request->property_id);
     }
 
     public function fulfill(User $user, AssetRequest $request): bool
     {
         return $user->hasPermissionTo('engineering.asset-request.approve')
-            && ($user->isSuperAdmin() || $user->property_id === $request->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $request->property_id);
     }
 }

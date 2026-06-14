@@ -7,7 +7,7 @@ use Modules\Finance\Banking\Models\BankAccount;
 use Modules\Foundation\Audit\Models\AuditLog;
 use Modules\Foundation\User\Models\User;
 use Modules\Foundation\Property\Models\Property;
-use Spatie\Permission\Models\Permission;
+use Modules\Foundation\Authorization\Models\Permission;
 use Tests\TestCase;
 
 class BankAccountModuleTest extends TestCase

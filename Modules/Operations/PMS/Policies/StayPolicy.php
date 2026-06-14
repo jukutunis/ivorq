@@ -15,7 +15,7 @@ class StayPolicy
     public function view(User $user, Stay $stay): bool
     {
         return $user->hasPermissionTo('pms.reservation.view')
-            && ($user->isSuperAdmin() || $user->property_id === $stay->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $stay->property_id);
     }
 
     /**
@@ -26,6 +26,6 @@ class StayPolicy
     public function checkOut(User $user, Stay $stay): bool
     {
         return $user->hasPermissionTo('pms.reservation.checkout')
-            && ($user->isSuperAdmin() || $user->property_id === $stay->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $stay->property_id);
     }
 }

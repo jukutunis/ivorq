@@ -10,7 +10,7 @@ class TaskAssignmentPolicy
     public function view(User $user, TaskAssignment $assignment): bool
     {
         return $user->hasPermissionTo('housekeeping.task.view')
-            && ($user->isSuperAdmin() || $user->property_id === $assignment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $assignment->property_id);
     }
 
     public function create(User $user): bool
@@ -21,12 +21,12 @@ class TaskAssignmentPolicy
     public function update(User $user, TaskAssignment $assignment): bool
     {
         return $user->hasPermissionTo('housekeeping.task.assign')
-            && ($user->isSuperAdmin() || $user->property_id === $assignment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $assignment->property_id);
     }
 
     public function delete(User $user, TaskAssignment $assignment): bool
     {
         return $user->hasPermissionTo('housekeeping.task.assign')
-            && ($user->isSuperAdmin() || $user->property_id === $assignment->property_id);
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $assignment->property_id);
     }
 }

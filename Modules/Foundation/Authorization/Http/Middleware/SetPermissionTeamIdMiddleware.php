@@ -31,7 +31,9 @@ class SetPermissionTeamIdMiddleware
         if ($user = $request->user()) {
             // property_id is null for super-admins — Spatie treats null as "no team
             // filter", which allows super-admins to bypass all team-scoped checks.
-            setPermissionsTeamId($user->property_id);
+            $teamId = $user->isSuperAdmin() ? null : app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+            \Illuminate\Support\Facades\Log::info("Setting team ID for user {$user->id} to " . var_export($teamId, true));
+            setPermissionsTeamId($teamId);
         }
 
         return $next($request);
