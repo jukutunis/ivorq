@@ -10,6 +10,7 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Finance\AccountsPayable\Enums\ApInvoiceStatusEnum;
 use Modules\Finance\AccountsPayable\Enums\ApInvoiceTypeEnum;
+use Modules\Finance\AccountsPayable\Enums\InvoicePaymentStatusEnum;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
@@ -39,6 +40,9 @@ class ApInvoice extends Model
         'subtotal_amount',
         'tax_amount',
         'grand_total_amount',
+        'amount_paid',
+        'amount_remaining',
+        'payment_status',
         'remarks',
         'approved_by',
         'approved_at',
@@ -59,6 +63,9 @@ class ApInvoice extends Model
         'subtotal_amount' => 'decimal:3',
         'tax_amount' => 'decimal:3',
         'grand_total_amount' => 'decimal:3',
+        'amount_paid' => 'decimal:2',
+        'amount_remaining' => 'decimal:2',
+        'payment_status' => InvoicePaymentStatusEnum::class,
         'approved_at' => 'datetime',
         'rejected_at' => 'datetime',
         'posted_at' => 'datetime',
