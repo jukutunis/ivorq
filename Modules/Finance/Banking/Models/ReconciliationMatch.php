@@ -28,6 +28,9 @@ class ReconciliationMatch extends Model
         'statement_amount',
         'bank_account_balance_before',
         'bank_account_balance_after',
+        'match_method',
+        'matched_by',
+        'override_reason',
     ];
 
     protected $casts = [
