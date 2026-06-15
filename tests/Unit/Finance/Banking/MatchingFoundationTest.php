@@ -26,7 +26,7 @@ class DummyMatchingEngine extends AbstractMatchingEngine
 
     public function evaluate(BankStatementLine $line, array $candidates): MatchResultDTO
     {
-        return new MatchResultDTO(false, 0, 'dummy', null);
+        return new MatchResultDTO(false, 0, 0, 0, 0, 'dummy', null);
     }
 
     // Expose protected methods for testing
@@ -74,12 +74,12 @@ class MatchingFoundationTest extends TestCase
     public function test_result_creation_and_validation()
     {
         $candidate = new MatchCandidateDTO('VendorPayment', 'ULID1', 'BSL1');
-        $result = new MatchResultDTO(true, 95.0, 'Match', $candidate);
+        $result = new MatchResultDTO(true, 95.0, 100.0, 90.0, 100.0, 'Match', $candidate);
 
         $this->assertTrue($result->is_match);
         
         $this->expectException(InvalidArgumentException::class);
-        new MatchResultDTO(false, -10, 'Fail', null); // < 0
+        new MatchResultDTO(false, -10, 0, 0, 0, 'Fail', null); // < 0
     }
 
     public function test_configuration_validation()

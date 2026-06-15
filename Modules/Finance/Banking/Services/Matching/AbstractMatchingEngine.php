@@ -34,7 +34,7 @@ abstract class AbstractMatchingEngine implements MatchingEngineInterface
 
     protected function calculateDateScore(Carbon $bankDate, Carbon $treasuryDate): float
     {
-        $diffDays = $bankDate->diffInDays($treasuryDate);
+        $diffDays = abs($bankDate->diffInDays($treasuryDate, false));
 
         if ($diffDays == 0) {
             return 100.0;

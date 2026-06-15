@@ -22,11 +22,16 @@ class MatchCandidateDTO
 
     public function setScores(float $amount, float $date, float $reference, float $total): void
     {
+        $amount = round($amount, 4);
+        $date = round($date, 4);
+        $reference = round($reference, 4);
+        $total = round($total, 4);
+
         if ($amount < 0 || $date < 0 || $reference < 0 || $total < 0) {
-            throw new InvalidArgumentException("Scores cannot be negative.");
+            throw new InvalidArgumentException("Scores cannot be negative. Got: {$amount}, {$date}, {$reference}, {$total}");
         }
         if ($amount > 100 || $date > 100 || $reference > 100 || $total > 100) {
-            throw new InvalidArgumentException("Scores cannot exceed 100.");
+            throw new InvalidArgumentException("Scores cannot exceed 100. Got: {$amount}, {$date}, {$reference}, {$total}");
         }
 
         $this->amount_score = $amount;

@@ -9,6 +9,9 @@ class MatchResultDTO
     public function __construct(
         public readonly bool $is_match,
         public readonly float $confidence_score,
+        public readonly float $amount_score,
+        public readonly float $date_score,
+        public readonly float $reference_score,
         public readonly string $reason,
         public readonly ?MatchCandidateDTO $candidate
     ) {
