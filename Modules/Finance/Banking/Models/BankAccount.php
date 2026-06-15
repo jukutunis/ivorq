@@ -23,6 +23,8 @@ class BankAccount extends Model
         'current_balance',
         'reconciled_balance',
         'is_active',
+        'branch_name',
+        'is_default',
     ];
 
     protected $casts = [
@@ -30,6 +32,7 @@ class BankAccount extends Model
         'current_balance' => 'decimal:2',
         'reconciled_balance' => 'decimal:2',
         'is_active' => 'boolean',
+        'is_default' => 'boolean',
     ];
 
     protected static function newFactory()

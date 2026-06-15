@@ -27,4 +27,10 @@ enum OperationalIdentityEnum: string
     // Extended Identities
     case PURCHASE_COMMITMENT = 'PURCHASE_COMMITMENT';
     case BUDGET_RESERVE = 'BUDGET_RESERVE';
+
+    // Treasury Identities
+    case AP_PAYMENT = 'AP_PAYMENT';
+    case BANK_DISBURSEMENT = 'BANK_DISBURSEMENT';
+    case PAYMENT_VARIANCE = 'PAYMENT_VARIANCE';
+    case BANK_FEE = 'BANK_FEE';
 }

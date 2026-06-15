@@ -22,6 +22,7 @@ class VendorPayment extends Model
     protected $casts = [
         'payment_date' => 'date',
         'total_amount' => 'decimal:2',
+        'bank_fee_amount' => 'decimal:2',
         'status' => VendorPaymentStatusEnum::class,
         'approved_at' => 'datetime',
     ];

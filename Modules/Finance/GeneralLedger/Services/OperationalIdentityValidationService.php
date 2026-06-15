@@ -46,6 +46,12 @@ class OperationalIdentityValidationService
             OperationalIdentityEnum::INVENTORY_ADJUSTMENT_GAIN->value => [AccountTypeEnum::Revenue],
             OperationalIdentityEnum::AP_CREDIT_NOTE_GAIN->value => [AccountTypeEnum::Revenue],
             OperationalIdentityEnum::AP_WRITEOFF_GAIN->value => [AccountTypeEnum::Revenue],
+
+            // TREASURY
+            OperationalIdentityEnum::AP_PAYMENT->value => [AccountTypeEnum::Liability],
+            OperationalIdentityEnum::BANK_DISBURSEMENT->value => [AccountTypeEnum::Asset],
+            OperationalIdentityEnum::BANK_FEE->value => [AccountTypeEnum::Expense],
+            OperationalIdentityEnum::PAYMENT_VARIANCE->value => [AccountTypeEnum::Expense, AccountTypeEnum::Revenue],
         ];
     }
 
