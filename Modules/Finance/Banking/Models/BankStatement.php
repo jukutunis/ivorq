@@ -24,6 +24,11 @@ class BankStatement extends Model
         'closing_balance',
         'imported_closing_balance',
         'status',
+        'file_name',
+        'file_hash',
+        'row_count',
+        'imported_by',
+        'imported_at',
     ];
 
     protected $casts = [
@@ -32,6 +37,8 @@ class BankStatement extends Model
         'closing_balance' => 'decimal:2',
         'imported_closing_balance' => 'decimal:2',
         'status' => BankStatementStatusEnum::class,
+        'row_count' => 'integer',
+        'imported_at' => 'datetime',
     ];
 
     public function bankAccount(): BelongsTo
