@@ -65,4 +65,21 @@ class ReconciliationMatch extends Model
     {
         return \Modules\Finance\Banking\database\Factories\ReconciliationMatchFactory::new();
     }
+
+    protected static function booted()
+    {
+        static::saving(function ($match) {
+            $session = $match->reconciliationSession()->first();
+            if ($session && $session->status === \Modules\Finance\Banking\Enums\ReconciliationSessionStatusEnum::Finalized) {
+                throw new \Exception("Freeze Protection: Cannot modify matches of a finalized session.");
+            }
+        });
+
+        static::deleting(function ($match) {
+            $session = $match->reconciliationSession()->first();
+            if ($session && $session->status === \Modules\Finance\Banking\Enums\ReconciliationSessionStatusEnum::Finalized) {
+                throw new \Exception("Freeze Protection: Cannot delete matches of a finalized session.");
+            }
+        });
+    }
 }

@@ -8,5 +8,6 @@ enum ReconciliationSessionStatusEnum: string
     case InProgress = 'InProgress';
     case Review = 'Review';
     case Completed = 'Completed';
+    case Finalized = 'Finalized';
     case Cancelled = 'Cancelled';
 }

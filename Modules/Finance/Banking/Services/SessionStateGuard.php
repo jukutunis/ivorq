@@ -14,9 +14,9 @@ class SessionStateGuard
      */
     public function validateCreationDate(string $propertyId, string $bankAccountId, string $startDate): void
     {
-        $latestSession = ReconciliationSession::where('property_id', $propertyId)
+            $latestSession = ReconciliationSession::where('property_id', $propertyId)
             ->where('bank_account_id', $bankAccountId)
-            ->where('status', ReconciliationSessionStatusEnum::Completed)
+            ->whereIn('status', [ReconciliationSessionStatusEnum::Completed, ReconciliationSessionStatusEnum::Finalized])
             ->orderByDesc('statement_date_end')
             ->first();
 
@@ -36,6 +36,10 @@ class SessionStateGuard
     public function transitionTo(ReconciliationSession $session, ReconciliationSessionStatusEnum $newStatus, string $userId): void
     {
         $current = $session->status;
+
+        if ($current === ReconciliationSessionStatusEnum::Finalized) {
+            throw new Exception("No Reopen Policy: Cannot transition a Finalized session to any other state.");
+        }
 
         if ($newStatus === ReconciliationSessionStatusEnum::InProgress) {
             if ($current !== ReconciliationSessionStatusEnum::Open) {
@@ -72,6 +76,24 @@ class SessionStateGuard
                 'reviewed_at' => now(),
                 'completed_by' => $userId,
                 'completed_at' => now(),
+            ]);
+        }
+        elseif ($newStatus === ReconciliationSessionStatusEnum::Finalized) {
+            if ($current !== ReconciliationSessionStatusEnum::Completed) {
+                throw new Exception("Illegal Transition: Cannot move to Finalized from {$current->value}.");
+            }
+            
+            if ($session->reviewed_by === $userId) {
+                throw new Exception("GovernanceException: Reviewer cannot be Finalizer.");
+            }
+            if ($session->created_by === $userId) {
+                throw new Exception("GovernanceException: Maker cannot be Finalizer.");
+            }
+
+            $session->update([
+                'status' => $newStatus,
+                'finalized_by' => $userId,
+                'finalized_at' => now(),
             ]);
         }
         else {

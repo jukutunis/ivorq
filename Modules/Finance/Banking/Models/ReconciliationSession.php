@@ -31,6 +31,9 @@ class ReconciliationSession extends Model
         'cancelled_by',
         'reviewed_by',
         'reviewed_at',
+        'finalized_by',
+        'finalized_at',
+        'finalization_notes',
     ];
 
     protected $casts = [
@@ -43,6 +46,7 @@ class ReconciliationSession extends Model
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
         'reviewed_at' => 'datetime',
+        'finalized_at' => 'datetime',
     ];
 
     public function bankAccount(): BelongsTo
