@@ -52,6 +52,8 @@ class OperationalIdentityValidationService
             OperationalIdentityEnum::BANK_DISBURSEMENT->value => [AccountTypeEnum::Asset],
             OperationalIdentityEnum::BANK_FEE->value => [AccountTypeEnum::Expense],
             OperationalIdentityEnum::PAYMENT_VARIANCE->value => [AccountTypeEnum::Expense, AccountTypeEnum::Revenue],
+            OperationalIdentityEnum::UNMATCHED_BANK_LINE->value => [AccountTypeEnum::Asset, AccountTypeEnum::Liability],
+            OperationalIdentityEnum::MANUAL_ADJUSTMENT->value => [AccountTypeEnum::Expense, AccountTypeEnum::Revenue],
         ];
     }
 
