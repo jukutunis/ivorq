@@ -31,6 +31,8 @@ class ReconciliationMatch extends Model
         'match_method',
         'matched_by',
         'override_reason',
+        'confidence_score',
+        'matched_at',
     ];
 
     protected $casts = [
@@ -40,6 +42,8 @@ class ReconciliationMatch extends Model
         'statement_amount' => 'decimal:2',
         'bank_account_balance_before' => 'decimal:2',
         'bank_account_balance_after' => 'decimal:2',
+        'confidence_score' => 'decimal:2',
+        'matched_at' => 'datetime',
     ];
 
     public function reconciliationSession(): BelongsTo

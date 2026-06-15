@@ -29,6 +29,8 @@ class ReconciliationSession extends Model
         'completed_by',
         'cancelled_at',
         'cancelled_by',
+        'reviewed_by',
+        'reviewed_at',
     ];
 
     protected $casts = [
@@ -40,6 +42,7 @@ class ReconciliationSession extends Model
         'status' => ReconciliationSessionStatusEnum::class,
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
+        'reviewed_at' => 'datetime',
     ];
 
     public function bankAccount(): BelongsTo

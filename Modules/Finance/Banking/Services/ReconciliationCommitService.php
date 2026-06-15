@@ -21,13 +21,14 @@ class ReconciliationCommitService
         float $amountMatched,
         string $matchMethod,
         string $userId,
-        ?string $reason = null
+        ?string $reason = null,
+        ?float $confidenceScore = null
     ): ReconciliationMatch {
         if ($amountMatched <= 0) {
             throw ReconciliationCommitException::invalidAmount($amountMatched);
         }
 
-        return DB::transaction(function () use ($session, $bankLineId, $matchableType, $matchableId, $amountMatched, $matchMethod, $userId, $reason) {
+        return DB::transaction(function () use ($session, $bankLineId, $matchableType, $matchableId, $amountMatched, $matchMethod, $userId, $reason, $confidenceScore) {
             
             // 1. Lock Bank Line
             $bankLine = BankStatementLine::where('id', $bankLineId)->lockForUpdate()->firstOrFail();
@@ -86,7 +87,15 @@ class ReconciliationCommitService
                 }
             }
 
-            // 6. Create Match
+            // 6. Calculate Running Balance
+            // Find all lines for this account strictly before this transaction date
+            // Note: Since we are in the commit layer, we simplify running balance by fetching the account's current internal balance
+            // and adjusting it. For exact snapshot:
+            $account = $session->bankAccount()->lockForUpdate()->first();
+            $balanceBefore = $account->current_balance ?? 0.0;
+            $balanceAfter = $balanceBefore + $amountMatched;
+
+            // 7. Create Match
             return ReconciliationMatch::create([
                 'property_id' => $session->property_id,
                 'reconciliation_session_id' => $session->id,
@@ -100,8 +109,10 @@ class ReconciliationCommitService
                 'matched_by' => $userId,
                 'override_reason' => $reason,
                 'is_locked' => true,
-                'bank_account_balance_before' => 0, // Simplified for this context
-                'bank_account_balance_after' => 0, // Simplified for this context
+                'bank_account_balance_before' => $balanceBefore,
+                'bank_account_balance_after' => $balanceAfter,
+                'confidence_score' => $confidenceScore,
+                'matched_at' => now(),
             ]);
         });
     }
@@ -109,10 +120,12 @@ class ReconciliationCommitService
     public function commitSplit(
         ReconciliationSession $session,
         string $bankLineId,
-        array $allocations, // [['type' => type, 'id' => id, 'amount' => amount]]
-        string $userId
+        array $allocations,
+        string $userId,
+        ?string $reason = null,
+        ?float $confidenceScore = null
     ): array {
-        return DB::transaction(function () use ($session, $bankLineId, $allocations, $userId) {
+        return DB::transaction(function () use ($session, $bankLineId, $allocations, $userId, $reason, $confidenceScore) {
             $matches = [];
             foreach ($allocations as $allocation) {
                 $matches[] = $this->commit1to1(
@@ -122,7 +135,9 @@ class ReconciliationCommitService
                     $allocation['id'],
                     $allocation['amount'],
                     'SPLIT',
-                    $userId
+                    $userId,
+                    $reason,
+                    $confidenceScore
                 );
             }
             return $matches;
@@ -131,12 +146,14 @@ class ReconciliationCommitService
 
     public function commitMerge(
         ReconciliationSession $session,
-        array $bankLineAllocations, // [['id' => bank_line_id, 'amount' => amount]]
+        array $bankLineAllocations,
         string $matchableType,
         string $matchableId,
-        string $userId
+        string $userId,
+        ?string $reason = null,
+        ?float $confidenceScore = null
     ): array {
-        return DB::transaction(function () use ($session, $bankLineAllocations, $matchableType, $matchableId, $userId) {
+        return DB::transaction(function () use ($session, $bankLineAllocations, $matchableType, $matchableId, $userId, $reason, $confidenceScore) {
             $matches = [];
             foreach ($bankLineAllocations as $line) {
                 $matches[] = $this->commit1to1(
@@ -146,7 +163,9 @@ class ReconciliationCommitService
                     $matchableId,
                     $line['amount'],
                     'MERGE',
-                    $userId
+                    $userId,
+                    $reason,
+                    $confidenceScore
                 );
             }
             return $matches;

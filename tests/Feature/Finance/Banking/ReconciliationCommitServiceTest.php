@@ -109,12 +109,17 @@ class ReconciliationCommitServiceTest extends TestCase
             1000.0,
             'MANUAL_OVERRIDE',
             $this->userId,
-            'Forced match by accountant'
+            'Forced match by accountant',
+            95.5
         );
 
         $this->assertEquals('MANUAL_OVERRIDE', $match->match_method);
         $this->assertEquals($this->userId, $match->matched_by);
         $this->assertEquals('Forced match by accountant', $match->override_reason);
+        $this->assertEquals(95.5, $match->confidence_score);
+        $this->assertNotNull($match->matched_at);
+        $this->assertEquals(0, $match->bank_account_balance_before);
+        $this->assertEquals(1000.0, $match->bank_account_balance_after);
 
         // Verify states updated
         $this->assertTrue($line->fresh()->is_reconciled);

@@ -18,6 +18,7 @@ class FundTransfer extends Model
     protected $casts = [
         'amount' => 'decimal:2',
         'transfer_date' => 'date',
+        'status' => \Modules\Finance\Treasury\Enums\FundTransferStatusEnum::class,
     ];
 
     public function sourceBankAccount(): BelongsTo
