@@ -15,6 +15,7 @@ class RevenueAssumption extends Model
         'company_id',
         'property_id',
         'budget_version_id',
+        'forecast_version_id',
         'metric_type',
         'period_number',
         'value',
@@ -33,5 +34,10 @@ class RevenueAssumption extends Model
     public function budgetVersion(): BelongsTo
     {
         return $this->belongsTo(BudgetVersion::class);
+    }
+
+    public function forecastVersion(): BelongsTo
+    {
+        return $this->belongsTo(ForecastVersion::class);
     }
 }
