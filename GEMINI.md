@@ -43,3 +43,21 @@ Git Tags:
 * v0.1-foundation-stable
 * v0.2-sprint02-complete
 * v0.3-sprint03-complete
+
+# Documentation Rules
+
+NEVER create sprint reports in repository root.
+
+All architecture documents must be stored under:
+
+docs/architecture/<domain>/
+
+All completion reports must be stored under:
+
+docs/completion-reports/
+
+All audit reports must be stored under:
+
+docs/audits/
+
+Repository root must remain clean.
