@@ -61,3 +61,29 @@ All audit reports must be stored under:
 docs/audits/
 
 Repository root must remain clean.
+
+## DOCUMENT OUTPUT RULE
+
+Any Architecture Audit, Architecture Revision,
+Domain Audit, Final Decision, ADR, Completion Report,
+Implementation Report, or Governance Report MUST:
+
+1. Be saved as a physical .md file inside repository.
+2. Never exist only as Gemini artifact.
+3. Be visible in git status.
+4. Be stored in approved docs folders.
+5. Include file verification before task completion.
+
+Task is NOT complete until file is commit-ready.
+
+## DOCUMENT VERIFICATION RULE
+
+Every document creation must verify:
+
+1. File exists physically
+2. File size reported
+3. Line count reported
+4. Appears in git status
+5. Commit recommendation generated
+
+A document is NOT considered completed until all five checks pass.
