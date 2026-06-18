@@ -24,10 +24,13 @@ return Application::configure(basePath: dirname(__DIR__))
             // Must run after StartSession so Auth::user() resolves from the session.
             // Sets Spatie Permission team context (property_id) for every web request.
             \Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware::class,
+            \Illuminate\Session\Middleware\AuthenticateSession::class,
+            \Modules\Foundation\Authentication\Http\Middleware\EnsureUserIsActive::class,
         ]);
 
         $middleware->api(prepend: [
             'throttle:api',
+            \Modules\Foundation\Authentication\Http\Middleware\EnsureUserIsActive::class,
         ]);
 
         // Named alias for API routes: apply AFTER auth:sanctum so the token-resolved
