@@ -13,7 +13,8 @@ class AuthService
 {
     public function __construct(
         private UserRepository $userRepository,
-        private TokenService $tokenService
+        private TokenService $tokenService,
+        private \Modules\Foundation\User\Repositories\UserSessionRepository $sessionRepository
     ) {}
 
     public function login(string $email, string $password, string $deviceName = 'web'): array
@@ -46,7 +47,11 @@ class AuthService
     {
         if ($tokenId) {
             $user->tokens()->where('id', $tokenId)->delete();
+            $this->sessionRepository->revokeByTokenId($tokenId);
         } else {
+            if ($token = $user->currentAccessToken()) {
+                $this->sessionRepository->revokeByTokenId($token->id);
+            }
             $user->currentAccessToken()->delete();
         }
 
@@ -56,6 +61,7 @@ class AuthService
     public function logoutAllDevices(User $user): void
     {
         $user->tokens()->delete();
+        $this->sessionRepository->revokeAllForUser($user->id);
 
         event(new UserLoggedOut($user));
     }

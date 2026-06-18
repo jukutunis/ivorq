@@ -7,10 +7,12 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\SalesAndEventManagement\Enums\BEOStatusEnum;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class BEOIssueLog extends Model
 {
-    use HasUlids;
+    use HasUlids, LogsActivity;
     
     protected $table = 'beo_issue_logs';
 
@@ -38,6 +40,13 @@ class BEOIssueLog extends Model
         'issued_at' => 'datetime',
         'approved_at' => 'datetime',
     ];
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
+    }
 
     public function eventFunction(): BelongsTo
     {

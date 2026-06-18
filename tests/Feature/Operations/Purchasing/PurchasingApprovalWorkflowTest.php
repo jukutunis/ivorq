@@ -1,6 +1,7 @@
 <?php
 
 namespace Tests\Feature\Operations\Purchasing;
+use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
 
 use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -32,7 +33,7 @@ class PurchasingApprovalWorkflowTest extends TestCase
             'requester_id' => $user->id,
             'required_date' => now()->addDays(7),
             'estimated_total' => 1000,
-            'status' => 'Draft'
+            'status' => PurchaseRequestStatusEnum::Draft->value
         ]);
 
         $workflow = ApprovalWorkflow::create([
@@ -61,6 +62,6 @@ class PurchasingApprovalWorkflowTest extends TestCase
         $pr->refresh();
 
         $this->assertEquals('Approved', $approvalRequest->status);
-        $this->assertEquals('Approved', $pr->status->value);
+        $this->assertEquals(PurchaseRequestStatusEnum::Approved->value, $pr->status->value);
     }
 }

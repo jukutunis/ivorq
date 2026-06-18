@@ -7,11 +7,13 @@ use Illuminate\Validation\ValidationException;
 use Modules\Operations\Inventory\Enums\CountStatusEnum;
 use Modules\Operations\Inventory\Models\StockCountSession;
 use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
+use Modules\Foundation\Approval\Services\ApprovalEngineService;
 
 class StockCountSessionService
 {
     public function __construct(
-        private InventoryStockRepository $stockRepository
+        private InventoryStockRepository $stockRepository,
+        private ApprovalEngineService $approvalEngineService
     ) {}
 
     public function create(array $data): StockCountSession
@@ -83,28 +85,13 @@ class StockCountSessionService
             $session->submitted_by = $userId ?? auth()->id();
             $session->save();
 
-            // TODO: Dispatch Foundation Approval Engine workflow event here.
+            // Dispatch Foundation Approval Engine workflow event
+            $this->approvalEngineService->submitForApproval($session, $session->submitted_by);
         });
 
         return $session->fresh();
     }
 
-    public function approve(string $id, ?string $userId = null): StockCountSession
-    {
-        $session = StockCountSession::findOrFail($id);
-
-        if ($session->status !== CountStatusEnum::SUBMITTED) {
-            throw ValidationException::withMessages([
-                'status' => ["Cannot approve. Session is not Submitted."],
-            ]);
-        }
-
-        $session->status = CountStatusEnum::APPROVED->value;
-        $session->approved_by = $userId ?? auth()->id();
-        $session->save();
-
-        return $session;
-    }
 
     public function cancel(string $id): StockCountSession
     {

@@ -11,10 +11,12 @@ use Shared\Traits\HasAuditColumns;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasUlid;
 use Modules\Operations\Purchasing\Models\Vendor;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class AccountPayable extends Model
 {
-    use HasUlid, BelongsToProperty, HasAuditColumns, SoftDeletes, HasFactory;
+    use HasUlid, BelongsToProperty, HasAuditColumns, SoftDeletes, HasFactory, LogsActivity;
 
     protected $table = 'accounts_payables';
 
@@ -60,5 +62,12 @@ class AccountPayable extends Model
     protected static function newFactory()
     {
         return \Modules\Finance\Payables\database\Factories\AccountPayableFactory::new();
+    }
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
     }
 }

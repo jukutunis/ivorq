@@ -9,6 +9,7 @@ use Modules\Operations\Purchasing\Repositories\PurchaseRequestLineRepository;
 use Modules\Operations\Purchasing\Repositories\PurchaseRequestRepository;
 use Modules\Foundation\Approval\Services\ApprovalEngineService;
 use Modules\Foundation\User\Models\User;
+use Modules\Finance\Budgeting\Services\BudgetVarianceService;
 use Shared\Exceptions\BusinessLogicException;
 
 class PurchaseRequestService
@@ -16,7 +17,8 @@ class PurchaseRequestService
     public function __construct(
         protected PurchaseRequestRepository $repository,
         protected PurchaseRequestLineRepository $lineRepository,
-        protected ApprovalEngineService $approvalEngine
+        protected ApprovalEngineService $approvalEngine,
+        protected BudgetVarianceService $budgetVarianceService
     ) {}
 
     public function createWithLines(array $data, array $lines): PurchaseRequest
@@ -97,14 +99,22 @@ class PurchaseRequestService
                 throw new BusinessLogicException('Only Draft Purchase Requests can be submitted.');
             }
 
-            // TODO: Budget integration will be implemented later in Budgeting/Finance sprint.
-            // Skip budget reservation for Sprint 09B.3.
+            // Enforce Budget Control
+            if ($pr->department_id && $pr->estimated_total > 0) {
+                $this->budgetVarianceService->validateDepartmentBudget(
+                    $pr->property_id,
+                    $pr->department_id,
+                    $pr->required_date->year,
+                    $pr->required_date->month,
+                    $pr->estimated_total
+                );
+            }
 
             // Evaluate workflow
-            $step = $this->approvalEngine->submitDocument($pr, 'purchasing');
+            $step = $this->approvalEngine->submitForApproval($pr, $pr->requester_id);
 
             $pr = $this->repository->update($id, [
-                'status' => PurchaseRequestStatusEnum::Submitted->value
+                'status' => PurchaseRequestStatusEnum::PendingReview->value
             ]);
 
             return $pr;
@@ -116,7 +126,7 @@ class PurchaseRequestService
         return DB::transaction(function () use ($id, $user, $remarks) {
             $pr = $this->repository->findOrFail($id);
             
-            if ($pr->status->value !== PurchaseRequestStatusEnum::Submitted->value) {
+            if ($pr->status->value !== PurchaseRequestStatusEnum::PendingReview->value) {
                 throw new BusinessLogicException('Only Submitted Purchase Requests can be approved.');
             }
 
@@ -146,7 +156,7 @@ class PurchaseRequestService
         return DB::transaction(function () use ($id, $user, $remarks) {
             $pr = $this->repository->findOrFail($id);
             
-            if ($pr->status->value !== PurchaseRequestStatusEnum::Submitted->value) {
+            if ($pr->status->value !== PurchaseRequestStatusEnum::PendingReview->value) {
                 throw new BusinessLogicException('Only Submitted Purchase Requests can be rejected.');
             }
 

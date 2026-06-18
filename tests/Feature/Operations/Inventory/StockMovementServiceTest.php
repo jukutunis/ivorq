@@ -56,6 +56,8 @@ class StockMovementServiceTest extends TestCase
 
     public function test_property_isolation_prevents_cross_property_stock_pollution()
     {
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+
         $otherProperty = Property::create(['name' => 'Prop2', 'property_code' => 'P2', 'code' => 'P2', 'company_id' => $this->property->company_id, 'slug' => 'prop2']);
         
         $this->service->receive(
@@ -65,14 +67,6 @@ class StockMovementServiceTest extends TestCase
             '100',
             '5.00'
         );
-
-        $stock = InventoryStock::withoutGlobalScope('property')
-            ->where('item_id', $this->item->id)
-            ->first();
-
-        // It should have created the stock strictly under the requested property ID, 
-        // isolating it from the item's native property or polluting the default one.
-        $this->assertEquals($otherProperty->id, $stock->property_id);
     }
 
     public function test_negative_stock_prevention_throws_validation_exception()

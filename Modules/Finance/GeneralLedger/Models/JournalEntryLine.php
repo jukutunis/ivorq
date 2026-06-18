@@ -8,10 +8,12 @@ use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class JournalEntryLine extends Model
 {
-    use HasUlid, BelongsToProperty, HasAuditColumns, HasFactory;
+    use HasUlid, BelongsToProperty, HasAuditColumns, HasFactory, LogsActivity;
 
     protected $table = 'gl_journal_entry_lines';
 
@@ -38,5 +40,12 @@ class JournalEntryLine extends Model
     public function account(): BelongsTo
     {
         return $this->belongsTo(Account::class, 'account_id');
+    }
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
     }
 }

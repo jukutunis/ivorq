@@ -64,4 +64,22 @@ class BudgetVarianceService
 
         return $variance;
     }
+
+    public function validateDepartmentBudget(string $propertyId, string $departmentId, int $year, int $month, float $requestedAmount): void
+    {
+        $variances = $this->getVariance($propertyId, $year, $month);
+
+        // If no active budget, we assume no budget is configured and therefore requests cannot proceed (strict budget enforcement).
+        if (empty($variances)) {
+            throw new \Shared\Exceptions\BusinessLogicException('No active budget found for the period.');
+        }
+
+        $availableBudget = collect($variances)
+            ->where('department_id', $departmentId)
+            ->sum('variance_amount');
+
+        if ($requestedAmount > $availableBudget) {
+            throw new \Shared\Exceptions\BusinessLogicException("Purchase Request amount ({$requestedAmount}) exceeds available department budget ({$availableBudget}).");
+        }
+    }
 }

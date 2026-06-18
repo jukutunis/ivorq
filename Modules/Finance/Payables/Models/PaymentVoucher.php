@@ -13,10 +13,12 @@ use Modules\Operations\Purchasing\Models\Vendor;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class PaymentVoucher extends Model
 {
-    use HasUlid, BelongsToProperty, HasAuditColumns, SoftDeletes, HasFactory;
+    use HasUlid, BelongsToProperty, HasAuditColumns, SoftDeletes, HasFactory, LogsActivity;
 
     protected $guarded = [];
 
@@ -26,6 +28,13 @@ class PaymentVoucher extends Model
         'payment_method' => PaymentMethodEnum::class,
         'status' => PaymentVoucherStatusEnum::class,
     ];
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logUnguarded()
+            ->logOnlyDirty();
+    }
 
     public function vendor(): BelongsTo
     {

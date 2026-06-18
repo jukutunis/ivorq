@@ -1,6 +1,7 @@
 <?php
 
 namespace Tests\Feature\Operations\Purchasing;
+use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
 
 use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -50,12 +51,12 @@ class PurchasingApprovalIntegrationTest extends TestCase
             'requester_id' => $user->id,
             'required_date' => now()->addDays(7),
             'estimated_total' => 5000,
-            'status' => 'Submitted'
+            'status' => PurchaseRequestStatusEnum::PendingReview->value
         ]);
 
         $pr->markAsApproved();
         $pr->refresh();
 
-        $this->assertEquals('Approved', $pr->status->value);
+        $this->assertEquals(PurchaseRequestStatusEnum::Approved->value, $pr->status->value);
     }
 }

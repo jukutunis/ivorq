@@ -26,8 +26,7 @@ class InventoryStockRepository
     public function findOrCreateLocked(string $itemId, string $locationId, string $propertyId): InventoryStock
     {
         // Ensure the row exists (no-op if already present)
-        InventoryStock::withoutGlobalScope('property')
-            ->firstOrCreate(
+        InventoryStock::firstOrCreate(
                 ['item_id' => $itemId, 'location_id' => $locationId],
                 [
                     'property_id'       => $propertyId,
@@ -38,8 +37,7 @@ class InventoryStockRepository
             );
 
         // Acquire the exclusive lock on the now-guaranteed-existing row
-        return InventoryStock::withoutGlobalScope('property')
-            ->where('item_id', $itemId)
+        return InventoryStock::where('item_id', $itemId)
             ->where('location_id', $locationId)
             ->lockForUpdate()
             ->firstOrFail();
@@ -89,8 +87,7 @@ class InventoryStockRepository
      */
     public function totalQuantityForItemLocked(string $itemId): string
     {
-        return (string) InventoryStock::withoutGlobalScope('property')
-            ->where('item_id', $itemId)
+        return (string) InventoryStock::where('item_id', $itemId)
             ->lockForUpdate()
             ->sum('physical_quantity');
     }

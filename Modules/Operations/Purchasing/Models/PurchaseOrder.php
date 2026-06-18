@@ -12,10 +12,12 @@ use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Foundation\Approval\Contracts\ApprovableContract;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class PurchaseOrder extends Model implements ApprovableContract
 {
-    use HasFactory, HasUlids, SoftDeletes, BelongsToProperty, HasAuditColumns;
+    use HasFactory, HasUlids, SoftDeletes, BelongsToProperty, HasAuditColumns, LogsActivity;
 
     protected $guarded = ['id'];
 
@@ -29,6 +31,13 @@ class PurchaseOrder extends Model implements ApprovableContract
         'exchange_rate' => 'decimal:4',
         'status' => PurchaseOrderStatusEnum::class,
     ];
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
+    }
 
     public function vendor(): BelongsTo
     {

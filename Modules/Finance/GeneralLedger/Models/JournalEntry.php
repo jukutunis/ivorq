@@ -10,10 +10,12 @@ use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class JournalEntry extends Model
 {
-    use HasUlid, BelongsToProperty, HasAuditColumns, SoftDeletes, HasFactory;
+    use HasUlid, BelongsToProperty, HasAuditColumns, SoftDeletes, HasFactory, LogsActivity;
 
     protected $table = 'gl_journal_entries';
 
@@ -39,5 +41,12 @@ class JournalEntry extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(JournalEntryLine::class, 'journal_entry_id');
+    }
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
     }
 }

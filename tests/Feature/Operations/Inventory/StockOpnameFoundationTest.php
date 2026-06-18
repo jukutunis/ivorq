@@ -15,6 +15,9 @@ use Modules\Operations\Inventory\Models\InventoryStock;
 use Modules\Operations\Inventory\Models\StockCountSession;
 use Modules\Operations\Inventory\Services\StockCountLineService;
 use Modules\Operations\Inventory\Services\StockCountSessionService;
+use Modules\Foundation\Approval\Models\ApprovalWorkflow;
+use Modules\Foundation\Approval\Models\ApprovalStep;
+use Modules\Foundation\Approval\Services\ApprovalEngineService;
 use Tests\TestCase;
 
 class StockOpnameFoundationTest extends TestCase
@@ -70,6 +73,7 @@ class StockOpnameFoundationTest extends TestCase
     public function test_stock_opname_lifecycle()
     {
         $user = \Modules\Foundation\User\Models\User::first();
+        $user->properties()->syncWithoutDetaching([$this->property->id]);
         $this->actingAs($user);
 
         // 1. Create Session
@@ -103,12 +107,32 @@ class StockOpnameFoundationTest extends TestCase
         $this->assertEquals(-100.00, $line->variance_cost); // Computed accessory check: -10 * 10.00
 
         // 5. Submit Count (Session Lock & Staleness Check)
+        // First we need a workflow setup
+        $workflow = ApprovalWorkflow::create([
+            'property_id' => $this->property->id,
+            'approvable_type' => StockCountSession::class,
+            'name' => 'Stock Count Approval',
+            'is_active' => true,
+        ]);
+        
+        ApprovalStep::create([
+            'workflow_id' => $workflow->id,
+            'sequence' => 1,
+            'name' => 'Inventory Manager',
+            'required_approvals' => 1,
+        ]);
+
         $this->sessionService->submit($session->id);
         $session->refresh();
         $this->assertEquals(CountStatusEnum::SUBMITTED, $session->status);
 
-        // 6. Approve
-        $this->sessionService->approve($session->id);
+        // 6. Approve via Engine
+        $approvalEngine = app(ApprovalEngineService::class);
+        $approvalRequest = $session->approvalRequests()->first();
+        $this->assertNotNull($approvalRequest);
+        
+        $approvalEngine->approve($approvalRequest, $user->id, 'Stock counts are correct.');
+        
         $session->refresh();
         $this->assertEquals(CountStatusEnum::APPROVED, $session->status);
     }
@@ -116,6 +140,7 @@ class StockOpnameFoundationTest extends TestCase
     public function test_staleness_detection()
     {
         $user = \Modules\Foundation\User\Models\User::first();
+        $user->properties()->syncWithoutDetaching([$this->property->id]);
         $this->actingAs($user);
 
         $session = $this->sessionService->create([

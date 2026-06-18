@@ -10,8 +10,8 @@ use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorContact;
 use Modules\Operations\Purchasing\Models\PurchaseRequest;
 use Modules\Operations\Purchasing\Models\PurchaseRequestLine;
-use Modules\Operations\Purchasing\Models\RFQ;
-use Modules\Operations\Purchasing\Models\Quotation;
+use Modules\Operations\Purchasing\Models\RequestForQuotation as RFQ;
+use Modules\Operations\Purchasing\Models\VendorQuotation as Quotation;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Foundation\Property\Models\Property;
 
@@ -90,12 +90,13 @@ class PurchasingModelTest extends TestCase
         ]);
 
         $quotation = Quotation::create([
-            'rfq_id' => $rfq->id,
+            'property_id' => $property->id,
+            'request_for_quotation_id' => $rfq->id,
             'vendor_id' => $vendor->id,
             'total_amount' => 1000,
         ]);
 
-        $this->assertEquals($rfq->id, $quotation->rfq->id);
+        $this->assertEquals($rfq->id, $quotation->requestForQuotation->id);
         $this->assertEquals($vendor->id, $quotation->vendor->id);
     }
 }

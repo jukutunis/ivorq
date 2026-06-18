@@ -15,10 +15,12 @@ use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
 use Modules\Foundation\Approval\Contracts\ApprovableContract;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class PurchaseRequest extends Model implements ApprovableContract
 {
-    use HasFactory, HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes;
+    use HasFactory, HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes, LogsActivity;
 
     protected $table = 'purchase_requests';
 
@@ -48,6 +50,13 @@ class PurchaseRequest extends Model implements ApprovableContract
         'approved_at' => 'datetime',
         'rejected_at' => 'datetime',
     ];
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
+    }
 
     public function property(): BelongsTo
     {

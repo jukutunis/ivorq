@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('currency_code', 10)->default('IDR');
             $table->decimal('exchange_rate', 14, 4)->default(1);
             $table->decimal('estimated_total', 14, 2)->default(0);
-            $table->string('status', 30)->default('Draft');
+            $table->string('status', 30)->default('DRAFT');
             $table->text('remarks')->nullable();
             
             $table->char('created_by', 26)->nullable();

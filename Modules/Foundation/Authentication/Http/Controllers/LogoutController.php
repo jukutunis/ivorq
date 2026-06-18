@@ -35,8 +35,13 @@ class LogoutController extends Controller
 
     public function logoutAll(Request $request): JsonResponse|RedirectResponse
     {
-        // Revoke all Sanctum tokens regardless of channel, then clear the session.
+        // Revoke all Sanctum tokens regardless of channel.
         $this->authService->logoutAllDevices($request->user());
+
+        // Invalidate "Remember Me" sessions
+        $user = $request->user();
+        $user->setRememberToken(\Illuminate\Support\Str::random(60));
+        $user->save();
 
         if ($request->wantsJson()) {
             return response()->json(['message' => 'Logged out from all devices.']);

@@ -9,10 +9,12 @@ use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
 use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class FinancialPeriod extends Model
 {
-    use HasUlid, BelongsToProperty, HasAuditColumns, SoftDeletes, HasFactory;
+    use HasUlid, BelongsToProperty, HasAuditColumns, SoftDeletes, HasFactory, LogsActivity;
 
     protected $table = 'gl_financial_periods';
 
@@ -36,4 +38,11 @@ class FinancialPeriod extends Model
         'closing_snapshot_at' => 'datetime',
         'closed_at' => 'datetime',
     ];
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
+    }
 }

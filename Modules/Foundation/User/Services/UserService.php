@@ -9,7 +9,8 @@ use Modules\Foundation\User\Repositories\UserRepository;
 class UserService
 {
     public function __construct(
-        private UserRepository $userRepository
+        private UserRepository $userRepository,
+        private \Modules\Foundation\User\Repositories\UserSessionRepository $sessionRepository
     ) {}
 
     public function paginate(int $perPage = 15): LengthAwarePaginator
@@ -44,7 +45,15 @@ class UserService
     {
         $data = array_filter($data, fn($value) => !is_null($value) || $value === false);
 
-        return $this->userRepository->update($id, $data);
+        $user = $this->userRepository->update($id, $data);
+
+        if (array_key_exists('is_active', $data) && $data['is_active'] === false) {
+            $user->tokens()->delete();
+            $this->sessionRepository->revokeAllForUser($id);
+            event(new \Modules\Foundation\Authentication\Events\UserLoggedOut($user));
+        }
+
+        return $user;
     }
 
     public function delete(string $id): bool

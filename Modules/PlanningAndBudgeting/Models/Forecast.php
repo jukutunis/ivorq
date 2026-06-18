@@ -8,10 +8,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\PlanningAndBudgeting\Enums\ForecastTypeEnum;
 use Modules\PlanningAndBudgeting\Enums\ForecastSourceTypeEnum;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class Forecast extends Model
 {
-    use HasUlids;
+    use HasUlids, LogsActivity;
 
     protected $fillable = [
         'company_id',
@@ -28,6 +30,13 @@ class Forecast extends Model
         'forecast_type' => ForecastTypeEnum::class,
         'forecast_source_type' => ForecastSourceTypeEnum::class,
     ];
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
+    }
 
     public function baseBudgetVersion(): BelongsTo
     {

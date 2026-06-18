@@ -1,6 +1,7 @@
 <?php
 
 namespace Tests\Feature\Operations\Purchasing;
+use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
 
 use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -42,7 +43,7 @@ class PurchasingTaskIntegrationTest extends TestCase
             'requester_id' => $user->id,
             'required_date' => now()->addDays(7),
             'estimated_total' => 1000,
-            'status' => 'Approved'
+            'status' => PurchaseRequestStatusEnum::Approved->value
         ]);
 
         $po = PurchaseOrder::create([
@@ -50,7 +51,7 @@ class PurchasingTaskIntegrationTest extends TestCase
             'vendor_id' => $vendor->id,
             'purchase_request_id' => $pr->id,
             'po_no' => 'PO-003', 'issue_date' => now(), 'expected_delivery_date' => now()->addDays(7),
-            'status' => 'Draft',
+            'status' => \Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum::Draft->value,
             'created_by' => $user->id,
         ]);
 

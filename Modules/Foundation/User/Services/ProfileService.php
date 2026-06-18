@@ -9,7 +9,8 @@ use Modules\Foundation\User\Repositories\UserRepository;
 class ProfileService
 {
     public function __construct(
-        private UserRepository $userRepository
+        private UserRepository $userRepository,
+        private \Modules\Foundation\User\Repositories\UserSessionRepository $sessionRepository
     ) {}
 
     public function update(User $user, array $data): User
@@ -30,6 +31,20 @@ class ProfileService
         }
 
         $this->userRepository->update($user->id, ['password' => $newPassword]);
+        
+        $user->password = \Illuminate\Support\Facades\Hash::make($newPassword);
+
+        \Illuminate\Support\Facades\Auth::logoutOtherDevices($newPassword);
+
+        if ($currentToken = $user->currentAccessToken()) {
+            $user->tokens()->where('id', '!=', $currentToken->id)->delete();
+            \Modules\Foundation\User\Models\UserSession::where('user_id', $user->id)
+                ->where('token_id', '!=', $currentToken->id)
+                ->delete();
+        } else {
+            $user->tokens()->delete();
+            $this->sessionRepository->revokeAllForUser($user->id);
+        }
 
         return true;
     }

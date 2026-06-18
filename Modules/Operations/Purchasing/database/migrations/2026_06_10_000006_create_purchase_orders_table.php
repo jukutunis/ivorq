@@ -22,7 +22,7 @@ return new class extends Migration
             $table->decimal('tax_amount', 14, 2)->default(0);
             $table->decimal('total_amount', 14, 2)->default(0);
             $table->decimal('received_total', 14, 2)->nullable()->default(0);
-            $table->string('status', 30)->default('Draft');
+            $table->string('status', 30)->default('DRAFT');
             $table->text('remarks')->nullable();
             
             $table->char('created_by', 26)->nullable();

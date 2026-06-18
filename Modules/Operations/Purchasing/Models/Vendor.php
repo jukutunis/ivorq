@@ -11,10 +11,12 @@ use Modules\Foundation\Company\Models\Company;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class Vendor extends Model
 {
-    use HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes;
+    use HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes, LogsActivity;
 
     protected $table = 'vendors';
 
@@ -44,6 +46,13 @@ class Vendor extends Model
         'payment_term_days' => 'integer',
         'credit_limit' => 'decimal:2',
     ];
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty();
+    }
 
     public function property(): BelongsTo
     {
