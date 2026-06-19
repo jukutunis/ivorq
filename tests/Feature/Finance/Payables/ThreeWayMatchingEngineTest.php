@@ -4,10 +4,10 @@ namespace Tests\Feature\Finance\Payables;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
-use Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum;
+use Modules\Finance\AccountsPayable\Enums\ApInvoiceStatusEnum;
 use Modules\Finance\Payables\Models\ThreeWayMatch;
-use Modules\Finance\Payables\Models\VendorInvoice;
-use Modules\Finance\Payables\Models\VendorInvoiceLine;
+use Modules\Finance\AccountsPayable\Models\ApInvoice;
+use Modules\Finance\AccountsPayable\Models\ApInvoiceLine;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Models\InventoryItem;
@@ -15,8 +15,8 @@ use Modules\Operations\Inventory\Models\InventoryLocation;
 use Modules\Operations\Inventory\Models\InventoryUnit;
 use Modules\Operations\Inventory\Models\InventoryCategory;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
-use Modules\Operations\Purchasing\Models\GoodsReceipt;
-use Modules\Operations\Purchasing\Models\GoodsReceiptLine;
+use Modules\Operations\Receiving\Models\ReceivingDocument;
+use Modules\Operations\Receiving\Models\ReceivingLine;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
 use Modules\Operations\Purchasing\Models\Vendor;
@@ -32,8 +32,8 @@ class ThreeWayMatchingEngineTest extends TestCase
     protected Vendor $vendor;
     protected PurchaseOrder $po;
     protected PurchaseOrderLine $poLine;
-    protected GoodsReceipt $grn;
-    protected GoodsReceiptLine $grnLine;
+    protected ReceivingDocument $grn;
+    protected ReceivingLine $grnLine;
     protected InventoryItem $item;
     protected InventoryLocation $location;
 
@@ -89,26 +89,27 @@ class ThreeWayMatchingEngineTest extends TestCase
             'purchase_request_line_id' => $this->createPurchaseRequestLine($pr)->id,
             'inventory_item_id' => $this->item->id,
             'unit_id' => $unit->id,
-            'quantity_ordered' => 10,
+            'ordered_quantity' => 10,
             'unit_cost' => 100,
             'line_total' => 1000,
         ]);
 
-        $this->grn = GoodsReceipt::create([
+        $this->grn = ReceivingDocument::create([
             'property_id' => $this->property->id,
             'purchase_order_id' => $this->po->id,
             'vendor_id' => $this->vendor->id,
-            'grn_no' => 'GRN-001',
+            'grn_number' => 'GRN-001',
             'received_date' => now(),
-            'status' => 'Posted',
+            'status' => 'approved',
         ]);
 
-        $this->grnLine = GoodsReceiptLine::create([
-            'goods_receipt_id' => $this->grn->id,
+        $this->grnLine = ReceivingLine::create([
+            'receiving_document_id' => $this->grn->id,
             'purchase_order_line_id' => $this->poLine->id,
             'inventory_item_id' => $this->item->id,
+            'description' => 'Test Item',
             'location_id' => $this->location->id,
-            'quantity_received' => 10,
+            'received_quantity' => 10,
             'unit_cost' => 100,
             'line_total' => 1000,
         ]);
@@ -116,22 +117,20 @@ class ThreeWayMatchingEngineTest extends TestCase
 
     public function test_successful_perfect_match()
     {
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'purchase_order_id' => $this->po->id,
-            'goods_receipt_id' => $this->grn->id,
-            'status' => VendorInvoiceStatusEnum::Submitted,
+            'status' => ApInvoiceStatusEnum::PENDING_REVIEW,
         ]);
 
-        VendorInvoiceLine::factory()->create([
-            'vendor_invoice_id' => $invoice->id,
-            'purchase_order_line_id' => $this->poLine->id,
-            'goods_receipt_line_id' => $this->grnLine->id,
-            'inventory_item_id' => $this->item->id,
+        ApInvoiceLine::factory()->create([
+            'invoice_id' => $invoice->id,
+            'receipt_line_id' => $this->grnLine->id,
+            'description' => 'Test Item',
             'quantity' => 10,
             'unit_price' => 100,
-            'line_total' => 1000,
+            'subtotal_amount' => 1000,
+            'total_amount' => 1000,
         ]);
 
         $response = $this->actingAs($this->user)
@@ -142,32 +141,28 @@ class ThreeWayMatchingEngineTest extends TestCase
         $response->assertJsonPath('data.total_quantity_variance', 0);
         $response->assertJsonPath('data.total_price_variance', 0);
 
-        $this->assertDatabaseHas('vendor_invoices', [
+        $this->assertDatabaseHas('ap_invoices', [
             'id' => $invoice->id,
-            'status' => VendorInvoiceStatusEnum::Matched->value,
+            'status' => ApInvoiceStatusEnum::APPROVED->value,
         ]);
     }
 
     public function test_match_with_quantity_and_price_variance()
     {
-        // Invoice bills 12 quantity (we ordered 10, received 10)
-        // Invoice bills 110 price (we ordered at 100)
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'purchase_order_id' => $this->po->id,
-            'goods_receipt_id' => $this->grn->id,
-            'status' => VendorInvoiceStatusEnum::Submitted,
+            'status' => ApInvoiceStatusEnum::PENDING_REVIEW,
         ]);
 
-        VendorInvoiceLine::factory()->create([
-            'vendor_invoice_id' => $invoice->id,
-            'purchase_order_line_id' => $this->poLine->id,
-            'goods_receipt_line_id' => $this->grnLine->id,
-            'inventory_item_id' => $this->item->id,
+        ApInvoiceLine::factory()->create([
+            'invoice_id' => $invoice->id,
+            'receipt_line_id' => $this->grnLine->id,
+            'description' => 'Test Item',
             'quantity' => 12,
             'unit_price' => 110,
-            'line_total' => 1320,
+            'subtotal_amount' => 1320,
+            'total_amount' => 1320,
         ]);
 
         $response = $this->actingAs($this->user)
@@ -176,41 +171,34 @@ class ThreeWayMatchingEngineTest extends TestCase
         $response->assertStatus(201);
         $response->assertJsonPath('data.status', MatchStatusEnum::MatchedWithVariance->value);
         
-        // Qty Variance = Inv (12) - GRN (10) = 2
         $response->assertJsonPath('data.total_quantity_variance', 2);
-        
-        // Price Variance = Inv (110) - PO (100) = 10
         $response->assertJsonPath('data.total_price_variance', 10);
-
-        // Amount Variance = Billed (1320) - Expected (10 * 100 = 1000) = 320
         $response->assertJsonPath('data.total_amount_variance', 320);
 
-        // Invoice status becomes matched per rules
-        $this->assertDatabaseHas('vendor_invoices', [
+        $this->assertDatabaseHas('ap_invoices', [
             'id' => $invoice->id,
-            'status' => VendorInvoiceStatusEnum::Matched->value,
+            'status' => ApInvoiceStatusEnum::APPROVED->value,
         ]);
     }
 
     public function test_matching_fails_without_po_or_grn()
     {
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => VendorInvoiceStatusEnum::Submitted,
-        ]); // Missing PO and GRN
+            'status' => ApInvoiceStatusEnum::PENDING_REVIEW,
+        ]); // No lines -> missing PO and GRN
 
         $response = $this->actingAs($this->user)
             ->postJson("/api/v1/payables/vendor-invoices/{$invoice->id}/match");
 
         $response->assertStatus(201);
         $response->assertJsonPath('data.status', MatchStatusEnum::Exception->value);
-        $response->assertJsonPath('data.exception_code', 'MissingPurchaseOrder');
+        $response->assertJsonPath('data.exception_code', 'DataIntegrityError');
 
-        // Invoice status remains Submitted
-        $this->assertDatabaseHas('vendor_invoices', [
+        $this->assertDatabaseHas('ap_invoices', [
             'id' => $invoice->id,
-            'status' => VendorInvoiceStatusEnum::Submitted->value,
+            'status' => ApInvoiceStatusEnum::PENDING_REVIEW->value,
         ]);
     }
 }

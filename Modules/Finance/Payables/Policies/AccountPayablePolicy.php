@@ -18,7 +18,7 @@ class AccountPayablePolicy
     public function view(User $user, AccountPayable $ap): bool
     {
         return $user->hasPermissionTo('payables.ap.view') && 
-               $user->hasPropertyAccess($ap->property_id);
+               $user->properties()->where('properties.id', $ap->property_id)->exists();
     }
 
     public function create(User $user): bool

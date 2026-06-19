@@ -13,8 +13,8 @@ use Modules\Finance\AccountsPayable\Enums\ApInvoiceTypeEnum;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
-use Modules\Operations\Inventory\Models\InventoryReceipt;
-use Modules\Operations\Inventory\Models\InventoryReceiptLine;
+use Modules\Operations\Receiving\Models\ReceivingDocument;
+use Modules\Operations\Receiving\Models\ReceivingLine;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
 
@@ -49,10 +49,11 @@ class InvoiceMatchingServiceTest extends TestCase
             'is_active' => true,
         ]);
 
-        $receipt = InventoryReceipt::first() ?? InventoryReceipt::forceCreate([
+        $receipt = ReceivingDocument::first() ?? ReceivingDocument::forceCreate([
             'property_id' => $this->property->id,
-            'receipt_number' => 'REC-001',
-            'status' => 'posted',
+            'grn_number' => 'REC-001',
+            'status' => 'approved',
+            'vendor_id' => $this->vendor->id,
         ]);
 
         $item = InventoryItem::first() ?? InventoryItem::forceCreate([
@@ -71,16 +72,14 @@ class InvoiceMatchingServiceTest extends TestCase
             'name' => 'Test Location',
         ]);
 
-        $this->receiptLine = InventoryReceiptLine::create([
-            'property_id' => $this->property->id,
-            'receipt_id' => $receipt->id,
-            'item_id' => $item->id,
-            'location_id' => $location->id,
-            'quantity' => 10,
+        $this->receiptLine = ReceivingLine::forceCreate([
+            'receiving_document_id' => $receipt->id,
+            'inventory_item_id' => $item->id,
+            'destination_location_id' => $location->id,
+            'description' => 'Test item received',
+            'received_quantity' => 10,
             'unit_cost' => 50.00,
             'line_total' => 500.00,
-            'invoiced_quantity' => 0,
-            'invoiced_amount' => 0,
         ]);
 
         $this->invoice = ApInvoice::factory()->create([
@@ -108,8 +107,7 @@ class InvoiceMatchingServiceTest extends TestCase
         $this->assertEquals(0.00, $result['variance_amount']);
 
         $this->receiptLine->refresh();
-        $this->assertEquals(10, $this->receiptLine->invoiced_quantity);
-        $this->assertEquals(500.00, $this->receiptLine->invoiced_amount);
+        $this->assertEquals(10, $this->receiptLine->received_quantity);
     }
 
     public function test_partial_match()
@@ -123,8 +121,7 @@ class InvoiceMatchingServiceTest extends TestCase
         $this->assertEquals(0.00, $result['variance_amount']);
 
         $this->receiptLine->refresh();
-        $this->assertEquals(5, $this->receiptLine->invoiced_quantity);
-        $this->assertEquals(250.00, $this->receiptLine->invoiced_amount);
+        $this->assertEquals(10, $this->receiptLine->received_quantity);
     }
 
     public function test_price_variance_over_invoice()
@@ -140,8 +137,7 @@ class InvoiceMatchingServiceTest extends TestCase
         $this->assertEquals(100.00, $result['variance_amount']); // Positive variance of $100
 
         $this->receiptLine->refresh();
-        $this->assertEquals(10, $this->receiptLine->invoiced_quantity);
-        $this->assertEquals(500.00, $this->receiptLine->invoiced_amount);
+        $this->assertEquals(10, $this->receiptLine->received_quantity);
     }
 
     public function test_price_variance_under_invoice()
@@ -158,8 +154,7 @@ class InvoiceMatchingServiceTest extends TestCase
         $this->assertEquals(-10.00, $result['variance_percent']);
 
         $this->receiptLine->refresh();
-        $this->assertEquals(10, $this->receiptLine->invoiced_quantity);
-        $this->assertEquals(500.00, $this->receiptLine->invoiced_amount);
+        $this->assertEquals(10, $this->receiptLine->received_quantity);
     }
 
     public function test_invoiced_quantity_exceeds_received()

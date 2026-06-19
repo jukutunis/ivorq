@@ -52,7 +52,7 @@ return new class extends Migration
             $table->ulid('id')->primary();
             $table->foreignUlid('property_id')->constrained('properties')->onDelete('cascade');
             $table->foreignUlid('venue_category_id')->nullable()->constrained('venue_categories')->nullOnDelete();
-            $table->foreignUlid('parent_venue_id')->nullable()->constrained('venues')->nullOnDelete();
+            $table->ulid('parent_venue_id')->nullable();
             
             $table->string('name');
             $table->string('code');
@@ -72,6 +72,10 @@ return new class extends Migration
             $table->softDeletes();
 
             $table->unique(['property_id', 'code']);
+        });
+
+        Schema::table('venues', function (Blueprint $table) {
+            $table->foreign('parent_venue_id')->references('id')->on('venues')->nullOnDelete();
         });
 
         Schema::create('venue_feature_assignments', function (Blueprint $table) {

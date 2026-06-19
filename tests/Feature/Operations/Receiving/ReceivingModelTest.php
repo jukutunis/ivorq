@@ -16,6 +16,12 @@ use Modules\Foundation\Property\Models\Property;
 
 class ReceivingModelTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->artisan('db:seed');
+    }
+
     use RefreshDatabase;
     protected $seed = true;
 

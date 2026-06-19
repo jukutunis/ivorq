@@ -6,10 +6,10 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Modules\Finance\Payables\Enums\AccountPayableStatusEnum;
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
-use Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum;
+use Modules\Finance\AccountsPayable\Enums\ApInvoiceStatusEnum;
 use Modules\Finance\Payables\Models\AccountPayable;
 use Modules\Finance\Payables\Models\ThreeWayMatch;
-use Modules\Finance\Payables\Models\VendorInvoice;
+use Modules\Finance\AccountsPayable\Models\ApInvoice;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Purchasing\Models\Vendor;
@@ -46,12 +46,12 @@ class AccountsPayableModuleTest extends TestCase
 
     public function test_can_generate_ap_from_matched_invoice()
     {
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => VendorInvoiceStatusEnum::Matched,
-            'grand_total' => 1000.50,
-            'invoice_number' => 'INV-2026-001',
+            'status' => ApInvoiceStatusEnum::APPROVED,
+            'grand_total_amount' => 1000.50,
+            'vendor_invoice_number' => 'INV-2026-001',
         ]);
 
         $response = $this->actingAs($this->user)
@@ -72,10 +72,10 @@ class AccountsPayableModuleTest extends TestCase
 
     public function test_cannot_generate_ap_from_unmatched_invoice()
     {
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => VendorInvoiceStatusEnum::Submitted,
+            'status' => ApInvoiceStatusEnum::PENDING_REVIEW,
         ]);
 
         $response = $this->actingAs($this->user)
@@ -89,10 +89,10 @@ class AccountsPayableModuleTest extends TestCase
 
     public function test_cannot_generate_ap_from_exception_invoice()
     {
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => VendorInvoiceStatusEnum::Submitted,
+            'status' => ApInvoiceStatusEnum::PENDING_REVIEW,
         ]);
 
         // Simulate an exception match
@@ -114,10 +114,10 @@ class AccountsPayableModuleTest extends TestCase
 
     public function test_only_one_ap_per_invoice()
     {
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => VendorInvoiceStatusEnum::Matched,
+            'status' => ApInvoiceStatusEnum::APPROVED,
         ]);
 
         // First call
@@ -141,10 +141,10 @@ class AccountsPayableModuleTest extends TestCase
         $otherVendorCategory = $this->createVendorCategory($otherProperty);
         $otherVendor = $this->createVendor($otherProperty, $otherVendorCategory);
 
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $otherProperty->id,
             'vendor_id' => $otherVendor->id,
-            'status' => VendorInvoiceStatusEnum::Matched,
+            'status' => ApInvoiceStatusEnum::APPROVED,
         ]);
 
         $response = $this->actingAs($this->user)
@@ -155,16 +155,16 @@ class AccountsPayableModuleTest extends TestCase
 
     public function test_ap_number_generation()
     {
-        $invoice1 = VendorInvoice::factory()->create([
+        $invoice1 = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => VendorInvoiceStatusEnum::Matched,
+            'status' => ApInvoiceStatusEnum::APPROVED,
         ]);
 
-        $invoice2 = VendorInvoice::factory()->create([
+        $invoice2 = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => VendorInvoiceStatusEnum::Matched,
+            'status' => ApInvoiceStatusEnum::APPROVED,
         ]);
 
         $res1 = $this->actingAs($this->user)->postJson("/api/v1/payables/vendor-invoices/{$invoice1->id}/generate-ap");
@@ -177,10 +177,10 @@ class AccountsPayableModuleTest extends TestCase
 
     public function test_audit_log_created()
     {
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => VendorInvoiceStatusEnum::Matched,
+            'status' => ApInvoiceStatusEnum::APPROVED,
         ]);
 
         $response = $this->actingAs($this->user)
@@ -196,11 +196,11 @@ class AccountsPayableModuleTest extends TestCase
 
     public function test_open_ap_outstanding_equals_invoice_total()
     {
-        $invoice = VendorInvoice::factory()->create([
+        $invoice = ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => VendorInvoiceStatusEnum::Matched,
-            'grand_total' => 2550.75,
+            'status' => ApInvoiceStatusEnum::APPROVED,
+            'grand_total_amount' => 2550.75,
         ]);
 
         $response = $this->actingAs($this->user)

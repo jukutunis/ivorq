@@ -15,7 +15,7 @@ class PurchaseOrderLineResource extends JsonResource
             'purchase_request_line_id' => $this->purchase_request_line_id,
             'inventory_item_id' => $this->inventory_item_id,
             'description' => $this->description,
-            'quantity_ordered' => $this->quantity_ordered,
+            'ordered_quantity' => $this->ordered_quantity,
             'quantity_received' => $this->quantity_received,
             'unit_cost' => $this->unit_cost,
             'line_total' => $this->line_total,

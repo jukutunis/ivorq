@@ -86,7 +86,7 @@ class ReceivingModuleTest extends TestCase
             'purchase_request_line_id' => $this->createPurchaseRequestLine($pr)->id,
             'inventory_item_id' => $this->item->id,
             'unit_id' => $unit->id,
-            'quantity_ordered' => 100,
+            'ordered_quantity' => 100,
             'quantity_received' => 0,
             'unit_cost' => 50,
             'line_total' => 5000,
@@ -169,7 +169,7 @@ class ReceivingModuleTest extends TestCase
             ->assertJsonPath('message', 'Only Issued or Partially Received Purchase Orders can be received.');
     }
 
-    public function test_cannot_receive_more_than_quantity_ordered()
+    public function test_cannot_receive_more_than_ordered_quantity()
     {
         $response = $this->actingAs($this->user)->postJson(route('purchasing.goods-receipts.store'), [
             'purchase_order_id' => $this->po->id,

@@ -5,9 +5,9 @@ namespace Modules\Finance\Payables\Services;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use Modules\Finance\Payables\Enums\AccountPayableStatusEnum;
-use Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum;
+use Modules\Finance\AccountsPayable\Enums\ApInvoiceStatusEnum;
 use Modules\Finance\Payables\Models\AccountPayable;
-use Modules\Finance\Payables\Models\VendorInvoice;
+use Modules\Finance\AccountsPayable\Models\ApInvoice;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class AccountPayableService
@@ -15,13 +15,13 @@ class AccountPayableService
     /**
      * Generates an Accounts Payable record from a successfully matched VendorInvoice.
      *
-     * @param VendorInvoice $invoice
+     * @param ApInvoice $invoice
      * @return AccountPayable
      * @throws HttpException|\Exception
      */
-    public function createFromMatchedInvoice(VendorInvoice $invoice): AccountPayable
+    public function createFromMatchedInvoice(ApInvoice $invoice): AccountPayable
     {
-        if ($invoice->status !== VendorInvoiceStatusEnum::Matched) {
+        if ($invoice->status !== ApInvoiceStatusEnum::APPROVED) {
             abort(400, "Only matched invoices can generate AP records.");
         }
 
@@ -51,7 +51,7 @@ class AccountPayableService
             $exchangeRate = $invoice->exchange_rate ?? 1.0000;
 
             // Remarks default
-            $remarks = "Generated from Vendor Invoice {$invoice->invoice_number}";
+            $remarks = "Generated from Vendor Invoice {$invoice->vendor_invoice_number}";
 
             return AccountPayable::create([
                 'property_id' => $invoice->property_id,
@@ -62,8 +62,8 @@ class AccountPayableService
                 'due_date' => $invoice->due_date,
                 'currency_code' => $invoice->currency_code ?? 'IDR',
                 'exchange_rate' => $exchangeRate,
-                'amount' => $invoice->grand_total,
-                'outstanding_amount' => $invoice->grand_total,
+                'amount' => $invoice->grand_total_amount,
+                'outstanding_amount' => $invoice->grand_total_amount,
                 'status' => AccountPayableStatusEnum::Open,
                 'remarks' => $remarks,
             ]);

@@ -13,7 +13,7 @@ return new class extends Migration
             
             $table->string('company_id', 26);
             $table->string('property_id', 26);
-            $table->string('beo_issue_log_id', 26);
+            $table->foreignUlid('beo_issue_log_id')->constrained('beo_issue_logs')->onDelete('cascade');
             
             $table->string('status');
             $table->string('severity');
@@ -23,7 +23,7 @@ return new class extends Migration
             
             $table->timestamps();
 
-            $table->foreign('beo_issue_log_id')->references('id')->on('beo_issue_logs')->onDelete('cascade');
+
         });
 
         // Drop the existing beo_acknowledgements table because we are changing its parent and fields
@@ -32,7 +32,7 @@ return new class extends Migration
         Schema::create('beo_acknowledgements', function (Blueprint $table) {
             $table->ulid('id')->primary();
             
-            $table->string('beo_distribution_id', 26);
+            $table->foreignUlid('beo_distribution_id')->constrained('beo_distributions')->onDelete('cascade');
             $table->string('department_id', 26);
             $table->string('user_id', 26)->nullable(); // User who acknowledged
             
@@ -48,14 +48,14 @@ return new class extends Migration
             
             $table->timestamps();
 
-            $table->foreign('beo_distribution_id')->references('id')->on('beo_distributions')->onDelete('cascade');
+
             $table->index('department_id');
         });
 
         Schema::create('beo_distribution_escalations', function (Blueprint $table) {
             $table->ulid('id')->primary();
             
-            $table->string('beo_acknowledgement_id', 26);
+            $table->foreignUlid('beo_acknowledgement_id')->constrained('beo_acknowledgements', 'id', 'fk_beo_escalations_ack_id')->onDelete('cascade');
             $table->integer('escalation_level')->default(1);
             $table->string('escalated_to_role_id', 26)->nullable();
             
@@ -63,16 +63,13 @@ return new class extends Migration
             
             $table->timestamps();
 
-            $table->foreign('beo_acknowledgement_id', 'fk_beo_escalations_ack_id')
-                  ->references('id')
-                  ->on('beo_acknowledgements')
-                  ->onDelete('cascade');
+
         });
 
         Schema::create('beo_distribution_audit_trails', function (Blueprint $table) {
             $table->ulid('id')->primary();
             
-            $table->string('distribution_id', 26);
+            $table->foreignUlid('distribution_id')->constrained('beo_distributions', 'id', 'fk_beo_audit_dist_id')->onDelete('cascade');
             $table->string('event_type');
             $table->jsonb('old_value')->nullable();
             $table->jsonb('new_value')->nullable();
@@ -80,10 +77,7 @@ return new class extends Migration
             
             $table->timestamps();
 
-            $table->foreign('distribution_id', 'fk_beo_audit_dist_id')
-                  ->references('id')
-                  ->on('beo_distributions')
-                  ->onDelete('cascade');
+
         });
     }
 
@@ -97,7 +91,7 @@ return new class extends Migration
         // Recreate the old beo_acknowledgements for down method
         Schema::create('beo_acknowledgements', function (Blueprint $table) {
             $table->ulid('id')->primary();
-            $table->string('beo_issue_log_id', 26);
+            $table->foreignUlid('beo_issue_log_id')->constrained('beo_issue_logs')->onDelete('cascade');
             $table->string('department_id', 26);
             $table->string('status'); 
             $table->string('acknowledged_by', 26)->nullable();
@@ -106,7 +100,7 @@ return new class extends Migration
             $table->string('created_by', 26)->nullable();
             $table->string('updated_by', 26)->nullable();
             $table->timestamps();
-            $table->foreign('beo_issue_log_id')->references('id')->on('beo_issue_logs')->onDelete('cascade');
+
             $table->index('department_id');
         });
     }

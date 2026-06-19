@@ -4,7 +4,7 @@ namespace Modules\Finance\Payables\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Modules\Finance\Payables\Models\VendorInvoice;
+use Modules\Finance\AccountsPayable\Models\ApInvoice;
 
 class UpdateVendorInvoiceRequest extends FormRequest
 {
@@ -15,7 +15,7 @@ class UpdateVendorInvoiceRequest extends FormRequest
 
     public function rules(): array
     {
-        /** @var VendorInvoice $invoice */
+        /** @var ApInvoice $invoice */
         $invoice = $this->route('vendor_invoice') ?? $this->route('id');
         $invoiceId = is_string($invoice) ? $invoice : $invoice?->id;
 
@@ -24,7 +24,7 @@ class UpdateVendorInvoiceRequest extends FormRequest
                 'nullable',
                 'string',
                 Rule::unique('vendor_invoices')->ignore($invoiceId)->where(function ($query) use ($invoice) {
-                    $vendorId = is_string($invoice) ? VendorInvoice::find($invoice)->vendor_id : $invoice?->vendor_id;
+                    $vendorId = is_string($invoice) ? ApInvoice::find($invoice)->vendor_id : $invoice?->vendor_id;
                     return $query->where('vendor_id', $vendorId)
                         ->where('property_id', app(\Shared\Services\CurrentPropertyService::class)->getPropertyId());
                 })

@@ -4,7 +4,7 @@ namespace Modules\Finance\AccountsPayable\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Modules\Operations\Inventory\Models\InventoryReceiptLine;
+use Modules\Operations\Receiving\Models\ReceivingLine;
 use Shared\Traits\HasUlid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Modules\Finance\AccountsPayable\Database\Factories\ApInvoiceLineFactory;
@@ -46,6 +46,6 @@ class ApInvoiceLine extends Model
 
     public function receiptLine(): BelongsTo
     {
-        return $this->belongsTo(InventoryReceiptLine::class, 'receipt_line_id');
+        return $this->belongsTo(ReceivingLine::class, 'receipt_line_id');
     }
 }

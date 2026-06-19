@@ -54,10 +54,10 @@ class PaymentProcessingModuleTest extends TestCase
 
     private function createAp(float $amount, float $outstanding, AccountPayableStatusEnum $status): AccountPayable
     {
-        $invoice = \Modules\Finance\Payables\Models\VendorInvoice::factory()->create([
+        $invoice = \Modules\Finance\AccountsPayable\Models\ApInvoice::factory()->create([
             'property_id' => $this->property->id,
             'vendor_id' => $this->vendor->id,
-            'status' => \Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum::Matched,
+            'status' => \Modules\Finance\AccountsPayable\Enums\ApInvoiceStatusEnum::APPROVED,
         ]);
 
         return AccountPayable::factory()->create([
@@ -258,10 +258,10 @@ class PaymentProcessingModuleTest extends TestCase
 
     public function test_property_isolation_on_payment()
     {
-        $invoice = \Modules\Finance\Payables\Models\VendorInvoice::factory()->create([
+        $invoice = \Modules\Finance\AccountsPayable\Models\ApInvoice::factory()->create([
             'property_id' => $this->otherProperty->id,
             'vendor_id' => $this->vendor->id,
-            'status' => \Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum::Matched,
+            'status' => \Modules\Finance\AccountsPayable\Enums\ApInvoiceStatusEnum::APPROVED,
         ]);
 
         $ap = AccountPayable::factory()->create([

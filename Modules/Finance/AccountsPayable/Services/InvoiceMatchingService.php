@@ -7,7 +7,7 @@ use Modules\Finance\AccountsPayable\Exceptions\InvoiceMatchingException;
 use Modules\Finance\AccountsPayable\Models\ApInvoice;
 use Modules\Finance\AccountsPayable\Models\ApInvoiceLine;
 use Modules\Finance\AccountsPayable\Enums\ApInvoiceTypeEnum;
-use Modules\Operations\Inventory\Models\InventoryReceiptLine;
+use Modules\Operations\Receiving\Models\ReceivingLine;
 
 class InvoiceMatchingService
 {
@@ -45,16 +45,20 @@ class InvoiceMatchingService
             throw InvoiceMatchingException::receiptLineMissing();
         }
 
-        $receiptLine = InventoryReceiptLine::lockForUpdate()->findOrFail($invoiceLine->receipt_line_id);
+        $receiptLine = ReceivingLine::lockForUpdate()->findOrFail($invoiceLine->receipt_line_id);
 
-        if ($receiptLine->property_id !== $invoice->property_id) {
+        if ($receiptLine->receivingDocument->property_id !== $invoice->property_id) {
             throw InvoiceMatchingException::propertyMismatch();
         }
 
-        $newInvoicedQuantity = $receiptLine->invoiced_quantity + $invoiceLine->quantity;
+        $existingInvoicedQuantity = ApInvoiceLine::where('receipt_line_id', $receiptLine->id)
+            ->where('id', '!=', $invoiceLine->id)
+            ->sum('quantity');
 
-        // Prevent invoiced_quantity > received_quantity (which is `quantity` in the db)
-        if ($newInvoicedQuantity > $receiptLine->quantity) {
+        $newInvoicedQuantity = $existingInvoicedQuantity + $invoiceLine->quantity;
+
+        // Prevent invoiced_quantity > received_quantity
+        if ($newInvoicedQuantity > $receiptLine->received_quantity) {
             throw InvoiceMatchingException::invoicedQuantityExceedsReceived();
         }
 
@@ -64,12 +68,7 @@ class InvoiceMatchingService
             $receiptLine->unit_cost
         );
 
-        // Update Receipt Tracking
-        $receiptLine->invoiced_quantity = $newInvoicedQuantity;
-        $receiptLine->invoiced_amount += $varianceResult['matched_amount'];
-        $receiptLine->save();
-
-        $matchType = $this->determineMatchType($invoiceLine->quantity, $receiptLine->quantity, $newInvoicedQuantity);
+        $matchType = $this->determineMatchType($invoiceLine->quantity, $receiptLine->received_quantity, $newInvoicedQuantity);
 
         return [
             'invoice_line_id' => $invoiceLine->id,

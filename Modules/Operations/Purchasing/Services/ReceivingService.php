@@ -71,8 +71,8 @@ class ReceivingService
 
                 $quantityReceived = (float) $lineData['quantity_received'];
 
-                // BR-002: Cannot receive more than quantity_ordered
-                if ($quantityReceived <= 0 || ($poLine->quantity_received + $quantityReceived) > $poLine->quantity_ordered) {
+                // BR-002: Cannot receive more than ordered_quantity
+                if ($quantityReceived <= 0 || ($poLine->quantity_received + $quantityReceived) > $poLine->ordered_quantity) {
                     throw new BusinessLogicException('Quantity received exceeds quantity ordered or is invalid.');
                 }
 
@@ -105,7 +105,7 @@ class ReceivingService
                 $poLine->quantity_received += $quantityReceived;
                 $poLine->save();
 
-                if ($poLine->quantity_received < $poLine->quantity_ordered) {
+                if ($poLine->quantity_received < $poLine->ordered_quantity) {
                     $allLinesFullyReceived = false;
                 }
                 
@@ -118,7 +118,7 @@ class ReceivingService
             // BR-004 & BR-003: Update PO status
             if ($allLinesFullyReceived && $hasPartialReceiving) {
                 // Double check if ALL lines in the PO are fully received
-                $unreceivedLines = $po->lines()->whereColumn('quantity_received', '<', 'quantity_ordered')->count();
+                $unreceivedLines = $po->lines()->whereColumn('quantity_received', '<', 'ordered_quantity')->count();
                 if ($unreceivedLines === 0) {
                     $po->status = PurchaseOrderStatusEnum::FullyReceived->value;
                 } else {

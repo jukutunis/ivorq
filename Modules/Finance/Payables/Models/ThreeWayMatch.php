@@ -31,7 +31,7 @@ class ThreeWayMatch extends Model
 
     public function vendorInvoice(): BelongsTo
     {
-        return $this->belongsTo(VendorInvoice::class);
+        return $this->belongsTo(ApInvoice::class);
     }
 
     public function purchaseOrder(): BelongsTo

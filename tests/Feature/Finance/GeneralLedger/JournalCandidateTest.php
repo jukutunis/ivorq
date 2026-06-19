@@ -109,7 +109,7 @@ class JournalCandidateTest extends TestCase
 
         // Should not reject POSTED
         $this->expectException(ValidationException::class);
-        $this->service->reject($posted->id);
+        $this->service->reject($posted->id, 'Rejection reason');
     }
 
     public function test_property_isolation()

@@ -7,7 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Modules\Finance\Payables\Http\Resources\AccountPayableResource;
 use Modules\Finance\Payables\Models\AccountPayable;
-use Modules\Finance\Payables\Models\VendorInvoice;
+use Modules\Finance\AccountsPayable\Models\ApInvoice;
 use Modules\Finance\Payables\Services\AccountPayableService;
 
 class AccountPayableController extends Controller
@@ -36,7 +36,7 @@ class AccountPayableController extends Controller
         return new AccountPayableResource($accountPayable);
     }
 
-    public function generate(VendorInvoice $vendorInvoice): AccountPayableResource
+    public function generate(ApInvoice $vendorInvoice): AccountPayableResource
     {
         $this->authorize('create', AccountPayable::class);
         $this->authorize('view', $vendorInvoice); // Ensure they can access the invoice

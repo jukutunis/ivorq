@@ -32,7 +32,7 @@ return new class extends Migration
 
         Schema::create('operational_packages', function (Blueprint $table) {
             $table->ulid('id')->primary();
-            $table->foreignUlid('event_execution_template_id', 'op_pkg_eet_id_foreign')->constrained('event_execution_templates')->onDelete('cascade');
+            $table->foreignUlid('event_execution_template_id')->constrained('event_execution_templates', 'id', 'op_pkg_eet_id_foreign')->onDelete('cascade');
             $table->string('name');
             $table->string('package_type');
             $table->string('revenue_classification');
@@ -91,7 +91,7 @@ return new class extends Migration
 
         Schema::create('special_request_sections', function (Blueprint $table) {
             $table->ulid('id')->primary();
-            $table->foreignUlid('operational_package_id', 'sp_req_op_pkg_id_foreign')->constrained('operational_packages')->onDelete('cascade');
+            $table->foreignUlid('operational_package_id')->constrained('operational_packages', 'id', 'sp_req_op_pkg_id_foreign')->onDelete('cascade');
             $table->text('request_details')->nullable();
             
             $table->ulid('created_by')->nullable();
@@ -116,7 +116,7 @@ return new class extends Migration
             $table->ulid('id')->primary();
             $table->foreignUlid('operational_package_id')->constrained('operational_packages')->onDelete('cascade');
             $table->string('role_name');
-            $table->foreignUlid('department_id', 'stf_sec_dept_id_foreign')->constrained('departments')->onDelete('cascade');
+            $table->foreignUlid('department_id')->constrained('departments', 'id', 'stf_sec_dept_id_foreign')->onDelete('cascade');
             $table->integer('headcount')->default(1);
             $table->decimal('shift_duration_hours', 5, 2)->nullable();
             

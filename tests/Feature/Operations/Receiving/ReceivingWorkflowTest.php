@@ -16,6 +16,12 @@ use Modules\Operations\Receiving\Enums\ReceivingDocumentStatusEnum;
 
 class ReceivingWorkflowTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->artisan('db:seed');
+    }
+
     use RefreshDatabase;
     protected $seed = true;
 

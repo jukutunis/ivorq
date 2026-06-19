@@ -31,6 +31,7 @@ class ReceivingInventoryIntegrationTest extends TestCase
     {
         parent::setUp();
         $this->artisan('db:seed');
+        $this->artisan('db:seed');
         
         $this->property = Property::first();
         app(CurrentPropertyService::class)->setPropertyId($this->property->id);

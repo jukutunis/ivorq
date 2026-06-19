@@ -89,7 +89,7 @@ class PurchaseOrderService
                     'purchase_request_line_id' => $line->id,
                     'inventory_item_id' => $line->inventory_item_id,
                     'description' => $line->description,
-                    'quantity_ordered' => $quantity,
+                    'ordered_quantity' => $quantity,
                     'quantity_received' => 0, // BR-005
                     'unit_id' => $line->unit_id,
                     'unit_cost' => $unitCost,
@@ -134,12 +134,12 @@ class PurchaseOrderService
                 $subtotal = 0;
                 foreach ($lines as $lineData) {
                     $poLine = $po->lines()->findOrFail($lineData['id']);
-                    $quantity = $lineData['quantity_ordered'] ?? $poLine->quantity_ordered;
+                    $quantity = $lineData['ordered_quantity'] ?? $poLine->ordered_quantity;
                     $unitCost = $lineData['unit_cost'] ?? $poLine->unit_cost;
                     $lineTotal = $quantity * $unitCost;
                     
                     $poLine->update([
-                        'quantity_ordered' => $quantity,
+                        'ordered_quantity' => $quantity,
                         'unit_cost' => $unitCost,
                         'line_total' => $lineTotal,
                         'updated_by' => $user->id,

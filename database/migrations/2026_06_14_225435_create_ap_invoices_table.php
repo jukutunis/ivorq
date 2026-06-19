@@ -53,7 +53,7 @@ return new class extends Migration
             $table->ulid('id')->primary();
             $table->foreignUlid('invoice_id')->constrained('ap_invoices')->cascadeOnDelete();
             
-            $table->foreignUlid('receipt_line_id')->nullable()->constrained('inventory_receipt_lines')->nullOnDelete();
+            $table->foreignUlid('receipt_line_id')->nullable()->constrained('receiving_lines')->nullOnDelete();
             
             $table->string('description');
             $table->decimal('quantity', 15, 3);

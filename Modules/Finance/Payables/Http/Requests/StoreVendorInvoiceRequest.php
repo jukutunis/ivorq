@@ -4,7 +4,7 @@ namespace Modules\Finance\Payables\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Modules\Finance\Payables\Enums\VendorInvoiceStatusEnum;
+use Modules\Finance\AccountsPayable\Enums\ApInvoiceStatusEnum;
 
 class StoreVendorInvoiceRequest extends FormRequest
 {
@@ -29,7 +29,7 @@ class StoreVendorInvoiceRequest extends FormRequest
             ],
             'invoice_date' => ['required', 'date'],
             'due_date' => ['nullable', 'date', 'after_or_equal:invoice_date'],
-            'status' => ['nullable', 'string', Rule::enum(VendorInvoiceStatusEnum::class)],
+            'status' => ['nullable', 'string', Rule::enum(ApInvoiceStatusEnum::class)],
             'remarks' => ['nullable', 'string'],
             'tax_amount' => ['nullable', 'numeric', 'min:0'],
             'discount_amount' => ['nullable', 'numeric', 'min:0'],

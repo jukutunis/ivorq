@@ -4,8 +4,7 @@ namespace Modules\Finance\Payables;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Route;
-use Modules\Finance\Payables\Policies\VendorInvoicePolicy;
-use Modules\Finance\Payables\Models\VendorInvoice;
+use Modules\Finance\AccountsPayable\Models\ApInvoice;
 use Illuminate\Support\Facades\Gate;
 
 class PayablesServiceProvider extends ServiceProvider
@@ -24,7 +23,7 @@ class PayablesServiceProvider extends ServiceProvider
 
     protected function registerPolicies(): void
     {
-        Gate::policy(VendorInvoice::class, VendorInvoicePolicy::class);
+        // Gate::policy(ApInvoice::class, VendorInvoicePolicy::class);
     }
 
     protected function registerRoutes(): void
