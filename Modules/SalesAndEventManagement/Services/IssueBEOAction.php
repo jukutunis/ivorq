@@ -86,13 +86,22 @@ class IssueBEOAction
             }
 
             // Generate Acknowledgement requests
-            foreach ($departmentIds as $departmentId) {
-                $newIssue->acknowledgements()->create([
-                    'department_id' => $departmentId,
-                    'status' => 'PENDING',
-                    'created_by' => $issuerId,
-                    'updated_by' => $issuerId,
+            if (!empty($departmentIds)) {
+                $distribution = $newIssue->distributions()->create([
+                    'company_id' => $companyId,
+                    'property_id' => $propertyId,
+                    'status' => 'DISTRIBUTED',
+                    'severity' => 'MINOR',
+                    'distributed_by' => $issuerId,
+                    'distributed_at' => now(),
                 ]);
+
+                foreach ($departmentIds as $departmentId) {
+                    $distribution->acknowledgements()->create([
+                        'department_id' => $departmentId,
+                        'status' => 'PENDING',
+                    ]);
+                }
             }
 
             return $newIssue;

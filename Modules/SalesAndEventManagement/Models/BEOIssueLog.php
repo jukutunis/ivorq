@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Modules\SalesAndEventManagement\Enums\BEOStatusEnum;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
@@ -58,8 +59,13 @@ class BEOIssueLog extends Model
         return $this->belongsTo(BEOIssueLog::class, 'previous_issue_id');
     }
 
-    public function acknowledgements(): HasMany
+    public function distributions(): HasMany
     {
-        return $this->hasMany(BEOAcknowledgement::class, 'beo_issue_log_id');
+        return $this->hasMany(BEODistribution::class, 'beo_issue_log_id');
+    }
+
+    public function acknowledgements(): HasManyThrough
+    {
+        return $this->hasManyThrough(BEOAcknowledgement::class, BEODistribution::class, 'beo_issue_log_id', 'beo_distribution_id');
     }
 }

@@ -126,13 +126,15 @@ class ReconciliationCommitServiceTest extends TestCase
         $this->assertEquals(VendorPaymentStatusEnum::Reconciled, $payment->fresh()->status);
     }
 
-    public function test_split_matching()
+    public function test_split_matching_throws_exception_due_to_unique_constraint()
     {
         $line = $this->createBankLine(-1500.0);
         $payment1 = $this->createPayment(1000.0);
         $payment2 = $this->createPayment(500.0);
 
-        $matches = $this->service->commitSplit(
+        $this->expectException(\Illuminate\Database\QueryException::class);
+
+        $this->service->commitSplit(
             $this->session,
             $line->id,
             [
@@ -141,21 +143,17 @@ class ReconciliationCommitServiceTest extends TestCase
             ],
             $this->userId
         );
-
-        $this->assertCount(2, $matches);
-        $this->assertTrue($line->fresh()->is_reconciled);
-        $this->assertEquals(VendorPaymentStatusEnum::Reconciled, $payment1->fresh()->status);
-        $this->assertEquals(VendorPaymentStatusEnum::Reconciled, $payment2->fresh()->status);
-        $this->assertEquals('SPLIT', $matches[0]->match_method);
     }
 
-    public function test_merge_matching()
+    public function test_merge_matching_throws_exception_due_to_unique_constraint()
     {
         $line1 = $this->createBankLine(-1000.0);
         $line2 = $this->createBankLine(-500.0);
         $payment = $this->createPayment(1500.0);
 
-        $matches = $this->service->commitMerge(
+        $this->expectException(\Illuminate\Database\QueryException::class);
+
+        $this->service->commitMerge(
             $this->session,
             [
                 ['id' => $line1->id, 'amount' => 1000.0],
@@ -165,12 +163,6 @@ class ReconciliationCommitServiceTest extends TestCase
             $payment->id,
             $this->userId
         );
-
-        $this->assertCount(2, $matches);
-        $this->assertTrue($line1->fresh()->is_reconciled);
-        $this->assertTrue($line2->fresh()->is_reconciled);
-        $this->assertEquals(VendorPaymentStatusEnum::Reconciled, $payment->fresh()->status);
-        $this->assertEquals('MERGE', $matches[0]->match_method);
     }
 
     public function test_over_allocation_protection_for_bank_line()

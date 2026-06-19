@@ -13,8 +13,8 @@ use Modules\Finance\AccountsPayable\Enums\ApInvoiceStatusEnum;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
-use Modules\Operations\Inventory\Models\InventoryReceipt;
-use Modules\Operations\Inventory\Models\InventoryReceiptLine;
+use Modules\Operations\Receiving\Models\ReceivingDocument;
+use Modules\Operations\Receiving\Models\ReceivingLine;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
@@ -57,10 +57,11 @@ class ApPostingEngineTest extends TestCase
             'is_active' => true,
         ]);
 
-        $receipt = InventoryReceipt::first() ?? InventoryReceipt::forceCreate([
+        $receipt = ReceivingDocument::first() ?? ReceivingDocument::forceCreate([
             'property_id' => $this->property->id,
-            'receipt_number' => 'REC-001',
-            'status' => 'posted',
+            'vendor_id' => $this->vendor->id,
+            'grn_number' => 'REC-001',
+            'status' => 'approved',
         ]);
 
         $item = InventoryItem::first() ?? InventoryItem::forceCreate([
@@ -79,16 +80,14 @@ class ApPostingEngineTest extends TestCase
             'name' => 'Test Location',
         ]);
 
-        $this->receiptLine = InventoryReceiptLine::create([
-            'property_id' => $this->property->id,
-            'receipt_id' => $receipt->id,
-            'item_id' => $item->id,
-            'location_id' => $location->id,
-            'quantity' => 10,
+        $this->receiptLine = ReceivingLine::forceCreate([
+            'receiving_document_id' => $receipt->id,
+            'inventory_item_id' => $item->id,
+            'destination_location_id' => $location->id,
+            'description' => 'Test Item',
+            'received_quantity' => 10,
             'unit_cost' => 50.00,
             'line_total' => 500.00,
-            'invoiced_quantity' => 0,
-            'invoiced_amount' => 0,
         ]);
 
         $this->engine = new ApPostingEngine(
