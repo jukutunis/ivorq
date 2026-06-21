@@ -41,7 +41,13 @@ A persistence layer (e.g., `PropertyBusinessDate` or extension of `Property`) mu
 A resolver service must accept a Property ID and return the currently active Open Business Date. If no open date exists, or the context is invalid, it must throw an explicit, controlled exception.
 
 ## Event Integrity Contract for Future Inventory Ledger
-Future ledgers must include a unique constraint on `(source_document_type, source_document_id)` to prevent duplicate processing, wrapped in a strict database transaction.
+A ledger event must preserve both:
+1. a deterministic idempotency key for retry-safe command processing; and
+2. a granular source-event identity.
+
+For Receiving, source identity must be based at least on the ReceivingLine level, not ReceivingDocument alone. The final source-event composite must distinguish legitimate original receipt, reversal, and correction events. A source document alone must never be assumed to produce only one ledger movement.
+
+The final physical unique indexes must be derived from actual repository schema and tests. They must prevent duplicate retry effects without blocking legitimate separately identified reversal or correction events.
 
 ## Retry, Duplicate, and Transaction Rules
 Duplicates must be rejected deterministically by database constraints. Retries must not yield duplicate quantity or financial consequences.
@@ -57,10 +63,18 @@ This recovery phase does not implement a full Night Audit workflow or UI. It imp
 Tenant and Property isolation must be strictly enforced in the resolver.
 
 ## Minimum Backend Recovery Scope
-- Property-scoped business date persistence.
-- Server-side resolver service returning the active date.
-- Explicit exception handling for closed/unavailable states.
-- Focused unit/feature tests validating isolation and resolution.
+Option B — dedicated Property Business Date persistence within the existing Modules\Foundation\Property boundary.
+
+Implementation must reuse, where compatible:
+Property ULID conventions
+Property company_id / tenant relationship
+BelongsToProperty scope
+CurrentPropertyService context
+HasAuditColumns
+LogsActivity
+Property authorization conventions
+Property factory and test-fixture conventions
+Property timezone attribute
 
 ## Explicitly Deferred Scope
 - Inventory Ledger
@@ -79,10 +93,10 @@ Tenant and Property isolation must be strictly enforced in the resolver.
 Must pass active-branch build and tests before proceeding to ledger implementation. Active-branch Property model placement, timezone configuration conventions, and Tenant scope traits must be fully verified before implementation.
 
 ## Go / No-Go Decision for Business Date Foundation
-NO-GO — Root-cause remediation required before Business Date implementation
+CONDITIONAL GO — Minimum Property Business Date backend foundation may be implemented only through the mapped Foundation Property conventions, with Property-scoped authorization, server-side resolution, green tests, and isolated commit boundaries.
 
 ## Go / No-Go Decision for Future Inventory Ledger Slice 1
-GO — Future Inventory Ledger Slice 1 may implement ledger-specific idempotency
+CONDITIONAL GO — Future Inventory Ledger Slice 1 may begin only after the Property Business Date foundation is implemented, Business Date tests are green, Finance Period status can be resolved through a read-only guard, and ledger-specific idempotency is enforced by tested persistence constraints and transaction boundaries.
 
 ## Implementation Commit Boundaries
 Commit 1: Specification
