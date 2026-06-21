@@ -45,6 +45,38 @@ The future posting guard must not invoke PeriodControlService::isOpen(), enforce
 - No direct posting path may bypass the guard.
 - The guard must be reusable for future Inventory Ledger and other ledger-affecting modules.
 
+The primary posting-path guard queries only the active, non-soft-deleted
+FinancialPeriod records within the server-side resolved current Property scope.
+
+If no qualifying FinancialPeriod exists in that scope, the guard returns
+FinancialPeriodMissing.
+
+The primary posting guard must not query another Property to distinguish
+whether a Financial Period exists elsewhere. It must not expose whether
+another Property has a corresponding Financial Period.
+
+The following are prohibited in the primary posting path:
+- withoutGlobalScopes()
+- cross-property lookup
+- explicit query for another property_id
+- any diagnostic that reveals another Property's period existence or status
+
+The primary posting-path guard must use normal active-record scopes only.
+
+It must not use withTrashed() or otherwise inspect soft-deleted FinancialPeriod
+records in order to classify a rejected posting attempt.
+
+A missing active FinancialPeriod, including a case where only soft-deleted
+historical records might exist, must resolve as FinancialPeriodMissing.
+
+Any persisted FinancialPeriod status that cannot be mapped safely to the
+expected FinancialPeriodStatusEnum, is corrupted, unsupported, unknown, or
+otherwise invalid must reject deterministically as FinancialPeriodInvalidState.
+
+The posting guard must not allow a raw enum-casting error, ValueError,
+database error, or raw persisted status value to escape as a user-facing
+diagnostic.
+
 # 8. Canonical Resolution Flow
 1. Resolve current Property from CurrentPropertyService.
 2. Resolve active Property Business Date from CurrentBusinessDateService.
@@ -84,7 +116,7 @@ Reopened must not automatically allow ledger posting: reopening is a controlled 
 | Financial Period Closing | Reject | No | No | Diagnostic context required |
 | Financial Period Closed | Reject | No | No | Diagnostic context required |
 | Financial Period Reopened | Reject | No | No | Diagnostic context required |
-| Period belongs to another Property | Reject | No | No | Diagnostic context required |
+| FinancialPeriodMissing within current Property scope. | Reject | No | No | Diagnostic context required |
 | Duplicate/ambiguous matching period records | Reject | No | No | Diagnostic context required |
 | Soft-deleted historical period only | Reject | No | No | Diagnostic context required |
 | Attempt to use caller-provided date/property/year/month | Reject | No | No | Diagnostic context required |
@@ -117,27 +149,33 @@ Proposed result/error categories:
 - FinancialPeriodMissing
 - FinancialPeriodNotOpen
 - FinancialPeriodAmbiguous
-- FinancialPeriodScopeMismatch
+- FinancialPeriodInvalidState
 - PostingPeriodGuardPassed
 
 *(Final exception class names require implementation review.)*
 
 # 14. Required Future Test Coverage
-- Open Business Date + Open Financial Period = passes.
-- Open Business Date + Missing Financial Period = rejects and does not create a period.
-- Open Business Date + Closing Financial Period = rejects.
-- Open Business Date + Closed Financial Period = rejects.
-- Open Business Date + Reopened Financial Period = rejects by default.
-- Closed Business Date + Open Financial Period = rejects.
-- No current Property = rejects.
-- No Business Date = rejects.
-- Financial Period from another Property = rejects.
-- Soft-deleted period cannot be used.
-- Duplicate/ambiguous period handling rejects deterministically.
-- Guard makes no database writes in all pass/reject scenarios.
-- Caller cannot inject arbitrary Property ID, date, year, month, or timezone.
-- Future Inventory Ledger integration must prove guard invocation before any immutable ledger write.
-- Each passing and rejecting guard test must capture FinancialPeriod records before and after invocation, proving that record count, status, opened_at, closed_at, closing_snapshot_at, opened_by, closed_by, created_by, updated_by, and timestamps remain unchanged.
+1. Current Property A has an Open FinancialPeriod:
+   Property A + matching Business Date passes.
+
+2. Current Property B has no matching active FinancialPeriod:
+   Property B rejects as FinancialPeriodMissing,
+   even if Property A has a matching FinancialPeriod.
+
+3. The primary posting guard performs no cross-property lookup.
+
+4. A soft-deleted FinancialPeriod must not qualify.
+   The primary posting guard must return FinancialPeriodMissing without
+   using withTrashed() or revealing the historical record.
+
+5. A corrupted, unknown, or enum-unmappable persisted period status rejects as
+   FinancialPeriodInvalidState without exposing raw database values.
+
+6. No-mutation tests must prove no INSERT, UPDATE, or DELETE query occurs in
+   any pass or rejection path.
+
+7. Before/after assertions must prove FinancialPeriod and PropertyBusinessDate
+   record counts, statuses, timestamps, and audit columns remain unchanged.
 
 # 15. Security, Authorization, and Audit Considerations
 - Period opening/closing/reopening remains a Finance-controlled administrative function.
