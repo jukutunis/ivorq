@@ -73,15 +73,18 @@ class AvcoValuationEngineTest extends TestCase
     public function test_shortage_issue_relieves_only_available_quantity_and_becomes_provisional()
     {
         $engine = new AvcoValuationEngine();
-        $prior = new AvcoValuationState('prop1', 'item1', 'scope1', new AvcoDecimal('10.0'), new AvcoDecimal('10.0'), new AvcoDecimal('100.0'));
-        $input = $this->createInput('issue', '-15.0', null, 1);
+        // prior carrying value is exactly 1.0000, qty is 3, unit cost is 0.3333
+        $prior = new AvcoValuationState('prop1', 'item1', 'scope1', new AvcoDecimal('3.0'), new AvcoDecimal('0.3333'), new AvcoDecimal('1.0000'));
+        $input = $this->createInput('issue', '-4.0', null, 1);
 
         $result = $engine->evaluate($input, $prior);
         $this->assertEquals(AvcoValuationResult::STATUS_PROVISIONAL, $result->status);
-        $this->assertTrue($result->newState->onHandQuantity->compareTo(new AvcoDecimal('-5.0')) === 0);
+        $this->assertTrue($result->newState->onHandQuantity->compareTo(new AvcoDecimal('-1.0')) === 0);
         $this->assertNull($result->newState->weightedAverageUnitCost);
         $this->assertTrue($result->newState->carryingValue->compareTo(new AvcoDecimal('0.0')) === 0);
-        $this->assertTrue($result->newState->unresolvedProvisionalQuantity->compareTo(new AvcoDecimal('5.0')) === 0);
+        // Entire prior carrying value is relieved
+        $this->assertTrue($result->signedCarryingValueDelta->compareTo(new AvcoDecimal('-1.0000')) === 0);
+        $this->assertTrue($result->newState->unresolvedProvisionalQuantity->compareTo(new AvcoDecimal('1.0')) === 0);
     }
 
     public function test_receipt_after_unresolved_provisional_balance_returns_correction_required()
@@ -102,6 +105,18 @@ class AvcoValuationEngineTest extends TestCase
 
         $result = $engine->evaluate($input, $prior);
         $this->assertEquals(AvcoValuationResult::STATUS_PENDING, $result->status);
+        $this->assertTrue($result->newState === $prior);
+    }
+    
+    public function test_issue_without_prevailing_carrying_cost_is_pending_and_state_unchanged()
+    {
+        $engine = new AvcoValuationEngine();
+        // Zero stock, no unit cost
+        $prior = new AvcoValuationState('prop1', 'item1', 'scope1', new AvcoDecimal('0.0'), null, new AvcoDecimal('0.0'));
+        $input = $this->createInput('issue', '-5.0', null, 1);
+        $result = $engine->evaluate($input, $prior);
+        $this->assertEquals(AvcoValuationResult::STATUS_PENDING, $result->status);
+        $this->assertTrue($result->newState === $prior);
     }
 
     public function test_duplicate_and_out_of_order_sequences_are_rejected()
@@ -192,7 +207,7 @@ class AvcoValuationEngineTest extends TestCase
 
     public function test_avcodecimal_rejects_invalid_formats()
     {
-        $invalidFormats = ['1.0.0', '1e5', '+10.0', ' 10.0', '10.0 ', 'NaN', 'INF', ''];
+        $invalidFormats = ['1.0.0', '1e5', '+10.0', ' 10.0', '10.0 ', 'NaN', 'INF', '', '1.23456'];
         foreach ($invalidFormats as $format) {
             try {
                 new AvcoDecimal($format);
@@ -201,6 +216,35 @@ class AvcoValuationEngineTest extends TestCase
                 $this->assertTrue(true);
             }
         }
+    }
+    
+    public function test_unknown_event_type_rejected()
+    {
+        $vSeq = new ValuationSequence('prop1', 'item1', 'scope1', '2026-01-01', 1);
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage("Unknown event type");
+        new AvcoValuationInput(
+            'txn1', $vSeq, 'unknown_event', new AvcoDecimal('1.0'), 
+            null, '2026-01-01 10:00:00', false, null, null, null
+        );
+    }
+    
+    public function test_empty_transaction_reference_rejected()
+    {
+        $vSeq = new ValuationSequence('prop1', 'item1', 'scope1', '2026-01-01', 1);
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage("transactionReference cannot be empty");
+        new AvcoValuationInput(
+            '', $vSeq, 'receipt', new AvcoDecimal('1.0'), 
+            null, '2026-01-01 10:00:00', false, null, null, null
+        );
+    }
+
+    public function test_negative_source_carrying_cost_rejected()
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage("sourceCarryingUnitCost cannot be negative");
+        new TransferValuationContext('prop1', 'item1', 'scope1', new AvcoDecimal('-1.0'));
     }
 
     public function test_no_avco_source_references_inventory_stock_or_float()

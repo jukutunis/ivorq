@@ -15,8 +15,8 @@ class AvcoDecimal
         if (!extension_loaded('bcmath')) {
             throw new RuntimeException("BCMath extension is required for safe valuation.");
         }
-        if (!preg_match('/^-?\d+(\.\d+)?$/', $value)) {
-            throw new InvalidArgumentException("Invalid decimal string format.");
+        if (!preg_match('/^-?\d+(\.\d{1,4})?$/', $value)) {
+            throw new InvalidArgumentException("Invalid decimal string format or exceeds scale limit.");
         }
         
         $this->value = bcadd($value, '0', self::SCALE);

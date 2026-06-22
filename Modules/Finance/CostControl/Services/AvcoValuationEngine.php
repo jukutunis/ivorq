@@ -84,14 +84,9 @@ class AvcoValuationEngine
             
             if ($priorState->onHandQuantity->compareTo($issueQty) < 0) {
                 $availableQty = $priorState->onHandQuantity->isPositive() ? $priorState->onHandQuantity : AvcoDecimal::zero();
-                $relievedValue = $availableQty->mul($priorState->weightedAverageUnitCost);
+                $relievedValue = $priorState->carryingValue; 
                 
                 $unresolvedQty = $issueQty->sub($availableQty);
-                $newCarryingValue = $priorState->carryingValue->sub($relievedValue);
-                if ($priorState->onHandQuantity->compareTo($issueQty) == 0 || $newCarryingValue->isNegative() || $newCarryingValue->isZero()) {
-                    $newCarryingValue = AvcoDecimal::zero();
-                    $relievedValue = $priorState->carryingValue;
-                }
 
                 return new AvcoValuationResult(
                     AvcoValuationResult::STATUS_PROVISIONAL,

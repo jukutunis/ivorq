@@ -2,6 +2,8 @@
 
 namespace Modules\Finance\CostControl\ValueObjects;
 
+use InvalidArgumentException;
+
 class AvcoValuationInput
 {
     public readonly string $transactionReference;
@@ -27,6 +29,16 @@ class AvcoValuationInput
         ?string $originalBusinessDate = null,
         ?TransferValuationContext $transferContext = null
     ) {
+        if (empty($transactionReference)) {
+            throw new InvalidArgumentException("transactionReference cannot be empty.");
+        }
+        if (empty($occurredAt)) {
+            throw new InvalidArgumentException("occurredAt cannot be empty.");
+        }
+        if (!in_array($eventType, ['receipt', 'issue', 'positive_adjustment', 'negative_adjustment', 'transfer'], true)) {
+            throw new InvalidArgumentException("Unknown event type: " . $eventType);
+        }
+
         $this->transactionReference = $transactionReference;
         $this->sequence = $sequence;
         $this->eventType = $eventType;

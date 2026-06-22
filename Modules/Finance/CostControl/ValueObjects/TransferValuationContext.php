@@ -20,6 +20,9 @@ class TransferValuationContext
         if (empty($sourcePropertyId) || empty($sourceItemId) || empty($sourceValuationScope)) {
             throw new InvalidArgumentException("Source identifiers cannot be empty.");
         }
+        if ($sourceCarryingUnitCost->isNegative()) {
+            throw new InvalidArgumentException("sourceCarryingUnitCost cannot be negative.");
+        }
         $this->sourcePropertyId = $sourcePropertyId;
         $this->sourceItemId = $sourceItemId;
         $this->sourceValuationScope = $sourceValuationScope;
