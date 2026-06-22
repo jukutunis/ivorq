@@ -12,33 +12,36 @@ class AvcoValuationResult
 
     public readonly string $status;
     public readonly AvcoValuationState $newState;
-    public readonly ?float $transactionValue;
+    public readonly ?AvcoDecimal $signedCarryingValueDelta;
     public readonly ?string $reasonCode;
-    public readonly ?float $unresolvedProvisionalQuantity;
-    public readonly ?float $sourceCarryingUnitCost;
+    public readonly ?AvcoDecimal $unresolvedProvisionalQuantity;
+    public readonly ?AvcoDecimal $sourceCarryingUnitCost;
     public readonly ?string $correctionTargetPeriodId;
     public readonly ?string $originalTransactionReference;
     public readonly ?string $originalBusinessDate;
+    public readonly bool $historicalStateUnchanged;
 
     public function __construct(
         string $status,
         AvcoValuationState $newState,
-        ?float $transactionValue = null,
+        ?AvcoDecimal $signedCarryingValueDelta = null,
         ?string $reasonCode = null,
-        ?float $unresolvedProvisionalQuantity = null,
-        ?float $sourceCarryingUnitCost = null,
+        ?AvcoDecimal $unresolvedProvisionalQuantity = null,
+        ?AvcoDecimal $sourceCarryingUnitCost = null,
         ?string $correctionTargetPeriodId = null,
         ?string $originalTransactionReference = null,
-        ?string $originalBusinessDate = null
+        ?string $originalBusinessDate = null,
+        bool $historicalStateUnchanged = false
     ) {
         $this->status = $status;
         $this->newState = $newState;
-        $this->transactionValue = $transactionValue;
+        $this->signedCarryingValueDelta = $signedCarryingValueDelta;
         $this->reasonCode = $reasonCode;
         $this->unresolvedProvisionalQuantity = $unresolvedProvisionalQuantity;
         $this->sourceCarryingUnitCost = $sourceCarryingUnitCost;
         $this->correctionTargetPeriodId = $correctionTargetPeriodId;
         $this->originalTransactionReference = $originalTransactionReference;
         $this->originalBusinessDate = $originalBusinessDate;
+        $this->historicalStateUnchanged = $historicalStateUnchanged;
     }
 }

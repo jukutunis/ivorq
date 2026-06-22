@@ -5,12 +5,19 @@ namespace Modules\Finance\CostControl\Services;
 use Modules\Finance\CostControl\ValueObjects\AvcoValuationInput;
 use Modules\Finance\CostControl\ValueObjects\AvcoValuationState;
 use Modules\Finance\CostControl\ValueObjects\AvcoValuationResult;
+use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
 use InvalidArgumentException;
 
 class AvcoValuationEngine
 {
     public function evaluate(AvcoValuationInput $input, AvcoValuationState $priorState): AvcoValuationResult
     {
+        if ($priorState->propertyId !== $input->sequence->propertyId ||
+            $priorState->itemId !== $input->sequence->itemId ||
+            $priorState->valuationScope !== $input->sequence->valuationScope) {
+            return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'SCOPE_MISMATCH');
+        }
+
         if ($priorState->lastAppliedSequence !== null) {
             try {
                 if ($input->sequence->compareTo($priorState->lastAppliedSequence) <= 0) {
@@ -19,8 +26,6 @@ class AvcoValuationEngine
             } catch (InvalidArgumentException $e) {
                 return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'SCOPE_MISMATCH');
             }
-        } elseif ($priorState->valuationScope !== $input->sequence->valuationScope) {
-            return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'SCOPE_MISMATCH');
         }
 
         if ($input->isSourceFinancialPeriodClosed) {
@@ -35,112 +40,118 @@ class AvcoValuationEngine
                 null, null,
                 $input->currentOpenCorrectionPeriodId,
                 $input->transactionReference,
-                $input->originalBusinessDate ?? $input->sequence->businessDate
+                $input->originalBusinessDate ?? $input->sequence->businessDate,
+                true
             );
         }
 
-        if (abs($priorState->unresolvedProvisionalQuantity) > 0.0) {
-            if ($input->eventType === 'receipt' || ($input->eventType === 'adjustment' && $input->quantityDelta > 0)) {
-                return new AvcoValuationResult(AvcoValuationResult::STATUS_PENDING, $priorState, null, 'PRIOR_UNRESOLVED_PROVISIONAL_BALANCE_EXISTS');
+        $newQuantity = $priorState->onHandQuantity->add($input->quantityDelta);
+
+        if ($input->eventType === 'receipt' || $input->eventType === 'positive_adjustment') {
+            if (!$input->quantityDelta->isPositive()) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'QUANTITY_DELTA_MUST_BE_POSITIVE');
             }
-        }
-
-        $newQuantity = $priorState->onHandQuantity + $input->quantityDelta;
-
-        if ($input->eventType === 'receipt') {
+            if ($priorState->unresolvedProvisionalQuantity->isPositive()) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_CORRECTION_REQUIRED, $priorState, null, 'PRIOR_UNRESOLVED_PROVISIONAL_BALANCE_EXISTS');
+            }
             if ($input->approvedValuationBasis === null) {
                 return new AvcoValuationResult(AvcoValuationResult::STATUS_PENDING, $priorState, null, 'MISSING_APPROVED_VALUATION_BASIS');
             }
-            $transactionValue = $input->quantityDelta * $input->approvedValuationBasis;
-            $newCarryingValue = $priorState->carryingValue + $transactionValue;
+            $transactionValue = $input->quantityDelta->mul($input->approvedValuationBasis);
+            $newCarryingValue = $priorState->carryingValue->add($transactionValue);
+            $newAvco = $newQuantity->isPositive() ? $newCarryingValue->div($newQuantity) : AvcoDecimal::zero();
             
-            $newAvco = $newQuantity > 0 ? $newCarryingValue / $newQuantity : 0.0;
             return new AvcoValuationResult(
                 AvcoValuationResult::STATUS_FINAL,
-                new AvcoValuationState($newQuantity, $newAvco, $newCarryingValue, $priorState->valuationScope, $input->sequence),
+                new AvcoValuationState(
+                    $priorState->propertyId, $priorState->itemId, $priorState->valuationScope,
+                    $newQuantity, $newAvco, $newCarryingValue, $input->sequence
+                ),
                 $transactionValue
             );
         }
 
-        if ($input->eventType === 'issue' || ($input->eventType === 'adjustment' && $input->quantityDelta < 0)) {
-            $prevailingCost = $priorState->weightedAverageUnitCost ?? 0.0;
-            $issueQty = abs($input->quantityDelta);
+        if ($input->eventType === 'issue' || $input->eventType === 'negative_adjustment') {
+            if (!$input->quantityDelta->isNegative()) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'QUANTITY_DELTA_MUST_BE_NEGATIVE');
+            }
+            if ($priorState->unresolvedProvisionalQuantity->isPositive()) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_CORRECTION_REQUIRED, $priorState, null, 'PRIOR_UNRESOLVED_PROVISIONAL_BALANCE_EXISTS');
+            }
+            if ($priorState->weightedAverageUnitCost === null) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_PENDING, $priorState, null, 'MISSING_PREVAILING_CARRYING_COST');
+            }
+
+            $issueQty = $input->quantityDelta->abs();
             
-            if ($priorState->onHandQuantity < $issueQty) {
-                $availableQty = max(0.0, $priorState->onHandQuantity);
-                $transactionValue = $availableQty * $prevailingCost;
-                $newCarryingValue = $priorState->carryingValue - $transactionValue;
-                $unresolvedQty = $issueQty - $availableQty;
-                $totalUnresolved = $priorState->unresolvedProvisionalQuantity + $unresolvedQty;
+            if ($priorState->onHandQuantity->compareTo($issueQty) < 0) {
+                $availableQty = $priorState->onHandQuantity->isPositive() ? $priorState->onHandQuantity : AvcoDecimal::zero();
+                $relievedValue = $availableQty->mul($priorState->weightedAverageUnitCost);
+                
+                $unresolvedQty = $issueQty->sub($availableQty);
+                
+                $newCarryingValue = $priorState->carryingValue->sub($relievedValue);
+                if ($priorState->onHandQuantity->compareTo($issueQty) == 0 || $newCarryingValue->isNegative()) {
+                    // Exhausted
+                    $newCarryingValue = AvcoDecimal::zero();
+                    $relievedValue = $priorState->carryingValue;
+                }
 
                 return new AvcoValuationResult(
                     AvcoValuationResult::STATUS_PROVISIONAL,
-                    new AvcoValuationState($newQuantity, $priorState->weightedAverageUnitCost, $newCarryingValue, $priorState->valuationScope, $input->sequence, $totalUnresolved),
-                    $transactionValue,
+                    new AvcoValuationState(
+                        $priorState->propertyId, $priorState->itemId, $priorState->valuationScope,
+                        $newQuantity, null, AvcoDecimal::zero(), $input->sequence, $unresolvedQty
+                    ),
+                    AvcoDecimal::zero()->sub($relievedValue),
                     'NEGATIVE_INVENTORY_PROVISIONAL',
-                    $totalUnresolved
+                    $unresolvedQty
                 );
             }
 
-            $transactionValue = $issueQty * $prevailingCost;
-            $newCarryingValue = $priorState->carryingValue - $transactionValue;
-            return new AvcoValuationResult(
-                AvcoValuationResult::STATUS_FINAL,
-                new AvcoValuationState($newQuantity, $prevailingCost, $newCarryingValue, $priorState->valuationScope, $input->sequence),
-                $transactionValue
-            );
-        }
-
-        if ($input->eventType === 'adjustment' && $input->quantityDelta > 0) {
-            if ($input->approvedValuationBasis === null) {
-                return new AvcoValuationResult(AvcoValuationResult::STATUS_PENDING, $priorState, null, 'MISSING_APPROVED_VALUATION_BASIS');
+            if ($priorState->onHandQuantity->compareTo($issueQty) == 0) {
+                $relievedValue = $priorState->carryingValue;
+                $newCarryingValue = AvcoDecimal::zero();
+                $newAvco = null;
+            } else {
+                $relievedValue = $issueQty->mul($priorState->weightedAverageUnitCost);
+                $newCarryingValue = $priorState->carryingValue->sub($relievedValue);
+                $newAvco = $priorState->weightedAverageUnitCost;
             }
-            $transactionValue = $input->quantityDelta * $input->approvedValuationBasis;
-            $newCarryingValue = $priorState->carryingValue + $transactionValue;
-            $newAvco = $newQuantity > 0 ? $newCarryingValue / $newQuantity : 0.0;
-            
+
             return new AvcoValuationResult(
                 AvcoValuationResult::STATUS_FINAL,
-                new AvcoValuationState($newQuantity, $newAvco, $newCarryingValue, $priorState->valuationScope, $input->sequence),
-                $transactionValue
+                new AvcoValuationState(
+                    $priorState->propertyId, $priorState->itemId, $priorState->valuationScope,
+                    $newQuantity, $newAvco, $newCarryingValue, $input->sequence
+                ),
+                AvcoDecimal::zero()->sub($relievedValue)
             );
         }
 
         if ($input->eventType === 'transfer') {
-             if ($input->sourceCarryingUnitCost === null) {
-                 return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'MISSING_SOURCE_CARRYING_COST');
+             if ($input->transferContext === null) {
+                 return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'MISSING_TRANSFER_CONTEXT');
+             }
+             $ctx = $input->transferContext;
+             if ($ctx->sourcePropertyId === $priorState->propertyId &&
+                 $ctx->sourceItemId === $priorState->itemId &&
+                 $ctx->sourceValuationScope === $priorState->valuationScope) {
+                 
+                 return new AvcoValuationResult(
+                     AvcoValuationResult::STATUS_FINAL,
+                     new AvcoValuationState(
+                         $priorState->propertyId, $priorState->itemId, $priorState->valuationScope,
+                         $priorState->onHandQuantity, $priorState->weightedAverageUnitCost, $priorState->carryingValue, $input->sequence, $priorState->unresolvedProvisionalQuantity
+                     ),
+                     AvcoDecimal::zero(),
+                     'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL',
+                     null,
+                     $ctx->sourceCarryingUnitCost
+                 );
              }
 
-             $transactionValue = abs($input->quantityDelta) * $input->sourceCarryingUnitCost;
-             $signedTransactionValue = $input->quantityDelta > 0 ? $transactionValue : -$transactionValue;
-             
-             $newCarryingValue = $priorState->carryingValue + $signedTransactionValue;
-             $prevailingCost = $priorState->weightedAverageUnitCost;
-
-             if ($input->quantityDelta < 0 && $priorState->onHandQuantity < abs($input->quantityDelta)) {
-                  $availableQty = max(0.0, $priorState->onHandQuantity);
-                  $relievedValue = $availableQty * $input->sourceCarryingUnitCost;
-                  $newCarryingValue = $priorState->carryingValue - $relievedValue;
-                  $unresolvedQty = abs($input->quantityDelta) - $availableQty;
-                  $totalUnresolved = $priorState->unresolvedProvisionalQuantity + $unresolvedQty;
-
-                  return new AvcoValuationResult(
-                      AvcoValuationResult::STATUS_PROVISIONAL,
-                      new AvcoValuationState($newQuantity, $prevailingCost, $newCarryingValue, $priorState->valuationScope, $input->sequence, $totalUnresolved),
-                      $relievedValue,
-                      'TRANSFER_SHORTAGE_PROVISIONAL',
-                      $totalUnresolved,
-                      $input->sourceCarryingUnitCost
-                  );
-             }
-             
-             return new AvcoValuationResult(
-                 AvcoValuationResult::STATUS_FINAL,
-                 new AvcoValuationState($newQuantity, $prevailingCost, $newCarryingValue, $priorState->valuationScope, $input->sequence),
-                 $signedTransactionValue,
-                 null, null,
-                 $input->sourceCarryingUnitCost
-             );
+             return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'TRANSFER_REQUIRES_PAIRED_SCOPE_MODEL');
         }
         
         return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'UNKNOWN_EVENT_TYPE');

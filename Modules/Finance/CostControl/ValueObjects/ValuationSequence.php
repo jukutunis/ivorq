@@ -25,6 +25,9 @@ class ValuationSequence
         if (empty($propertyId) || empty($itemId) || empty($valuationScope) || empty($businessDate)) {
             throw new InvalidArgumentException("identifiers and businessDate cannot be empty");
         }
+        if (!preg_match("/^\d{4}-\d{2}-\d{2}$/", $businessDate)) {
+            throw new InvalidArgumentException("businessDate must be YYYY-MM-DD");
+        }
 
         $this->propertyId = $propertyId;
         $this->itemId = $itemId;
