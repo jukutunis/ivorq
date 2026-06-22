@@ -12,6 +12,7 @@ class FinanceServiceProvider extends ServiceProvider
         PayablesServiceProvider::class,
         BankingServiceProvider::class,
         \Modules\Finance\GeneralLedger\GeneralLedgerServiceProvider::class,
+        \Modules\Finance\CostControl\CostControlServiceProvider::class,
     ];
 
     public function register(): void
