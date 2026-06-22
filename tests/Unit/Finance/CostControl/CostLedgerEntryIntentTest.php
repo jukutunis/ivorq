@@ -18,9 +18,9 @@ class CostLedgerEntryIntentTest extends TestCase
             idempotencyKey: 'idemp_123',
             entrySequence: 1,
             currencyCode: 'USD',
-            quantityDelta: 10.0,
-            unitCost: 15.0,
-            valueDelta: 150.0,
+            quantityDelta: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('10.0'),
+            unitCost: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('15.0'),
+            valueDelta: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('150.0'),
             businessDate: '2026-06-22',
             occurredAt: '2026-06-22 10:00:00'
         );
@@ -42,9 +42,9 @@ class CostLedgerEntryIntentTest extends TestCase
             idempotencyKey: 'idemp_123',
             entrySequence: 0,
             currencyCode: 'USD',
-            quantityDelta: 10.0,
-            unitCost: 15.0,
-            valueDelta: 150.0,
+            quantityDelta: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('10.0'),
+            unitCost: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('15.0'),
+            valueDelta: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('150.0'),
             businessDate: '2026-06-22',
             occurredAt: '2026-06-22 10:00:00'
         );
@@ -63,9 +63,9 @@ class CostLedgerEntryIntentTest extends TestCase
             idempotencyKey: 'idemp_123',
             entrySequence: 1,
             currencyCode: 'USD',
-            quantityDelta: 10.0,
-            unitCost: 15.0,
-            valueDelta: 150.0,
+            quantityDelta: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('10.0'),
+            unitCost: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('15.0'),
+            valueDelta: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('150.0'),
             businessDate: '2026-06-22',
             occurredAt: '2026-06-22 10:00:00'
         );
@@ -81,9 +81,9 @@ class CostLedgerEntryIntentTest extends TestCase
             idempotencyKey: 'idemp_123',
             entrySequence: 1,
             currencyCode: 'USD',
-            quantityDelta: 10.0,
-            unitCost: 15.0,
-            valueDelta: 150.0,
+            quantityDelta: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('10.0'),
+            unitCost: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('15.0'),
+            valueDelta: new \Modules\Finance\CostControl\ValueObjects\AvcoDecimal('150.0'),
             businessDate: '2026-06-22',
             occurredAt: '2026-06-22 10:00:00'
         );
