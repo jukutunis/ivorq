@@ -21,6 +21,8 @@ class InventoryTransaction extends Model
         'unit_cost'        => 'decimal:2',
         'total_cost'       => 'decimal:2',
         'posted_at'        => 'datetime',
+        'business_date'    => 'date',
+        'occurred_at'      => 'datetime',
     ];
 
     public function property()
@@ -41,5 +43,15 @@ class InventoryTransaction extends Model
     public function postedBy()
     {
         return $this->belongsTo(\Modules\Foundation\User\Models\User::class, 'posted_by');
+    }
+
+    public function reversesTransaction()
+    {
+        return $this->belongsTo(self::class, 'reverses_inventory_transaction_id');
+    }
+
+    public function correctsTransaction()
+    {
+        return $this->belongsTo(self::class, 'corrects_inventory_transaction_id');
     }
 }

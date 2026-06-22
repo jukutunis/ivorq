@@ -59,6 +59,27 @@ class InventoryStockRepository
         );
     }
 
+    public function createOrLockControlled(string $propertyId, string $itemId, string $locationId): InventoryStock
+    {
+        InventoryStock::insertOrIgnore([
+            'id'                => (string) \Illuminate\Support\Str::ulid(),
+            'property_id'       => $propertyId,
+            'item_id'           => $itemId,
+            'location_id'       => $locationId,
+            'physical_quantity' => 0,
+            'reserved_quantity' => 0,
+            'status'            => ItemStatusEnum::OutOfStock->value,
+            'created_at'        => now(),
+            'updated_at'        => now(),
+        ]);
+
+        return InventoryStock::where('property_id', $propertyId)
+            ->where('item_id', $itemId)
+            ->where('location_id', $locationId)
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
     public function updateBalance(
         string            $id,
         string            $physicalQuantity,
