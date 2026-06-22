@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 namespace Tests\Unit\Finance\CostControl;
 
@@ -247,17 +247,55 @@ class AvcoValuationEngineTest extends TestCase
         new TransferValuationContext('prop1', 'item1', 'scope1', new AvcoDecimal('-1.0'));
     }
 
-    public function test_no_avco_source_references_inventory_stock_or_float()
+    public function test_avco_static_contract()
     {
         $repoRoot = dirname(__DIR__, 4);
-        $costControlDir = $repoRoot . DIRECTORY_SEPARATOR . 'Modules' . DIRECTORY_SEPARATOR . 'Finance' . DIRECTORY_SEPARATOR . 'CostControl';
+        $files = [
+            'Modules/Finance/CostControl/Services/AvcoValuationEngine.php',
+            'Modules/Finance/CostControl/ValueObjects/AvcoDecimal.php',
+            'Modules/Finance/CostControl/ValueObjects/AvcoValuationInput.php',
+            'Modules/Finance/CostControl/ValueObjects/AvcoValuationResult.php',
+            'Modules/Finance/CostControl/ValueObjects/AvcoValuationState.php',
+            'Modules/Finance/CostControl/ValueObjects/TransferValuationContext.php',
+            'Modules/Finance/CostControl/ValueObjects/ValuationSequence.php'
+        ];
 
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($costControlDir));
-        foreach ($iterator as $file) {
-            if ($file->isFile() && $file->getExtension() === 'php' && strpos($file->getPathname(), 'tests') === false) {
-                $content = file_get_contents($file->getPathname());
-                $this->assertStringNotContainsString('InventoryStock', $content);
-                $this->assertDoesNotMatchRegularExpression('/\bfloat\b/', $content);
+        $forbiddenStrings = [
+            'InventoryStock',
+            '::query(',
+            '->where(',
+            '->first(',
+            '->find(',
+            'DB::',
+            'Model::',
+            '->save(',
+            '->create(',
+            '->update(',
+            '->delete(',
+            'GeneralLedger',
+            'Journal',
+            'AccountsPayable',
+            'Payable',
+            'GRNI'
+        ];
+
+        foreach ($files as $relPath) {
+            $path = $repoRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relPath);
+            $this->assertFileExists($path);
+            $content = file_get_contents($path);
+
+            $this->assertDoesNotMatchRegularExpression(
+                '/\bfloat\b/',
+                $content,
+                "File $relPath contains forbidden token: float"
+            );
+
+            foreach ($forbiddenStrings as $token) {
+                $this->assertStringNotContainsString(
+                    $token,
+                    $content,
+                    "File $relPath contains forbidden token: $token"
+                );
             }
         }
     }
