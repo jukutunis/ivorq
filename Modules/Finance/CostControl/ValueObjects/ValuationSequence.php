@@ -25,8 +25,11 @@ class ValuationSequence
         if (empty($propertyId) || empty($itemId) || empty($valuationScope) || empty($businessDate)) {
             throw new InvalidArgumentException("identifiers and businessDate cannot be empty");
         }
-        if (!preg_match("/^\d{4}-\d{2}-\d{2}$/", $businessDate)) {
+        if (!preg_match("/^(\d{4})-(\d{2})-(\d{2})$/", $businessDate, $matches)) {
             throw new InvalidArgumentException("businessDate must be YYYY-MM-DD");
+        }
+        if (!checkdate((int)$matches[2], (int)$matches[3], (int)$matches[1])) {
+            throw new InvalidArgumentException("businessDate must be a valid calendar date");
         }
 
         $this->propertyId = $propertyId;

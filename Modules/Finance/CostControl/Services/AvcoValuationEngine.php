@@ -45,14 +45,15 @@ class AvcoValuationEngine
             );
         }
 
+        if ($priorState->unresolvedProvisionalQuantity->isPositive()) {
+            return new AvcoValuationResult(AvcoValuationResult::STATUS_CORRECTION_REQUIRED, $priorState, null, 'PRIOR_UNRESOLVED_PROVISIONAL_BALANCE_EXISTS');
+        }
+
         $newQuantity = $priorState->onHandQuantity->add($input->quantityDelta);
 
         if ($input->eventType === 'receipt' || $input->eventType === 'positive_adjustment') {
             if (!$input->quantityDelta->isPositive()) {
                 return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'QUANTITY_DELTA_MUST_BE_POSITIVE');
-            }
-            if ($priorState->unresolvedProvisionalQuantity->isPositive()) {
-                return new AvcoValuationResult(AvcoValuationResult::STATUS_CORRECTION_REQUIRED, $priorState, null, 'PRIOR_UNRESOLVED_PROVISIONAL_BALANCE_EXISTS');
             }
             if ($input->approvedValuationBasis === null) {
                 return new AvcoValuationResult(AvcoValuationResult::STATUS_PENDING, $priorState, null, 'MISSING_APPROVED_VALUATION_BASIS');
@@ -75,9 +76,6 @@ class AvcoValuationEngine
             if (!$input->quantityDelta->isNegative()) {
                 return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'QUANTITY_DELTA_MUST_BE_NEGATIVE');
             }
-            if ($priorState->unresolvedProvisionalQuantity->isPositive()) {
-                return new AvcoValuationResult(AvcoValuationResult::STATUS_CORRECTION_REQUIRED, $priorState, null, 'PRIOR_UNRESOLVED_PROVISIONAL_BALANCE_EXISTS');
-            }
             if ($priorState->weightedAverageUnitCost === null) {
                 return new AvcoValuationResult(AvcoValuationResult::STATUS_PENDING, $priorState, null, 'MISSING_PREVAILING_CARRYING_COST');
             }
@@ -89,10 +87,8 @@ class AvcoValuationEngine
                 $relievedValue = $availableQty->mul($priorState->weightedAverageUnitCost);
                 
                 $unresolvedQty = $issueQty->sub($availableQty);
-                
                 $newCarryingValue = $priorState->carryingValue->sub($relievedValue);
-                if ($priorState->onHandQuantity->compareTo($issueQty) == 0 || $newCarryingValue->isNegative()) {
-                    // Exhausted
+                if ($priorState->onHandQuantity->compareTo($issueQty) == 0 || $newCarryingValue->isNegative() || $newCarryingValue->isZero()) {
                     $newCarryingValue = AvcoDecimal::zero();
                     $relievedValue = $priorState->carryingValue;
                 }
@@ -130,6 +126,9 @@ class AvcoValuationEngine
         }
 
         if ($input->eventType === 'transfer') {
+             if ($input->quantityDelta->isZero()) {
+                 return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'QUANTITY_DELTA_CANNOT_BE_ZERO');
+             }
              if ($input->transferContext === null) {
                  return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'MISSING_TRANSFER_CONTEXT');
              }

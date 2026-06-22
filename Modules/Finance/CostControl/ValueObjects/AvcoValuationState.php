@@ -25,6 +25,17 @@ class AvcoValuationState
         ?ValuationSequence $lastAppliedSequence = null,
         ?AvcoDecimal $unresolvedProvisionalQuantity = null
     ) {
+        if (empty($propertyId) || empty($itemId) || empty($valuationScope)) {
+            throw new InvalidArgumentException("Identifiers cannot be empty.");
+        }
+        if ($lastAppliedSequence !== null) {
+            if ($lastAppliedSequence->propertyId !== $propertyId ||
+                $lastAppliedSequence->itemId !== $itemId ||
+                $lastAppliedSequence->valuationScope !== $valuationScope) {
+                throw new InvalidArgumentException("lastAppliedSequence must match state identity.");
+            }
+        }
+
         $this->propertyId = $propertyId;
         $this->itemId = $itemId;
         $this->valuationScope = $valuationScope;
@@ -40,7 +51,11 @@ class AvcoValuationState
         if ($this->unresolvedProvisionalQuantity->isNegative()) {
             throw new InvalidArgumentException("unresolvedProvisionalQuantity cannot be negative");
         }
+        
         if ($this->unresolvedProvisionalQuantity->isPositive()) {
+            if (!$this->onHandQuantity->isNegative() || $this->onHandQuantity->abs()->compareTo($this->unresolvedProvisionalQuantity) !== 0) {
+                throw new InvalidArgumentException("When provisional balance exists, onHandQuantity must be negative and equal in absolute to unresolved quantity.");
+            }
             if ($this->weightedAverageUnitCost !== null) {
                 throw new InvalidArgumentException("weightedAverageUnitCost must be null when provisional balance exists");
             }
@@ -50,6 +65,18 @@ class AvcoValuationState
         } else {
             if ($this->onHandQuantity->isNegative()) {
                 throw new InvalidArgumentException("onHandQuantity cannot be negative when no provisional balance exists");
+            }
+            if ($this->onHandQuantity->isZero()) {
+                if (!$this->carryingValue->isZero()) {
+                    throw new InvalidArgumentException("carryingValue must be zero when onHandQuantity is zero");
+                }
+                if ($this->weightedAverageUnitCost !== null) {
+                    throw new InvalidArgumentException("weightedAverageUnitCost must be null when onHandQuantity is zero");
+                }
+            } else {
+                if ($this->weightedAverageUnitCost === null) {
+                    throw new InvalidArgumentException("weightedAverageUnitCost must not be null when onHandQuantity is positive");
+                }
             }
         }
     }

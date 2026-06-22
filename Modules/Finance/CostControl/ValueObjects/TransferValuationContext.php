@@ -2,6 +2,8 @@
 
 namespace Modules\Finance\CostControl\ValueObjects;
 
+use InvalidArgumentException;
+
 class TransferValuationContext
 {
     public readonly string $sourcePropertyId;
@@ -15,6 +17,9 @@ class TransferValuationContext
         string $sourceValuationScope,
         AvcoDecimal $sourceCarryingUnitCost
     ) {
+        if (empty($sourcePropertyId) || empty($sourceItemId) || empty($sourceValuationScope)) {
+            throw new InvalidArgumentException("Source identifiers cannot be empty.");
+        }
         $this->sourcePropertyId = $sourcePropertyId;
         $this->sourceItemId = $sourceItemId;
         $this->sourceValuationScope = $sourceValuationScope;
