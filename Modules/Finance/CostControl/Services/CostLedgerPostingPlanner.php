@@ -65,14 +65,42 @@ class CostLedgerPostingPlanner
 
         $result = $this->engine->evaluate($input, $priorState);
 
+        if ($result->status === AvcoValuationResult::STATUS_PROVISIONAL && $result->reasonCode === 'NEGATIVE_INVENTORY_PROVISIONAL') {
+            $mappedDecision = new CostLedgerPostingDecision(
+                CostLedgerPostingDecision::STATUS_PENDING,
+                'PROVISIONAL_VALUATION_REQUIRES_RESOLUTION',
+                true,
+                null, null,
+                $evidence->sourceTransactionReference,
+                $evidence->originalBusinessDate ?? $evidence->sourceBusinessDate
+            );
+            return new CostLedgerPostingPlan(
+                $mappedDecision,
+                $priorState,
+                $priorState,
+                $result,
+                null,
+                $evidence->sourceTransactionReference,
+                $evidence->idempotencyKey
+            );
+        }
+
         if ($result->status === AvcoValuationResult::STATUS_PENDING || 
             $result->status === AvcoValuationResult::STATUS_REJECTED || 
             $result->status === AvcoValuationResult::STATUS_CORRECTION_REQUIRED) {
             
+            if ($result->reasonCode === 'TRANSFER_REQUIRES_PAIRED_SCOPE_MODEL') {
+                $mappedDecision = new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, $result->reasonCode, true);
+                return new CostLedgerPostingPlan($mappedDecision, $priorState, $priorState, $result, null, $evidence->sourceTransactionReference, $evidence->idempotencyKey);
+            }
+
             $mappedDecision = new CostLedgerPostingDecision(
                 $result->status,
                 $result->reasonCode ?? 'AVCO_FAILURE',
-                true
+                true,
+                null, null,
+                $evidence->sourceTransactionReference,
+                $evidence->originalBusinessDate ?? $evidence->sourceBusinessDate
             );
 
             return new CostLedgerPostingPlan(
@@ -86,20 +114,30 @@ class CostLedgerPostingPlanner
             );
         }
 
-        // Final or Provisional
-        // Map eventType to entryType explicitly as per migration
-        // CHECK (entry_type IN ('receipt', 'issue', 'adjustment', 'transfer', 'correction', 'reversal'));
+        if ($result->reasonCode === 'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL') {
+            $mappedDecision = new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_ALLOW, 'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL', false);
+            return new CostLedgerPostingPlan(
+                $mappedDecision,
+                $priorState,
+                $result->newState,
+                $result,
+                null,
+                $evidence->sourceTransactionReference,
+                $evidence->idempotencyKey
+            );
+        }
+
         $entryType = $evidence->eventType;
         $metadata = $evidence->metadata ?? [];
+        
+        $unitCost = $evidence->approvedValuationBasis;
+        if ($entryType === 'issue' || $entryType === 'negative_adjustment') {
+            $unitCost = $priorState->weightedAverageUnitCost;
+        }
         
         if ($entryType === 'positive_adjustment' || $entryType === 'negative_adjustment') {
             $metadata['adjustment_direction'] = $entryType;
             $entryType = 'adjustment';
-        }
-
-        if ($result->status === AvcoValuationResult::STATUS_PROVISIONAL && $result->reasonCode === 'NEGATIVE_INVENTORY_PROVISIONAL') {
-             $metadata['provisional_unresolved_qty'] = $result->unresolvedProvisionalQuantity ? $result->unresolvedProvisionalQuantity->getValue() : '0.0000';
-             $metadata['provisional_relieved_value'] = $result->signedCarryingValueDelta ? $result->signedCarryingValueDelta->getValue() : '0.0000';
         }
 
         $intent = new CostLedgerEntryIntent(
@@ -111,13 +149,15 @@ class CostLedgerPostingPlanner
             $evidence->entrySequence,
             $evidence->currencyCode,
             $evidence->quantityDelta,
-            $result->newState->weightedAverageUnitCost ?? AvcoDecimal::zero(),
-            $result->signedCarryingValueDelta ?? AvcoDecimal::zero(),
+            $unitCost,
+            $result->signedCarryingValueDelta,
             $evidence->sourceBusinessDate,
             $evidence->occurredAt,
             $evidence->originalBusinessDate,
             $metadata
         );
+
+        $decision = new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_ALLOW, 'ELIGIBLE', false);
 
         return new CostLedgerPostingPlan(
             $decision,

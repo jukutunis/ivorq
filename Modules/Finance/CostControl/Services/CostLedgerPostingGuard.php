@@ -13,29 +13,26 @@ class CostLedgerPostingGuard
         CostLedgerPostingWindow $window,
         AvcoValuationState $priorState
     ): CostLedgerPostingDecision {
-        // 1. Identity Validation
         if ($evidence->propertyId !== $window->propertyId) {
-            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'PROPERTY_MISMATCH_WITH_WINDOW');
+            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'PROPERTY_MISMATCH_WITH_WINDOW', true);
         }
         if ($priorState->propertyId !== $evidence->propertyId) {
-            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'PROPERTY_MISMATCH_WITH_STATE');
+            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'PROPERTY_MISMATCH_WITH_STATE', true);
         }
         if ($priorState->itemId !== $evidence->itemId) {
-            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'ITEM_MISMATCH_WITH_STATE');
+            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'ITEM_MISMATCH_WITH_STATE', true);
         }
         if ($priorState->valuationScope !== $evidence->valuationScope) {
-            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'SCOPE_MISMATCH_WITH_STATE');
+            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'SCOPE_MISMATCH_WITH_STATE', true);
         }
         if ($evidence->sourceBusinessDate !== $window->sourceBusinessDate) {
-            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'BUSINESS_DATE_MISMATCH_WITH_WINDOW');
+            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'BUSINESS_DATE_MISMATCH_WITH_WINDOW', true);
         }
 
-        // 2. Approval Validation
-        if (!$evidence->isExplicitlyApproved) {
-            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'SOURCE_NOT_APPROVED');
+        if ($evidence->approvalStatus !== 'approved' || empty($evidence->approvalReference)) {
+            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'SOURCE_NOT_APPROVED', true);
         }
 
-        // 3. Source Business Date Close Rule
         if (!$window->isPropertyBusinessDateOpen) {
             if ($window->currentOpenCorrectionBusinessDate !== null && $window->currentOpenCorrectionFinancialPeriodId !== null) {
                 return new CostLedgerPostingDecision(
@@ -51,7 +48,6 @@ class CostLedgerPostingGuard
             return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'MISSING_OPEN_CORRECTION_CONTEXT', true, null, null, $evidence->sourceTransactionReference, $evidence->sourceBusinessDate);
         }
 
-        // 4. Source Financial Period Close Rule
         if (!$window->isFinancialPeriodOpen) {
             if ($window->currentOpenCorrectionBusinessDate !== null && $window->currentOpenCorrectionFinancialPeriodId !== null) {
                 return new CostLedgerPostingDecision(
@@ -67,7 +63,6 @@ class CostLedgerPostingGuard
             return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'MISSING_OPEN_CORRECTION_CONTEXT', true, null, null, $evidence->sourceTransactionReference, $evidence->sourceBusinessDate);
         }
 
-        // 5. AVCO-plan eligibility
         return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_ALLOW, 'ELIGIBLE');
     }
 }

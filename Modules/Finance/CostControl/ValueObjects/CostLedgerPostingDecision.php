@@ -30,6 +30,32 @@ class CostLedgerPostingDecision
             throw new InvalidArgumentException("Invalid decision status");
         }
         
+        if (empty($reasonCode)) {
+            throw new InvalidArgumentException("reasonCode is mandatory and non-empty");
+        }
+
+        if ($status === self::STATUS_ALLOW) {
+            if ($historicalStateUnchanged !== false) throw new InvalidArgumentException("allow requires historicalStateUnchanged = false");
+            if ($targetCorrectionBusinessDate !== null || $targetCorrectionPeriodId !== null || $originalTransactionReference !== null || $originalBusinessDate !== null) {
+                throw new InvalidArgumentException("allow requires no correction target/date/reference fields");
+            }
+        }
+
+        if ($status === self::STATUS_PENDING || $status === self::STATUS_REJECTED) {
+            if ($historicalStateUnchanged !== true) throw new InvalidArgumentException("pending/rejected requires historicalStateUnchanged = true");
+            if ($targetCorrectionBusinessDate !== null || $targetCorrectionPeriodId !== null) {
+                throw new InvalidArgumentException("pending/rejected requires no correction target/date");
+            }
+        }
+
+        if ($status === self::STATUS_CORRECTION_REQUIRED) {
+            if ($historicalStateUnchanged !== true) throw new InvalidArgumentException("correction_required requires historicalStateUnchanged = true");
+            if (empty($targetCorrectionBusinessDate)) throw new InvalidArgumentException("correction business date required");
+            if (empty($targetCorrectionPeriodId)) throw new InvalidArgumentException("correction FinancialPeriod ID required");
+            if (empty($originalTransactionReference)) throw new InvalidArgumentException("original transaction reference required");
+            if (empty($originalBusinessDate)) throw new InvalidArgumentException("original business date required");
+        }
+        
         $this->status = $status;
         $this->reasonCode = $reasonCode;
         $this->historicalStateUnchanged = $historicalStateUnchanged;

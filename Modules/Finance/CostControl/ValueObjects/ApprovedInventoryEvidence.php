@@ -1,6 +1,7 @@
 <?php
 namespace Modules\Finance\CostControl\ValueObjects;
 use InvalidArgumentException;
+use DateTime;
 
 class ApprovedInventoryEvidence
 {
@@ -18,6 +19,8 @@ class ApprovedInventoryEvidence
     public readonly ?TransferValuationContext $transferContext;
     public readonly string $idempotencyKey;
     public readonly int $entrySequence;
+    public readonly string $approvalStatus;
+    public readonly ?string $approvalReference;
     public readonly bool $isExplicitlyApproved;
     public readonly ?string $originalBusinessDate;
     public readonly ?array $metadata;
@@ -37,7 +40,8 @@ class ApprovedInventoryEvidence
         ?TransferValuationContext $transferContext,
         string $idempotencyKey,
         int $entrySequence,
-        bool $isExplicitlyApproved,
+        string $approvalStatus,
+        ?string $approvalReference = null,
         ?string $originalBusinessDate = null,
         ?array $metadata = null
     ) {
@@ -48,12 +52,39 @@ class ApprovedInventoryEvidence
         if (empty($valuationScope)) throw new InvalidArgumentException("valuationScope cannot be empty");
         if (empty($idempotencyKey)) throw new InvalidArgumentException("idempotencyKey cannot be empty");
         if ($entrySequence <= 0) throw new InvalidArgumentException("entrySequence must be positive");
+        
         if (!in_array($eventType, ['receipt', 'issue', 'positive_adjustment', 'negative_adjustment', 'transfer'], true)) {
             throw new InvalidArgumentException("Unknown event type: $eventType");
         }
-        if (empty($currencyCode) || strlen($currencyCode) !== 3) throw new InvalidArgumentException("currencyCode must be a 3-character string");
-        if (empty($sourceBusinessDate)) throw new InvalidArgumentException("sourceBusinessDate cannot be empty");
-        if (empty($occurredAt)) throw new InvalidArgumentException("occurredAt cannot be empty");
+        
+        if (!preg_match('/^[A-Z]{3}$/', $currencyCode)) {
+            throw new InvalidArgumentException("currencyCode must be exactly uppercase [A-Z]{3}");
+        }
+
+        if (!($d = DateTime::createFromFormat('Y-m-d', $sourceBusinessDate)) || $d->format('Y-m-d') !== $sourceBusinessDate) {
+            throw new InvalidArgumentException("sourceBusinessDate must be a valid calendar date");
+        }
+
+        if ($originalBusinessDate !== null && (!($d = DateTime::createFromFormat('Y-m-d', $originalBusinessDate)) || $d->format('Y-m-d') !== $originalBusinessDate)) {
+            throw new InvalidArgumentException("originalBusinessDate must be a valid calendar date");
+        }
+
+        if (!strtotime($occurredAt)) {
+            throw new InvalidArgumentException("occurredAt must be a valid parseable date-time");
+        }
+
+        if (!in_array($approvalStatus, ['approved', 'pending', 'rejected'], true)) {
+            throw new InvalidArgumentException("Unknown approvalStatus: $approvalStatus");
+        }
+
+        if ($approvalStatus === 'approved' && empty($approvalReference)) {
+            throw new InvalidArgumentException("approved status requires non-empty approvalReference");
+        }
+
+        if (($approvalStatus === 'pending' || $approvalStatus === 'rejected') && !empty($approvalReference)) {
+            throw new InvalidArgumentException("pending/rejected status must not carry approvalReference");
+        }
+
         $this->sourceInventoryTransactionId = $sourceInventoryTransactionId;
         $this->sourceTransactionReference = $sourceTransactionReference;
         $this->propertyId = $propertyId;
@@ -68,7 +99,9 @@ class ApprovedInventoryEvidence
         $this->transferContext = $transferContext;
         $this->idempotencyKey = $idempotencyKey;
         $this->entrySequence = $entrySequence;
-        $this->isExplicitlyApproved = $isExplicitlyApproved;
+        $this->approvalStatus = $approvalStatus;
+        $this->approvalReference = $approvalReference;
+        $this->isExplicitlyApproved = ($approvalStatus === 'approved' && !empty($approvalReference));
         $this->originalBusinessDate = $originalBusinessDate;
         $this->metadata = $metadata;
     }
