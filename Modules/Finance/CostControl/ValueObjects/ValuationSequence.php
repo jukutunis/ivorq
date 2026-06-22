@@ -32,4 +32,20 @@ class ValuationSequence
         $this->businessDate = $businessDate;
         $this->ledgerSequence = $ledgerSequence;
     }
+
+    public function compareTo(ValuationSequence $other): int
+    {
+        if ($this->propertyId !== $other->propertyId || 
+            $this->itemId !== $other->itemId || 
+            $this->valuationScope !== $other->valuationScope) {
+            throw new InvalidArgumentException("Cannot compare sequences from different scopes.");
+        }
+
+        $dateComparison = strcmp($this->businessDate, $other->businessDate);
+        if ($dateComparison !== 0) {
+            return $dateComparison;
+        }
+
+        return $this->ledgerSequence <=> $other->ledgerSequence;
+    }
 }

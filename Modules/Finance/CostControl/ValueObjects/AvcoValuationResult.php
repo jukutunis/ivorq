@@ -12,12 +12,33 @@ class AvcoValuationResult
 
     public readonly string $status;
     public readonly AvcoValuationState $newState;
-    public readonly float $transactionValue;
+    public readonly ?float $transactionValue;
+    public readonly ?string $reasonCode;
+    public readonly ?float $unresolvedProvisionalQuantity;
+    public readonly ?float $sourceCarryingUnitCost;
+    public readonly ?string $correctionTargetPeriodId;
+    public readonly ?string $originalTransactionReference;
+    public readonly ?string $originalBusinessDate;
 
-    public function __construct(string $status, AvcoValuationState $newState, float $transactionValue)
-    {
+    public function __construct(
+        string $status,
+        AvcoValuationState $newState,
+        ?float $transactionValue = null,
+        ?string $reasonCode = null,
+        ?float $unresolvedProvisionalQuantity = null,
+        ?float $sourceCarryingUnitCost = null,
+        ?string $correctionTargetPeriodId = null,
+        ?string $originalTransactionReference = null,
+        ?string $originalBusinessDate = null
+    ) {
         $this->status = $status;
         $this->newState = $newState;
         $this->transactionValue = $transactionValue;
+        $this->reasonCode = $reasonCode;
+        $this->unresolvedProvisionalQuantity = $unresolvedProvisionalQuantity;
+        $this->sourceCarryingUnitCost = $sourceCarryingUnitCost;
+        $this->correctionTargetPeriodId = $correctionTargetPeriodId;
+        $this->originalTransactionReference = $originalTransactionReference;
+        $this->originalBusinessDate = $originalBusinessDate;
     }
 }
