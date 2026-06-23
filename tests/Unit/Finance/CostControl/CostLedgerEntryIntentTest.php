@@ -53,7 +53,7 @@ class CostLedgerEntryIntentTest extends TestCase
     public function test_intent_menolak_source_transaction_reference_kosong()
     {
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage("sourceInventoryTransactionId cannot be empty");
+        $this->expectExceptionMessage("sourceInventoryTransactionId cannot be blank");
 
         new CostLedgerEntryIntent(
             propertyId: 'prop_01',

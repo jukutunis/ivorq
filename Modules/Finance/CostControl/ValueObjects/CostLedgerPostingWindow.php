@@ -20,7 +20,7 @@ class CostLedgerPostingWindow
         ?string $currentOpenCorrectionBusinessDate = null,
         ?string $currentOpenCorrectionFinancialPeriodId = null
     ) {
-        if (empty($propertyId)) throw new InvalidArgumentException("propertyId cannot be empty");
+        if (trim($propertyId) === '') throw new InvalidArgumentException("propertyId cannot be blank");
         
         if (!($d = DateTime::createFromFormat('Y-m-d', $sourceBusinessDate)) || $d->format('Y-m-d') !== $sourceBusinessDate) {
             throw new InvalidArgumentException("sourceBusinessDate must be a valid calendar date");

@@ -69,10 +69,7 @@ class CostLedgerPostingPlanner
             $mappedDecision = new CostLedgerPostingDecision(
                 CostLedgerPostingDecision::STATUS_PENDING,
                 'PROVISIONAL_VALUATION_REQUIRES_RESOLUTION',
-                true,
-                null, null,
-                $evidence->sourceTransactionReference,
-                $evidence->originalBusinessDate ?? $evidence->sourceBusinessDate
+                true
             );
             return new CostLedgerPostingPlan(
                 $mappedDecision,
@@ -85,22 +82,30 @@ class CostLedgerPostingPlanner
             );
         }
 
-        if ($result->status === AvcoValuationResult::STATUS_PENDING || 
-            $result->status === AvcoValuationResult::STATUS_REJECTED || 
-            $result->status === AvcoValuationResult::STATUS_CORRECTION_REQUIRED) {
-            
-            if ($result->reasonCode === 'TRANSFER_REQUIRES_PAIRED_SCOPE_MODEL') {
-                $mappedDecision = new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, $result->reasonCode, true);
-                return new CostLedgerPostingPlan($mappedDecision, $priorState, $priorState, $result, null, $evidence->sourceTransactionReference, $evidence->idempotencyKey);
+        if ($result->status === AvcoValuationResult::STATUS_CORRECTION_REQUIRED) {
+            if ($result->reasonCode === 'PRIOR_UNRESOLVED_PROVISIONAL_BALANCE_EXISTS') {
+                $mappedDecision = new CostLedgerPostingDecision(
+                    CostLedgerPostingDecision::STATUS_PENDING,
+                    'PRIOR_UNRESOLVED_PROVISIONAL_BALANCE_EXISTS',
+                    true
+                );
+            } else {
+                $mappedDecision = new CostLedgerPostingDecision(
+                    CostLedgerPostingDecision::STATUS_REJECTED,
+                    'UNSUPPORTED_AVCO_CORRECTION_CONTEXT',
+                    true
+                );
             }
+            return new CostLedgerPostingPlan($mappedDecision, $priorState, $priorState, $result, null, $evidence->sourceTransactionReference, $evidence->idempotencyKey);
+        }
 
+        if ($result->status === AvcoValuationResult::STATUS_PENDING || 
+            $result->status === AvcoValuationResult::STATUS_REJECTED) {
+            
             $mappedDecision = new CostLedgerPostingDecision(
                 $result->status,
                 $result->reasonCode ?? 'AVCO_FAILURE',
-                true,
-                null, null,
-                $evidence->sourceTransactionReference,
-                $evidence->originalBusinessDate ?? $evidence->sourceBusinessDate
+                true
             );
 
             return new CostLedgerPostingPlan(
@@ -130,11 +135,32 @@ class CostLedgerPostingPlanner
         $entryType = $evidence->eventType;
         $metadata = $evidence->metadata ?? [];
         
-        $unitCost = $evidence->approvedValuationBasis;
-        if ($entryType === 'issue' || $entryType === 'negative_adjustment') {
+        $unitCost = null;
+        $valueDelta = $result->signedCarryingValueDelta;
+
+        if ($entryType === 'receipt' || $entryType === 'positive_adjustment') {
+            $unitCost = $evidence->approvedValuationBasis;
+        } elseif ($entryType === 'issue' || $entryType === 'negative_adjustment') {
             $unitCost = $priorState->weightedAverageUnitCost;
         }
         
+        if ($unitCost === null || $valueDelta === null) {
+            $mappedDecision = new CostLedgerPostingDecision(
+                CostLedgerPostingDecision::STATUS_PENDING,
+                'UNREPRESENTABLE_EVENT_VALUATION',
+                true
+            );
+            return new CostLedgerPostingPlan(
+                $mappedDecision,
+                $priorState,
+                $priorState,
+                $result,
+                null,
+                $evidence->sourceTransactionReference,
+                $evidence->idempotencyKey
+            );
+        }
+
         if ($entryType === 'positive_adjustment' || $entryType === 'negative_adjustment') {
             $metadata['adjustment_direction'] = $entryType;
             $entryType = 'adjustment';
@@ -150,7 +176,7 @@ class CostLedgerPostingPlanner
             $evidence->currencyCode,
             $evidence->quantityDelta,
             $unitCost,
-            $result->signedCarryingValueDelta,
+            $valueDelta,
             $evidence->sourceBusinessDate,
             $evidence->occurredAt,
             $evidence->originalBusinessDate,

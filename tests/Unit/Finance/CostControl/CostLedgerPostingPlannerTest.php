@@ -12,8 +12,12 @@ use Modules\Finance\CostControl\ValueObjects\ValuationSequence;
 use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
 use Modules\Finance\CostControl\ValueObjects\CostLedgerEntryIntent;
 use Modules\Finance\CostControl\ValueObjects\TransferValuationContext;
-use Modules\Finance\CostControl\Contracts\FutureLockOrderContract;
+use Modules\Finance\CostControl\ValueObjects\CostLedgerPostingDecision;
+use Modules\Finance\CostControl\ValueObjects\CostLedgerPostingPlan;
 use InvalidArgumentException;
+use PHPUnit\Framework\MockObject\MockObject;
+use Modules\Finance\CostControl\ValueObjects\AvcoValuationInput;
+use Modules\Finance\CostControl\ValueObjects\AvcoValuationResult;
 
 class CostLedgerPostingPlannerTest extends TestCase
 {
@@ -35,10 +39,10 @@ class CostLedgerPostingPlannerTest extends TestCase
         return new CostLedgerPostingWindow($propId, $sourceDate, $propOpen, $finOpen, $corrDate, $corrFin);
     }
 
-    private function createState(string $propId = 'prop1', string $itemId = 'item1', string $scope = 'scope1', string $qty = '10.0', string $unit = '10.0', string $val = '100.0'): AvcoValuationState
+    private function createState(string $propId = 'prop1', string $itemId = 'item1', string $scope = 'scope1', string $qty = '10.0', ?string $unit = '10.0', string $val = '100.0', string $unresolved = '0.0'): AvcoValuationState
     {
         $seq = new ValuationSequence($propId, $itemId, $scope, '2025-12-31', 1);
-        return new AvcoValuationState($propId, $itemId, $scope, new AvcoDecimal($qty), new AvcoDecimal($unit), new AvcoDecimal($val), $seq);
+        return new AvcoValuationState($propId, $itemId, $scope, new AvcoDecimal($qty), $unit !== null ? new AvcoDecimal($unit) : null, new AvcoDecimal($val), $seq, new AvcoDecimal($unresolved));
     }
 
     public function test_receipt_intent_unit_cost_equals_source_approved_basis()
@@ -199,6 +203,65 @@ class CostLedgerPostingPlannerTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
         $this->createWindow(true, true, null, 'fin1');
+    }
+    
+    public function test_whitespace_rejection()
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->createEvidence('receipt', '10.0', '20.0', 'approved', '   ');
+    }
+
+    public function test_prior_unresolved_provisional_balance()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $prior = $this->createState('prop1', 'item1', 'scope1', '-5.0', null, '0.0', '5.0');
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0');
+        $window = $this->createWindow();
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('pending', $plan->decision->status);
+        $this->assertEquals('PRIOR_UNRESOLVED_PROVISIONAL_BALANCE_EXISTS', $plan->decision->reasonCode);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNotNull($plan->valuationResult);
+        $this->assertEquals('correction_required', $plan->valuationResult->status);
+    }
+
+    public function test_unexpected_avco_correction_path()
+    {
+        /** @var AvcoValuationEngine|MockObject $engine */
+        $engine = $this->createMock(AvcoValuationEngine::class);
+        $prior = $this->createState();
+        $engine->method('evaluate')->willReturn(new AvcoValuationResult('correction_required', $prior, null, 'SOME_WEIRD_REASON'));
+        
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), $engine);
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0');
+        $window = $this->createWindow();
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('rejected', $plan->decision->status);
+        $this->assertEquals('UNSUPPORTED_AVCO_CORRECTION_CONTEXT', $plan->decision->reasonCode);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+    }
+
+    public function test_representability_guard()
+    {
+        /** @var AvcoValuationEngine|MockObject $engine */
+        $engine = $this->createMock(AvcoValuationEngine::class);
+        $prior = $this->createState('prop1', 'item1', 'scope1', '10.0', '10.0', '100.0'); 
+        $engine->method('evaluate')->willReturn(new AvcoValuationResult('final', $prior, null, null)); // null value delta
+        
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), $engine);
+        // pass null basis, resulting in null unitCost in intent
+        $evidence = $this->createEvidence('receipt', '5.0', null); 
+        $window = $this->createWindow();
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('pending', $plan->decision->status);
+        $this->assertEquals('UNREPRESENTABLE_EVENT_VALUATION', $plan->decision->reasonCode);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
     }
 
     public function test_planner_production_source_no_forbidden()

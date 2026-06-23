@@ -45,7 +45,7 @@ class CostLedgerPostingGuard
                     $evidence->sourceBusinessDate
                 );
             }
-            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'MISSING_OPEN_CORRECTION_CONTEXT', true, null, null, $evidence->sourceTransactionReference, $evidence->sourceBusinessDate);
+            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'MISSING_OPEN_CORRECTION_CONTEXT', true);
         }
 
         if (!$window->isFinancialPeriodOpen) {
@@ -60,9 +60,9 @@ class CostLedgerPostingGuard
                     $evidence->sourceBusinessDate
                 );
             }
-            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'MISSING_OPEN_CORRECTION_CONTEXT', true, null, null, $evidence->sourceTransactionReference, $evidence->sourceBusinessDate);
+            return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_REJECTED, 'MISSING_OPEN_CORRECTION_CONTEXT', true);
         }
 
-        return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_ALLOW, 'ELIGIBLE');
+        return new CostLedgerPostingDecision(CostLedgerPostingDecision::STATUS_ALLOW, 'ELIGIBLE', false);
     }
 }

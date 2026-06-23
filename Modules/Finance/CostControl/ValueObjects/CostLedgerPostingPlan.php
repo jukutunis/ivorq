@@ -21,18 +21,18 @@ class CostLedgerPostingPlan
         string $sourceTransactionReference,
         string $idempotencyKey
     ) {
+        if (trim($sourceTransactionReference) === '') throw new InvalidArgumentException("sourceTransactionReference cannot be blank");
+        if (trim($idempotencyKey) === '') throw new InvalidArgumentException("idempotencyKey cannot be blank");
+
         if (in_array($decision->status, [CostLedgerPostingDecision::STATUS_PENDING, CostLedgerPostingDecision::STATUS_REJECTED, CostLedgerPostingDecision::STATUS_CORRECTION_REQUIRED], true)) {
             if ($intent !== null) throw new InvalidArgumentException("intent must be null for pending/rejected/correction_required");
             if ($resultingState !== $priorState) throw new InvalidArgumentException("resultingState must be exact same instance as priorState for pending/rejected/correction_required");
         }
 
         if ($decision->status === CostLedgerPostingDecision::STATUS_ALLOW) {
-            if (empty($sourceTransactionReference)) throw new InvalidArgumentException("sourceTransactionReference must be non-empty for allow");
-            if (empty($idempotencyKey)) throw new InvalidArgumentException("idempotencyKey must be non-empty for allow");
-            
             if ($intent === null) {
                 if ($decision->reasonCode !== 'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL') {
-                    throw new InvalidArgumentException("intent may be null only for SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL");
+                    throw new InvalidArgumentException("allow + null intent + any reason other than SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL must throw InvalidArgumentException");
                 }
             } else {
                 if ($intent->propertyId !== $priorState->propertyId) throw new InvalidArgumentException("intent propertyId must match priorState propertyId");

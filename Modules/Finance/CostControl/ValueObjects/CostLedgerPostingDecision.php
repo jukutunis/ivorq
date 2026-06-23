@@ -30,7 +30,7 @@ class CostLedgerPostingDecision
             throw new InvalidArgumentException("Invalid decision status");
         }
         
-        if (empty($reasonCode)) {
+        if (trim($reasonCode) === '') {
             throw new InvalidArgumentException("reasonCode is mandatory and non-empty");
         }
 
@@ -50,10 +50,10 @@ class CostLedgerPostingDecision
 
         if ($status === self::STATUS_CORRECTION_REQUIRED) {
             if ($historicalStateUnchanged !== true) throw new InvalidArgumentException("correction_required requires historicalStateUnchanged = true");
-            if (empty($targetCorrectionBusinessDate)) throw new InvalidArgumentException("correction business date required");
-            if (empty($targetCorrectionPeriodId)) throw new InvalidArgumentException("correction FinancialPeriod ID required");
-            if (empty($originalTransactionReference)) throw new InvalidArgumentException("original transaction reference required");
-            if (empty($originalBusinessDate)) throw new InvalidArgumentException("original business date required");
+            if ($targetCorrectionBusinessDate === null || trim($targetCorrectionBusinessDate) === '') throw new InvalidArgumentException("correction business date required");
+            if ($targetCorrectionPeriodId === null || trim($targetCorrectionPeriodId) === '') throw new InvalidArgumentException("correction FinancialPeriod ID required");
+            if ($originalTransactionReference === null || trim($originalTransactionReference) === '') throw new InvalidArgumentException("original transaction reference required");
+            if ($originalBusinessDate === null || trim($originalBusinessDate) === '') throw new InvalidArgumentException("original business date required");
         }
         
         $this->status = $status;

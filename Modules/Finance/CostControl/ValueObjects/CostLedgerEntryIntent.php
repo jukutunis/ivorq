@@ -36,15 +36,15 @@ class CostLedgerEntryIntent
         ?string $originalBusinessDate = null,
         ?array $metadata = null
     ) {
-        if (empty($propertyId)) throw new InvalidArgumentException("propertyId cannot be empty");
-        if (empty($sourceInventoryTransactionId)) throw new InvalidArgumentException("sourceInventoryTransactionId cannot be empty");
+        if (trim($propertyId) === '') throw new InvalidArgumentException("propertyId cannot be blank");
+        if (trim($sourceInventoryTransactionId) === '') throw new InvalidArgumentException("sourceInventoryTransactionId cannot be blank");
         if ($entrySequence <= 0) throw new InvalidArgumentException("entrySequence must be positive");
         
         if (!in_array($entryType, ['receipt', 'issue', 'adjustment', 'transfer', 'correction', 'reversal'], true)) {
             throw new InvalidArgumentException("unknown entry type");
         }
         
-        if (empty($idempotencyKey)) throw new InvalidArgumentException("idempotencyKey cannot be empty");
+        if (trim($idempotencyKey) === '') throw new InvalidArgumentException("idempotencyKey cannot be blank");
         
         if (!preg_match('/^[A-Z]{3}$/', $currencyCode)) {
             throw new InvalidArgumentException("currencyCode must be exactly uppercase [A-Z]{3}");
@@ -58,7 +58,7 @@ class CostLedgerEntryIntent
             throw new InvalidArgumentException("originalBusinessDate must be a valid calendar date");
         }
 
-        if (!strtotime($occurredAt)) {
+        if (trim($occurredAt) === '' || !strtotime($occurredAt)) {
             throw new InvalidArgumentException("occurredAt must be a valid parseable date-time");
         }
 

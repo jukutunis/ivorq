@@ -45,12 +45,12 @@ class ApprovedInventoryEvidence
         ?string $originalBusinessDate = null,
         ?array $metadata = null
     ) {
-        if (empty($sourceInventoryTransactionId)) throw new InvalidArgumentException("sourceInventoryTransactionId cannot be empty");
-        if (empty($sourceTransactionReference)) throw new InvalidArgumentException("sourceTransactionReference cannot be empty");
-        if (empty($propertyId)) throw new InvalidArgumentException("propertyId cannot be empty");
-        if (empty($itemId)) throw new InvalidArgumentException("itemId cannot be empty");
-        if (empty($valuationScope)) throw new InvalidArgumentException("valuationScope cannot be empty");
-        if (empty($idempotencyKey)) throw new InvalidArgumentException("idempotencyKey cannot be empty");
+        if (trim($sourceInventoryTransactionId) === '') throw new InvalidArgumentException("sourceInventoryTransactionId cannot be blank");
+        if (trim($sourceTransactionReference) === '') throw new InvalidArgumentException("sourceTransactionReference cannot be blank");
+        if (trim($propertyId) === '') throw new InvalidArgumentException("propertyId cannot be blank");
+        if (trim($itemId) === '') throw new InvalidArgumentException("itemId cannot be blank");
+        if (trim($valuationScope) === '') throw new InvalidArgumentException("valuationScope cannot be blank");
+        if (trim($idempotencyKey) === '') throw new InvalidArgumentException("idempotencyKey cannot be blank");
         if ($entrySequence <= 0) throw new InvalidArgumentException("entrySequence must be positive");
         
         if (!in_array($eventType, ['receipt', 'issue', 'positive_adjustment', 'negative_adjustment', 'transfer'], true)) {
@@ -69,7 +69,7 @@ class ApprovedInventoryEvidence
             throw new InvalidArgumentException("originalBusinessDate must be a valid calendar date");
         }
 
-        if (!strtotime($occurredAt)) {
+        if (trim($occurredAt) === '' || !strtotime($occurredAt)) {
             throw new InvalidArgumentException("occurredAt must be a valid parseable date-time");
         }
 
@@ -77,12 +77,14 @@ class ApprovedInventoryEvidence
             throw new InvalidArgumentException("Unknown approvalStatus: $approvalStatus");
         }
 
-        if ($approvalStatus === 'approved' && empty($approvalReference)) {
-            throw new InvalidArgumentException("approved status requires non-empty approvalReference");
-        }
-
-        if (($approvalStatus === 'pending' || $approvalStatus === 'rejected') && !empty($approvalReference)) {
-            throw new InvalidArgumentException("pending/rejected status must not carry approvalReference");
+        if ($approvalStatus === 'approved') {
+            if ($approvalReference === null || trim($approvalReference) === '') {
+                throw new InvalidArgumentException("approved status requires non-empty approvalReference");
+            }
+        } else {
+            if ($approvalReference !== null) {
+                throw new InvalidArgumentException("pending/rejected status must have null approvalReference");
+            }
         }
 
         $this->sourceInventoryTransactionId = $sourceInventoryTransactionId;
@@ -101,7 +103,7 @@ class ApprovedInventoryEvidence
         $this->entrySequence = $entrySequence;
         $this->approvalStatus = $approvalStatus;
         $this->approvalReference = $approvalReference;
-        $this->isExplicitlyApproved = ($approvalStatus === 'approved' && !empty($approvalReference));
+        $this->isExplicitlyApproved = ($approvalStatus === 'approved');
         $this->originalBusinessDate = $originalBusinessDate;
         $this->metadata = $metadata;
     }
