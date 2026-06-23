@@ -438,4 +438,168 @@ class CostLedgerPostingPlannerTest extends TestCase
         $state = $this->createState();
         new CostLedgerPostingPlan($decision, $state, $state, null, null, 'REF', '   ');
     }
+
+    // --- Guard Regression Tests ---
+
+    public function test_property_window_mismatch()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'approved', 'ref1', 'prop2', 'item1', 'scope1');
+        $window = $this->createWindow(true, true, null, null, 'prop1');
+        $prior = $this->createState('prop2', 'item1', 'scope1');
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('rejected', $plan->decision->status);
+        $this->assertEquals('PROPERTY_MISMATCH_WITH_WINDOW', $plan->decision->reasonCode);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
+
+    public function test_property_state_mismatch()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'approved', 'ref1', 'prop1', 'item1', 'scope1');
+        $window = $this->createWindow(true, true, null, null, 'prop1');
+        $prior = $this->createState('prop2', 'item1', 'scope1');
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('rejected', $plan->decision->status);
+        $this->assertEquals('PROPERTY_MISMATCH_WITH_STATE', $plan->decision->reasonCode);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
+
+    public function test_item_mismatch()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'approved', 'ref1', 'prop1', 'item2', 'scope1');
+        $window = $this->createWindow(true, true, null, null, 'prop1');
+        $prior = $this->createState('prop1', 'item1', 'scope1');
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('rejected', $plan->decision->status);
+        $this->assertEquals('ITEM_MISMATCH_WITH_STATE', $plan->decision->reasonCode);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
+
+    public function test_valuation_scope_mismatch()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'approved', 'ref1', 'prop1', 'item1', 'scope2');
+        $window = $this->createWindow(true, true, null, null, 'prop1');
+        $prior = $this->createState('prop1', 'item1', 'scope1');
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('rejected', $plan->decision->status);
+        $this->assertEquals('SCOPE_MISMATCH_WITH_STATE', $plan->decision->reasonCode);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
+
+    public function test_business_date_mismatch()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'approved', 'ref1', 'prop1', 'item1', 'scope1', null, 'USD', '2026-01-02');
+        $window = $this->createWindow(true, true, null, null, 'prop1', '2026-01-01');
+        $prior = $this->createState('prop1', 'item1', 'scope1');
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('rejected', $plan->decision->status);
+        $this->assertEquals('BUSINESS_DATE_MISMATCH_WITH_WINDOW', $plan->decision->reasonCode);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
+
+    public function test_rejected_approval()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'rejected', null);
+        $window = $this->createWindow();
+        $prior = $this->createState();
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('rejected', $plan->decision->status);
+        $this->assertEquals('SOURCE_NOT_APPROVED', $plan->decision->reasonCode);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
+
+    public function test_closed_business_date_with_correction()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'approved', 'ref1', 'prop1', 'item1', 'scope1', null, 'USD', '2026-01-01');
+        $window = $this->createWindow(false, true, '2026-01-02', 'correction-period-1', 'prop1', '2026-01-01');
+        $prior = $this->createState();
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('correction_required', $plan->decision->status);
+        $this->assertEquals('SOURCE_BUSINESS_DATE_CLOSED', $plan->decision->reasonCode);
+        $this->assertTrue($plan->decision->historicalStateUnchanged);
+        $this->assertEquals('2026-01-02', $plan->decision->targetCorrectionBusinessDate);
+        $this->assertEquals('correction-period-1', $plan->decision->targetCorrectionPeriodId);
+        $this->assertEquals('txn1', $plan->decision->originalTransactionReference);
+        $this->assertEquals('2026-01-01', $plan->decision->originalBusinessDate);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
+
+    public function test_closed_business_date_without_correction()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'approved', 'ref1', 'prop1', 'item1', 'scope1', null, 'USD', '2026-01-01');
+        $window = $this->createWindow(false, true, null, null, 'prop1', '2026-01-01');
+        $prior = $this->createState();
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('rejected', $plan->decision->status);
+        $this->assertEquals('MISSING_OPEN_CORRECTION_CONTEXT', $plan->decision->reasonCode);
+        $this->assertTrue($plan->decision->historicalStateUnchanged);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
+
+    public function test_closed_financial_period_with_correction()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'approved', 'ref1', 'prop1', 'item1', 'scope1', null, 'USD', '2026-01-01');
+        $window = $this->createWindow(true, false, '2026-01-02', 'correction-period-1', 'prop1', '2026-01-01');
+        $prior = $this->createState();
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('correction_required', $plan->decision->status);
+        $this->assertEquals('SOURCE_FINANCIAL_PERIOD_CLOSED', $plan->decision->reasonCode);
+        $this->assertTrue($plan->decision->historicalStateUnchanged);
+        $this->assertEquals('2026-01-02', $plan->decision->targetCorrectionBusinessDate);
+        $this->assertEquals('correction-period-1', $plan->decision->targetCorrectionPeriodId);
+        $this->assertEquals('txn1', $plan->decision->originalTransactionReference);
+        $this->assertEquals('2026-01-01', $plan->decision->originalBusinessDate);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
+
+    public function test_closed_financial_period_without_correction()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $evidence = $this->createEvidence('receipt', '10.0', '20.0', 'approved', 'ref1', 'prop1', 'item1', 'scope1', null, 'USD', '2026-01-01');
+        $window = $this->createWindow(true, false, null, null, 'prop1', '2026-01-01');
+        $prior = $this->createState();
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('rejected', $plan->decision->status);
+        $this->assertEquals('MISSING_OPEN_CORRECTION_CONTEXT', $plan->decision->reasonCode);
+        $this->assertTrue($plan->decision->historicalStateUnchanged);
+        $this->assertNull($plan->intent);
+        $this->assertSame($prior, $plan->resultingState);
+        $this->assertNull($plan->valuationResult);
+    }
 }
