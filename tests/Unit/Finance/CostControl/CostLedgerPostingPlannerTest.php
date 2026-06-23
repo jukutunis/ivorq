@@ -290,4 +290,152 @@ class CostLedgerPostingPlannerTest extends TestCase
             }
         }
     }
+
+    // --- Decision Contract Tests ---
+    public function test_decision_correction_required_with_invalid_target_date() {
+        $this->expectException(InvalidArgumentException::class);
+        new CostLedgerPostingDecision('correction_required', 'R', true, '2026-02-31', 'P1', 'REF', '2026-01-01');
+    }
+
+    public function test_decision_correction_required_with_invalid_original_date() {
+        $this->expectException(InvalidArgumentException::class);
+        new CostLedgerPostingDecision('correction_required', 'R', true, '2026-01-01', 'P1', 'REF', '2026-13-01');
+    }
+
+    public function test_decision_correction_required_with_blank_period_id() {
+        $this->expectException(InvalidArgumentException::class);
+        new CostLedgerPostingDecision('correction_required', 'R', true, '2026-01-01', '  ', 'REF', '2026-01-01');
+    }
+
+    public function test_decision_allow_with_original_reference() {
+        $this->expectException(InvalidArgumentException::class);
+        new CostLedgerPostingDecision('allow', 'R', false, null, null, 'REF', null);
+    }
+
+    public function test_decision_pending_with_correction_target() {
+        $this->expectException(InvalidArgumentException::class);
+        new CostLedgerPostingDecision('pending', 'R', true, '2026-01-01', 'P1');
+    }
+
+    public function test_decision_rejected_with_correction_target() {
+        $this->expectException(InvalidArgumentException::class);
+        new CostLedgerPostingDecision('rejected', 'R', true, '2026-01-01', 'P1');
+    }
+
+    public function test_decision_pending_with_invalid_diagnostic_date() {
+        $this->expectException(InvalidArgumentException::class);
+        new CostLedgerPostingDecision('pending', 'R', true, null, null, 'REF', '2026-1-1');
+    }
+
+    public function test_decision_whitespace_reason_code() {
+        $this->expectException(InvalidArgumentException::class);
+        new CostLedgerPostingDecision('allow', '   ', false);
+    }
+
+    // --- Plan Contract Tests ---
+    public function test_plan_pending_with_intent() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('pending', 'R', true);
+        $state = $this->createState();
+        $intent = new CostLedgerEntryIntent('prop1', 'T', null, 'receipt', 'I', 1, 'USD', new AvcoDecimal('1'), new AvcoDecimal('1'), new AvcoDecimal('1'), '2026-01-01', '2026-01-01 10:00:00');
+        new CostLedgerPostingPlan($decision, $state, $state, null, $intent, 'REF', 'I');
+    }
+
+    public function test_plan_rejected_with_cloned_state() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('rejected', 'R', true);
+        $state1 = $this->createState();
+        $state2 = clone $state1;
+        new CostLedgerPostingPlan($decision, $state1, $state2, null, null, 'REF', 'I');
+    }
+
+    public function test_plan_correction_required_with_non_identical_state() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('correction_required', 'R', true, '2026-01-01', 'P1', 'REF', '2026-01-01');
+        $state1 = $this->createState();
+        $state2 = $this->createState('prop1', 'item2');
+        new CostLedgerPostingPlan($decision, $state1, $state2, null, null, 'REF', 'I');
+    }
+
+    public function test_plan_allow_null_intent_non_transfer() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('allow', 'OTHER', false);
+        $state = $this->createState();
+        $result = new AvcoValuationResult('final', $state, null, 'OTHER');
+        new CostLedgerPostingPlan($decision, $state, $state, $result, null, 'REF', 'I');
+    }
+
+    public function test_plan_allow_intent_null_result() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('allow', 'R', false);
+        $state = $this->createState();
+        $intent = new CostLedgerEntryIntent('prop1', 'T', null, 'receipt', 'I', 1, 'USD', new AvcoDecimal('1'), new AvcoDecimal('1'), new AvcoDecimal('1'), '2026-01-01', '2026-01-01 10:00:00');
+        new CostLedgerPostingPlan($decision, $state, $state, null, $intent, 'REF', 'I');
+    }
+
+    public function test_plan_allow_intent_non_final_result() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('allow', 'R', false);
+        $state = $this->createState();
+        $result = new AvcoValuationResult('pending', $state);
+        $intent = new CostLedgerEntryIntent('prop1', 'T', null, 'receipt', 'I', 1, 'USD', new AvcoDecimal('1'), new AvcoDecimal('1'), new AvcoDecimal('1'), '2026-01-01', '2026-01-01 10:00:00');
+        new CostLedgerPostingPlan($decision, $state, $state, $result, $intent, 'REF', 'I');
+    }
+
+    public function test_plan_allow_intent_state_mismatch() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('allow', 'R', false);
+        $state1 = $this->createState();
+        $state2 = clone $state1;
+        $result = new AvcoValuationResult('final', $state1);
+        $intent = new CostLedgerEntryIntent('prop1', 'T', null, 'receipt', 'I', 1, 'USD', new AvcoDecimal('1'), new AvcoDecimal('1'), new AvcoDecimal('1'), '2026-01-01', '2026-01-01 10:00:00');
+        new CostLedgerPostingPlan($decision, $state1, $state2, $result, $intent, 'REF', 'I');
+    }
+
+    public function test_plan_transfer_allow_null_result() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('allow', 'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL', false);
+        $state = $this->createState();
+        new CostLedgerPostingPlan($decision, $state, $state, null, null, 'REF', 'I');
+    }
+
+    public function test_plan_transfer_allow_non_final_result() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('allow', 'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL', false);
+        $state = $this->createState();
+        $result = new AvcoValuationResult('pending', $state);
+        new CostLedgerPostingPlan($decision, $state, $state, $result, null, 'REF', 'I');
+    }
+
+    public function test_plan_allow_mismatched_intent_property() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('allow', 'R', false);
+        $state = $this->createState('prop1');
+        $result = new AvcoValuationResult('final', $state);
+        $intent = new CostLedgerEntryIntent('prop2', 'T', null, 'receipt', 'I', 1, 'USD', new AvcoDecimal('1'), new AvcoDecimal('1'), new AvcoDecimal('1'), '2026-01-01', '2026-01-01 10:00:00');
+        new CostLedgerPostingPlan($decision, $state, $state, $result, $intent, 'REF', 'I');
+    }
+
+    public function test_plan_allow_mismatched_idempotency_key() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('allow', 'R', false);
+        $state = $this->createState('prop1');
+        $result = new AvcoValuationResult('final', $state);
+        $intent = new CostLedgerEntryIntent('prop1', 'T', null, 'receipt', 'I1', 1, 'USD', new AvcoDecimal('1'), new AvcoDecimal('1'), new AvcoDecimal('1'), '2026-01-01', '2026-01-01 10:00:00');
+        new CostLedgerPostingPlan($decision, $state, $state, $result, $intent, 'REF', 'I2');
+    }
+
+    public function test_plan_whitespace_reference() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('pending', 'R', true);
+        $state = $this->createState();
+        new CostLedgerPostingPlan($decision, $state, $state, null, null, '   ', 'I');
+    }
+
+    public function test_plan_whitespace_idempotency() {
+        $this->expectException(InvalidArgumentException::class);
+        $decision = new CostLedgerPostingDecision('pending', 'R', true);
+        $state = $this->createState();
+        new CostLedgerPostingPlan($decision, $state, $state, null, null, 'REF', '   ');
+    }
 }

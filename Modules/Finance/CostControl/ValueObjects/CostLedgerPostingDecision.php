@@ -1,6 +1,7 @@
 <?php
 namespace Modules\Finance\CostControl\ValueObjects;
 use InvalidArgumentException;
+use DateTime;
 
 class CostLedgerPostingDecision
 {
@@ -32,6 +33,14 @@ class CostLedgerPostingDecision
         
         if (trim($reasonCode) === '') {
             throw new InvalidArgumentException("reasonCode is mandatory and non-empty");
+        }
+
+        if ($targetCorrectionBusinessDate !== null && (!($d = DateTime::createFromFormat('Y-m-d', $targetCorrectionBusinessDate)) || $d->format('Y-m-d') !== $targetCorrectionBusinessDate)) {
+            throw new InvalidArgumentException("targetCorrectionBusinessDate must be a valid calendar date");
+        }
+
+        if ($originalBusinessDate !== null && (!($d = DateTime::createFromFormat('Y-m-d', $originalBusinessDate)) || $d->format('Y-m-d') !== $originalBusinessDate)) {
+            throw new InvalidArgumentException("originalBusinessDate must be a valid calendar date");
         }
 
         if ($status === self::STATUS_ALLOW) {

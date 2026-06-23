@@ -30,13 +30,20 @@ class CostLedgerPostingPlan
         }
 
         if ($decision->status === CostLedgerPostingDecision::STATUS_ALLOW) {
-            if ($intent === null) {
+            if ($intent !== null) {
+                if ($valuationResult === null) throw new InvalidArgumentException("allow plan with intent requires non-null valuationResult");
+                if ($valuationResult->status !== 'final') throw new InvalidArgumentException("allow plan with intent requires final valuationResult");
+                if ($resultingState !== $valuationResult->newState) throw new InvalidArgumentException("resultingState must be exact same instance as valuationResult->newState");
+                if ($intent->propertyId !== $priorState->propertyId) throw new InvalidArgumentException("intent propertyId must match priorState propertyId");
+                if ($intent->idempotencyKey !== $idempotencyKey) throw new InvalidArgumentException("intent idempotencyKey must match plan idempotencyKey");
+            } else {
                 if ($decision->reasonCode !== 'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL') {
                     throw new InvalidArgumentException("allow + null intent + any reason other than SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL must throw InvalidArgumentException");
                 }
-            } else {
-                if ($intent->propertyId !== $priorState->propertyId) throw new InvalidArgumentException("intent propertyId must match priorState propertyId");
-                if ($intent->idempotencyKey !== $idempotencyKey) throw new InvalidArgumentException("intent idempotencyKey must match plan idempotencyKey");
+                if ($valuationResult === null) throw new InvalidArgumentException("transfer-neutral allow plan requires non-null valuationResult");
+                if ($valuationResult->status !== 'final') throw new InvalidArgumentException("transfer-neutral allow plan requires final valuationResult");
+                if ($valuationResult->reasonCode !== 'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL') throw new InvalidArgumentException("transfer-neutral valuationResult reasonCode must be SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL");
+                if ($resultingState !== $valuationResult->newState) throw new InvalidArgumentException("resultingState must be exact same instance as valuationResult->newState");
             }
         }
 
