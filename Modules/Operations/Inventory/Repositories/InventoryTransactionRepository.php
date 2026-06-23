@@ -61,6 +61,11 @@ class InventoryTransactionRepository
         return $transaction;
     }
 
+    public function findById(string $id): ?InventoryTransaction
+    {
+        return InventoryTransaction::find($id);
+    }
+
     public function appendControlled(\Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent $intent): InventoryTransaction
     {
         $transaction = new InventoryTransaction();
