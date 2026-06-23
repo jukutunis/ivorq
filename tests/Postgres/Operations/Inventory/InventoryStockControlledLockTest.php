@@ -30,7 +30,7 @@ class InventoryStockControlledLockTest extends PostgresTestCase
             $this->assertEquals($itemId, $stock->item_id);
             $this->assertEquals($locationId, $stock->location_id);
             $this->assertEquals(0, $stock->physical_quantity);
-            $this->assertEquals(ItemStatusEnum::OutOfStock->value, $stock->status);
+            $this->assertSame(ItemStatusEnum::OutOfStock, $stock->status);
         });
     }
 
@@ -59,7 +59,7 @@ class InventoryStockControlledLockTest extends PostgresTestCase
             $this->assertEquals($itemId, $stock->item_id);
             $this->assertEquals($locationId, $stock->location_id);
             $this->assertEquals(15, $stock->physical_quantity);
-            $this->assertEquals(ItemStatusEnum::InStock->value, $stock->status);
+            $this->assertSame(ItemStatusEnum::InStock, $stock->status);
         });
     }
     public function test_repeated_controlled_resolution_returns_the_same_tuple_row(): void
