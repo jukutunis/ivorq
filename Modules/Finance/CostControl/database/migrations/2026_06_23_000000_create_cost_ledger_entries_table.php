@@ -32,12 +32,14 @@ return new class extends Migration
                   ->on('inventory_transactions')
                   ->onDelete('restrict');
 
+            $table->unique(['property_id', 'idempotency_key', 'entry_sequence'], 'uk_cost_ledger_idempotency');
+        });
+
+        Schema::table('cost_ledger_entries', function (Blueprint $table) {
             $table->foreign('prior_cost_ledger_entry_id')
                   ->references('id')
                   ->on('cost_ledger_entries')
                   ->onDelete('restrict');
-
-            $table->unique(['property_id', 'idempotency_key', 'entry_sequence'], 'uk_cost_ledger_idempotency');
         });
 
         DB::unprepared("
