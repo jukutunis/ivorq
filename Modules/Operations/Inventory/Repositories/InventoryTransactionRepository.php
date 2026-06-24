@@ -66,8 +66,11 @@ class InventoryTransactionRepository
         return InventoryTransaction::find($id);
     }
 
-    public function appendControlled(\Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent $intent): InventoryTransaction
-    {
+    public function appendControlled(
+        \Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent $intent,
+        string $quantityBefore,
+        string $quantityAfter
+    ): InventoryTransaction {
         $transaction = new InventoryTransaction();
 
         $transaction->property_id = $intent->propertyId;
@@ -86,7 +89,9 @@ class InventoryTransactionRepository
 
         // General ledger fields
         $transaction->transaction_type = $intent->transactionType;
+        $transaction->quantity_before = $quantityBefore;
         $transaction->quantity_change = $intent->quantityChange;
+        $transaction->quantity_after = $quantityAfter;
 
         if ($intent->reference !== null) {
             $transaction->reference = $intent->reference;
