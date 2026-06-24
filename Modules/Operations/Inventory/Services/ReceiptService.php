@@ -17,7 +17,8 @@ class ReceiptService
         private InventoryReceiptRepository $receiptRepository,
         private StockMovementService $stockMovementService,
         private InventoryItemRepository $itemRepository,
-        private InventoryStockRepository $stockRepository
+        private InventoryStockRepository $stockRepository,
+        private AvcoValuationCalculator $avcoCalculator
     ) {}
 
     public function create(array $data): InventoryReceipt
@@ -73,20 +74,14 @@ class ReceiptService
                 );
             }
 
-            // Compute AVCO exactly to formula: 
-            // new_avco = ((old_qty * old_cost) + (receipt_qty * receipt_cost)) / (old_qty + receipt_qty)
+            // Compute AVCO exactly to formula via pure calculator service
             foreach ($linesByItem as $itemId => $lines) {
                 ['item' => $item, 'oldWac' => $oldWac, 'oldQty' => $oldQty] = $itemSnapshots[$itemId];
 
                 $receiptQty   = $lines->sum(fn ($l) => (float) $l->quantity);
                 $receiptValue = $lines->sum(fn ($l) => (float) $l->quantity * (float) $l->unit_cost);
 
-                $newTotalQty = $oldQty + $receiptQty;
-                
-                $newWac = 0.0;
-                if ($newTotalQty > 0) {
-                    $newWac = (($oldQty * $oldWac) + $receiptValue) / $newTotalQty;
-                }
+                $newWac = $this->avcoCalculator->calculate($oldQty, $oldWac, $receiptQty, $receiptValue);
 
                 $this->itemRepository->update($item->id, ['weighted_average_cost' => $newWac]);
             }
