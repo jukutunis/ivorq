@@ -14,7 +14,15 @@ class WorkOrderClosureController extends Controller
 
     public function store(Request $request, WorkOrder $workOrder)
     {
-        $this->authorize('update', $workOrder);
+        $resolvedPropertyId = app(\Shared\Services\CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
+        $this->authorize('create', [\Modules\Operations\WorkOrder\Models\WorkOrderClosure::class, $workOrder]);
 
         $request->validate([
             'resolution_notes' => 'required|string',

@@ -7,35 +7,48 @@ use Modules\Operations\WorkOrder\Models\WorkOrder;
 use Modules\Operations\WorkOrder\DTOs\WorkOrderClosureDTO;
 use Modules\Operations\WorkOrder\Enums\WorkOrderStatusEnum;
 
+use Illuminate\Support\Facades\DB;
+
 class WorkOrderClosureService
 {
     public function __construct(protected WorkOrderHistoryService $historyService) {}
 
     public function close(WorkOrderClosureDTO $dto, string $userId): WorkOrderClosure
     {
-        $wo = WorkOrder::findOrFail($dto->workOrderId);
+        return DB::transaction(function () use ($dto, $userId) {
+            $wo = WorkOrder::findOrFail($dto->workOrderId);
 
-        if ($wo->status === WorkOrderStatusEnum::Closed) {
-            throw new \Exception("Work Order is already closed.");
-        }
+            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+            if ($wo->property_id !== $currentPropertyId) {
+                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            }
 
-        $closure = WorkOrderClosure::create([
-            'work_order_id' => $wo->id,
-            'closed_by_user_id' => $userId,
-            'closed_at' => now(),
-            'resolution_notes' => $dto->resolutionNotes,
-            'root_cause' => $dto->rootCause,
-            'has_signature' => $dto->hasSignature,
-            'snapshot_data' => $wo->toArray(), // Immutable snapshot
-            'created_by' => $userId,
-        ]);
+            if ($wo->status === WorkOrderStatusEnum::Closed) {
+                throw new \Exception("Work Order is already closed.");
+            }
 
-        $wo->update(['status' => WorkOrderStatusEnum::Closed]);
+            if ($wo->status !== WorkOrderStatusEnum::Resolved) {
+                throw new \Exception("Work Order must be resolved before it can be closed.");
+            }
 
-        $this->historyService->log($wo->id, $userId, 'closed');
+            $closure = WorkOrderClosure::create([
+                'work_order_id' => $wo->id,
+                'closed_by_user_id' => $userId,
+                'closed_at' => now(),
+                'resolution_notes' => $dto->resolutionNotes,
+                'root_cause' => $dto->rootCause,
+                'has_signature' => $dto->hasSignature,
+                'snapshot_data' => $wo->toArray(), // Immutable snapshot
+                'created_by' => $userId,
+            ]);
 
-        event(new \Modules\Operations\WorkOrder\Events\WorkOrderClosed($wo));
+            $wo->update(['status' => WorkOrderStatusEnum::Closed]);
 
-        return $closure;
+            $this->historyService->log($wo->id, $userId, 'closed');
+
+            event(new \Modules\Operations\WorkOrder\Events\WorkOrderClosed($wo));
+
+            return $closure;
+        });
     }
 }

@@ -18,6 +18,11 @@ class WorkOrderService
     public function create(WorkOrderDTO $dto, string $userId): WorkOrder
     {
         return DB::transaction(function () use ($dto, $userId) {
+            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+            if ($dto->propertyId !== $currentPropertyId) {
+                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            }
+
             $number = $this->numberGenerator->generate($dto->propertyId);
             $score = $this->priorityScoreService->calculate($dto);
 
@@ -42,8 +47,6 @@ class WorkOrderService
                 'created_by' => $userId,
             ]);
 
-         
-
             $this->historyService->log($wo->id, $userId, 'created');
 
             event(new \Modules\Operations\WorkOrder\Events\WorkOrderCreated($wo));
@@ -52,25 +55,73 @@ class WorkOrderService
         });
     }
 
-    public function updateStatus(WorkOrder $wo, WorkOrderStatusEnum $newStatus, string $userId): WorkOrder
+    public function updateStatus(WorkOrder $wo, WorkOrderStatusEnum $newStatus, string $userId, ?string $resolutionNotes = null): WorkOrder
     {
-        if ($wo->status === WorkOrderStatusEnum::Closed) {
-            throw new \Exception("Cannot update a closed Work Order");
-        }
+        return DB::transaction(function () use ($wo, $newStatus, $userId, $resolutionNotes) {
+            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+            if ($wo->property_id !== $currentPropertyId) {
+                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            }
 
-        $oldStatus = $wo->status;
-        $workOrderId = $wo->id;
+            if ($wo->status === WorkOrderStatusEnum::Closed) {
+                throw new \Exception("Cannot update a closed Work Order");
+            }
 
-        $wo->update([
-            'status' => $newStatus,
-            'updated_by' => $userId
-        ]);
+            $oldStatus = $wo->status;
 
-        $oldValue = $oldStatus instanceof \BackedEnum ? $oldStatus->value : (string) $oldStatus;
-         
+            if ($newStatus === WorkOrderStatusEnum::InProgress) {
+                if ($oldStatus !== WorkOrderStatusEnum::Assigned) {
+                    throw new \Exception("Work Order must be in Assigned status to start work.");
+                }
 
-        $this->historyService->log($workOrderId, $userId, 'status_changed', 'status', $oldValue, $newStatus->value);
+                $hasAssignment = \Modules\Operations\WorkOrder\Models\WorkOrderAssignment::where('work_order_id', $wo->id)
+                    ->where('user_id', $userId)
+                    ->where('status', 'active')
+                    ->exists();
+                if (!$hasAssignment) {
+                    throw new \Exception("Only the active assigned technician can start this Work Order.");
+                }
 
-        return $wo;
+                $wo->update([
+                    'status' => $newStatus,
+                    'updated_by' => $userId
+                ]);
+
+                $this->historyService->log($wo->id, $userId, 'started', 'status', $oldStatus->value, $newStatus->value);
+
+                event(new \Modules\Operations\WorkOrder\Events\WorkOrderStarted($wo));
+
+            } elseif ($newStatus === WorkOrderStatusEnum::Resolved) {
+                if ($oldStatus !== WorkOrderStatusEnum::InProgress) {
+                    throw new \Exception("Work Order must be in In Progress status to resolve.");
+                }
+
+                $hasAssignment = \Modules\Operations\WorkOrder\Models\WorkOrderAssignment::where('work_order_id', $wo->id)
+                    ->where('user_id', $userId)
+                    ->where('status', 'active')
+                    ->exists();
+                if (!$hasAssignment) {
+                    throw new \Exception("Only the active assigned technician can resolve this Work Order.");
+                }
+
+                if (empty($resolutionNotes) || trim($resolutionNotes) === '') {
+                    throw new \Exception("Resolution notes are required.");
+                }
+
+                $wo->update([
+                    'status' => $newStatus,
+                    'updated_by' => $userId
+                ]);
+
+                $this->historyService->log($wo->id, $userId, 'resolved', 'status', $oldStatus->value, $newStatus->value, $resolutionNotes);
+
+                event(new \Modules\Operations\WorkOrder\Events\WorkOrderCompleted($wo));
+
+            } else {
+                throw new \Exception("Arbitrary status transition to {$newStatus->value} is not allowed.");
+            }
+
+            return $wo;
+        });
     }
 }

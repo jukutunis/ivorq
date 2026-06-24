@@ -9,7 +9,22 @@ class EngineeringController extends Controller
 {
     public function workOrders()
     {
-        return Inertia::render('Ivorq/Engineering/EngineeringWorkspace', ['activeTab' => 'work_orders']);
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+
+        $workOrders = \Modules\Operations\WorkOrder\Models\WorkOrder::where('property_id', $propertyId)
+            ->with(['assignments.user', 'closures', 'labors'])
+            ->latest()
+            ->get();
+
+        $technicians = \Modules\Foundation\User\Models\User::whereHas('properties', function ($query) use ($propertyId) {
+            $query->where('properties.id', $propertyId);
+        })->get(['users.id', 'users.name']);
+
+        return Inertia::render('Ivorq/Engineering/EngineeringWorkspace', [
+            'activeTab' => 'work_orders',
+            'workOrders' => $workOrders,
+            'technicians' => $technicians,
+        ]);
     }
 
     public function preventiveMaintenance()

@@ -18,11 +18,21 @@ class WorkOrderApiTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        
+
         $this->seed(\Database\Seeders\DatabaseSeeder::class);
 
         $this->property = Property::first();
         $this->user = User::first();
+        $this->user->properties()->syncWithoutDetaching([
+            $this->property->id => [
+                'is_default' => true,
+                'status' => 'active',
+                'joined_at' => now(),
+            ]
+        ]);
+        setPermissionsTeamId($this->property->id);
+        app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
+
         $this->user->givePermissionTo([
             'workorder.view',
             'workorder.create',
@@ -50,7 +60,7 @@ class WorkOrderApiTest extends TestCase
             'status' => 'draft',
             'property_id' => $this->property->id,
         ]);
-        
+
         // Test priority score logic
         $wo = WorkOrder::find($response->json('id'));
         $this->assertEquals(50, $wo->priority_score); // High = 50
@@ -79,7 +89,7 @@ class WorkOrderApiTest extends TestCase
     public function test_property_isolation_on_view()
     {
         $wo = WorkOrder::first();
-        
+
         // Create a property
         $otherProperty = Property::create([
             'id' => \Illuminate\Support\Str::ulid()->toString(),
@@ -96,10 +106,18 @@ class WorkOrderApiTest extends TestCase
             'name' => 'Other User',
             'email' => 'other@ivorq.local',
             'password' => bcrypt('password'),
-            'property_id' => $otherPropertyId,
             'is_active' => true,
         ]);
-        
+        $otherUser->properties()->syncWithoutDetaching([
+            $otherPropertyId => [
+                'is_default' => true,
+                'status' => 'active',
+                'joined_at' => now(),
+            ]
+        ]);
+        setPermissionsTeamId($otherPropertyId);
+        app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
+
         $otherUser->givePermissionTo('workorder.view');
 
         $response = $this->actingAs($otherUser)->getJson("/api/v1/operations/work-orders/{$wo->id}", [
@@ -113,6 +131,15 @@ class WorkOrderApiTest extends TestCase
         $wo = WorkOrder::where('status', 'open')->first();
         $this->assertNotNull($wo);
         $this->assertNotNull($wo->id, 'WO ID is null right after query!');
+
+        // Setup assignment so user is authorized to start work
+        \Modules\Operations\WorkOrder\Models\WorkOrderAssignment::create([
+            'work_order_id' => $wo->id,
+            'user_id' => $this->user->id,
+            'status' => 'active',
+            'created_by' => $this->user->id,
+        ]);
+        $wo->update(['status' => 'assigned']);
 
         $response = $this->actingAs($this->user)->patchJson("/api/v1/operations/work-orders/{$wo->id}/status", [
             'status' => 'in_progress',
@@ -128,12 +155,20 @@ class WorkOrderApiTest extends TestCase
     public function test_cannot_update_closed_work_order()
     {
         $wo = WorkOrder::where('status', 'open')->first();
+
+        // Setup assignment
+        \Modules\Operations\WorkOrder\Models\WorkOrderAssignment::create([
+            'work_order_id' => $wo->id,
+            'user_id' => $this->user->id,
+            'status' => 'active',
+            'created_by' => $this->user->id,
+        ]);
         $wo->update(['status' => 'closed']);
 
         $response = $this->actingAs($this->user)->patchJson("/api/v1/operations/work-orders/{$wo->id}/status", [
-            'status' => 'open',
+            'status' => 'in_progress',
         ], ['X-Property-ID' => $this->property->id]);
 
-        $response->assertStatus(500); 
+        $response->assertStatus(500);
     }
 }

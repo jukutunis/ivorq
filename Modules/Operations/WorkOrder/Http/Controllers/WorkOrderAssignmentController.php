@@ -14,6 +14,14 @@ class WorkOrderAssignmentController extends Controller
 
     public function store(Request $request, WorkOrder $workOrder)
     {
+        $resolvedPropertyId = app(\Shared\Services\CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
         $this->authorize('assign', $workOrder);
 
         $request->validate([

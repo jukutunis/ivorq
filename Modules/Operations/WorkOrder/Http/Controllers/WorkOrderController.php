@@ -15,16 +15,32 @@ class WorkOrderController extends Controller
 
     public function index(Request $request)
     {
+        $resolvedPropertyId = app(\Shared\Services\CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
         $this->authorize('viewAny', WorkOrder::class);
 
-        $query = WorkOrder::where('property_id', $request->header('X-Property-ID'));
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
+        $query = WorkOrder::where('property_id', $resolvedPropertyId);
 
         return response()->json($query->paginate());
     }
 
     public function store(Request $request)
     {
+        $resolvedPropertyId = app(\Shared\Services\CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
         $this->authorize('create', WorkOrder::class);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
 
         $dto = WorkOrderDTO::fromRequest($request);
         $wo = $this->service->create($dto, $request->user()->id);
@@ -32,23 +48,44 @@ class WorkOrderController extends Controller
         return response()->json($wo, 201);
     }
 
-    public function show(WorkOrder $workOrder)
+    public function show(Request $request, WorkOrder $workOrder)
     {
+        $resolvedPropertyId = app(\Shared\Services\CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
         $this->authorize('view', $workOrder);
 
-        $workOrder->load(['tasks', 'assignments', 'labors', 'materials', 'approvals', 'closures', 'histories']);
+        $workOrder->load(['tasks', 'assignments.user', 'labors', 'materials', 'approvals', 'closures', 'histories']);
 
         return response()->json($workOrder);
     }
 
     public function updateStatus(Request $request, WorkOrder $workOrder)
     {
+        $resolvedPropertyId = app(\Shared\Services\CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
         $this->authorize('update', $workOrder);
 
-        $request->validate(['status' => 'required|string']);
+        $request->validate([
+            'status' => 'required|string',
+            'resolution_notes' => 'nullable|string',
+        ]);
 
         $status = WorkOrderStatusEnum::from($request->input('status'));
-        $wo = $this->service->updateStatus($workOrder, $status, $request->user()->id);
+        $resolutionNotes = $request->input('resolution_notes');
+
+        $wo = $this->service->updateStatus($workOrder, $status, $request->user()->id, $resolutionNotes);
 
         return response()->json($wo);
     }
