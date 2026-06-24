@@ -79,6 +79,12 @@ class InventoryPostingControlCoordinator
                 $quantityBefore = (string)$stock->physical_quantity;
                 $quantityAfter = bcadd($quantityBefore, (string)$intent->quantityChange, 4);
 
+                if (bccomp($quantityAfter, '0', 4) < 0) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'stock' => ["Negative stock is not allowed for item {$intent->itemId} at location {$intent->locationId}"],
+                    ]);
+                }
+
                 $transaction = $this->transactionRepo->appendControlled($intent, $quantityBefore, $quantityAfter, $actorId);
 
                 $status = (bccomp($quantityAfter, '0', 4) > 0) ? ItemStatusEnum::InStock : ItemStatusEnum::OutOfStock;
