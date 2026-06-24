@@ -64,18 +64,15 @@ Then acquire row locks in this order:
 - `PeriodControlService::close` must be refactored to use `lockForUpdate()`.
 - Future locking and revalidation belong to a new transaction-level
   Inventory Posting Control Coordinator or equivalent future coordinator.
-- A future `BusinessDateCloseService` must follow the identical lock protocol.
+- A future BusinessDateCloseService must apply the conditional control-lock protocol defined in D-INV-05. A standalone Business Date close locks only PropertyBusinessDate. FinancialPeriod and InventoryStock are acquired only when the same approved transaction reads or mutates those resources, preserving PropertyBusinessDate → FinancialPeriod → InventoryStock whenever multiple resources participate.
 
 ## PostgreSQL Validation Requirements
 Extensive PostgreSQL-only concurrency tests must be written to explicitly trigger race conditions between closing events and inventory posting, asserting that the locks correctly reject out-of-bounds postings or serialize valid ones.
 
 ## Deadlock and Retry Principles
-Deadlock retry may occur only for a posting request carrying a deterministic
-idempotency_key.
+Automatic retries are prohibited. A controlled posting request executes once. On a deadlock, serialization failure, or timeout, the transaction must fully roll back and return a controlled retryable failure where applicable.
 
-Every retry must restart the full transaction and lock protocol.
-
-Blind retries without idempotency identity are prohibited.
+Any retry is a new request using the same idempotency key. It must not be performed automatically in-process, by a worker loop, or by a transaction retry wrapper.
 
 ## Explicit Non-Goals
 - We are **not** rewriting the entire Night Audit process.
