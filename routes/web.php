@@ -15,6 +15,7 @@ use App\Http\Controllers\Ivorq\HousekeepingController;
 use App\Http\Controllers\Ivorq\EngineeringController;
 use App\Http\Controllers\Ivorq\FinanceController;
 use App\Http\Controllers\Ivorq\HRISController;
+use App\Http\Controllers\Ivorq\ShiftLogController;
 
 Route::middleware(['auth', 'active.property'])->group(function () {
     Route::get('/frontdesk', fn() => redirect('/frontdesk/arrivals'));
@@ -57,4 +58,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
         Route::get('/leave-requests', [HRISController::class, 'leaveRequests']);
         Route::get('/payroll', [HRISController::class, 'payroll']);
     });
+
+    Route::get('/logbook', [ShiftLogController::class, 'index']);
+    Route::post('/api/v1/operations/shift-logs', [ShiftLogController::class, 'store']);
+    Route::patch('/api/v1/operations/shift-logs/{shiftLog}', [ShiftLogController::class, 'update']);
+    Route::post('/api/v1/operations/shift-logs/{shiftLog}/submit', [ShiftLogController::class, 'submit']);
+    Route::post('/api/v1/operations/shift-logs/{shiftLog}/acknowledge', [ShiftLogController::class, 'acknowledge']);
 });
