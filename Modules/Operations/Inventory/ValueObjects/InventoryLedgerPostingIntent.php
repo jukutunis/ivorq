@@ -21,6 +21,8 @@ readonly class InventoryLedgerPostingIntent
         public string $idempotencyKey,
         public TransactionTypeEnum $transactionType,
         public string $quantityChange,
+        public string $unitCost,
+        public string $totalCost,
         public ?string $reference = null,
         public ?string $notes = null,
         public ?string $reversesInventoryTransactionId = null,

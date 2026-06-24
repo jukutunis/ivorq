@@ -23,13 +23,13 @@ class ReceivingApprovalIntegrationService
         }
     }
 
-    public function handleApproval(ReceivingDocument $document): void
+    public function handleApproval(ReceivingDocument $document, ?string $approverId = null): void
     {
-        \Illuminate\Support\Facades\DB::transaction(function () use ($document) {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($document, $approverId) {
             $document->update(['status' => \Modules\Operations\Receiving\Enums\ReceivingDocumentStatusEnum::Approved->value]);
             
             // Sync to inventory if applicable
-            $this->inventoryIntegrationService->syncToInventory($document);
+            $this->inventoryIntegrationService->syncToInventory($document, $approverId);
         });
     }
 

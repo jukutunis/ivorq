@@ -106,10 +106,28 @@ class InventoryStockRepository
      * Locked SUM — use inside a DB::transaction() when the result must be
      * consistent with concurrent writes (e.g. WAC calculation in ReceiptService).
      */
+    public function totalQuantityForPropertyItemLocked(string $propertyId, string $itemId): string
+    {
+        return (string) InventoryStock::withoutGlobalScope('property')
+            ->where('property_id', $propertyId)
+            ->where('item_id', $itemId)
+            ->orderBy('location_id', 'asc')
+            ->orderBy('id', 'asc')
+            ->lockForUpdate()
+            ->get()
+            ->sum('physical_quantity');
+    }
+
+    /**
+     * @deprecated Use totalQuantityForPropertyItemLocked() instead.
+     */
     public function totalQuantityForItemLocked(string $itemId): string
     {
         return (string) InventoryStock::where('item_id', $itemId)
+            ->orderBy('location_id', 'asc')
+            ->orderBy('id', 'asc')
             ->lockForUpdate()
+            ->get()
             ->sum('physical_quantity');
     }
 

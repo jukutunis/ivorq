@@ -24,7 +24,7 @@ class ReceivingApprovalListener
     {
         $approvable = $event->approvalRequest->approvable;
         if ($approvable instanceof \Modules\Operations\Receiving\Models\ReceivingDocument) {
-            
+
             // Create task for the next steps
             $step = $event->approvalRequest->currentStep;
             if ($step) {
@@ -54,7 +54,10 @@ class ReceivingApprovalListener
     {
         $approvable = $event->approvalRequest->approvable;
         if ($approvable instanceof \Modules\Operations\Receiving\Models\ReceivingDocument) {
-            $this->approvalIntegrationService->handleApproval($approvable);
+            $approverAction = $event->approvalRequest->actions()->where('action_type', 'approve')->latest()->first();
+            $approverId = $approverAction ? $approverAction->user_id : null;
+
+            $this->approvalIntegrationService->handleApproval($approvable, $approverId);
 
             try {
                 AppNotification::create([

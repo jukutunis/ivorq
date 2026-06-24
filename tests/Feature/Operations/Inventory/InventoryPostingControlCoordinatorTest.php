@@ -70,7 +70,7 @@ class InventoryPostingControlCoordinatorTest extends PostgresTestCase
         return [$property, $item, $location, $businessDate, $period];
     }
 
-    private function createIntent(array $fixture, ?string $idempotencyKey = null, string $qty = '10.0000'): InventoryLedgerPostingIntent
+    private function createIntent(array $fixture, ?string $idempotencyKey = null, string $qty = '10.0000', string $unitCost = '10.00', string $totalCost = '100.00'): InventoryLedgerPostingIntent
     {
         [$property, $item, $location] = $fixture;
         return new InventoryLedgerPostingIntent(
@@ -86,7 +86,9 @@ class InventoryPostingControlCoordinatorTest extends PostgresTestCase
             movementRole: 'increase',
             idempotencyKey: $idempotencyKey ?? (string) Str::ulid(),
             transactionType: TransactionTypeEnum::PurchaseReceipt,
-            quantityChange: $qty
+            quantityChange: $qty,
+            unitCost: $unitCost,
+            totalCost: $totalCost
         );
     }
 
@@ -99,6 +101,8 @@ class InventoryPostingControlCoordinatorTest extends PostgresTestCase
 
         $this->assertNotNull($tx->id);
         $this->assertEquals($intent->quantityChange, $tx->quantity_change);
+        $this->assertEquals($intent->unitCost, $tx->unit_cost);
+        $this->assertEquals($intent->totalCost, $tx->total_cost);
 
         $stock = InventoryStock::where('item_id', $intent->itemId)
             ->where('location_id', $intent->locationId)
@@ -128,6 +132,22 @@ class InventoryPostingControlCoordinatorTest extends PostgresTestCase
 
         $intent1 = $this->createIntent($fixture, $key, '10.0000');
         $intent2 = $this->createIntent($fixture, $key, '20.0000');
+
+        $this->coordinator->post($intent1);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage("Idempotency collision");
+
+        $this->coordinator->post($intent2);
+    }
+
+    public function test_it_rejects_collision_on_changed_cost()
+    {
+        $fixture = $this->createFixture();
+        $key = (string) Str::ulid();
+
+        $intent1 = $this->createIntent($fixture, $key, '10.0000', '10.00', '100.00');
+        $intent2 = $this->createIntent($fixture, $key, '10.0000', '15.00', '150.00');
 
         $this->coordinator->post($intent1);
 

@@ -31,53 +31,40 @@ class InventoryPostingControlCoordinator
     ) {
     }
 
-    public function post(InventoryLedgerPostingIntent $intent): InventoryTransaction
-    {
-        return $this->executeOnce(function () use ($intent) {
-            return DB::transaction(function () use ($intent) {
+    public function post(
+        InventoryLedgerPostingIntent $intent,
+        ?string $actorId = null
+    ): InventoryTransaction {
+        return $this->executeOnce(function () use ($intent, $actorId) {
+            return DB::transaction(function () use ($intent, $actorId) {
                 $existing = InventoryTransaction::where('property_id', $intent->propertyId)
                     ->where('idempotency_key', $intent->idempotencyKey)
                     ->lockForUpdate()
                     ->first();
 
                 if ($existing) {
-                    $isMatch = $existing->source_document_type === $intent->sourceDocumentType &&
+                    $isMatch = $existing->property_id === $intent->propertyId &&
+                               $existing->source_document_type === $intent->sourceDocumentType &&
                                $existing->source_document_id === $intent->sourceDocumentId &&
                                $existing->source_line_type === $intent->sourceLineType &&
                                $existing->source_line_id === $intent->sourceLineId &&
                                $existing->movement_role === $intent->movementRole &&
                                $existing->item_id === $intent->itemId &&
                                $existing->location_id === $intent->locationId &&
-                               (string)$existing->quantity_change === (string)$intent->quantityChange;
+                               bccomp((string)$existing->quantity_change, (string)$intent->quantityChange, 4) === 0 &&
+                               bccomp((string)$existing->unit_cost, (string)$intent->unitCost, 4) === 0 &&
+                               bccomp((string)$existing->total_cost, (string)$intent->totalCost, 4) === 0;
 
                     if ($isMatch) {
                         return $existing;
                     }
 
-                    throw new RuntimeException("Idempotency collision: same key with different intent.");
+                    throw new RuntimeException(
+                        "Idempotency collision: same key with different intent. Key: {$intent->idempotencyKey}"
+                    );
                 }
 
-                $businessDate = PropertyBusinessDate::where('property_id', $intent->propertyId)
-                    ->where('business_date', $intent->businessDate)
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$businessDate || $businessDate->status !== PropertyBusinessDateStatusEnum::Open || !$businessDate->is_open) {
-                    throw new RuntimeException("Business date is closed or missing.");
-                }
-
-                $year = $intent->occurredAt->year;
-                $month = $intent->occurredAt->month;
-
-                $period = FinancialPeriod::where('property_id', $intent->propertyId)
-                    ->where('period_year', $year)
-                    ->where('period_month', $month)
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$period || ($period->status !== FinancialPeriodStatusEnum::Open && $period->status !== FinancialPeriodStatusEnum::Reopened)) {
-                    throw new RuntimeException("Financial period is closed or missing.");
-                }
+                [$businessDate, $period] = $this->lockContext($intent->propertyId, $intent->businessDate, $intent->occurredAt);
 
                 $stock = $this->stockRepo->createOrLockControlled($intent->propertyId, $intent->itemId, $intent->locationId);
 
@@ -92,7 +79,7 @@ class InventoryPostingControlCoordinator
                 $quantityBefore = (string)$stock->physical_quantity;
                 $quantityAfter = bcadd($quantityBefore, (string)$intent->quantityChange, 4);
 
-                $transaction = $this->transactionRepo->appendControlled($intent, $quantityBefore, $quantityAfter);
+                $transaction = $this->transactionRepo->appendControlled($intent, $quantityBefore, $quantityAfter, $actorId);
 
                 $status = (bccomp($quantityAfter, '0', 4) > 0) ? ItemStatusEnum::InStock : ItemStatusEnum::OutOfStock;
 
@@ -101,6 +88,39 @@ class InventoryPostingControlCoordinator
                 return $transaction;
             });
         });
+    }
+
+    public function lockContext(string $propertyId, string $businessDate, \Illuminate\Support\Carbon $occurredAt): array
+    {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'Controlled inventory posting lock context requires an active transaction.'
+            );
+        }
+
+        $dbDate = PropertyBusinessDate::where('property_id', $propertyId)
+            ->where('business_date', $businessDate)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$dbDate || $dbDate->status !== PropertyBusinessDateStatusEnum::Open || !$dbDate->is_open) {
+            throw new RuntimeException("Business date is closed or missing.");
+        }
+
+        $year = $occurredAt->year;
+        $month = $occurredAt->month;
+
+        $period = FinancialPeriod::where('property_id', $propertyId)
+            ->where('period_year', $year)
+            ->where('period_month', $month)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$period || ($period->status !== FinancialPeriodStatusEnum::Open && $period->status !== FinancialPeriodStatusEnum::Reopened)) {
+            throw new RuntimeException("Financial period is closed or missing.");
+        }
+
+        return [$dbDate, $period];
     }
 
     public function executeOnce(callable $operation): mixed

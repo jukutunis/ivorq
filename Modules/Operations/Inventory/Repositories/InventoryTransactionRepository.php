@@ -69,7 +69,8 @@ class InventoryTransactionRepository
     public function appendControlled(
         \Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent $intent,
         string $quantityBefore,
-        string $quantityAfter
+        string $quantityAfter,
+        ?string $actorId = null
     ): InventoryTransaction {
         $transaction = new InventoryTransaction();
 
@@ -92,9 +93,13 @@ class InventoryTransactionRepository
         $transaction->quantity_before = $quantityBefore;
         $transaction->quantity_change = $intent->quantityChange;
         $transaction->quantity_after = $quantityAfter;
+        $transaction->posted_by = $actorId;
+        $transaction->unit_cost = $intent->unitCost;
+        $transaction->total_cost = $intent->totalCost;
+        $transaction->posted_at = $intent->occurredAt;
 
         if ($intent->reference !== null) {
-            $transaction->reference = $intent->reference;
+            $transaction->reference_id = $intent->reference;
         }
 
         if ($intent->notes !== null) {
