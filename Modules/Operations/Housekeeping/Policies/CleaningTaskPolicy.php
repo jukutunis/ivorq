@@ -9,45 +9,54 @@ class CleaningTaskPolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasPermissionTo('housekeeping.task.view');
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+        return $user->hasPermissionTo('housekeeping.task.view')
+            && ($user->isSuperAdmin() || $user->properties()->where('properties.id', $propertyId)->exists());
     }
 
     public function view(User $user, CleaningTask $task): bool
     {
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         return $user->hasPermissionTo('housekeeping.task.view')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
+            && ($user->isSuperAdmin() || ($propertyId === $task->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
 
     public function create(User $user): bool
     {
-        return $user->hasPermissionTo('housekeeping.task.create');
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+        return $user->hasPermissionTo('housekeeping.task.create')
+            && ($user->isSuperAdmin() || $user->properties()->where('properties.id', $propertyId)->exists());
     }
 
     public function update(User $user, CleaningTask $task): bool
     {
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         return $user->hasPermissionTo('housekeeping.task.edit')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
+            && ($user->isSuperAdmin() || ($propertyId === $task->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
 
     public function delete(User $user, CleaningTask $task): bool
     {
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         return $user->hasPermissionTo('housekeeping.task.delete')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
+            && ($user->isSuperAdmin() || ($propertyId === $task->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
 
     public function assign(User $user, CleaningTask $task): bool
     {
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         return $user->hasPermissionTo('housekeeping.task.assign')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
+            && ($user->isSuperAdmin() || ($propertyId === $task->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
 
     public function changeStatus(User $user, CleaningTask $task): bool
     {
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         return $user->hasAnyPermission([
             'housekeeping.task.edit',
             'housekeeping.task.start',
             'housekeeping.task.complete',
             'housekeeping.task.cancel',
-        ]) && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $task->property_id);
+        ]) && ($user->isSuperAdmin() || ($propertyId === $task->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
 }

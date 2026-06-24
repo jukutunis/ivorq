@@ -37,9 +37,17 @@ class InspectionService
      */
     public function conduct(string $id): RoomInspection
     {
-        return $this->inspectionRepository->update($id, [
-            'status' => InspectionStatusEnum::InProgress->value,
-        ]);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($id) {
+            $inspection = $this->inspectionRepository->find($id);
+            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+            if ($inspection->property_id !== $currentPropertyId) {
+                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            }
+
+            return $this->inspectionRepository->update($id, [
+                'status' => InspectionStatusEnum::InProgress->value,
+            ]);
+        });
     }
 
     /**
@@ -52,26 +60,48 @@ class InspectionService
     public function pass(
         string                  $id,
         ?string                 $remarks  = null,
-        ?InspectionSeverityEnum $severity = null
+        ?InspectionSeverityEnum $severity = null,
+        ?string                 $supervisorId = null
     ): RoomInspection {
-        $inspection = $this->inspectionRepository->find($id);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($id, $remarks, $severity, $supervisorId) {
+            $inspection = $this->inspectionRepository->find($id);
 
-        $updated = $this->inspectionRepository->update($id, [
-            'status'              => InspectionStatusEnum::Passed->value,
-            'inspected_at'        => now(),
-            'remarks'             => $remarks,
-            'inspection_severity' => $severity?->value,
-        ]);
+            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+            if ($inspection->property_id !== $currentPropertyId) {
+                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            }
 
-        $this->roomService->changeCleanlinessStatus(
-            $inspection->room_id,
-            RoomCleanlinessStatusEnum::Inspected,
-            'Inspection passed',
-        );
+            $updated = $this->inspectionRepository->update($id, [
+                'status'              => InspectionStatusEnum::Passed->value,
+                'inspected_at'        => now(),
+                'remarks'             => $remarks,
+                'is_passed'           => true,
+                'inspection_severity' => $severity?->value,
+                'supervisor_id'       => $supervisorId ?? auth()->id(),
+            ]);
 
-        event(new InspectionCompleted($updated));
+            $room = $this->roomService->changeCleanlinessStatus(
+                $inspection->room_id,
+                RoomCleanlinessStatusEnum::Inspected,
+                'Inspection passed',
+            );
 
-        return $updated;
+            $room->readiness_state = 'ready_for_sale';
+            $room->save();
+
+            if ($inspection->cleaning_task_id) {
+                $task = \Modules\Operations\Housekeeping\Models\CleaningTask::find($inspection->cleaning_task_id);
+                if ($task) {
+                    $task->update([
+                        'verified_at' => now(),
+                    ]);
+                }
+            }
+
+            event(new InspectionCompleted($updated));
+
+            return $updated;
+        });
     }
 
     /**
@@ -85,25 +115,38 @@ class InspectionService
     public function fail(
         string                  $id,
         ?string                 $remarks  = null,
-        ?InspectionSeverityEnum $severity = null
+        ?InspectionSeverityEnum $severity = null,
+        ?string                 $supervisorId = null
     ): RoomInspection {
-        $inspection = $this->inspectionRepository->find($id);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($id, $remarks, $severity, $supervisorId) {
+            $inspection = $this->inspectionRepository->find($id);
 
-        $updated = $this->inspectionRepository->update($id, [
-            'status'              => InspectionStatusEnum::Failed->value,
-            'inspected_at'        => now(),
-            'remarks'             => $remarks,
-            'inspection_severity' => $severity?->value,
-        ]);
+            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+            if ($inspection->property_id !== $currentPropertyId) {
+                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            }
 
-        $this->roomService->changeCleanlinessStatus(
-            $inspection->room_id,
-            RoomCleanlinessStatusEnum::Dirty,
-            'Inspection failed — room requires recleaning',
-        );
+            $updated = $this->inspectionRepository->update($id, [
+                'status'              => InspectionStatusEnum::Failed->value,
+                'inspected_at'        => now(),
+                'remarks'             => $remarks,
+                'is_passed'           => false,
+                'inspection_severity' => $severity?->value,
+                'supervisor_id'       => $supervisorId ?? auth()->id(),
+            ]);
 
-        event(new InspectionCompleted($updated));
+            $room = $this->roomService->changeCleanlinessStatus(
+                $inspection->room_id,
+                RoomCleanlinessStatusEnum::Dirty,
+                'Inspection failed — room requires recleaning',
+            );
 
-        return $updated;
+            $room->readiness_state = 'waiting_cleaning';
+            $room->save();
+
+            event(new InspectionCompleted($updated));
+
+            return $updated;
+        });
     }
 }

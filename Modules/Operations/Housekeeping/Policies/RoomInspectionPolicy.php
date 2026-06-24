@@ -9,35 +9,43 @@ class RoomInspectionPolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasPermissionTo('housekeeping.inspection.view');
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+        return $user->hasPermissionTo('housekeeping.inspection.view')
+            && ($user->isSuperAdmin() || $user->properties()->where('properties.id', $propertyId)->exists());
     }
 
     public function view(User $user, RoomInspection $inspection): bool
     {
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         return $user->hasPermissionTo('housekeeping.inspection.view')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $inspection->property_id);
+            && ($user->isSuperAdmin() || ($propertyId === $inspection->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
 
     public function create(User $user): bool
     {
-        return $user->hasPermissionTo('housekeeping.inspection.create');
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+        return $user->hasPermissionTo('housekeeping.inspection.create')
+            && ($user->isSuperAdmin() || $user->properties()->where('properties.id', $propertyId)->exists());
     }
 
     public function update(User $user, RoomInspection $inspection): bool
     {
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         return $user->hasPermissionTo('housekeeping.inspection.create')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $inspection->property_id);
+            && ($user->isSuperAdmin() || ($propertyId === $inspection->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
 
     public function delete(User $user, RoomInspection $inspection): bool
     {
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         return $user->hasPermissionTo('housekeeping.inspection.create')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $inspection->property_id);
+            && ($user->isSuperAdmin() || ($propertyId === $inspection->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
 
     public function conduct(User $user, RoomInspection $inspection): bool
     {
+        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
         return $user->hasPermissionTo('housekeeping.inspection.conduct')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $inspection->property_id);
+            && ($user->isSuperAdmin() || ($propertyId === $inspection->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
 }

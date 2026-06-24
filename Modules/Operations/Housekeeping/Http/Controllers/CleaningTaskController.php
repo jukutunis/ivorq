@@ -16,20 +16,30 @@ use Modules\Operations\Housekeeping\Http\Requests\UpdateCleaningTaskRequest;
 use Modules\Operations\Housekeeping\Http\Resources\CleaningTaskResource;
 use Modules\Operations\Housekeeping\Models\CleaningTask;
 use Modules\Operations\Housekeeping\Services\CleaningTaskService;
+use Modules\Operations\Housekeeping\Repositories\CleaningTaskRepository;
 use Shared\Services\CurrentPropertyService;
 
 class CleaningTaskController extends Controller
 {
     public function __construct(
         private CleaningTaskService $taskService,
+        private CleaningTaskRepository $taskRepository,
     ) {}
 
     public function index(): Response
     {
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = request()->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
         $this->authorize('viewAny', CleaningTask::class);
 
         $filters = request()->only(['status', 'task_type', 'room_id', 'zone_id']);
-        $tasks   = $this->taskService->paginate($filters);
+        $tasks   = $this->taskRepository->paginate($filters);
 
         return Inertia::render('Operations/Housekeeping/Tasks/Index', [
             'tasks'      => CleaningTaskResource::collection($tasks),
@@ -47,6 +57,14 @@ class CleaningTaskController extends Controller
 
     public function create(): Response
     {
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = request()->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
         $this->authorize('create', CleaningTask::class);
 
         return Inertia::render('Operations/Housekeeping/Tasks/Create', [
@@ -57,21 +75,52 @@ class CleaningTaskController extends Controller
         ]);
     }
 
-    public function store(StoreCleaningTaskRequest $request): RedirectResponse
+    public function store(StoreCleaningTaskRequest $request)
     {
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
+        if ($request->has('property_id') && $request->input('property_id') !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
         $data = array_merge($request->validated(), [
-            'property_id' => app(CurrentPropertyService::class)->getId(),
+            'property_id' => $resolvedPropertyId,
         ]);
 
         $task = $this->taskService->create($data);
+
+        if ($request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'task' => new CleaningTaskResource($task->fresh())
+            ], 201);
+        }
 
         return redirect()->route('operations.cleaning-tasks.show', $task->id)
             ->with('success', 'Cleaning task created successfully.');
     }
 
-    public function show(string $task): Response
+    public function show(\Illuminate\Http\Request $request, string $task): Response
     {
-        $model = $this->taskService->find($task);
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
+        $model = $this->taskRepository->find($task);
+        if ($model->property_id !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
         $this->authorize('view', $model);
 
         return Inertia::render('Operations/Housekeeping/Tasks/Show', [
@@ -79,9 +128,21 @@ class CleaningTaskController extends Controller
         ]);
     }
 
-    public function edit(string $task): Response
+    public function edit(\Illuminate\Http\Request $request, string $task): Response
     {
-        $model = $this->taskService->find($task);
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
+        $model = $this->taskRepository->find($task);
+        if ($model->property_id !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/Housekeeping/Tasks/Edit', [
@@ -93,20 +154,65 @@ class CleaningTaskController extends Controller
         ]);
     }
 
-    public function update(UpdateCleaningTaskRequest $request, string $task): RedirectResponse
+    public function update(UpdateCleaningTaskRequest $request, string $task)
     {
-        $this->taskService->update($task, $request->validated());
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
+        if ($request->has('property_id') && $request->input('property_id') !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
+        $model = $this->taskRepository->find($task);
+        if ($model->property_id !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
+        $this->authorize('update', $model);
+
+        $this->taskRepository->update($task, $request->validated());
+
+        if ($request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Cleaning task updated successfully.'
+            ]);
+        }
 
         return redirect()->route('operations.cleaning-tasks.show', $task)
             ->with('success', 'Cleaning task updated successfully.');
     }
 
-    public function destroy(string $task): RedirectResponse
+    public function destroy(\Illuminate\Http\Request $request, string $task)
     {
-        $model = $this->taskService->find($task);
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
+        $model = $this->taskRepository->find($task);
+        if ($model->property_id !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
         $this->authorize('delete', $model);
 
-        $this->taskService->delete($task);
+        $this->taskRepository->delete($task);
+
+        if ($request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Cleaning task deleted successfully.'
+            ]);
+        }
 
         return redirect()->route('operations.cleaning-tasks.index')
             ->with('success', 'Cleaning task deleted successfully.');
@@ -114,26 +220,65 @@ class CleaningTaskController extends Controller
 
     public function changeStatus(ChangeCleaningTaskStatusRequest $request, string $task): JsonResponse
     {
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
+        $model = $this->taskRepository->find($task);
+        if ($model->property_id !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
+        $this->authorize('changeStatus', $model);
+
         $data    = $request->validated();
         $status  = TaskStatusEnum::from($data['status']);
         $remarks = $data['remarks'] ?? null;
 
-        $updated = $this->taskService->changeStatus($task, $status, $remarks);
+        $updated = $this->taskService->changeStatus($task, $status, auth()->id(), $remarks);
 
         return response()->json([
             'message' => "Task status changed to {$status->label()}.",
-            'task'    => new CleaningTaskResource($updated),
+            'task'    => new CleaningTaskResource($updated->fresh(['room', 'assignments.user'])),
         ]);
     }
 
-    public function assign(StoreTaskAssignmentRequest $request, string $task): RedirectResponse
+    public function assign(StoreTaskAssignmentRequest $request, string $task)
     {
-        $model = $this->taskService->find($task);
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+        }
+
+        if ($request->has('property_id') && $request->input('property_id') !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
+        $model = $this->taskRepository->find($task);
+        if ($model->property_id !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
         $this->authorize('assign', $model);
 
         $this->taskService->assign($task, array_merge($request->validated(), [
             'assigned_by' => auth()->id(),
         ]));
+
+        if ($request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Task assigned successfully.',
+                'task' => new CleaningTaskResource($model->fresh(['room', 'assignments.user']))
+            ]);
+        }
 
         return redirect()->route('operations.cleaning-tasks.show', $task)
             ->with('success', 'Task assigned successfully.');
