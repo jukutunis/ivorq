@@ -66,6 +66,7 @@ class PeriodControlService
             $period = FinancialPeriod::where('property_id', $propertyId)
                 ->where('period_year', $year)
                 ->where('period_month', $month)
+                ->lockForUpdate()
                 ->firstOrFail();
 
             if ($period->status === FinancialPeriodStatusEnum::Closed) {
@@ -96,6 +97,7 @@ class PeriodControlService
             $period = FinancialPeriod::where('property_id', $propertyId)
                 ->where('period_year', $year)
                 ->where('period_month', $month)
+                ->lockForUpdate()
                 ->firstOrFail();
 
             if ($period->status !== FinancialPeriodStatusEnum::Closed) {
