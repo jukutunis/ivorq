@@ -1,6 +1,6 @@
 # ADR-036: Inventory Ledger Source Identity, Idempotency, Reversal and Correction
 
-**Status:** Draft — Owner Review Required
+**Status:** Approved
 **Date:** 2026-06-22
 
 ## Context and Current Repository Evidence

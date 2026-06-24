@@ -1,6 +1,6 @@
 # ADR-037: Inventory Posting Control and Closing Lock Protocol
 
-**Status:** Draft — Owner Review Required
+**Status:** Approved
 **Date:** 2026-06-22
 
 ## Context and Current Repository Evidence

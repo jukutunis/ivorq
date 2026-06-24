@@ -1,6 +1,6 @@
 # ADR-035: Inventory Ledger Canonical Persistence and Temporal Integrity
 
-**Status:** Draft — Owner Review Required
+**Status:** Approved
 **Date:** 2026-06-22
 
 ## Context and Current Repository Evidence
