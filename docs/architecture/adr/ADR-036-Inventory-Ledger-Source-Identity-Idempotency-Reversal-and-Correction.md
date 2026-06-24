@@ -113,7 +113,9 @@ Following double-entry accounting principles, physical quantities in a closed or
 - **Correction:** Reverses the old line, appends the new corrected line.
 
 ### Explicit Handling of Receiving Integration
-For Receiving (`Modules/Operations/Receiving/Services/InventoryReceiptIntegrationService.php`), a deterministic ledger key can be created directly from the `ReceivingDocumentLine` or `InventoryReceiptLine` identity. The integration must be refactored to pass line IDs, abandoning the parent-only `$receipt->id` propagation.
+For Receiving (`Modules/Operations/Receiving/Services/InventoryReceiptIntegrationService.php`), a deterministic ledger key can be created directly from the `ReceivingDocumentLine` or `InventoryReceiptLine` identity. Line-level source identity is a mandatory target-state requirement for any future Receiving integration. This ADR does not itself authorize operational Receiving wiring, ReceiptService replacement, dual-write, or receipt lifecycle changes.
+
+The integration will be refactored in a separately approved Receipt integration slice to pass line IDs, abandoning the parent-only `$receipt->id` propagation.
 
 ## Explicit Non-Goals
 - Cost Ledger logic

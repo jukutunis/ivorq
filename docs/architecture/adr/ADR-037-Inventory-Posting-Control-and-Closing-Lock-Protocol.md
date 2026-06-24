@@ -26,7 +26,9 @@ Future posting will use a shared posting-versus-closing consistency protocol enf
 9. Update `InventoryStock` projection.
 10. Commit.
 
-Future Financial Period closing and future Business Date closing **must** use compatible control-row locks and the same lock ordering before changing status.
+Future Financial Period closing and future Business Date closing must use compatible control-row locks.
+
+A standalone Business Date close locks only PropertyBusinessDate. FinancialPeriod and InventoryStock are acquired only when the same approved transaction needs those resources, always preserving PropertyBusinessDate → FinancialPeriod → InventoryStock where multiple resources participate.
 
 `PostingPeriodGuard` remains:
 - zero-argument;
