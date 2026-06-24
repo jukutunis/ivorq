@@ -17,9 +17,9 @@ class AuthService
         private \Modules\Foundation\User\Repositories\UserSessionRepository $sessionRepository
     ) {}
 
-    public function login(string $email, string $password, string $deviceName = 'web'): array
+    public function login(string $email, string $password, string $companyId, string $deviceName = 'web'): array
     {
-        $user = $this->userRepository->findByEmail($email);
+        $user = $this->userRepository->findByEmailAndCompany($email, $companyId);
 
         if (!$user || !Hash::check($password, $user->password)) {
             throw ValidationException::withMessages([

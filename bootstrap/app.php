@@ -37,6 +37,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // user is available. Usage: Route::middleware(['auth:sanctum', 'permission.team'])
         $middleware->alias([
             'permission.team' => \Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware::class,
+            'active.property' => \Modules\Foundation\Authentication\Http\Middleware\EnsureActivePropertyContext::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

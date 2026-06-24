@@ -27,6 +27,10 @@ class AppServiceProvider extends ServiceProvider
             return \Illuminate\Cache\RateLimiting\Limit::perMinute(5)->by($request->ip());
         });
 
+        \Illuminate\Support\Facades\RateLimiter::for('cloud_name', function (\Illuminate\Http\Request $request) {
+            return \Illuminate\Cache\RateLimiting\Limit::perMinute(10)->by($request->ip());
+        });
+
         \Illuminate\Support\Facades\Event::subscribe(\Modules\Foundation\Notification\Listeners\TaskEventListener::class);
         
         \Illuminate\Support\Facades\Event::listen(

@@ -18,43 +18,96 @@ class PasswordResetController extends Controller
         private PasswordService $passwordService
     ) {}
 
-    public function showForgotForm(): Response
+    public function showForgotForm(\Illuminate\Http\Request $request): Response|\Illuminate\Http\RedirectResponse
     {
-        return Inertia::render('Foundation/Auth/ForgotPassword');
+        $tenantId = $request->session()->get('login.tenant_id');
+        if (!$tenantId) {
+            return redirect()->route('login')->withErrors(['cloud_name' => 'Please select a Cloud Name first to reset your password.']);
+        }
+
+        return Inertia::render('Foundation/Auth/ForgotPassword', [
+            'tenant' => [
+                'id' => $tenantId,
+                'name' => $request->session()->get('login.tenant_name'),
+            ]
+        ]);
     }
 
     public function sendResetLink(ForgotPasswordRequest $request): JsonResponse|RedirectResponse
     {
-        $status = $this->passwordService->sendResetLink($request->email);
-
-        if ($request->wantsJson()) {
-            return $status === Password::RESET_LINK_SENT
-                ? response()->json(['message' => __($status)])
-                : response()->json(['message' => __($status)], 422);
+        $tenantId = $request->session()->get('login.tenant_id');
+        if (!$tenantId) {
+            return back()->withErrors(['email' => 'Session expired. Please start over.']);
         }
 
-        return $status === Password::RESET_LINK_SENT
-            ? back()->with('status', __($status))
-            : back()->withErrors(['email' => __($status)]);
+        $user = \Modules\Foundation\User\Models\User::where('email', $request->email)
+            ->whereHas('properties', function ($q) use ($tenantId) {
+                $q->where('company_id', $tenantId)
+                  ->where('properties.is_active', true)
+                  ->where('property_user.status', 'active');
+            })->first();
+
+        if ($user) {
+            $token = Password::getRepository()->create($user);
+            $user->notify(new \Modules\Foundation\Authentication\Notifications\TenantAwareResetPasswordNotification($token, $tenantId));
+        }
+
+        $msg = 'If an eligible account exists, we’ll send password reset instructions.';
+
+        if ($request->wantsJson()) {
+            return response()->json(['message' => __($msg)]);
+        }
+
+        return back()->with('status', __($msg));
     }
 
-    public function showResetForm(string $token): Response
+    public function showResetForm(\Illuminate\Http\Request $request, string $token): Response
     {
-        return Inertia::render('Foundation/Auth/ResetPassword', ['token' => $token]);
+        if (!$request->hasValidSignature()) {
+            abort(403, 'Invalid or expired password reset link.');
+        }
+
+        return Inertia::render('Foundation/Auth/ResetPassword', [
+            'token' => $token,
+            'email' => $request->email,
+            'tenant' => $request->tenant,
+        ]);
     }
 
     public function reset(ResetPasswordRequest $request): JsonResponse|RedirectResponse
     {
-        $status = $this->passwordService->reset($request->validated());
-
-        if ($request->wantsJson()) {
-            return $status === Password::PASSWORD_RESET
-                ? response()->json(['message' => __($status)])
-                : response()->json(['message' => __($status)], 422);
+        if (!$request->hasValidSignature()) {
+            abort(403, 'Invalid or expired password reset link.');
         }
 
-        return $status === Password::PASSWORD_RESET
-            ? redirect()->route('login')->with('status', __($status))
-            : back()->withErrors(['email' => __($status)]);
+        $tenantId = $request->tenant;
+
+        $user = \Modules\Foundation\User\Models\User::where('email', $request->email)
+            ->whereHas('properties', function ($q) use ($tenantId) {
+                $q->where('company_id', $tenantId)
+                  ->where('properties.is_active', true)
+                  ->where('property_user.status', 'active');
+            })->first();
+
+        if (!$user) {
+            $msg = 'Your account is no longer active in this workspace.';
+            return $request->wantsJson()
+                ? response()->json(['message' => $msg], 422)
+                : back()->withErrors(['email' => $msg]);
+        }
+
+        $status = $this->passwordService->reset($request->validated());
+
+        if ($status === Password::PASSWORD_RESET) {
+            $msg = __($status);
+            return $request->wantsJson()
+                ? response()->json(['message' => $msg])
+                : redirect()->route('login')->with('status', $msg);
+        }
+
+        $msg = __($status);
+        return $request->wantsJson()
+            ? response()->json(['message' => $msg], 422)
+            : back()->withErrors(['email' => $msg]);
     }
 }

@@ -30,6 +30,16 @@ class UserRepository
         return User::where('email', $email)->first();
     }
 
+    public function findByEmailAndCompany(string $email, string $companyId): ?User
+    {
+        return User::where('email', $email)
+            ->whereHas('properties', function ($query) use ($companyId) {
+                $query->where('company_id', $companyId)
+                      ->where('properties.is_active', true)
+                      ->where('property_user.status', 'active');
+            })->first();
+    }
+
     public function allForProperty(string $propertyId): Collection
     {
         return User::forProperty($propertyId)
