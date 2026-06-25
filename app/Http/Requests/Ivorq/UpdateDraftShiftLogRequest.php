@@ -20,7 +20,7 @@ class UpdateDraftShiftLogRequest extends FormRequest
             'priority' => ['required', 'string', 'in:low,normal,high'],
             'requires_follow_up' => ['boolean'],
             'shift_id' => ['nullable', 'string', 'size:26'],
-            'department_id' => ['nullable', 'string', 'size:26'],
+            'department_id' => ['required', 'string', 'size:26'],
             'area' => ['nullable', 'string', 'max:255'],
         ];
     }

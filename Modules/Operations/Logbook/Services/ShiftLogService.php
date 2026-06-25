@@ -69,6 +69,18 @@ class ShiftLogService
             throw new AuthorizationException("Only the creator can submit their own draft.");
         }
 
+        if (empty($log->department_id)) {
+            throw new \Exception("The shift log must have a valid department before submission.");
+        }
+
+        $deptExists = Department::withoutGlobalScope('property')
+            ->where('id', $log->department_id)
+            ->where('property_id', $propertyId)
+            ->exists();
+        if (!$deptExists) {
+            throw new \Exception("The department must belong to the active property.");
+        }
+
         return DB::transaction(function () use ($log, $userId) {
             $log->update([
                 'status' => ShiftLogStatusEnum::Submitted->value,
@@ -107,6 +119,22 @@ class ShiftLogService
 
     private function validateReferences(string $propertyId, array $data): void
     {
+        if (empty($data['department_id'])) {
+            throw ValidationException::withMessages([
+                'department_id' => 'The department field is required.'
+            ]);
+        }
+
+        $deptExists = Department::withoutGlobalScope('property')
+            ->where('id', $data['department_id'])
+            ->where('property_id', $propertyId)
+            ->exists();
+        if (!$deptExists) {
+            throw ValidationException::withMessages([
+                'department_id' => 'The selected department must belong to the active property.'
+            ]);
+        }
+
         if (!empty($data['shift_id'])) {
             $shiftExists = Shift::withoutGlobalScope('property')
                 ->where('id', $data['shift_id'])
@@ -115,18 +143,6 @@ class ShiftLogService
             if (!$shiftExists) {
                 throw ValidationException::withMessages([
                     'shift_id' => 'The selected shift must belong to the active property.'
-                ]);
-            }
-        }
-
-        if (!empty($data['department_id'])) {
-            $deptExists = Department::withoutGlobalScope('property')
-                ->where('id', $data['department_id'])
-                ->where('property_id', $propertyId)
-                ->exists();
-            if (!$deptExists) {
-                throw ValidationException::withMessages([
-                    'department_id' => 'The selected department must belong to the active property.'
                 ]);
             }
         }

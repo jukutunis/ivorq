@@ -348,9 +348,9 @@ const ShiftLogWorkspace = ({
                       </select>
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '6px' }}>Department (Optional)</label>
-                      <select className="filter-input" style={{ width: '100%' }} value={departmentId} onChange={e => setDepartmentId(e.target.value)}>
-                        <option value="">None</option>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '6px' }}>Department *</label>
+                      <select className="filter-input" style={{ width: '100%' }} value={departmentId} onChange={e => setDepartmentId(e.target.value)} required>
+                        <option value="">Select Department...</option>
                         {departments.map(d => (
                           <option key={d.id} value={d.id}>{d.name}</option>
                         ))}

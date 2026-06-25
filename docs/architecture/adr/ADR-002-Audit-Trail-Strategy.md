@@ -59,7 +59,10 @@ The following entities are classified as **Mandatory** and must implement the au
 * **Inventory:** `StockCount`, `InventoryAdjustment`, `Item`, `Warehouse`
 * **Sales & Events:** `BEO`, `Event`, `Forecast`, `Budget`
 * **Workflows:** `ApprovalRequest`, `DistributionEscalation`
-* **Operations:** `GuestRequest`, `EngineeringWorkOrder`
+* **Operations:** `GuestRequest`, `EngineeringWorkOrder`, `ShiftHandover` (current implementation name: `ShiftLog`)
+
+*Note: Future Operational Log Entry, correction/clarification, roster acknowledgement, and follow-up resolution records require Mandatory Audit alignment when they are introduced.*
+
 
 ## Mandatory Audit Actions
 For each Mandatory entity, the following actions MUST be explicitly audited when they occur:

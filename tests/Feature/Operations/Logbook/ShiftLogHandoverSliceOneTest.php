@@ -83,7 +83,45 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'status' => ShiftLogStatusEnum::Draft->value,
             'created_by' => $this->userA->id,
             'property_id' => $this->property->id,
+            'department_id' => $this->department->id,
         ]);
+    }
+
+    public function test_create_fails_when_department_is_omitted()
+    {
+        $response = $this->actingAs($this->userA)
+            ->postJson('/api/v1/operations/shift-logs', [
+                'subject' => 'Chiller Status',
+                'content' => 'Chiller #2 is working normally.',
+                'category' => 'Engineering',
+                'priority' => 'normal',
+                'requires_follow_up' => false,
+                'shift_id' => $this->shift->id,
+                'area' => 'Basement',
+            ], ['X-Property-ID' => $this->property->id]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['department_id']);
+    }
+
+    public function test_create_fails_when_department_belongs_to_another_property()
+    {
+        $otherDept = $this->createDepartment($this->otherProperty);
+
+        $response = $this->actingAs($this->userA)
+            ->postJson('/api/v1/operations/shift-logs', [
+                'subject' => 'Chiller Status',
+                'content' => 'Chiller #2 is working normally.',
+                'category' => 'Engineering',
+                'priority' => 'normal',
+                'requires_follow_up' => false,
+                'shift_id' => $this->shift->id,
+                'department_id' => $otherDept->id,
+                'area' => 'Basement',
+            ], ['X-Property-ID' => $this->property->id]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['department_id']);
     }
 
     public function test_creator_edits_own_draft()
@@ -96,6 +134,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'priority' => 'low',
             'status' => ShiftLogStatusEnum::Draft->value,
             'created_by' => $this->userA->id,
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userA)
@@ -105,6 +144,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
                 'category' => 'Maintenance',
                 'priority' => 'normal',
                 'requires_follow_up' => true,
+                'department_id' => $this->department->id,
             ], ['X-Property-ID' => $this->property->id]);
 
         $response->assertStatus(200);
@@ -114,7 +154,93 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'content' => 'Water leak resolved.',
             'requires_follow_up' => true,
             'priority' => 'normal',
+            'department_id' => $this->department->id,
         ]);
+    }
+
+    public function test_draft_update_can_replace_department_within_same_property()
+    {
+        $log = ShiftLog::create([
+            'property_id' => $this->property->id,
+            'subject' => 'Leak report',
+            'content' => 'Minor leak.',
+            'category' => 'Maintenance',
+            'priority' => 'low',
+            'status' => ShiftLogStatusEnum::Draft->value,
+            'created_by' => $this->userA->id,
+            'department_id' => $this->department->id,
+        ]);
+
+        $anotherDept = $this->createDepartment($this->property, ['name' => 'Another Department', 'code' => 'ADEP']);
+
+        $response = $this->actingAs($this->userA)
+            ->patchJson("/api/v1/operations/shift-logs/{$log->id}", [
+                'subject' => 'Leak report updated',
+                'content' => 'Water leak resolved.',
+                'category' => 'Maintenance',
+                'priority' => 'normal',
+                'department_id' => $anotherDept->id,
+            ], ['X-Property-ID' => $this->property->id]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('shift_logs', [
+            'id' => $log->id,
+            'department_id' => $anotherDept->id,
+        ]);
+    }
+
+    public function test_draft_update_cannot_clear_department()
+    {
+        $log = ShiftLog::create([
+            'property_id' => $this->property->id,
+            'subject' => 'Leak report',
+            'content' => 'Minor leak.',
+            'category' => 'Maintenance',
+            'priority' => 'low',
+            'status' => ShiftLogStatusEnum::Draft->value,
+            'created_by' => $this->userA->id,
+            'department_id' => $this->department->id,
+        ]);
+
+        $response = $this->actingAs($this->userA)
+            ->patchJson("/api/v1/operations/shift-logs/{$log->id}", [
+                'subject' => 'Leak report updated',
+                'content' => 'Water leak resolved.',
+                'category' => 'Maintenance',
+                'priority' => 'normal',
+                'department_id' => '',
+            ], ['X-Property-ID' => $this->property->id]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['department_id']);
+    }
+
+    public function test_draft_update_cannot_move_department_to_another_property()
+    {
+        $log = ShiftLog::create([
+            'property_id' => $this->property->id,
+            'subject' => 'Leak report',
+            'content' => 'Minor leak.',
+            'category' => 'Maintenance',
+            'priority' => 'low',
+            'status' => ShiftLogStatusEnum::Draft->value,
+            'created_by' => $this->userA->id,
+            'department_id' => $this->department->id,
+        ]);
+
+        $otherDept = $this->createDepartment($this->otherProperty);
+
+        $response = $this->actingAs($this->userA)
+            ->patchJson("/api/v1/operations/shift-logs/{$log->id}", [
+                'subject' => 'Leak report updated',
+                'content' => 'Water leak resolved.',
+                'category' => 'Maintenance',
+                'priority' => 'normal',
+                'department_id' => $otherDept->id,
+            ], ['X-Property-ID' => $this->property->id]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['department_id']);
     }
 
     public function test_another_same_property_user_cannot_edit_someone_else_draft()
@@ -127,6 +253,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'priority' => 'low',
             'status' => ShiftLogStatusEnum::Draft->value,
             'created_by' => $this->userA->id,
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userB)
@@ -135,6 +262,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
                 'content' => 'Content edit.',
                 'category' => 'Maintenance',
                 'priority' => 'normal',
+                'department_id' => $this->department->id,
             ], ['X-Property-ID' => $this->property->id]);
 
         $response->assertStatus(403);
@@ -150,6 +278,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'priority' => 'high',
             'status' => ShiftLogStatusEnum::Draft->value,
             'created_by' => $this->userA->id,
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userA)
@@ -159,6 +288,29 @@ class ShiftLogHandoverSliceOneTest extends TestCase
         $this->assertEquals(ShiftLogStatusEnum::Submitted, $log->fresh()->status);
         $this->assertEquals($this->userA->id, $log->fresh()->submitted_by);
         $this->assertNotNull($log->fresh()->submitted_at);
+    }
+
+    public function test_submit_fails_closed_for_legacy_style_draft_with_no_department()
+    {
+        $log = ShiftLog::create([
+            'property_id' => $this->property->id,
+            'subject' => 'Legacy Log',
+            'content' => 'No department in database.',
+            'category' => 'Maintenance',
+            'priority' => 'low',
+            'status' => ShiftLogStatusEnum::Draft->value,
+            'created_by' => $this->userA->id,
+            'department_id' => null, // Legacy state
+        ]);
+
+        $response = $this->actingAs($this->userA)
+            ->postJson("/api/v1/operations/shift-logs/{$log->id}/submit", [], ['X-Property-ID' => $this->property->id]);
+
+        $response->assertStatus(500);
+        $log->refresh();
+        $this->assertEquals(ShiftLogStatusEnum::Draft, $log->status);
+        $this->assertNull($log->submitted_by);
+        $this->assertNull($log->submitted_at);
     }
 
     public function test_another_user_cannot_submit_someone_else_draft()
@@ -171,6 +323,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'priority' => 'high',
             'status' => ShiftLogStatusEnum::Draft->value,
             'created_by' => $this->userA->id,
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userB)
@@ -192,6 +345,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'created_by' => $this->userA->id,
             'submitted_by' => $this->userA->id,
             'submitted_at' => now(),
+            'department_id' => $this->department->id,
         ]);
 
         // Creator attempts to update it
@@ -201,6 +355,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
                 'content' => 'New text.',
                 'category' => 'Engineering',
                 'priority' => 'high',
+                'department_id' => $this->department->id,
             ], ['X-Property-ID' => $this->property->id]);
 
         $response->assertStatus(403); // Throws exception: only drafts can be edited.
@@ -218,6 +373,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'created_by' => $this->userA->id,
             'submitted_by' => $this->userA->id,
             'submitted_at' => now(),
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userB)
@@ -241,6 +397,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'created_by' => $this->userA->id,
             'submitted_by' => $this->userA->id,
             'submitted_at' => now(),
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userA)
@@ -260,6 +417,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'priority' => 'high',
             'status' => ShiftLogStatusEnum::Draft->value,
             'created_by' => $this->userA->id,
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userB)
@@ -282,6 +440,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'submitted_at' => now(),
             'acknowledged_by' => $this->userB->id,
             'acknowledged_at' => now(),
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userB)
@@ -301,6 +460,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'status' => ShiftLogStatusEnum::Submitted->value,
             'created_by' => $this->userA->id,
             'requires_follow_up' => true,
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userB)
@@ -320,6 +480,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'priority' => 'normal',
             'status' => ShiftLogStatusEnum::Draft->value,
             'created_by' => $this->otherPropertyUser->id,
+            'department_id' => $this->department->id, // database allows any ID since it doesn't do cross-property validation on insert
         ]);
 
         // User A tries to view other property's log
@@ -339,6 +500,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
                 'content' => 'Attacking...',
                 'category' => 'Engineering',
                 'priority' => 'normal',
+                'department_id' => $this->department->id,
             ], ['X-Property-ID' => $this->property->id]);
 
         $response->assertStatus(404);
@@ -370,6 +532,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'priority' => 'normal',
             'status' => ShiftLogStatusEnum::Submitted->value,
             'created_by' => $this->otherPropertyUser->id,
+            'department_id' => $this->department->id,
         ]);
 
         // Same property log
@@ -381,6 +544,7 @@ class ShiftLogHandoverSliceOneTest extends TestCase
             'priority' => 'normal',
             'status' => ShiftLogStatusEnum::Submitted->value,
             'created_by' => $this->userA->id,
+            'department_id' => $this->department->id,
         ]);
 
         $response = $this->actingAs($this->userB)
