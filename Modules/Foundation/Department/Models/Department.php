@@ -50,4 +50,9 @@ class Department extends Model
     {
         return $this->hasMany(Department::class, 'parent_id');
     }
+
+    public function supervisorAssignments(): HasMany
+    {
+        return $this->hasMany(DepartmentSupervisor::class, 'department_id');
+    }
 }

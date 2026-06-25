@@ -60,6 +60,7 @@ The following entities are classified as **Mandatory** and must implement the au
 * **Sales & Events:** `BEO`, `Event`, `Forecast`, `Budget`
 * **Workflows:** `ApprovalRequest`, `DistributionEscalation`
 * **Operations:** `GuestRequest`, `EngineeringWorkOrder`, `ShiftHandover` (current implementation name: `ShiftLog`), `Operational Log Entry` (current implementation name: `LogbookEntry`), `Operational Log Entry Follow-up Resolution` (current implementation name: `LogbookEntryFollowUpResolution`), `Operational Log Entry Self-Correction` (current implementation name: `LogbookEntrySelfCorrection`)
+* **Organization Supervisor:** `Department Supervisor Assignment` (current implementation name: `DepartmentSupervisor`)
 
 *Note: Runtime audit instrumentation remains separately approved.*
 

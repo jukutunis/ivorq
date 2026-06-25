@@ -30,6 +30,9 @@ class PermissionSeeder extends Seeder
 
             // Activity
             'activity.view',
+
+            // Logbook & Supervisory Scope
+            'logbook.clarify', 'department.supervisors.manage',
         ];
 
         foreach ($permissions as $name) {

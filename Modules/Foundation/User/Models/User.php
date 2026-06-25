@@ -98,4 +98,9 @@ class User extends Authenticatable
             ->wherePivot('status', 'active')
             ->first();
     }
+
+    public function supervisedDepartmentAssignments(): HasMany
+    {
+        return $this->hasMany(\Modules\Foundation\Department\Models\DepartmentSupervisor::class, 'user_id');
+    }
 }
