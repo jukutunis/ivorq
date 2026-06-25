@@ -36,6 +36,14 @@ interface ShiftLog {
   created_at: string;
 }
 
+interface LogbookEntryFollowUpResolution {
+  id: string;
+  resolution_note: string;
+  resolved_by: string;
+  resolver?: { id: string; name: string };
+  resolved_at: string;
+}
+
 interface LogbookEntry {
   id: string;
   subject: string;
@@ -52,6 +60,7 @@ interface LogbookEntry {
   department_id?: string;
   department?: { id: string; name: string };
   created_at: string;
+  resolution?: LogbookEntryFollowUpResolution;
 }
 
 interface ShiftLogWorkspaceProps {
@@ -92,6 +101,8 @@ const ShiftLogWorkspace = ({
   const [opPriority, setOpPriority] = React.useState<'low' | 'normal' | 'high'>('normal');
   const [opRequiresFollowUp, setOpRequiresFollowUp] = React.useState(false);
   const [opDepartmentId, setOpDepartmentId] = React.useState('');
+  const [resolvingEntryId, setResolvingEntryId] = React.useState<string | null>(null);
+  const [resolutionText, setResolutionText] = React.useState('');
 
   const handleOpEditClick = (entry: LogbookEntry) => {
     setEditingOpEntry(entry);
@@ -148,6 +159,24 @@ const ShiftLogWorkspace = ({
       })
       .catch(err => {
         alert(err.response?.data?.message || 'Error submitting entry.');
+      });
+  };
+
+  const handleResolveFollowUp = (entryId: string) => {
+    if (!resolutionText.trim()) {
+      alert('Resolution note is required.');
+      return;
+    }
+    axios.post(`/api/v1/operations/logbook-entries/${entryId}/follow-up-resolution`, {
+      resolution_note: resolutionText
+    }, { headers: { 'X-Property-ID': currentPropertyId } })
+      .then(() => {
+        setResolvingEntryId(null);
+        setResolutionText('');
+        router.reload();
+      })
+      .catch(err => {
+        alert(err.response?.data?.message || 'Error resolving follow-up.');
       });
   };
   const [editingLog, setEditingLog] = React.useState<ShiftLog | null>(null);
@@ -331,6 +360,8 @@ const ShiftLogWorkspace = ({
 
   const renderOpCard = (entry: LogbookEntry) => {
     const isCreator = auth_user && entry.created_by === auth_user.id;
+    const hasResolution = !!entry.resolution;
+    const followUpStatus = !entry.requires_follow_up ? 'Not Required' : (hasResolution ? 'Resolved' : 'Open');
 
     return (
       <div key={entry.id} style={{ 
@@ -370,8 +401,8 @@ const ShiftLogWorkspace = ({
                 fontSize: '10px', 
                 padding: '2px 6px', 
                 borderRadius: '4px', 
-                background: '#EEF2FF', 
-                color: '#3730A3', 
+                background: hasResolution ? '#E1F5FE' : '#EEF2FF', 
+                color: hasResolution ? '#0288D1' : '#3730A3', 
                 fontWeight: 'bold' 
               }}>Follow-up Required</span>
             )}
@@ -392,12 +423,66 @@ const ShiftLogWorkspace = ({
           )}
         </div>
 
+        {/* Follow-up Status Section */}
+        <div style={{ 
+          fontSize: '12px', 
+          marginTop: '8px', 
+          padding: '8px 12px', 
+          borderRadius: '6px', 
+          background: followUpStatus === 'Resolved' ? '#F0FDF4' : (followUpStatus === 'Open' ? '#FFFBEB' : '#F8FAFC'),
+          border: '1px solid ' + (followUpStatus === 'Resolved' ? '#DCFCE7' : (followUpStatus === 'Open' ? '#FEF3C7' : '#E2E8F0')),
+          color: followUpStatus === 'Resolved' ? '#166534' : (followUpStatus === 'Open' ? '#92400E' : '#475569')
+        }}>
+          <div><strong>Follow-up Status:</strong> {followUpStatus}</div>
+          
+          {/* If resolved, show resolution details */}
+          {hasResolution && entry.resolution && (
+            <div style={{ marginTop: '4px', borderTop: '1px dashed #DCFCE7', paddingTop: '4px' }}>
+              <div><strong>Resolution Note:</strong> {entry.resolution.resolution_note}</div>
+              <div style={{ fontSize: '10px', color: '#166534', marginTop: '2px' }}>
+                Resolved by {entry.resolution.resolver?.name || 'Unknown'} at {new Date(entry.resolution.resolved_at).toLocaleString()}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Inline Resolve Follow-up Form */}
+        {resolvingEntryId === entry.id && (
+          <div style={{ 
+            marginTop: '8px', 
+            padding: '12px', 
+            borderRadius: '6px', 
+            background: '#F8FAFC', 
+            border: '1px solid #E2E8F0',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px'
+          }}>
+            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Resolution Note</label>
+            <textarea 
+              className="filter-input"
+              style={{ width: '100%', height: '60px', padding: '6px', fontSize: '13px' }}
+              value={resolutionText}
+              onChange={e => setResolutionText(e.target.value)}
+              placeholder="Explain how this issue was resolved..."
+              required
+            />
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <Button variant="secondary" size="xs" onClick={() => { setResolvingEntryId(null); setResolutionText(''); }}>Cancel</Button>
+              <Button variant="primary" size="xs" onClick={() => handleResolveFollowUp(entry.id)}>Submit Resolution</Button>
+            </div>
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
           {entry.status === 'draft' && isCreator && (
             <>
               <Button variant="secondary" size="xs" onClick={() => handleOpEditClick(entry)}>Edit</Button>
               <Button variant="primary" size="xs" onClick={() => handleOpSubmit(entry.id)}>Submit</Button>
             </>
+          )}
+          {entry.status === 'submitted' && entry.requires_follow_up && !hasResolution && isCreator && resolvingEntryId !== entry.id && (
+            <Button variant="primary" size="xs" onClick={() => { setResolvingEntryId(entry.id); setResolutionText(''); }}>Resolve Follow-up</Button>
           )}
         </div>
       </div>

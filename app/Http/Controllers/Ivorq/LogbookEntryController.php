@@ -38,7 +38,7 @@ class LogbookEntryController extends Controller
 
         $this->authorize('viewAny', LogbookEntry::class);
 
-        $entries = LogbookEntry::with(['creator', 'submitter', 'department'])
+        $entries = LogbookEntry::with(['creator', 'submitter', 'department', 'resolution.resolver'])
             ->where('property_id', $resolvedPropertyId)
             ->where('created_by', auth()->id())
             ->whereIn('status', [
@@ -71,7 +71,7 @@ class LogbookEntryController extends Controller
 
         return response()->json([
             'success' => true,
-            'entry' => $entry->load(['creator', 'submitter', 'department']),
+            'entry' => $entry->load(['creator', 'submitter', 'department', 'resolution.resolver']),
         ], 201);
     }
 
@@ -96,7 +96,7 @@ class LogbookEntryController extends Controller
 
         return response()->json([
             'success' => true,
-            'entry' => $updated->load(['creator', 'submitter', 'department']),
+            'entry' => $updated->load(['creator', 'submitter', 'department', 'resolution.resolver']),
         ]);
     }
 
@@ -120,7 +120,7 @@ class LogbookEntryController extends Controller
 
         return response()->json([
             'success' => true,
-            'entry' => $updated->load(['creator', 'submitter', 'department']),
+            'entry' => $updated->load(['creator', 'submitter', 'department', 'resolution.resolver']),
         ]);
     }
 }

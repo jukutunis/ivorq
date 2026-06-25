@@ -52,4 +52,9 @@ class LogbookEntry extends Model
     {
         return $this->belongsTo(\Modules\Foundation\Department\Models\Department::class, 'department_id');
     }
+
+    public function resolution(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(LogbookEntryFollowUpResolution::class, 'logbook_entry_id');
+    }
 }
