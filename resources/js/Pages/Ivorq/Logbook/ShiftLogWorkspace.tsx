@@ -346,12 +346,12 @@ const ShiftLogWorkspace = ({
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
           {log.status === 'draft' && isCreator && (
             <>
-              <Button variant="secondary" size="xs" onClick={() => handleEditClick(log)}>Edit</Button>
-              <Button variant="primary" size="xs" onClick={() => handleSubmitForHandover(log.id)}>Submit Handover</Button>
+              <Button variant="secondary" size="sm" onClick={() => handleEditClick(log)}>Edit</Button>
+              <Button variant="primary" size="sm" onClick={() => handleSubmitForHandover(log.id)}>Submit Handover</Button>
             </>
           )}
           {canAcknowledge && (
-            <Button variant="primary" size="xs" onClick={() => handleAcknowledge(log.id)}>Acknowledge</Button>
+            <Button variant="primary" size="sm" onClick={() => handleAcknowledge(log.id)}>Acknowledge</Button>
           )}
         </div>
       </div>
@@ -468,8 +468,8 @@ const ShiftLogWorkspace = ({
               required
             />
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <Button variant="secondary" size="xs" onClick={() => { setResolvingEntryId(null); setResolutionText(''); }}>Cancel</Button>
-              <Button variant="primary" size="xs" onClick={() => handleResolveFollowUp(entry.id)}>Submit Resolution</Button>
+              <Button variant="secondary" size="sm" onClick={() => { setResolvingEntryId(null); setResolutionText(''); }}>Cancel</Button>
+              <Button variant="primary" size="sm" onClick={() => handleResolveFollowUp(entry.id)}>Submit Resolution</Button>
             </div>
           </div>
         )}
@@ -477,12 +477,12 @@ const ShiftLogWorkspace = ({
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
           {entry.status === 'draft' && isCreator && (
             <>
-              <Button variant="secondary" size="xs" onClick={() => handleOpEditClick(entry)}>Edit</Button>
-              <Button variant="primary" size="xs" onClick={() => handleOpSubmit(entry.id)}>Submit</Button>
+              <Button variant="secondary" size="sm" onClick={() => handleOpEditClick(entry)}>Edit</Button>
+              <Button variant="primary" size="sm" onClick={() => handleOpSubmit(entry.id)}>Submit</Button>
             </>
           )}
           {entry.status === 'submitted' && entry.requires_follow_up && !hasResolution && isCreator && resolvingEntryId !== entry.id && (
-            <Button variant="primary" size="xs" onClick={() => { setResolvingEntryId(entry.id); setResolutionText(''); }}>Resolve Follow-up</Button>
+            <Button variant="primary" size="sm" onClick={() => { setResolvingEntryId(entry.id); setResolutionText(''); }}>Resolve Follow-up</Button>
           )}
         </div>
       </div>
@@ -493,11 +493,10 @@ const ShiftLogWorkspace = ({
     <>
       <div className="workspace-container">
         <WorkspaceHeader 
-          moduleTitle="Operations Shift Handover Logbook"
-          propertyContext={currentPropertyId}
+          title="Operations Shift Handover Logbook"
         />
         
-        <ModuleTabs tabs={tabs} activeTab="/logbook" />
+        <ModuleTabs tabs={tabs} activeTabId="/logbook" />
 
         <SplitLayout>
           <QuickFilterPanel>
@@ -697,7 +696,7 @@ const ShiftLogWorkspace = ({
                     </h3>
                     <div>
                       {drafts.length > 0 ? drafts.map(renderCard) : (
-                        <div style={{ textSelf: 'center', color: '#94A3B8', fontSize: '13px', textAlign: 'center', padding: '20px', border: '1px dashed #CBD5E1', borderRadius: '8px' }}>
+                        <div style={{ color: '#94A3B8', fontSize: '13px', textAlign: 'center', padding: '20px', border: '1px dashed #CBD5E1', borderRadius: '8px' }}>
                           No draft logs.
                         </div>
                       )}
