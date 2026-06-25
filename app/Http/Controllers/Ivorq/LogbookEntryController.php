@@ -38,7 +38,7 @@ class LogbookEntryController extends Controller
 
         $this->authorize('viewAny', LogbookEntry::class);
 
-        $entries = LogbookEntry::with(['creator', 'submitter', 'department', 'resolution.resolver'])
+        $entries = LogbookEntry::with(['creator', 'submitter', 'department', 'resolution.resolver', 'corrections.corrector'])
             ->where('property_id', $resolvedPropertyId)
             ->where('created_by', auth()->id())
             ->whereIn('status', [
@@ -71,7 +71,7 @@ class LogbookEntryController extends Controller
 
         return response()->json([
             'success' => true,
-            'entry' => $entry->load(['creator', 'submitter', 'department', 'resolution.resolver']),
+            'entry' => $entry->load(['creator', 'submitter', 'department', 'resolution.resolver', 'corrections.corrector']),
         ], 201);
     }
 
@@ -96,7 +96,7 @@ class LogbookEntryController extends Controller
 
         return response()->json([
             'success' => true,
-            'entry' => $updated->load(['creator', 'submitter', 'department', 'resolution.resolver']),
+            'entry' => $updated->load(['creator', 'submitter', 'department', 'resolution.resolver', 'corrections.corrector']),
         ]);
     }
 
@@ -120,7 +120,7 @@ class LogbookEntryController extends Controller
 
         return response()->json([
             'success' => true,
-            'entry' => $updated->load(['creator', 'submitter', 'department', 'resolution.resolver']),
+            'entry' => $updated->load(['creator', 'submitter', 'department', 'resolution.resolver', 'corrections.corrector']),
         ]);
     }
 }

@@ -57,4 +57,9 @@ class LogbookEntry extends Model
     {
         return $this->hasOne(LogbookEntryFollowUpResolution::class, 'logbook_entry_id');
     }
+
+    public function corrections(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(LogbookEntrySelfCorrection::class, 'logbook_entry_id')->orderBy('created_at', 'asc');
+    }
 }

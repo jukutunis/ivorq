@@ -70,4 +70,5 @@ Route::middleware(['auth', 'active.property'])->group(function () {
     Route::patch('/api/v1/operations/logbook-entries/{logbookEntry}', [\App\Http\Controllers\Ivorq\LogbookEntryController::class, 'update']);
     Route::post('/api/v1/operations/logbook-entries/{logbookEntry}/submit', [\App\Http\Controllers\Ivorq\LogbookEntryController::class, 'submit']);
     Route::post('/api/v1/operations/logbook-entries/{logbookEntry}/follow-up-resolution', [\App\Http\Controllers\Ivorq\LogbookEntryFollowUpResolutionController::class, 'resolve']);
+    Route::post('/api/v1/operations/logbook-entries/{logbookEntry}/self-corrections', [\App\Http\Controllers\Ivorq\LogbookEntrySelfCorrectionController::class, 'append']);
 });

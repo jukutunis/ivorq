@@ -47,7 +47,7 @@ class ShiftLogController extends Controller
         $shifts = \Modules\Foundation\Department\Models\Shift::all();
         $departments = \Modules\Foundation\Department\Models\Department::all();
 
-        $myOperationalEntries = \Modules\Operations\Logbook\Models\LogbookEntry::with(['creator', 'submitter', 'department', 'resolution.resolver'])
+        $myOperationalEntries = \Modules\Operations\Logbook\Models\LogbookEntry::with(['creator', 'submitter', 'department', 'resolution.resolver', 'corrections.corrector'])
             ->where('property_id', $resolvedPropertyId)
             ->where('created_by', auth()->id())
             ->whereIn('status', [

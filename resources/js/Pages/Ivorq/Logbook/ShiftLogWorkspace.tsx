@@ -44,6 +44,15 @@ interface LogbookEntryFollowUpResolution {
   resolved_at: string;
 }
 
+interface LogbookEntrySelfCorrection {
+  id: string;
+  correction_reason: string;
+  correction_content: string;
+  corrected_by: string;
+  corrector?: { id: string; name: string };
+  corrected_at: string;
+}
+
 interface LogbookEntry {
   id: string;
   subject: string;
@@ -61,6 +70,7 @@ interface LogbookEntry {
   department?: { id: string; name: string };
   created_at: string;
   resolution?: LogbookEntryFollowUpResolution;
+  corrections?: LogbookEntrySelfCorrection[];
 }
 
 interface ShiftLogWorkspaceProps {
@@ -103,6 +113,9 @@ const ShiftLogWorkspace = ({
   const [opDepartmentId, setOpDepartmentId] = React.useState('');
   const [resolvingEntryId, setResolvingEntryId] = React.useState<string | null>(null);
   const [resolutionText, setResolutionText] = React.useState('');
+  const [correctingEntryId, setCorrectingEntryId] = React.useState<string | null>(null);
+  const [correctionReason, setCorrectionReason] = React.useState('');
+  const [correctionContent, setCorrectionContent] = React.useState('');
 
   const handleOpEditClick = (entry: LogbookEntry) => {
     setEditingOpEntry(entry);
@@ -179,6 +192,31 @@ const ShiftLogWorkspace = ({
         alert(err.response?.data?.message || 'Error resolving follow-up.');
       });
   };
+
+  const handleAppendCorrection = (entryId: string) => {
+    if (!correctionReason.trim()) {
+      alert('Correction reason is required.');
+      return;
+    }
+    if (!correctionContent.trim()) {
+      alert('Correction content is required.');
+      return;
+    }
+    axios.post(`/api/v1/operations/logbook-entries/${entryId}/self-corrections`, {
+      correction_reason: correctionReason,
+      correction_content: correctionContent,
+    }, { headers: { 'X-Property-ID': currentPropertyId } })
+      .then(() => {
+        setCorrectingEntryId(null);
+        setCorrectionReason('');
+        setCorrectionContent('');
+        router.reload();
+      })
+      .catch(err => {
+        alert(err.response?.data?.message || 'Error appending self-correction.');
+      });
+  };
+
   const [editingLog, setEditingLog] = React.useState<ShiftLog | null>(null);
 
   const [subject, setSubject] = React.useState('');
@@ -446,6 +484,29 @@ const ShiftLogWorkspace = ({
           )}
         </div>
 
+        {/* Self-Corrections Section */}
+        {entry.corrections && entry.corrections.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Self-Corrections:</div>
+            {entry.corrections.map((corr) => (
+              <div key={corr.id} style={{
+                fontSize: '12px',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                background: '#F8FAFC',
+                border: '1px solid #E2E8F0',
+                color: '#334155'
+              }}>
+                <div><strong>Reason:</strong> {corr.correction_reason}</div>
+                <div style={{ marginTop: '2px' }}><strong>Correction:</strong> {corr.correction_content}</div>
+                <div style={{ fontSize: '10px', color: '#64748B', marginTop: '4px' }}>
+                  Corrected by {corr.corrector?.name || 'Unknown'} at {new Date(corr.corrected_at).toLocaleString()}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Inline Resolve Follow-up Form */}
         {resolvingEntryId === entry.id && (
           <div style={{ 
@@ -474,6 +535,49 @@ const ShiftLogWorkspace = ({
           </div>
         )}
 
+        {/* Inline Self-Correction Form */}
+        {correctingEntryId === entry.id && (
+          <div style={{
+            marginTop: '8px',
+            padding: '12px',
+            borderRadius: '6px',
+            background: '#F8FAFC',
+            border: '1px solid #E2E8F0',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px'
+          }}>
+            <h5 style={{ fontSize: '12px', fontWeight: 'bold', color: '#1E293B', margin: 0 }}>Add Self-Correction</h5>
+            <div>
+              <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748B', display: 'block', marginBottom: '4px' }}>Correction Reason</label>
+              <input
+                type="text"
+                className="filter-input"
+                style={{ width: '100%', padding: '6px', fontSize: '13px' }}
+                value={correctionReason}
+                onChange={e => setCorrectionReason(e.target.value)}
+                placeholder="e.g. Typo in room number, incorrect reading"
+                required
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748B', display: 'block', marginBottom: '4px' }}>Correction Content</label>
+              <textarea
+                className="filter-input"
+                style={{ width: '100%', height: '60px', padding: '6px', fontSize: '13px' }}
+                value={correctionContent}
+                onChange={e => setCorrectionContent(e.target.value)}
+                placeholder="Explain the correction..."
+                required
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <Button variant="secondary" size="sm" onClick={() => { setCorrectingEntryId(null); setCorrectionReason(''); setCorrectionContent(''); }}>Cancel</Button>
+              <Button variant="primary" size="sm" onClick={() => handleAppendCorrection(entry.id)}>Submit Correction</Button>
+            </div>
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
           {entry.status === 'draft' && isCreator && (
             <>
@@ -483,6 +587,9 @@ const ShiftLogWorkspace = ({
           )}
           {entry.status === 'submitted' && entry.requires_follow_up && !hasResolution && isCreator && resolvingEntryId !== entry.id && (
             <Button variant="primary" size="sm" onClick={() => { setResolvingEntryId(entry.id); setResolutionText(''); }}>Resolve Follow-up</Button>
+          )}
+          {entry.status === 'submitted' && isCreator && correctingEntryId !== entry.id && (
+            <Button variant="primary" size="sm" onClick={() => { setCorrectingEntryId(entry.id); setCorrectionReason(''); setCorrectionContent(''); }}>Add Self-Correction</Button>
           )}
         </div>
       </div>
