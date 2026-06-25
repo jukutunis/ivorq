@@ -47,10 +47,21 @@ class ShiftLogController extends Controller
         $shifts = \Modules\Foundation\Department\Models\Shift::all();
         $departments = \Modules\Foundation\Department\Models\Department::all();
 
+        $myOperationalEntries = \Modules\Operations\Logbook\Models\LogbookEntry::with(['creator', 'submitter', 'department'])
+            ->where('property_id', $resolvedPropertyId)
+            ->where('created_by', auth()->id())
+            ->whereIn('status', [
+                \Modules\Operations\Logbook\Enums\LogbookEntryStatusEnum::Draft->value,
+                \Modules\Operations\Logbook\Enums\LogbookEntryStatusEnum::Submitted->value,
+            ])
+            ->latest()
+            ->get();
+
         return Inertia::render('Ivorq/Logbook/ShiftLogWorkspace', [
             'shiftLogs' => $shiftLogs,
             'shifts' => $shifts,
             'departments' => $departments,
+            'myOperationalEntries' => $myOperationalEntries,
             'auth_user' => auth()->user(),
         ]);
     }

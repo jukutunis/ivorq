@@ -64,4 +64,9 @@ Route::middleware(['auth', 'active.property'])->group(function () {
     Route::patch('/api/v1/operations/shift-logs/{shiftLog}', [ShiftLogController::class, 'update']);
     Route::post('/api/v1/operations/shift-logs/{shiftLog}/submit', [ShiftLogController::class, 'submit']);
     Route::post('/api/v1/operations/shift-logs/{shiftLog}/acknowledge', [ShiftLogController::class, 'acknowledge']);
+
+    Route::get('/api/v1/operations/logbook-entries', [\App\Http\Controllers\Ivorq\LogbookEntryController::class, 'index']);
+    Route::post('/api/v1/operations/logbook-entries', [\App\Http\Controllers\Ivorq\LogbookEntryController::class, 'store']);
+    Route::patch('/api/v1/operations/logbook-entries/{logbookEntry}', [\App\Http\Controllers\Ivorq\LogbookEntryController::class, 'update']);
+    Route::post('/api/v1/operations/logbook-entries/{logbookEntry}/submit', [\App\Http\Controllers\Ivorq\LogbookEntryController::class, 'submit']);
 });
