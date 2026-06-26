@@ -77,4 +77,5 @@ Route::middleware(['auth', 'active.property'])->group(function () {
     Route::post('/api/v1/sales-events/beo-distributions/{distribution}/cancel', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'cancel']);
     Route::post('/api/v1/sales-events/beo-acknowledgements/{acknowledgement}/acknowledge', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'acknowledge']);
     Route::post('/api/v1/sales-events/beo-acknowledgements/{acknowledgement}/reject', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'reject']);
+    Route::get('/api/v1/sales-events/beo-distributions/{distribution}', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'show']);
 });

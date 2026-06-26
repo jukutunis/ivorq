@@ -834,4 +834,95 @@ class BEODistributionHardeningTest extends PostgresTestCase
         $this->assertEquals(AcknowledgementStatusEnum::REJECTED, $ack->status);
         $this->assertEquals('Invalid BEO details', $ack->rejection_reason);
     }
+
+    public function test_http_show_distribution_happy_path(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $service      = $this->makeService();
+        $distribution = $service->createDistribution($issueLog->id, DistributionSeverityEnum::MINOR);
+        $distribution = $service->distributeBEO($distribution->id, (string) Str::ulid(), [(string) Str::ulid()]);
+
+        $user = $this->createUserForProperty($propertyId);
+
+        session([
+            'current_property_id' => $propertyId,
+            'active_property_id'  => $propertyId,
+            'active_company_id'   => $companyId,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyId);
+
+        $response = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => $propertyId])
+            ->getJson("/api/v1/sales-events/beo-distributions/{$distribution->id}");
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('distribution.id', $distribution->id)
+            ->assertJsonPath('distribution.property_id', $propertyId)
+            ->assertJsonStructure([
+                'success',
+                'distribution' => [
+                    'id',
+                    'company_id',
+                    'property_id',
+                    'beo_issue_log_id',
+                    'status',
+                    'severity',
+                    'acknowledgements',
+                ],
+            ]);
+    }
+
+    public function test_http_show_distribution_denied_for_cross_property(): void
+    {
+        $companyIdA  = (string) Str::ulid();
+        $propertyIdA = (string) Str::ulid();
+        $issueLogA   = $this->createDummyIssueLog($companyIdA, $propertyIdA);
+
+        $service       = $this->makeService();
+        $distributionA = $service->createDistribution($issueLogA->id, DistributionSeverityEnum::MINOR);
+
+        $companyIdB  = (string) Str::ulid();
+        $propertyIdB = (string) Str::ulid();
+        $this->createDummyIssueLog($companyIdB, $propertyIdB);
+
+        $userB = $this->createUserForProperty($propertyIdB);
+
+        session([
+            'current_property_id' => $propertyIdB,
+            'active_property_id'  => $propertyIdB,
+            'active_company_id'   => $companyIdB,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyIdB);
+
+        $response = $this->actingAs($userB)
+            ->withHeaders(['X-Property-ID' => $propertyIdB])
+            ->getJson("/api/v1/sales-events/beo-distributions/{$distributionA->id}");
+
+        $response->assertStatus(403);
+    }
+
+    public function test_http_show_distribution_denied_without_active_property_context(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $service      = $this->makeService();
+        $distribution = $service->createDistribution($issueLog->id, DistributionSeverityEnum::MINOR);
+
+        $user = $this->createUserForProperty($propertyId);
+
+        app(CurrentPropertyService::class)->clear();
+
+        $response = $this->actingAs($user)
+            ->getJson("/api/v1/sales-events/beo-distributions/{$distribution->id}");
+
+        $response->assertStatus(403);
+    }
 }

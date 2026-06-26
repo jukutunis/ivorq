@@ -52,6 +52,18 @@ class BEODistributionPolicy
     }
 
     /**
+     * View a distribution detail.
+     * Property and membership check.
+     */
+    public function view(User $user, BEODistribution $distribution): bool
+    {
+        $propertyId = app(CurrentPropertyService::class)->getPropertyId();
+
+        return $distribution->property_id === $propertyId
+            && ($user->isSuperAdmin() || $user->properties()->where('properties.id', $propertyId)->exists());
+    }
+
+    /**
      * Acknowledge an assigned BEO acknowledgement.
      * Property and membership check identical.
      */

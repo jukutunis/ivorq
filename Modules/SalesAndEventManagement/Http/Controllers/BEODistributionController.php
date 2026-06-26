@@ -199,4 +199,31 @@ class BEODistributionController extends Controller
             'acknowledgement' => $ack,
         ]);
     }
+
+    /**
+     * GET /api/v1/sales-events/beo-distributions/{distribution}
+     */
+    public function show(Request $request, BEODistribution $distribution): JsonResponse
+    {
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(
+                'Property context is missing, mismatched, or unauthorized.'
+            );
+        }
+
+        if ($distribution->property_id !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException('Property context mismatch.');
+        }
+
+        $this->authorize('view', $distribution);
+
+        return response()->json([
+            'success'      => true,
+            'distribution' => $distribution->load('acknowledgements'),
+        ]);
+    }
 }
