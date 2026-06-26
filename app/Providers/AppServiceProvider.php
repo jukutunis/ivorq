@@ -45,5 +45,35 @@ class AppServiceProvider extends ServiceProvider
             \Modules\Foundation\Approval\Events\ApprovalRejected::class,
             [\Modules\Foundation\Approval\Listeners\ApprovalNotificationListener::class, 'handleApprovalRejected']
         );
+
+        // BEO Distribution audit trail — Sprint 14.8.5.1 §3
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\SalesAndEventManagement\Events\DistributionDistributedEvent::class,
+            [\Modules\SalesAndEventManagement\Listeners\DistributionAuditListener::class, 'handleDistributed']
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\SalesAndEventManagement\Events\DistributionSupersededEvent::class,
+            [\Modules\SalesAndEventManagement\Listeners\DistributionAuditListener::class, 'handleSuperseded']
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\SalesAndEventManagement\Events\DistributionCancelledEvent::class,
+            [\Modules\SalesAndEventManagement\Listeners\DistributionAuditListener::class, 'handleCancelled']
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\SalesAndEventManagement\Events\DistributionAcknowledgedEvent::class,
+            [\Modules\SalesAndEventManagement\Listeners\DistributionAuditListener::class, 'handleAcknowledged']
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\SalesAndEventManagement\Events\DistributionAcknowledgementRejectedEvent::class,
+            [\Modules\SalesAndEventManagement\Listeners\DistributionAuditListener::class, 'handleAcknowledgementRejected']
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\SalesAndEventManagement\Events\DistributionEscalatedEvent::class,
+            [\Modules\SalesAndEventManagement\Listeners\DistributionAuditListener::class, 'handleEscalated']
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Modules\SalesAndEventManagement\Events\DistributionCompletedEvent::class,
+            [\Modules\SalesAndEventManagement\Listeners\DistributionAuditListener::class, 'handleCompleted']
+        );
     }
 }
