@@ -4,6 +4,7 @@ namespace Tests\Postgres\SalesAndEventManagement;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Tests\PostgresTestCase;
 use Modules\SalesAndEventManagement\Models\BEOIssueLog;
@@ -20,6 +21,8 @@ use Modules\SalesAndEventManagement\Exceptions\DistributionStateException;
 use Modules\SalesAndEventManagement\Events\DistributionDistributedEvent;
 use Modules\SalesAndEventManagement\Events\DistributionAcknowledgedEvent;
 use Modules\SalesAndEventManagement\Events\DistributionCompletedEvent;
+use Modules\Foundation\User\Models\User;
+use Shared\Services\CurrentPropertyService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -101,6 +104,31 @@ class BEODistributionHardeningTest extends PostgresTestCase
     private function makeService(): BEODistributionService
     {
         return new BEODistributionService(new DistributionStateMachine());
+    }
+
+    /**
+     * Create a User attached to $propertyId via property_user pivot.
+     * Direct DB pattern — User model does not have HasFactory.
+     */
+    private function createUserForProperty(string $propertyId): User
+    {
+        $user = User::create([
+            'name'              => 'BEO Test User',
+            'email'             => 'beo-test-' . Str::random(6) . '@ivorq.test',
+            'password'          => Hash::make('password'),
+            'email_verified_at' => now(),
+            'is_active'         => true,
+        ]);
+
+        DB::table('property_user')->insert([
+            'user_id'     => $user->id,
+            'property_id' => $propertyId,
+            'is_default'  => true,
+            'status'      => 'active',
+            'joined_at'   => now(),
+        ]);
+
+        return $user;
     }
 
     // -----------------------------------------------------------------------
@@ -314,16 +342,16 @@ class BEODistributionHardeningTest extends PostgresTestCase
 
         // Revision issue log pointing back
         $revisionIssueLog = BEOIssueLog::forceCreate([
-            'id'               => (string) Str::ulid(),
-            'company_id'       => $companyId,
-            'property_id'      => $propertyId,
-            'function_id'      => $issueLog->function_id,
-            'issue_number'     => 'BEO-002',
+            'id'                => (string) Str::ulid(),
+            'company_id'        => $companyId,
+            'property_id'       => $propertyId,
+            'function_id'       => $issueLog->function_id,
+            'issue_number'      => 'BEO-002',
             'previous_issue_id' => $issueLog->id,
-            'revision_number'  => 1,
-            'status'           => 'PUBLISHED',
-            'snapshot_payload' => json_encode(['foo' => 'bar']),
-            'snapshot_hash'    => 'hash456',
+            'revision_number'   => 1,
+            'status'            => 'PUBLISHED',
+            'snapshot_payload'  => json_encode(['foo' => 'bar']),
+            'snapshot_hash'     => 'hash456',
         ]);
 
         $this->makeService()->createDistribution($revisionIssueLog->id, DistributionSeverityEnum::MAJOR);
@@ -410,5 +438,232 @@ class BEODistributionHardeningTest extends PostgresTestCase
         $engine->acknowledge($ack->id, (string) Str::ulid());
         // Second call on the same ack must throw
         $engine->acknowledge($ack->id, (string) Str::ulid());
+    }
+
+    // -----------------------------------------------------------------------
+    // HTTP boundary: distribute route → controller → policy → service → state machine
+    // -----------------------------------------------------------------------
+
+    public function test_http_distribute_returns_201_and_persists_distributed_status(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $user = $this->createUserForProperty($propertyId);
+
+        session([
+            'current_property_id' => $propertyId,
+            'active_property_id'  => $propertyId,
+            'active_company_id'   => $companyId,
+        ]);
+
+        // Seed server-resolved property context (mirrors active.property middleware)
+        app(CurrentPropertyService::class)->setPropertyId($propertyId);
+
+        $response = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => $propertyId])
+            ->postJson('/api/v1/sales-events/beo-distributions', [
+                'beo_issue_log_id' => $issueLog->id,
+                'severity'         => 'MINOR',
+                'department_ids'   => [(string) Str::ulid(), (string) Str::ulid()],
+            ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('distribution.status', 'DISTRIBUTED');
+
+        $this->assertDatabaseHas('beo_distributions', [
+            'beo_issue_log_id' => $issueLog->id,
+            'status'           => 'DISTRIBUTED',
+            'property_id'      => $propertyId,
+        ]);
+    }
+
+    public function test_http_distribute_rejects_empty_department_ids_with_422(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $user = $this->createUserForProperty($propertyId);
+
+        session([
+            'current_property_id' => $propertyId,
+            'active_property_id'  => $propertyId,
+            'active_company_id'   => $companyId,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyId);
+
+        $response = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => $propertyId])
+            ->postJson('/api/v1/sales-events/beo-distributions', [
+                'beo_issue_log_id' => $issueLog->id,
+                'severity'         => 'MINOR',
+                'department_ids'   => [],
+            ]);
+
+        $response->assertStatus(422);
+    }
+
+    public function test_http_cancel_returns_200_and_cancelled_status(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $distribution = BEODistribution::forceCreate([
+            'id'               => (string) Str::ulid(),
+            'company_id'       => $companyId,
+            'property_id'      => $propertyId,
+            'beo_issue_log_id' => $issueLog->id,
+            'status'           => DistributionStatusEnum::DRAFT,
+            'severity'         => DistributionSeverityEnum::MINOR,
+        ]);
+
+        $user = $this->createUserForProperty($propertyId);
+
+        session([
+            'current_property_id' => $propertyId,
+            'active_property_id'  => $propertyId,
+            'active_company_id'   => $companyId,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyId);
+
+        $response = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => $propertyId])
+            ->postJson("/api/v1/sales-events/beo-distributions/{$distribution->id}/cancel");
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('distribution.status', 'CANCELLED');
+
+        $distribution->refresh();
+        $this->assertEquals(DistributionStatusEnum::CANCELLED, $distribution->status);
+    }
+
+    public function test_http_distribute_rejects_wrong_property_header_with_403(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $user = $this->createUserForProperty($propertyId);
+
+        session([
+            'current_property_id' => $propertyId,
+            'active_property_id'  => $propertyId,
+            'active_company_id'   => $companyId,
+        ]);
+
+        // Server resolves the real propertyId, but client sends a different header
+        app(CurrentPropertyService::class)->setPropertyId($propertyId);
+
+        $response = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => (string) Str::ulid()])
+            ->postJson('/api/v1/sales-events/beo-distributions', [
+                'beo_issue_log_id' => $issueLog->id,
+                'severity'         => 'MINOR',
+                'department_ids'   => [(string) Str::ulid()],
+            ]);
+
+        $response->assertStatus(403);
+    }
+
+    public function test_http_distribute_denied_for_cross_property_resource(): void
+    {
+        $companyIdA  = (string) Str::ulid();
+        $propertyIdA = (string) Str::ulid();
+        $issueLogA   = $this->createDummyIssueLog($companyIdA, $propertyIdA);
+
+        $companyIdB  = (string) Str::ulid();
+        $propertyIdB = (string) Str::ulid();
+        $this->createDummyIssueLog($companyIdB, $propertyIdB);
+
+        $userB = $this->createUserForProperty($propertyIdB);
+
+        session([
+            'current_property_id' => $propertyIdB,
+            'active_property_id'  => $propertyIdB,
+            'active_company_id'   => $companyIdB,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyIdB);
+
+        $response = $this->actingAs($userB)
+            ->withHeaders(['X-Property-ID' => $propertyIdB])
+            ->postJson('/api/v1/sales-events/beo-distributions', [
+                'beo_issue_log_id' => $issueLogA->id,
+                'severity'         => 'MINOR',
+                'department_ids'   => [(string) Str::ulid()],
+            ]);
+
+        $response->assertStatus(403);
+
+        $this->assertDatabaseMissing('beo_distributions', [
+            'beo_issue_log_id' => $issueLogA->id,
+            'status'           => 'DISTRIBUTED',
+        ]);
+    }
+
+    public function test_http_cancel_denied_for_cross_property_resource(): void
+    {
+        $companyIdA  = (string) Str::ulid();
+        $propertyIdA = (string) Str::ulid();
+        $issueLogA   = $this->createDummyIssueLog($companyIdA, $propertyIdA);
+
+        $distributionA = BEODistribution::forceCreate([
+            'id'               => (string) Str::ulid(),
+            'company_id'       => $companyIdA,
+            'property_id'      => $propertyIdA,
+            'beo_issue_log_id' => $issueLogA->id,
+            'status'           => DistributionStatusEnum::DRAFT,
+            'severity'         => DistributionSeverityEnum::MINOR,
+        ]);
+
+        $companyIdB  = (string) Str::ulid();
+        $propertyIdB = (string) Str::ulid();
+        $this->createDummyIssueLog($companyIdB, $propertyIdB);
+
+        $userB = $this->createUserForProperty($propertyIdB);
+
+        session([
+            'current_property_id' => $propertyIdB,
+            'active_property_id'  => $propertyIdB,
+            'active_company_id'   => $companyIdB,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyIdB);
+
+        $response = $this->actingAs($userB)
+            ->withHeaders(['X-Property-ID' => $propertyIdB])
+            ->postJson("/api/v1/sales-events/beo-distributions/{$distributionA->id}/cancel");
+
+        $response->assertStatus(403);
+
+        $distributionA->refresh();
+        $this->assertNotEquals(DistributionStatusEnum::CANCELLED, $distributionA->status);
+    }
+
+    public function test_http_distribute_denied_without_active_property_context(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $user = $this->createUserForProperty($propertyId);
+
+        app(CurrentPropertyService::class)->clear();
+
+        $response = $this->actingAs($user)
+            ->postJson('/api/v1/sales-events/beo-distributions', [
+                'beo_issue_log_id' => $issueLog->id,
+                'severity'         => 'MINOR',
+                'department_ids'   => [(string) Str::ulid()],
+            ]);
+
+        $response->assertStatus(403);
     }
 }

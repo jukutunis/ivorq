@@ -71,4 +71,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
     Route::post('/api/v1/operations/logbook-entries/{logbookEntry}/submit', [\App\Http\Controllers\Ivorq\LogbookEntryController::class, 'submit']);
     Route::post('/api/v1/operations/logbook-entries/{logbookEntry}/follow-up-resolution', [\App\Http\Controllers\Ivorq\LogbookEntryFollowUpResolutionController::class, 'resolve']);
     Route::post('/api/v1/operations/logbook-entries/{logbookEntry}/self-corrections', [\App\Http\Controllers\Ivorq\LogbookEntrySelfCorrectionController::class, 'append']);
+
+    // BEO Distribution — Sprint 14.8.5
+    Route::post('/api/v1/sales-events/beo-distributions', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'distribute']);
+    Route::post('/api/v1/sales-events/beo-distributions/{distribution}/cancel', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'cancel']);
 });
