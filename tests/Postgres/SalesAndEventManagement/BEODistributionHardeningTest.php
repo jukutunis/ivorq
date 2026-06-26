@@ -666,4 +666,172 @@ class BEODistributionHardeningTest extends PostgresTestCase
 
         $response->assertStatus(403);
     }
+
+    public function test_http_acknowledge_happy_path(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $service      = $this->makeService();
+        $distribution = $service->createDistribution($issueLog->id, DistributionSeverityEnum::MINOR);
+        $distribution = $service->distributeBEO($distribution->id, (string) Str::ulid(), [(string) Str::ulid()]);
+        $ack          = $distribution->acknowledgements->first();
+
+        $user = $this->createUserForProperty($propertyId);
+
+        session([
+            'current_property_id' => $propertyId,
+            'active_property_id'  => $propertyId,
+            'active_company_id'   => $companyId,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyId);
+
+        $response = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => $propertyId])
+            ->postJson("/api/v1/sales-events/beo-acknowledgements/{$ack->id}/acknowledge");
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $ack->refresh();
+        $this->assertEquals(AcknowledgementStatusEnum::ACKNOWLEDGED, $ack->status);
+        $this->assertEquals($user->id, $ack->user_id);
+    }
+
+    public function test_http_acknowledge_denied_for_cross_property(): void
+    {
+        $companyIdA  = (string) Str::ulid();
+        $propertyIdA = (string) Str::ulid();
+        $issueLogA   = $this->createDummyIssueLog($companyIdA, $propertyIdA);
+
+        $service       = $this->makeService();
+        $distributionA = $service->createDistribution($issueLogA->id, DistributionSeverityEnum::MINOR);
+        $distributionA = $service->distributeBEO($distributionA->id, (string) Str::ulid(), [(string) Str::ulid()]);
+        $ackA          = $distributionA->acknowledgements->first();
+
+        $companyIdB  = (string) Str::ulid();
+        $propertyIdB = (string) Str::ulid();
+        $this->createDummyIssueLog($companyIdB, $propertyIdB);
+
+        $userB = $this->createUserForProperty($propertyIdB);
+
+        session([
+            'current_property_id' => $propertyIdB,
+            'active_property_id'  => $propertyIdB,
+            'active_company_id'   => $companyIdB,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyIdB);
+
+        $response = $this->actingAs($userB)
+            ->withHeaders(['X-Property-ID' => $propertyIdB])
+            ->postJson("/api/v1/sales-events/beo-acknowledgements/{$ackA->id}/acknowledge");
+
+        $response->assertStatus(403);
+
+        $ackA->refresh();
+        $this->assertEquals(AcknowledgementStatusEnum::PENDING, $ackA->status);
+    }
+
+    public function test_http_acknowledge_denied_without_active_property_context(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $service      = $this->makeService();
+        $distribution = $service->createDistribution($issueLog->id, DistributionSeverityEnum::MINOR);
+        $distribution = $service->distributeBEO($distribution->id, (string) Str::ulid(), [(string) Str::ulid()]);
+        $ack          = $distribution->acknowledgements->first();
+
+        $user = $this->createUserForProperty($propertyId);
+
+        app(CurrentPropertyService::class)->clear();
+
+        $response = $this->actingAs($user)
+            ->postJson("/api/v1/sales-events/beo-acknowledgements/{$ack->id}/acknowledge");
+
+        $response->assertStatus(403);
+
+        $ack->refresh();
+        $this->assertEquals(AcknowledgementStatusEnum::PENDING, $ack->status);
+    }
+
+    public function test_http_acknowledge_double_acknowledgement_fails(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $service      = $this->makeService();
+        $distribution = $service->createDistribution($issueLog->id, DistributionSeverityEnum::MINOR);
+        $distribution = $service->distributeBEO($distribution->id, (string) Str::ulid(), [(string) Str::ulid()]);
+        $ack          = $distribution->acknowledgements->first();
+
+        $user = $this->createUserForProperty($propertyId);
+
+        session([
+            'current_property_id' => $propertyId,
+            'active_property_id'  => $propertyId,
+            'active_company_id'   => $companyId,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyId);
+
+        // First attempt: succeeds
+        $response1 = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => $propertyId])
+            ->postJson("/api/v1/sales-events/beo-acknowledgements/{$ack->id}/acknowledge");
+        $response1->assertStatus(200);
+
+        // Second attempt: fails with 422
+        $response2 = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => $propertyId])
+            ->postJson("/api/v1/sales-events/beo-acknowledgements/{$ack->id}/acknowledge");
+        $response2->assertStatus(422);
+    }
+
+    public function test_http_reject_happy_path_and_validation(): void
+    {
+        $companyId  = (string) Str::ulid();
+        $propertyId = (string) Str::ulid();
+        $issueLog   = $this->createDummyIssueLog($companyId, $propertyId);
+
+        $service      = $this->makeService();
+        $distribution = $service->createDistribution($issueLog->id, DistributionSeverityEnum::MINOR);
+        $distribution = $service->distributeBEO($distribution->id, (string) Str::ulid(), [(string) Str::ulid()]);
+        $ack          = $distribution->acknowledgements->first();
+
+        $user = $this->createUserForProperty($propertyId);
+
+        session([
+            'current_property_id' => $propertyId,
+            'active_property_id'  => $propertyId,
+            'active_company_id'   => $companyId,
+        ]);
+
+        app(CurrentPropertyService::class)->setPropertyId($propertyId);
+
+        // Test validation: reason required
+        $responseErr = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => $propertyId])
+            ->postJson("/api/v1/sales-events/beo-acknowledgements/{$ack->id}/reject", []);
+        $responseErr->assertStatus(422);
+
+        // Test valid rejection
+        $response = $this->actingAs($user)
+            ->withHeaders(['X-Property-ID' => $propertyId])
+            ->postJson("/api/v1/sales-events/beo-acknowledgements/{$ack->id}/reject", [
+                'reason' => 'Invalid BEO details',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $ack->refresh();
+        $this->assertEquals(AcknowledgementStatusEnum::REJECTED, $ack->status);
+        $this->assertEquals('Invalid BEO details', $ack->rejection_reason);
+    }
 }

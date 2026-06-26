@@ -7,8 +7,10 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Modules\SalesAndEventManagement\Models\BEODistribution;
+use Modules\SalesAndEventManagement\Models\BEOAcknowledgement;
 use Modules\SalesAndEventManagement\Policies\BEODistributionPolicy;
 use Modules\SalesAndEventManagement\Services\BEODistributionService;
+use Modules\SalesAndEventManagement\Services\AcknowledgementEngine;
 use Modules\SalesAndEventManagement\Enums\DistributionSeverityEnum;
 use Modules\SalesAndEventManagement\Exceptions\DistributionStateException;
 use Shared\Services\CurrentPropertyService;
@@ -28,9 +30,12 @@ use Shared\Services\CurrentPropertyService;
  */
 class BEODistributionController extends Controller
 {
-    public function __construct(protected BEODistributionService $service)
-    {
+    public function __construct(
+        protected BEODistributionService $service,
+        protected AcknowledgementEngine $ackEngine,
+    ) {
         Gate::policy(BEODistribution::class, BEODistributionPolicy::class);
+        Gate::policy(BEOAcknowledgement::class, BEODistributionPolicy::class);
     }
 
     /**
@@ -118,6 +123,80 @@ class BEODistributionController extends Controller
         return response()->json([
             'success'      => true,
             'distribution' => $cancelled,
+        ]);
+    }
+
+    /**
+     * POST /api/v1/sales-events/beo-acknowledgements/{acknowledgement}/acknowledge
+     */
+    public function acknowledge(Request $request, BEOAcknowledgement $acknowledgement): JsonResponse
+    {
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(
+                'Property context is missing, mismatched, or unauthorized.'
+            );
+        }
+
+        if ($acknowledgement->distribution->property_id !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException('Property context mismatch.');
+        }
+
+        $this->authorize('acknowledge', $acknowledgement);
+
+        try {
+            $ack = $this->ackEngine->acknowledge($acknowledgement->id, $request->user()->id);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'success'         => true,
+            'acknowledgement' => $ack,
+        ]);
+    }
+
+    /**
+     * POST /api/v1/sales-events/beo-acknowledgements/{acknowledgement}/reject
+     */
+    public function reject(Request $request, BEOAcknowledgement $acknowledgement): JsonResponse
+    {
+        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        setPermissionsTeamId($resolvedPropertyId);
+
+        $requestPropertyId = $request->header('X-Property-ID');
+        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(
+                'Property context is missing, mismatched, or unauthorized.'
+            );
+        }
+
+        if ($acknowledgement->distribution->property_id !== $resolvedPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException('Property context mismatch.');
+        }
+
+        $this->authorize('reject', $acknowledgement);
+
+        $request->validate([
+            'reason' => ['required', 'string', 'min:1'],
+        ]);
+
+        try {
+            $ack = $this->ackEngine->reject(
+                $acknowledgement->id,
+                $request->user()->id,
+                $request->input('reason')
+            );
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'success'         => true,
+            'acknowledgement' => $ack,
         ]);
     }
 }

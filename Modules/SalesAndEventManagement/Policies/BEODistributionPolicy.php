@@ -4,6 +4,7 @@ namespace Modules\SalesAndEventManagement\Policies;
 
 use Modules\Foundation\User\Models\User;
 use Modules\SalesAndEventManagement\Models\BEODistribution;
+use Modules\SalesAndEventManagement\Models\BEOAcknowledgement;
 use Modules\SalesAndEventManagement\Enums\DistributionStatusEnum;
 use Shared\Services\CurrentPropertyService;
 
@@ -48,5 +49,29 @@ class BEODistributionPolicy
         return $distribution->property_id === $propertyId
             && ($user->isSuperAdmin() || $user->properties()->where('properties.id', $propertyId)->exists())
             && ! in_array($distribution->status, $terminal, true);
+    }
+
+    /**
+     * Acknowledge an assigned BEO acknowledgement.
+     * Property and membership check identical.
+     */
+    public function acknowledge(User $user, BEOAcknowledgement $acknowledgement): bool
+    {
+        $propertyId = app(CurrentPropertyService::class)->getPropertyId();
+
+        return $acknowledgement->distribution->property_id === $propertyId
+            && ($user->isSuperAdmin() || $user->properties()->where('properties.id', $propertyId)->exists());
+    }
+
+    /**
+     * Reject an assigned BEO acknowledgement.
+     * Property and membership check identical.
+     */
+    public function reject(User $user, BEOAcknowledgement $acknowledgement): bool
+    {
+        $propertyId = app(CurrentPropertyService::class)->getPropertyId();
+
+        return $acknowledgement->distribution->property_id === $propertyId
+            && ($user->isSuperAdmin() || $user->properties()->where('properties.id', $propertyId)->exists());
     }
 }

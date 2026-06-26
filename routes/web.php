@@ -75,4 +75,6 @@ Route::middleware(['auth', 'active.property'])->group(function () {
     // BEO Distribution — Sprint 14.8.5
     Route::post('/api/v1/sales-events/beo-distributions', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'distribute']);
     Route::post('/api/v1/sales-events/beo-distributions/{distribution}/cancel', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'cancel']);
+    Route::post('/api/v1/sales-events/beo-acknowledgements/{acknowledgement}/acknowledge', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'acknowledge']);
+    Route::post('/api/v1/sales-events/beo-acknowledgements/{acknowledgement}/reject', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'reject']);
 });
