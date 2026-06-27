@@ -25,8 +25,10 @@ class InventoryTransaction extends Model
         'occurred_at'        => 'datetime',
         'currency_code'      => 'string',
         'financial_period_id'=> 'string',
-        'valuation_scope'    => 'string',
-        'valuation_sequence' => 'integer',
+        'valuation_scope'              => 'string',
+        'valuation_sequence'           => 'integer',
+        'valuation_approval_status'    => 'string',
+        'valuation_approval_reference' => 'string',
     ];
 
     public function property()

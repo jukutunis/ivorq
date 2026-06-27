@@ -70,6 +70,8 @@ class InventoryTransactionRepository
         \Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent $intent,
         string $quantityBefore,
         string $quantityAfter,
+        string $valuationApprovalStatus,
+        string $valuationApprovalReference,
         ?string $actorId = null,
         ?string $currencyCode = null,
         ?string $financialPeriodId = null,
@@ -85,6 +87,8 @@ class InventoryTransactionRepository
         $transaction->financial_period_id = $financialPeriodId;
         $transaction->valuation_scope = $valuationScope;
         $transaction->valuation_sequence = $valuationSequence;
+        $transaction->valuation_approval_status = $valuationApprovalStatus;
+        $transaction->valuation_approval_reference = $valuationApprovalReference;
 
         // Controlled fields
         $transaction->business_date = $intent->businessDate;

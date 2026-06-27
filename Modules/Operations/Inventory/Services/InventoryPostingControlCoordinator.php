@@ -17,6 +17,7 @@ use RuntimeException;
 use Modules\Operations\Inventory\Enums\ItemStatusEnum;
 use Modules\Foundation\Outbox\Repositories\OutboxRepository;
 use Modules\Operations\Inventory\Repositories\InventoryValuationSequenceRepository;
+use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 
 class InventoryPostingControlCoordinator
 {
@@ -40,7 +41,9 @@ class InventoryPostingControlCoordinator
         ?string $actorId = null
     ): InventoryTransaction {
         return $this->executeOnce(function () use ($intent, $actorId) {
-            return DB::transaction(function () use ($intent, $actorId) {
+            [$valuationApprovalStatus, $valuationApprovalReference] = $this->resolveValuationAuthorizationEvidence($intent);
+
+            return DB::transaction(function () use ($intent, $actorId, $valuationApprovalStatus, $valuationApprovalReference) {
                 $existing = InventoryTransaction::where('property_id', $intent->propertyId)
                     ->where('idempotency_key', $intent->idempotencyKey)
                     ->lockForUpdate()
@@ -102,6 +105,8 @@ class InventoryPostingControlCoordinator
                     $intent,
                     $quantityBefore,
                     $quantityAfter,
+                    $valuationApprovalStatus,
+                    $valuationApprovalReference,
                     $actorId,
                     $currency,
                     $period->id,
@@ -123,6 +128,44 @@ class InventoryPostingControlCoordinator
                 return $transaction;
             });
         });
+    }
+
+    private function resolveValuationAuthorizationEvidence(InventoryLedgerPostingIntent $intent): array
+    {
+        $type   = $intent->transactionType;
+        $docType = $intent->sourceDocumentType;
+        $docId   = $intent->sourceDocumentId;
+
+        if ($type === TransactionTypeEnum::Issue) {
+            if ($docType !== 'inventory_issue') {
+                throw new RuntimeException(
+                    "Controlled posting source-document-type mismatch: expected 'inventory_issue', got '{$docType}'."
+                );
+            }
+            return ['approved', "inventory_issue:{$docId}:posted"];
+        }
+
+        if ($type === TransactionTypeEnum::AdjustmentIn || $type === TransactionTypeEnum::AdjustmentOut) {
+            if ($docType !== 'inventory_adjustment') {
+                throw new RuntimeException(
+                    "Controlled posting source-document-type mismatch: expected 'inventory_adjustment', got '{$docType}'."
+                );
+            }
+            return ['approved', "inventory_adjustment:{$docId}:approved"];
+        }
+
+        if ($type === TransactionTypeEnum::TransferOut || $type === TransactionTypeEnum::TransferIn) {
+            if ($docType !== 'inventory_transfer') {
+                throw new RuntimeException(
+                    "Controlled posting source-document-type mismatch: expected 'inventory_transfer', got '{$docType}'."
+                );
+            }
+            return ['approved', "inventory_transfer:{$docId}:completed"];
+        }
+
+        throw new RuntimeException(
+            "Controlled posting rejected: unsupported transaction type '{$type->value}'."
+        );
     }
 
     public function lockContext(string $propertyId, string $businessDate, \Illuminate\Support\Carbon $occurredAt): array
