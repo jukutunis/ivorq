@@ -132,33 +132,143 @@ class AvcoValuationEngine
         }
 
         if ($input->eventType === 'transfer') {
-             if ($input->quantityDelta->isZero()) {
-                 return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'QUANTITY_DELTA_CANNOT_BE_ZERO');
-             }
-             if ($input->transferContext === null) {
-                 return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'MISSING_TRANSFER_CONTEXT');
-             }
-             $ctx = $input->transferContext;
-             if ($ctx->sourcePropertyId === $priorState->propertyId &&
-                 $ctx->sourceItemId === $priorState->itemId &&
-                 $ctx->sourceValuationScope === $priorState->valuationScope) {
-                 
-                 return new AvcoValuationResult(
-                     AvcoValuationResult::STATUS_FINAL,
-                     new AvcoValuationState(
-                         $priorState->propertyId, $priorState->itemId, $priorState->valuationScope,
-                         $priorState->onHandQuantity, $priorState->weightedAverageUnitCost, $priorState->carryingValue, $input->sequence, $priorState->unresolvedProvisionalQuantity
-                     ),
-                     AvcoDecimal::zero(),
-                     'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL',
-                     null,
-                     $ctx->sourceCarryingUnitCost
-                 );
-             }
+            if ($input->quantityDelta->isZero()) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'QUANTITY_DELTA_CANNOT_BE_ZERO');
+            }
+            if ($input->transferContext === null) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'MISSING_TRANSFER_CONTEXT');
+            }
+            $ctx = $input->transferContext;
 
-             return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'TRANSFER_REQUIRES_PAIRED_SCOPE_MODEL');
+            if ($ctx->destinationValuationScope === null) {
+                // Legacy mode: same-scope check uses priorState comparison
+                if ($ctx->sourcePropertyId === $priorState->propertyId &&
+                    $ctx->sourceItemId === $priorState->itemId &&
+                    $ctx->sourceValuationScope === $priorState->valuationScope) {
+                    return $this->sameScopeNeutralResult($priorState, $input->sequence, $ctx->sourceCarryingUnitCost);
+                }
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'TRANSFER_REQUIRES_PAIRED_SCOPE_MODEL');
+            }
+
+            // Paired-scope mode (destinationValuationScope is provided)
+            if ($ctx->sourceValuationScope === $ctx->destinationValuationScope) {
+                // Same source and destination scope — neutral transfer
+                if ($ctx->sourcePropertyId === $priorState->propertyId &&
+                    $ctx->sourceItemId === $priorState->itemId &&
+                    $priorState->valuationScope === $ctx->sourceValuationScope) {
+                    return $this->sameScopeNeutralResult($priorState, $input->sequence, $ctx->sourceCarryingUnitCost);
+                }
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'SCOPE_MISMATCH');
+            }
+
+            // Cross-scope: source and destination are distinct scopes
+            if ($ctx->sourcePropertyId !== $priorState->propertyId || $ctx->sourceItemId !== $priorState->itemId) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'SCOPE_MISMATCH');
+            }
+
+            $isSourceLeg      = ($priorState->valuationScope === $ctx->sourceValuationScope);
+            $isDestinationLeg = ($priorState->valuationScope === $ctx->destinationValuationScope);
+
+            if (!$isSourceLeg && !$isDestinationLeg) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'INVALID_CROSS_SCOPE_TRANSFER_LEG');
+            }
+
+            if ($isSourceLeg) {
+                if (!$input->quantityDelta->isNegative()) {
+                    return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'INVALID_CROSS_SCOPE_TRANSFER_LEG');
+                }
+                return $this->evaluateCrossScopeTransferOut($input, $priorState);
+            }
+
+            // $isDestinationLeg
+            if (!$input->quantityDelta->isPositive()) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'INVALID_CROSS_SCOPE_TRANSFER_LEG');
+            }
+            return $this->evaluateCrossScopeTransferIn($input, $priorState, $ctx);
         }
         
         return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'UNKNOWN_EVENT_TYPE');
+    }
+
+    private function sameScopeNeutralResult(
+        AvcoValuationState $priorState,
+        \Modules\Finance\CostControl\ValueObjects\ValuationSequence $sequence,
+        AvcoDecimal $sourceCarryingUnitCost
+    ): AvcoValuationResult {
+        return new AvcoValuationResult(
+            AvcoValuationResult::STATUS_FINAL,
+            new AvcoValuationState(
+                $priorState->propertyId, $priorState->itemId, $priorState->valuationScope,
+                $priorState->onHandQuantity, $priorState->weightedAverageUnitCost,
+                $priorState->carryingValue, $sequence, $priorState->unresolvedProvisionalQuantity
+            ),
+            AvcoDecimal::zero(),
+            'SAME_SCOPE_TRANSFER_VALUATION_NEUTRAL',
+            null,
+            $sourceCarryingUnitCost
+        );
+    }
+
+    private function evaluateCrossScopeTransferOut(
+        AvcoValuationInput $input,
+        AvcoValuationState $priorState
+    ): AvcoValuationResult {
+        if ($priorState->weightedAverageUnitCost === null) {
+            return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'MISSING_PREVAILING_CARRYING_COST');
+        }
+
+        $issueQty     = $input->quantityDelta->abs();
+        $newQuantity  = $priorState->onHandQuantity->add($input->quantityDelta);
+
+        if ($newQuantity->isNegative()) {
+            return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'CROSS_SCOPE_TRANSFER_OUT_EXCEEDS_AVAILABLE_QUANTITY');
+        }
+
+        if ($newQuantity->isZero()) {
+            $relievedValue    = $priorState->carryingValue;
+            $newCarryingValue = AvcoDecimal::zero();
+            $newAvco          = null;
+        } else {
+            $relievedValue    = $issueQty->mul($priorState->weightedAverageUnitCost);
+            $newCarryingValue = $priorState->carryingValue->sub($relievedValue);
+            $newAvco          = $priorState->weightedAverageUnitCost;
+        }
+
+        return new AvcoValuationResult(
+            AvcoValuationResult::STATUS_FINAL,
+            new AvcoValuationState(
+                $priorState->propertyId, $priorState->itemId, $priorState->valuationScope,
+                $newQuantity, $newAvco, $newCarryingValue, $input->sequence
+            ),
+            AvcoDecimal::zero()->sub($relievedValue),
+            'CROSS_SCOPE_TRANSFER_OUT',
+            null,
+            $priorState->weightedAverageUnitCost
+        );
+    }
+
+    private function evaluateCrossScopeTransferIn(
+        AvcoValuationInput $input,
+        AvcoValuationState $priorState,
+        \Modules\Finance\CostControl\ValueObjects\TransferValuationContext $ctx
+    ): AvcoValuationResult {
+        $inValue          = $input->quantityDelta->mul($ctx->sourceCarryingUnitCost);
+        $newQuantity      = $priorState->onHandQuantity->add($input->quantityDelta);
+        $newCarryingValue = $priorState->carryingValue->add($inValue);
+        $newAvco          = $newQuantity->isPositive()
+            ? $newCarryingValue->div($newQuantity)
+            : AvcoDecimal::zero();
+
+        return new AvcoValuationResult(
+            AvcoValuationResult::STATUS_FINAL,
+            new AvcoValuationState(
+                $priorState->propertyId, $priorState->itemId, $priorState->valuationScope,
+                $newQuantity, $newAvco, $newCarryingValue, $input->sequence
+            ),
+            $inValue,
+            'CROSS_SCOPE_TRANSFER_IN',
+            null,
+            $ctx->sourceCarryingUnitCost
+        );
     }
 }

@@ -142,6 +142,9 @@ class CostLedgerPostingPlanner
             $unitCost = $evidence->approvedValuationBasis;
         } elseif ($entryType === 'issue' || $entryType === 'negative_adjustment') {
             $unitCost = $priorState->weightedAverageUnitCost;
+        } elseif ($entryType === 'transfer') {
+            // Cross-scope transfer: engine carries the frozen unit cost in sourceCarryingUnitCost
+            $unitCost = $result->sourceCarryingUnitCost;
         }
         
         if ($unitCost === null || $valueDelta === null) {
