@@ -1,0 +1,20 @@
+<?php
+
+namespace Modules\Finance\CostControl\Enums;
+
+enum CostAuthorityEnrollmentPreflightFindingCode: string
+{
+    case GROUP_NOT_APPROVED                                       = 'GROUP_NOT_APPROVED';
+    case GROUP_HAS_NO_SNAPSHOTS                                   = 'GROUP_HAS_NO_SNAPSHOTS';
+    case SNAPSHOT_CONTEXT_INCONSISTENT                            = 'SNAPSHOT_CONTEXT_INCONSISTENT';
+    case SNAPSHOT_SCOPE_NOT_CANONICAL                             = 'SNAPSHOT_SCOPE_NOT_CANONICAL';
+    case POSITIVE_STOCK_LOCATION_NOT_COVERED                      = 'POSITIVE_STOCK_LOCATION_NOT_COVERED';
+    case PENDING_OR_FAILED_SOURCE_OUTBOX_MESSAGE                  = 'PENDING_OR_FAILED_SOURCE_OUTBOX_MESSAGE';
+    case PROPERTY_BUSINESS_DATE_NOT_OPEN                          = 'PROPERTY_BUSINESS_DATE_NOT_OPEN';
+    case FINANCIAL_PERIOD_NOT_OPEN                                = 'FINANCIAL_PERIOD_NOT_OPEN';
+    case UNRESOLVED_JOURNAL_CANDIDATE                             = 'UNRESOLVED_JOURNAL_CANDIDATE';
+    case BUSINESS_LOCATION_COMPLETENESS_REQUIRES_RECONCILIATION   = 'BUSINESS_LOCATION_COMPLETENESS_REQUIRES_RECONCILIATION';
+    case BASELINE_ALIGNMENT_NOT_EVALUATED                         = 'BASELINE_ALIGNMENT_NOT_EVALUATED';
+    case GL_AUTHORITY_ROUTING_NOT_EVALUATED                       = 'GL_AUTHORITY_ROUTING_NOT_EVALUATED';
+    case PERIOD_BOUNDARY_NOT_EVALUATED                            = 'PERIOD_BOUNDARY_NOT_EVALUATED';
+}
