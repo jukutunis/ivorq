@@ -79,6 +79,14 @@ A CostControl-owned durable AVCO state record must be maintained per valuation s
 * **Sequence Guard**: No message of sequence $N$ may be processed before sequence $N-1$ is successfully recorded in the state record.
 * **Reconstruction**: The state record must never be dynamically reconstructed from mutable `InventoryStock`.
 
+### Strict Sequence Barrier
+For a valuation scope, a pending, rejected, correction-required, or out-of-order sequence is a blocking business outcome.
+The AVCO durable state and last_valuation_sequence remain unchanged.
+No Cost Ledger entry may be appended for that sequence.
+A completed consumer business decision must transition the corresponding Outbox message to failed with a safe durable reason.
+No later valuation sequence in the same scope may be planned, appended, or used to advance AVCO state until the blocking sequence is resolved through a future explicitly authorized controlled correction/recovery capability.
+Silent skips, automatic retries, sequence bypass, and later-sequence AVCO calculation are prohibited.
+
 ### 5. Delayed Business Date and Financial Period Policy
 A deferred Cost Ledger delivery must never silently append into a closed Financial Period or bypass a closed Business Date control.
 * **Source-Time Posting Eligibility**: Immutable evidence proves the Inventory posting was authorized under Business Date and Financial Period controls at posting time.
@@ -95,11 +103,11 @@ The `CostControl Outbox Consumer` must update the outbox message state based on 
 | Malformed topic or payload | `failed` | Permanent failure. Payload lacks ULID or is not JSON. |
 | Source `InventoryTransaction` missing | `failed` | Permanent failure. Transaction does not exist in DB. |
 | Evidence incomplete or unavailable | `failed` | Permanent failure. Required evidence cannot be resolved. |
-| Planner rejected | `failed` | Permanent failure. Ineligible transaction context. |
-| Planner pending or deferred | `failed` | Recoverable failure. Recoverable only through a future controlled recovery capability. |
-| Out-of-order valuation sequence | `failed` | Recoverable failure. Recoverable only through a future controlled recovery capability. |
-| Closed/ineligible posting window | `failed` | Recoverable failure. Awaiting correction workflow or reopen. |
-| Unexpected infrastructure failure (completed write) | `failed` | Recoverable failure. Message becomes failed with a safe reason. |
+| Planner rejected | `failed` | Permanent failure. Ineligible transaction context. AVCO state does not advance; later sequences remain blocked; controlled correction/recovery is required. |
+| Planner pending or deferred | `failed` | Recoverable failure. AVCO state does not advance; later sequences remain blocked; controlled correction/recovery is required. |
+| Out-of-order valuation sequence | `failed` | Recoverable failure. AVCO state does not advance; later sequences remain blocked; controlled correction/recovery is required. |
+| Closed/ineligible posting window | `failed` | Recoverable failure. AVCO state does not advance; later sequences remain blocked; controlled correction/recovery is required. |
+| Unexpected infrastructure failure (completed write) | `failed` | Recoverable failure. Message becomes failed with a safe reason. AVCO state does not advance; later sequences remain blocked; controlled correction/recovery is required. |
 | Unexpected process interruption (write interrupted) | `pending` | Incomplete execution. Message remains pending. |
 
 * **Interruption Policy**: When an unexpected infrastructure failure is caught and failure-state writing can complete durably, the message becomes failed with a safe reason. When execution is interrupted before failure-state writing can complete, the message may remain pending. This represents incomplete execution, not a completed business decision, and requires future controlled recovery.
@@ -121,7 +129,7 @@ Cost Ledger append is idempotent. A crash after append but before `markDelivered
 
 ## Consequences
 * **Decoupled Validation**: Outbox messages can be written synchronously without waiting for valuation calculations.
-* **Strict Ordering**: Enforcing valuation sequence guarantees the mathematical correctness of AVCO at the cost of requiring sequential delivery per valuation scope.
+* **Strict Ordering**: Enforcing valuation sequence guarantees the mathematical correctness of AVCO at the cost of requiring sequential delivery per valuation scope. This strict ordering may intentionally block later business events in a valuation scope until the earlier sequence is resolved.
 * **Observability**: Every processing outcome is durably tracked on the outbox record, making errors instantly observable.
 
 ---
@@ -163,6 +171,9 @@ This ADR does not authorize:
 * **Allowing Late Delivery to Bypass Closed Periods**: Rejected because it violates basic accounting audit and control principles.
 * **Matching Exception Message Text**: Rejected because database error messages are locale-dependent and unsafe for business logic.
 * **Reconstructing AVCO without Sequence**: Rejected because out-of-order execution breaks AVCO math.
+* **Advancing State for Pending/Provisional Sequence Without Cost Ledger Append**: Rejected because it breaks sequence and monetary consistency between AVCO state and the Cost Ledger.
+* **Processing Sequence N+1 While N Remains Unresolved**: Rejected because out-of-order calculation violates chronological consistency of weighted average calculations.
+* **Silently Skipping a Failed Valuation Sequence**: Rejected because it leads to permanent audit trail divergence and incorrect subsequent costs.
 
 ---
 
