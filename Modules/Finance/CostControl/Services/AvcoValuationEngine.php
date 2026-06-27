@@ -18,6 +18,17 @@ class AvcoValuationEngine
             return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'SCOPE_MISMATCH');
         }
 
+        $expectedLedgerSequence = $priorState->lastAppliedSequence !== null
+            ? $priorState->lastAppliedSequence->ledgerSequence + 1
+            : 1;
+
+        if ($input->sequence->ledgerSequence !== $expectedLedgerSequence) {
+            if ($priorState->lastAppliedSequence !== null && $input->sequence->ledgerSequence <= $priorState->lastAppliedSequence->ledgerSequence) {
+                return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'OUT_OF_ORDER_OR_DUPLICATE_SEQUENCE');
+            }
+            return new AvcoValuationResult(AvcoValuationResult::STATUS_REJECTED, $priorState, null, 'SEQUENCE_GAP_DETECTED');
+        }
+
         if ($priorState->lastAppliedSequence !== null) {
             try {
                 if ($input->sequence->compareTo($priorState->lastAppliedSequence) <= 0) {

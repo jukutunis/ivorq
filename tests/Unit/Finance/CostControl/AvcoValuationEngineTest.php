@@ -134,6 +134,67 @@ class AvcoValuationEngineTest extends TestCase
         $this->assertEquals(AvcoValuationResult::STATUS_REJECTED, $outOfOrderResult->status);
     }
 
+    public function test_fresh_scope_with_sequence_1_proceeds_to_valuation()
+    {
+        $engine = new AvcoValuationEngine();
+        $prior = new AvcoValuationState('prop1', 'item1', 'scope1', new AvcoDecimal('10.0'), new AvcoDecimal('10.0'), new AvcoDecimal('100.0'));
+        $input = $this->createInput('receipt', '10.0', '20.0', 1);
+
+        $result = $engine->evaluate($input, $prior);
+        $this->assertEquals(AvcoValuationResult::STATUS_FINAL, $result->status);
+        $this->assertEquals(1, $result->newState->lastAppliedSequence->ledgerSequence);
+    }
+
+    public function test_fresh_scope_with_sequence_2_is_rejected_as_gap()
+    {
+        $engine = new AvcoValuationEngine();
+        $prior = new AvcoValuationState('prop1', 'item1', 'scope1', new AvcoDecimal('10.0'), new AvcoDecimal('10.0'), new AvcoDecimal('100.0'));
+        $input = $this->createInput('receipt', '10.0', '20.0', 2);
+
+        $result = $engine->evaluate($input, $prior);
+        $this->assertEquals(AvcoValuationResult::STATUS_REJECTED, $result->status);
+        $this->assertEquals('SEQUENCE_GAP_DETECTED', $result->reasonCode);
+        $this->assertSame($prior, $result->newState);
+    }
+
+    public function test_prior_sequence_1_with_incoming_3_is_rejected_as_gap()
+    {
+        $engine = new AvcoValuationEngine();
+        $priorSeq = new ValuationSequence('prop1', 'item1', 'scope1', '2026-01-01', 1);
+        $prior = new AvcoValuationState('prop1', 'item1', 'scope1', new AvcoDecimal('10.0'), new AvcoDecimal('10.0'), new AvcoDecimal('100.0'), $priorSeq);
+        $input = $this->createInput('receipt', '10.0', '20.0', 3);
+
+        $result = $engine->evaluate($input, $prior);
+        $this->assertEquals(AvcoValuationResult::STATUS_REJECTED, $result->status);
+        $this->assertEquals('SEQUENCE_GAP_DETECTED', $result->reasonCode);
+        $this->assertSame($prior, $result->newState);
+    }
+
+    public function test_prior_sequence_1_with_incoming_1_is_rejected_as_duplicate()
+    {
+        $engine = new AvcoValuationEngine();
+        $priorSeq = new ValuationSequence('prop1', 'item1', 'scope1', '2026-01-01', 1);
+        $prior = new AvcoValuationState('prop1', 'item1', 'scope1', new AvcoDecimal('10.0'), new AvcoDecimal('10.0'), new AvcoDecimal('100.0'), $priorSeq);
+        $input = $this->createInput('receipt', '10.0', '20.0', 1);
+
+        $result = $engine->evaluate($input, $prior);
+        $this->assertEquals(AvcoValuationResult::STATUS_REJECTED, $result->status);
+        $this->assertEquals('OUT_OF_ORDER_OR_DUPLICATE_SEQUENCE', $result->reasonCode);
+        $this->assertSame($prior, $result->newState);
+    }
+
+    public function test_prior_sequence_1_with_incoming_2_proceeds_to_valuation_and_advances_state()
+    {
+        $engine = new AvcoValuationEngine();
+        $priorSeq = new ValuationSequence('prop1', 'item1', 'scope1', '2026-01-01', 1);
+        $prior = new AvcoValuationState('prop1', 'item1', 'scope1', new AvcoDecimal('10.0'), new AvcoDecimal('10.0'), new AvcoDecimal('100.0'), $priorSeq);
+        $input = $this->createInput('receipt', '10.0', '20.0', 2);
+
+        $result = $engine->evaluate($input, $prior);
+        $this->assertEquals(AvcoValuationResult::STATUS_FINAL, $result->status);
+        $this->assertEquals(2, $result->newState->lastAppliedSequence->ledgerSequence);
+    }
+
     public function test_scope_mismatch_is_rejected()
     {
         $engine = new AvcoValuationEngine();
