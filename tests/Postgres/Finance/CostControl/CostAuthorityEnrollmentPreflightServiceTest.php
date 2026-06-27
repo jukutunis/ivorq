@@ -344,10 +344,9 @@ class CostAuthorityEnrollmentPreflightServiceTest extends PostgresTestCase
             'updated_at'  => now(),
         ]);
 
-        // Disable triggers on both tables immediately before the required direct
-        // test-data mutations that simulate pre-migration legacy scope data.
+        // Disable triggers immediately before the required direct mutation that
+        // creates malformed legacy scope data.
         DB::statement('ALTER TABLE cost_authority_enrollment_scope_snapshots DISABLE TRIGGER ALL');
-        DB::statement('ALTER TABLE cost_authority_enrollment_groups DISABLE TRIGGER ALL');
 
         try {
             DB::table('cost_authority_enrollment_scope_snapshots')->insert([
@@ -364,20 +363,20 @@ class CostAuthorityEnrollmentPreflightServiceTest extends PostgresTestCase
                 'created_at'             => now(),
                 'updated_at'             => now(),
             ]);
-
-            // Advance the draft group to approved while triggers are disabled.
-            DB::table('cost_authority_enrollment_groups')
-                ->where('id', $malformedGroupId)
-                ->update([
-                    'status'      => CostAuthorityEnrollmentStatusEnum::Approved->value,
-                    'approved_by' => $this->actorId,
-                    'approved_at' => now(),
-                    'updated_at'  => now(),
-                ]);
         } finally {
-            DB::statement('ALTER TABLE cost_authority_enrollment_groups ENABLE TRIGGER ALL');
             DB::statement('ALTER TABLE cost_authority_enrollment_scope_snapshots ENABLE TRIGGER ALL');
         }
+
+        // Triggers restored. Advance the group to approved; the approval trigger
+        // is satisfied by the presence of approved_by and approved_at.
+        DB::table('cost_authority_enrollment_groups')
+            ->where('id', $malformedGroupId)
+            ->update([
+                'status'      => CostAuthorityEnrollmentStatusEnum::Approved->value,
+                'approved_by' => $this->actorId,
+                'approved_at' => now(),
+                'updated_at'  => now(),
+            ]);
 
         $result = $this->service->evaluate($malformedGroupId);
 
