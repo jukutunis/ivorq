@@ -344,38 +344,40 @@ class CostAuthorityEnrollmentPreflightServiceTest extends PostgresTestCase
             'updated_at'  => now(),
         ]);
 
-        // Disable triggers to simulate pre-migration data with a bad scope.
+        // Disable triggers on both tables immediately before the required direct
+        // test-data mutations that simulate pre-migration legacy scope data.
         DB::statement('ALTER TABLE cost_authority_enrollment_scope_snapshots DISABLE TRIGGER ALL');
-
-        DB::table('cost_authority_enrollment_scope_snapshots')->insert([
-            'id'                     => (string) Str::ulid(),
-            'enrollment_group_id'    => $malformedGroupId,
-            'location_id'            => $this->locationB,
-            'valuation_scope'        => 'arbitrary:non:canonical:scope',
-            'opening_quantity'       => '50.0000',
-            'opening_carrying_value' => '750.0000',
-            'currency_code'          => 'USD',
-            'business_date'          => $this->businessDate,
-            'financial_period_id'    => $this->financialPeriodId,
-            'evidence_timestamp'     => now(),
-            'created_at'             => now(),
-            'updated_at'             => now(),
-        ]);
-
-        // Advance the draft group to approved while triggers are disabled.
         DB::statement('ALTER TABLE cost_authority_enrollment_groups DISABLE TRIGGER ALL');
 
-        DB::table('cost_authority_enrollment_groups')
-            ->where('id', $malformedGroupId)
-            ->update([
-                'status'      => CostAuthorityEnrollmentStatusEnum::Approved->value,
-                'approved_by' => $this->actorId,
-                'approved_at' => now(),
-                'updated_at'  => now(),
+        try {
+            DB::table('cost_authority_enrollment_scope_snapshots')->insert([
+                'id'                     => (string) Str::ulid(),
+                'enrollment_group_id'    => $malformedGroupId,
+                'location_id'            => $this->locationB,
+                'valuation_scope'        => 'arbitrary:non:canonical:scope',
+                'opening_quantity'       => '50.0000',
+                'opening_carrying_value' => '750.0000',
+                'currency_code'          => 'USD',
+                'business_date'          => $this->businessDate,
+                'financial_period_id'    => $this->financialPeriodId,
+                'evidence_timestamp'     => now(),
+                'created_at'             => now(),
+                'updated_at'             => now(),
             ]);
 
-        DB::statement('ALTER TABLE cost_authority_enrollment_groups ENABLE TRIGGER ALL');
-        DB::statement('ALTER TABLE cost_authority_enrollment_scope_snapshots ENABLE TRIGGER ALL');
+            // Advance the draft group to approved while triggers are disabled.
+            DB::table('cost_authority_enrollment_groups')
+                ->where('id', $malformedGroupId)
+                ->update([
+                    'status'      => CostAuthorityEnrollmentStatusEnum::Approved->value,
+                    'approved_by' => $this->actorId,
+                    'approved_at' => now(),
+                    'updated_at'  => now(),
+                ]);
+        } finally {
+            DB::statement('ALTER TABLE cost_authority_enrollment_groups ENABLE TRIGGER ALL');
+            DB::statement('ALTER TABLE cost_authority_enrollment_scope_snapshots ENABLE TRIGGER ALL');
+        }
 
         $result = $this->service->evaluate($malformedGroupId);
 
