@@ -10,12 +10,18 @@ use Modules\Operations\Inventory\Models\InventoryAdjustment;
 use Modules\Operations\Inventory\Repositories\InventoryAdjustmentRepository;
 use Modules\Operations\Inventory\Repositories\InventoryItemRepository;
 use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
+use Modules\Operations\Inventory\Services\InventoryPostingControlCoordinator;
+use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
+use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
+use Shared\Exceptions\BusinessLogicException;
+use Modules\Operations\Inventory\Events\InventoryAdjustmentPosted;
 
 class AdjustmentService
 {
     public function __construct(
         private InventoryAdjustmentRepository $adjustmentRepository,
-        private StockMovementService $stockMovementService,
+        private InventoryPostingControlCoordinator $coordinator,
         private InventoryItemRepository $itemRepository,
         private InventoryStockRepository $stockRepository
     ) {}
@@ -60,12 +66,59 @@ class AdjustmentService
             ]);
         }
 
-        DB::transaction(function () use ($adjustment, $userId) {
-            foreach ($adjustment->lines as $line) {
-                // BR-065: staleness check — lock balance row for this item at the
-                // adjustment header location (adjustment lines always share the
-                // header location_id by design; no per-line location override).
-                $balance    = $this->stockRepository->findOrCreateLocked($line->item_id, $adjustment->location_id, $adjustment->property_id);
+        $businessDate = PropertyBusinessDate::where('property_id', $adjustment->property_id)
+            ->where('status', PropertyBusinessDateStatusEnum::Open)
+            ->where('is_open', true)
+            ->first();
+
+        if (!$businessDate) {
+            throw new BusinessLogicException("No open business date found for property.");
+        }
+
+        $authId = auth()->id();
+        $actorId = $userId ?? $authId;
+
+        if (!$actorId) {
+            throw new BusinessLogicException("Authenticated posting operator is required.");
+        }
+
+        if ($authId !== null && $userId !== null && $userId !== $authId) {
+            throw new BusinessLogicException("The supplied user ID does not match the authenticated posting operator.");
+        }
+
+        // Deterministic multi-line order: item_id ASC -> id ASC
+        $sortedLines = $adjustment->lines->map(function ($line) {
+            if (!$line->item_id) {
+                throw new BusinessLogicException("Adjustment line is missing item.");
+            }
+            return $line;
+        })->sortBy([
+            ['item_id', 'asc'],
+            ['id', 'asc'],
+        ]);
+
+        $occurredAt = \Illuminate\Support\Carbon::parse($adjustment->created_at ?? now());
+
+        DB::transaction(function () use ($adjustment, $sortedLines, $businessDate, $occurredAt, $actorId) {
+            // Lock context first
+            $this->coordinator->lockContext($adjustment->property_id, $businessDate->business_date, $occurredAt);
+
+            $intents = [];
+
+            foreach ($sortedLines as $line) {
+                // Check idempotency first to allow re-post replay
+                $idemKey = "adj_{$adjustment->id}_{$line->id}_approve";
+                $existingTx = \Modules\Operations\Inventory\Models\InventoryTransaction::where('property_id', $adjustment->property_id)
+                    ->where('idempotency_key', $idemKey)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($existingTx) {
+                    continue;
+                }
+
+                // BR-065: staleness check — lock balance row for this item
+                $balance = $this->stockRepository->createOrLockControlled($adjustment->property_id, $line->item_id, $adjustment->location_id);
                 $currentQty = (float) $balance->physical_quantity;
 
                 if ($currentQty !== (float) $line->quantity_system) {
@@ -82,30 +135,59 @@ class AdjustmentService
                 }
 
                 $item = $this->itemRepository->find($line->item_id);
+                if (!$item) {
+                    throw new BusinessLogicException("Item not found: {$line->item_id}");
+                }
 
                 // BR-067: cost stamped at approval time using item.weighted_average_cost.
                 // positive adjustment may use unit_cost from the line if provided;
                 // negative adjustment always uses the item's weighted_average_cost.
-                $unitCost = $variance > 0 && $line->unit_cost
+                $costToUse = $variance > 0 && $line->unit_cost !== null
                     ? (string) $line->unit_cost
-                    : (string) $item->weighted_average_cost;
+                    : ($item->weighted_average_cost !== null ? (string) $item->weighted_average_cost : null);
 
-                $this->stockMovementService->adjust(
-                    $adjustment->property_id,
-                    $line->item_id,
-                    $adjustment->location_id,
-                    (string) $variance,
-                    $unitCost,
-                    $adjustment->id,
-                    $adjustment->adjustment_number,
-                    $userId
+                if ($costToUse === null) {
+                    throw ValidationException::withMessages([
+                        'cost' => ["Item {$item->name} ({$item->sku}) does not have a valid cost."],
+                    ]);
+                }
+
+                $qtyChange = (string) $variance;
+                $totalCost = bcmul($qtyChange, $costToUse, 4);
+
+                $type = $variance > 0 ? TransactionTypeEnum::AdjustmentIn : TransactionTypeEnum::AdjustmentOut;
+
+                $intents[] = new InventoryLedgerPostingIntent(
+                    propertyId: $adjustment->property_id,
+                    itemId: $line->item_id,
+                    locationId: $adjustment->location_id,
+                    businessDate: $businessDate->business_date,
+                    occurredAt: $occurredAt,
+                    sourceDocumentType: 'inventory_adjustment',
+                    sourceDocumentId: $adjustment->id,
+                    sourceLineType: 'inventory_adjustment_line',
+                    sourceLineId: $line->id,
+                    movementRole: $type->value,
+                    idempotencyKey: "adj_{$adjustment->id}_{$line->id}_approve",
+                    transactionType: $type,
+                    quantityChange: $qtyChange,
+                    unitCost: $costToUse,
+                    totalCost: $totalCost,
+                    reference: $adjustment->adjustment_number,
+                    notes: 'Inventory Adjustment Posting'
                 );
+            }
+
+            // Post all intents
+            foreach ($intents as $intent) {
+                $transaction = $this->coordinator->post($intent, $actorId);
+                InventoryAdjustmentPosted::dispatch($transaction);
             }
 
             $this->adjustmentRepository->update($adjustment->id, [
                 'status'      => AdjustmentStatusEnum::Approved->value,
                 'approved_at' => now(),
-                'approved_by' => $userId ?? auth()->id(),
+                'approved_by' => $actorId,
             ]);
         });
 
