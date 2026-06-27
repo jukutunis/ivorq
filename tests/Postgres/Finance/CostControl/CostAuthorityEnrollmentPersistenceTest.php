@@ -50,11 +50,20 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
     // Helpers
     // -------------------------------------------------------------------------
 
+    /**
+     * Build a canonical valuation_scope string for the given location.
+     * This matches the exact format written by InventoryPostingControlCoordinator.
+     */
+    private function canonicalScope(string $locationId): string
+    {
+        return "property:{$this->propertyId}:location:{$locationId}:item:{$this->itemId}";
+    }
+
     private function makeSnapshot(string $locationId, ?string $scope = null, array $overrides = []): array
     {
         return array_merge([
             'location_id'            => $locationId,
-            'valuation_scope'        => $scope ?? "property:{$this->propertyId}:location:{$locationId}:item:{$this->itemId}",
+            'valuation_scope'        => $scope ?? $this->canonicalScope($locationId),
             'opening_quantity'       => '100.0000',
             'opening_carrying_value' => '1500.0000',
             'currency_code'          => 'USD',
@@ -79,7 +88,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
     }
 
     // -------------------------------------------------------------------------
-    // Test 1: draft parent with two location/scope snapshots persists
+    // Test 1: draft parent with two distinct canonical-scope snapshots persists
     // -------------------------------------------------------------------------
 
     public function test_draft_group_with_two_snapshots_persists(): void
@@ -97,21 +106,31 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
         $locationIds = $snapshots->pluck('location_id')->sort()->values()->toArray();
         $expected    = collect([$this->locationA, $this->locationB])->sort()->values()->toArray();
         $this->assertEquals($expected, $locationIds);
+
+        // Verify each snapshot carries its canonical valuation_scope.
+        foreach ($snapshots as $snapshot) {
+            $this->assertEquals(
+                $this->canonicalScope($snapshot->location_id),
+                $snapshot->valuation_scope
+            );
+        }
     }
 
     // -------------------------------------------------------------------------
-    // Test 2: duplicate location_id + valuation_scope inside one group rejected
+    // Test 2: duplicate location_id inside one group is rejected
+    //         (regardless of valuation_scope — new uk_caess_group_location)
     // -------------------------------------------------------------------------
 
-    public function test_duplicate_location_scope_within_group_is_rejected(): void
+    public function test_duplicate_location_within_group_is_rejected(): void
     {
         $this->expectException(\Illuminate\Database\QueryException::class);
 
+        // Both snapshots share location_id — must violate uk_caess_group_location.
         $this->repo->createDraft(
             ['property_id' => $this->propertyId, 'item_id' => $this->itemId],
             [
-                $this->makeSnapshot($this->locationA, 'scope:A'),
-                $this->makeSnapshot($this->locationA, 'scope:A'), // duplicate
+                $this->makeSnapshot($this->locationA),
+                $this->makeSnapshot($this->locationA), // same location — duplicate
             ]
         );
     }
@@ -250,14 +269,17 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
         DB::transaction(fn () => $this->repo->approve($group->id, $this->actorId, $approvedAt));
 
+        $newLocationId = (string) Str::ulid();
+
         $this->expectException(\Illuminate\Database\QueryException::class);
+        // Parent-draft guard fires before canonical-scope guard — existing message.
         $this->expectExceptionMessageMatches('/snapshot changes are not allowed when parent status=approved/');
 
         DB::table('cost_authority_enrollment_scope_snapshots')->insert([
             'id'                     => (string) Str::ulid(),
             'enrollment_group_id'    => $group->id,
-            'location_id'            => (string) Str::ulid(),
-            'valuation_scope'        => 'late:insert:attempt',
+            'location_id'            => $newLocationId,
+            'valuation_scope'        => $this->canonicalScope($newLocationId),
             'opening_quantity'       => '1.0000',
             'opening_carrying_value' => '10.0000',
             'currency_code'          => 'USD',
@@ -425,5 +447,74 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
         DB::table('cost_authority_enrollment_groups')
             ->where('id', $group->id)
             ->delete();
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 12: non-canonical valuation_scope is rejected by PostgreSQL trigger
+    //          (canonical-scope invariant — new in corrective slice)
+    // -------------------------------------------------------------------------
+
+    public function test_pg_trigger_rejects_non_canonical_valuation_scope(): void
+    {
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectExceptionMessageMatches('/valuation_scope is not canonical/');
+
+        // Insert a parent group directly to bypass the repository scope guard.
+        $groupId = (string) Str::ulid();
+        DB::table('cost_authority_enrollment_groups')->insert([
+            'id'          => $groupId,
+            'property_id' => $this->propertyId,
+            'item_id'     => $this->itemId,
+            'status'      => 'draft',
+            'created_at'  => now(),
+            'updated_at'  => now(),
+        ]);
+
+        // Insert a snapshot with an arbitrary (non-canonical) scope string.
+        DB::table('cost_authority_enrollment_scope_snapshots')->insert([
+            'id'                     => (string) Str::ulid(),
+            'enrollment_group_id'    => $groupId,
+            'location_id'            => $this->locationA,
+            'valuation_scope'        => 'arbitrary:non:canonical:string',
+            'opening_quantity'       => '100.0000',
+            'opening_carrying_value' => '1500.0000',
+            'currency_code'          => 'USD',
+            'business_date'          => '2026-07-01',
+            'evidence_timestamp'     => now(),
+            'created_at'             => now(),
+            'updated_at'             => now(),
+        ]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 13: second snapshot for the same enrollment_group_id + location_id
+    //          is rejected, even with a different valuation_scope
+    //          (new uk_caess_group_location uniqueness — corrective slice)
+    // -------------------------------------------------------------------------
+
+    public function test_unique_index_rejects_second_snapshot_for_same_location(): void
+    {
+        $this->expectException(\Illuminate\Database\QueryException::class);
+
+        // First snapshot for locationA.
+        $group = $this->makeDraftGroup([
+            $this->makeSnapshot($this->locationA),
+        ]);
+
+        // Second snapshot for the same locationA — canonical scope is identical
+        // (confirmed by canonicalScope helper), so uk_caess_group_location fires.
+        DB::table('cost_authority_enrollment_scope_snapshots')->insert([
+            'id'                     => (string) Str::ulid(),
+            'enrollment_group_id'    => $group->id,
+            'location_id'            => $this->locationA,
+            'valuation_scope'        => $this->canonicalScope($this->locationA),
+            'opening_quantity'       => '50.0000',
+            'opening_carrying_value' => '750.0000',
+            'currency_code'          => 'USD',
+            'business_date'          => '2026-07-01',
+            'evidence_timestamp'     => now(),
+            'created_at'             => now(),
+            'updated_at'             => now(),
+        ]);
     }
 }

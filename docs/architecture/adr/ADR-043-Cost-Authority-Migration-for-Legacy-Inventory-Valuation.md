@@ -20,9 +20,25 @@ Sistem saat ini mengelola data fisik persediaan (`InventoryStock`) dan nilai leg
 2. **Before enrollment, legacy valuation remains authoritative for every active location and valuation scope in that group.**
 3. **After enrollment, CostControl is the sole AVCO authority for every included location and valuation scope in that group.**
 4. **Mixed legacy and CostControl authority across locations for the same Property + Item enrollment group is prohibited.**
-5. **CostControl state remains calculated per: property_id + location_id + item_id + valuation_scope.**
+5. **CostControl state remains calculated per: property_id + location_id + item_id + valuation_scope.** *(See Implementation Clarification — Canonical Valuation Scope below for the exact meaning of valuation_scope.)*
 
 Cutover otoritas harus dilakukan secara terkoordinasi sebagai satu kesatuan kelompok Property + Item karena representasi legacy WAC tidak dapat membedakan lokasi penyimpanan.
+
+## Implementation Clarification — Canonical Valuation Scope
+
+This section resolves the physical state identity of `valuation_scope` and supersedes any prior wording that could imply it is an independently selectable fourth physical AVCO or sequence dimension.
+
+* **Physical AVCO state and Inventory valuation-sequence serialization use `property_id + location_id + item_id`.** Both `cost_avco_states` and `inventory_valuation_sequences` are keyed and locked on this three-dimensional identity.
+
+* **`valuation_scope` is a required canonical immutable evidence key, deterministically derived as:** `property:{property_id}:location:{location_id}:item:{item_id}`. This matches exactly what `InventoryPostingControlCoordinator` writes at runtime.
+
+* **`valuation_scope` is not an independently selectable fourth physical state dimension.** A caller may not choose an arbitrary string for the same `property_id + location_id + item_id` physical scope.
+
+* **Any prior wording in ADR-043 that could imply physical state per `property_id + location_id + item_id + valuation_scope` is clarified by this section.** The three-tuple is the physical identity; `valuation_scope` is its canonical immutable label.
+
+* **The Property + Item enrollment group cutover decision remains unchanged.** Cutover still applies to all locations for a given Property + Item together.
+
+* **Each enrollment snapshot maps to exactly one `location_id` and its canonical `valuation_scope`.** No two snapshots in one enrollment group may share the same `location_id`, and the `valuation_scope` of every snapshot must equal `property:{parent.property_id}:location:{snapshot.location_id}:item:{parent.item_id}`.
 
 ## Immutable Opening Evidence
 Sebelum enrollment dijalankan untuk suatu kelompok Property + Item, dokumen bukti transisi awal yang bersifat immutable wajib dibuat secara konseptual mengandung informasi berikut:
