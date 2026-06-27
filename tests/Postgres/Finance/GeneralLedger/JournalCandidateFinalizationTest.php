@@ -38,6 +38,7 @@ class JournalCandidateFinalizationTest extends PostgresTestCase
     private string $assetAccountId;
     private string $revenueAccountId;
     private string $financialPeriodId;
+    private string $businessDateId;
 
     protected function setUp(): void
     {
@@ -108,14 +109,27 @@ class JournalCandidateFinalizationTest extends PostgresTestCase
         // Create open financial period for 2026-07
         $this->financialPeriodId = (string) Str::ulid();
         DB::table('gl_financial_periods')->insert([
-            'id' => $this->financialPeriodId,
-            'property_id' => $this->propertyId,
-            'period_year' => 2026,
+            'id'           => $this->financialPeriodId,
+            'property_id'  => $this->propertyId,
+            'period_year'  => 2026,
             'period_month' => 7,
-            'status' => 'Open',
-            'opened_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
+            'status'       => 'Open',
+            'opened_at'    => now(),
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+
+        // Create open PropertyBusinessDate for 2026-07-01 (matches candidate_date used throughout)
+        $this->businessDateId = (string) Str::ulid();
+        DB::table('property_business_dates')->insert([
+            'id'            => $this->businessDateId,
+            'property_id'   => $this->propertyId,
+            'business_date' => '2026-07-01',
+            'status'        => 'Open',
+            'is_open'       => true,
+            'opened_at'     => now(),
+            'created_at'    => now(),
+            'updated_at'    => now(),
         ]);
     }
 
@@ -518,5 +532,129 @@ class JournalCandidateFinalizationTest extends PostgresTestCase
         }
 
         $this->assertCount(0, JournalEntry::where('journal_candidate_id', $candidate->id)->get());
+    }
+
+    // =========================================================================
+    // GL Slice B: Authoritative final posting context proofs
+    // =========================================================================
+
+    // Proof 1 — Open PropertyBusinessDate + Open FinancialPeriod allows finalization
+    public function test_slice_b_open_business_date_and_open_period_allow_finalization(): void
+    {
+        // setUp provides Open PropertyBusinessDate for 2026-07-01 and Open FinancialPeriod for 2026/07.
+        $candidate = $this->makeApprovedCandidate();
+        $journal   = $this->finalizationService->finalize($candidate->id);
+
+        $this->assertEquals(JournalStatusEnum::Posted, $journal->status);
+        $this->assertEquals(JournalCandidateStatusEnum::POSTED, $candidate->fresh()->status);
+    }
+
+    // Proof 2 — Missing PropertyBusinessDate rejects finalization with full rollback
+    public function test_slice_b_missing_business_date_rejects_finalization(): void
+    {
+        DB::table('property_business_dates')
+            ->where('property_id', $this->propertyId)
+            ->delete();
+
+        $candidate = $this->makeApprovedCandidate();
+
+        try {
+            $this->finalizationService->finalize($candidate->id);
+            $this->fail('Finalization must fail when PropertyBusinessDate row is absent.');
+        } catch (Exception $e) {
+            $this->assertStringContainsString('PropertyBusinessDate not found', $e->getMessage());
+        }
+
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->fresh()->status);
+        $this->assertCount(0, JournalEntry::where('journal_candidate_id', $candidate->id)->get());
+        $this->assertNull(DB::table('gl_ledger_balances')->where('property_id', $this->propertyId)->first());
+    }
+
+    // Proof 3 — Closed PropertyBusinessDate rejects finalization with full rollback
+    public function test_slice_b_closed_business_date_rejects_finalization(): void
+    {
+        DB::table('property_business_dates')
+            ->where('id', $this->businessDateId)
+            ->update(['status' => 'Closed', 'is_open' => false, 'closed_at' => now()]);
+
+        $candidate = $this->makeApprovedCandidate();
+
+        try {
+            $this->finalizationService->finalize($candidate->id);
+            $this->fail('Finalization must fail when PropertyBusinessDate is Closed.');
+        } catch (Exception $e) {
+            $this->assertStringContainsString('is not Open', $e->getMessage());
+        }
+
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->fresh()->status);
+        $this->assertCount(0, JournalEntry::where('journal_candidate_id', $candidate->id)->get());
+        $this->assertNull(DB::table('gl_ledger_balances')->where('property_id', $this->propertyId)->first());
+    }
+
+    // Proof 4 — Missing FinancialPeriod rejects finalization; no auto-creation occurs
+    public function test_slice_b_missing_financial_period_rejects_finalization(): void
+    {
+        DB::table('gl_financial_periods')
+            ->where('id', $this->financialPeriodId)
+            ->delete();
+
+        $candidate = $this->makeApprovedCandidate();
+
+        try {
+            $this->finalizationService->finalize($candidate->id);
+            $this->fail('Finalization must fail when FinancialPeriod row is absent.');
+        } catch (\Modules\Finance\GeneralLedger\Exceptions\PeriodClosedException $e) {
+            $this->assertStringContainsString('FinancialPeriod not found', $e->getMessage());
+            $this->assertStringContainsString('Auto-creation is not permitted', $e->getMessage());
+        }
+
+        // Prove no period was auto-created during the failed finalization attempt.
+        $this->assertNull(
+            DB::table('gl_financial_periods')
+                ->where('property_id', $this->propertyId)
+                ->where('period_year', 2026)
+                ->where('period_month', 7)
+                ->first()
+        );
+
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->fresh()->status);
+        $this->assertCount(0, JournalEntry::where('journal_candidate_id', $candidate->id)->get());
+        $this->assertNull(DB::table('gl_ledger_balances')->where('property_id', $this->propertyId)->first());
+    }
+
+    // Proof 5 — Closed FinancialPeriod rejects finalization with full rollback
+    public function test_slice_b_closed_financial_period_rejects_finalization(): void
+    {
+        DB::table('gl_financial_periods')
+            ->where('id', $this->financialPeriodId)
+            ->update(['status' => 'Closed', 'closed_at' => now()]);
+
+        $candidate = $this->makeApprovedCandidate();
+
+        try {
+            $this->finalizationService->finalize($candidate->id);
+            $this->fail('Finalization must fail when FinancialPeriod is Closed.');
+        } catch (\Modules\Finance\GeneralLedger\Exceptions\PeriodClosedException $e) {
+            $this->assertStringContainsString('is closed or closing', $e->getMessage());
+        }
+
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->fresh()->status);
+        $this->assertCount(0, JournalEntry::where('journal_candidate_id', $candidate->id)->get());
+        $this->assertNull(DB::table('gl_ledger_balances')->where('property_id', $this->propertyId)->first());
+    }
+
+    // Proof 6 — Reopened FinancialPeriod allows finalization when PropertyBusinessDate is Open
+    public function test_slice_b_reopened_period_allows_finalization_when_business_date_open(): void
+    {
+        DB::table('gl_financial_periods')
+            ->where('id', $this->financialPeriodId)
+            ->update(['status' => 'Reopened']);
+
+        // PropertyBusinessDate remains Open from setUp.
+        $candidate = $this->makeApprovedCandidate();
+        $journal   = $this->finalizationService->finalize($candidate->id);
+
+        $this->assertEquals(JournalStatusEnum::Posted, $journal->status);
+        $this->assertEquals(JournalCandidateStatusEnum::POSTED, $candidate->fresh()->status);
     }
 }
