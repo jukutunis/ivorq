@@ -23,6 +23,7 @@ class FoundationServiceProvider extends ServiceProvider
         AuditServiceProvider::class,
         ActivityServiceProvider::class,
         \Modules\Foundation\Approval\ApprovalServiceProvider::class,
+        \Modules\Foundation\Outbox\OutboxServiceProvider::class,
     ];
 
     public function register(): void
