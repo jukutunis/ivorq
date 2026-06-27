@@ -2,6 +2,7 @@
 
 namespace Modules\Foundation\Outbox\Repositories;
 
+use Illuminate\Support\Facades\DB;
 use Modules\Foundation\Outbox\Models\OutboxMessage;
 use Modules\Foundation\Outbox\Enums\OutboxStatusEnum;
 
@@ -23,6 +24,19 @@ class OutboxRepository
     public function findById(string $id): ?OutboxMessage
     {
         return OutboxMessage::find($id);
+    }
+
+    public function findForUpdate(string $id): ?OutboxMessage
+    {
+        if (DB::transactionLevel() < 1) {
+            throw new \RuntimeException(
+                'OutboxRepository::findForUpdate requires an active outer transaction.'
+            );
+        }
+
+        return OutboxMessage::whereKey($id)
+            ->lockForUpdate()
+            ->first();
     }
 
     public function incrementAttempts(string $id): OutboxMessage

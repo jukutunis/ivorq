@@ -4,6 +4,7 @@ namespace Tests\Postgres\Foundation\Outbox;
 
 use Tests\PostgresTestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Foundation\Outbox\Repositories\OutboxRepository;
 use Modules\Foundation\Outbox\Models\OutboxMessage;
@@ -14,6 +15,11 @@ class OutboxMessageDeliveryStateTest extends PostgresTestCase
     use RefreshDatabase;
 
     protected $seed = true;
+
+    protected function connectionsToTransact(): array
+    {
+        return [];
+    }
 
     private OutboxRepository $repository;
 
@@ -164,5 +170,38 @@ class OutboxMessageDeliveryStateTest extends PostgresTestCase
         $this->assertEquals(0, $fresh->attempts);
         $this->assertNull($fresh->last_error);
         $this->assertEquals($deliveredAt, $fresh->delivered_at);
+    }
+
+    public function test_find_for_update_requires_active_outer_transaction(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/requires an active outer transaction/');
+
+        $this->repository->findForUpdate((string) Str::ulid());
+    }
+
+    public function test_find_for_update_returns_pending_message_inside_transaction(): void
+    {
+        $message = $this->createPendingMessage();
+
+        $found = DB::transaction(function () use ($message) {
+            return $this->repository->findForUpdate($message->id);
+        });
+
+        $this->assertNotNull($found);
+        $this->assertEquals($message->id, $found->id);
+        $this->assertEquals(OutboxStatusEnum::Pending, $found->status);
+        $this->assertEquals(0, $found->attempts);
+    }
+
+    public function test_find_for_update_returns_null_for_unknown_id_inside_transaction(): void
+    {
+        $unknownId = (string) Str::ulid();
+
+        $found = DB::transaction(function () use ($unknownId) {
+            return $this->repository->findForUpdate($unknownId);
+        });
+
+        $this->assertNull($found);
     }
 }
