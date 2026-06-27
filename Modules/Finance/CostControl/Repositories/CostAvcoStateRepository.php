@@ -27,7 +27,7 @@ class CostAvcoStateRepository
      * Prohibited patterns:
      *   - firstOrCreate(...)->lockForUpdate()   — not PostgreSQL race-safe
      *   - MAX(sequence) + 1
-     *   - InventoryStock lookup
+     *   - direct operational stock-record lookup
      *   - inferred scope identity
      *   - state mutation without a prior locked row
      */

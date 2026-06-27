@@ -30,7 +30,7 @@ class CostLedgerPostingPlannerTest extends TestCase
         return new ApprovedInventoryEvidence(
             'inv1', 'txn1', $propId, $itemId, $scope, $currency, $businessDate, $occurredAt,
             $type, new AvcoDecimal($qty), $basis !== null ? new AvcoDecimal($basis) : null,
-            $ctx, 'idemp1', 1, $status, $ref
+            $ctx, 'idemp1', 2, $status, $ref
         );
     }
 
@@ -128,11 +128,27 @@ class CostLedgerPostingPlannerTest extends TestCase
         $this->assertTrue($plan->resultingState->carryingValue->compareTo(new AvcoDecimal('100.0')) === 0);
     }
 
-    public function test_cross_scope_transfer_rejected()
+    public function test_cross_scope_paired_transfer_source_leg_plan_allowed()
+    {
+        $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
+        $ctx = new TransferValuationContext('prop1', 'item1', 'scope1', new AvcoDecimal('50.0'), 'scope2');
+        $evidence = $this->createEvidence('transfer', '-5.0', null, 'approved', 'ref1', 'prop1', 'item1', 'scope1', $ctx);
+        $window = $this->createWindow();
+        $prior = $this->createState('prop1', 'item1', 'scope1', '10.0', '50.0', '500.0');
+
+        $plan = $planner->plan($evidence, $window, $prior);
+        $this->assertEquals('allow', $plan->decision->status);
+        $this->assertNotNull($plan->intent);
+        $this->assertEquals('transfer', $plan->intent->entryType);
+        $this->assertTrue($plan->intent->unitCost->compareTo(new AvcoDecimal('50.0')) === 0);
+        $this->assertTrue($plan->intent->valueDelta->compareTo(new AvcoDecimal('-250.0')) === 0);
+    }
+
+    public function test_cross_scope_unpaired_legacy_transfer_rejected()
     {
         $planner = new CostLedgerPostingPlanner(new CostLedgerPostingGuard(), new AvcoValuationEngine());
         $ctx = new TransferValuationContext('prop1', 'item1', 'scope2', new AvcoDecimal('10.0'));
-        $evidence = $this->createEvidence('transfer', '5.0', null, 'approved', 'ref1', 'prop1', 'item1', 'scope1', $ctx);
+        $evidence = $this->createEvidence('transfer', '-5.0', null, 'approved', 'ref1', 'prop1', 'item1', 'scope1', $ctx);
         $window = $this->createWindow();
         $prior = $this->createState();
 
