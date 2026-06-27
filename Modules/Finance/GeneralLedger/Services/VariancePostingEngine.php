@@ -33,25 +33,34 @@ class VariancePostingEngine
         $totalCost = abs((float) $transaction->total_cost);
 
         // Idempotency
-        $candidate = JournalCandidate::firstOrCreate([
-            'source_type' => 'InventoryTransaction',
-            'source_id' => $transaction->id,
-            'posting_event' => 'InventoryAdjustmentVariance',
-        ], [
-            'property_id' => $propertyId,
-            'status' => JournalCandidateStatusEnum::DRAFT->value,
-            'candidate_date' => $date->toDateString(),
-            'description' => "Stock Opname Variance " . ($transaction->transaction_type === TransactionTypeEnum::AdjustmentIn ? 'Positive' : 'Negative') . " Adjustment for Item {$transaction->item_id}",
-            'metadata' => [
-                'adjustment_id' => $transaction->reference_id,
-                'item_id' => $transaction->item_id,
-                'location_id' => $transaction->location_id,
-                'quantity_variance' => $transaction->quantity_change,
-                'unit_cost' => $transaction->unit_cost,
-                'total_cost' => $totalCost,
-            ],
-            'created_by' => $transaction->posted_by,
-        ]);
+        try {
+            $candidate = JournalCandidate::firstOrCreate([
+                'property_id' => $propertyId,
+                'source_type' => 'InventoryTransaction',
+                'source_id' => $transaction->id,
+                'posting_event' => 'InventoryAdjustmentVariance',
+            ], [
+                'status' => JournalCandidateStatusEnum::DRAFT->value,
+                'candidate_date' => $date->toDateString(),
+                'description' => "Stock Opname Variance " . ($transaction->transaction_type === TransactionTypeEnum::AdjustmentIn ? 'Positive' : 'Negative') . " Adjustment for Item {$transaction->item_id}",
+                'metadata' => [
+                    'adjustment_id' => $transaction->reference_id,
+                    'item_id' => $transaction->item_id,
+                    'location_id' => $transaction->location_id,
+                    'quantity_variance' => $transaction->quantity_change,
+                    'unit_cost' => $transaction->unit_cost,
+                    'total_cost' => $totalCost,
+                ],
+                'created_by' => $transaction->posted_by,
+            ]);
+        } catch (\Illuminate\Database\QueryException $e) {
+            $candidate = JournalCandidate::where([
+                'property_id' => $propertyId,
+                'source_type' => 'InventoryTransaction',
+                'source_id' => $transaction->id,
+                'posting_event' => 'InventoryAdjustmentVariance',
+            ])->firstOrFail();
+        }
 
         // If the candidate was already successfully processed (e.g., PENDING_REVIEW, APPROVED, POSTED), skip it.
         // If it's DRAFT or CONFIGURATION_ERROR, we will try to process lines.

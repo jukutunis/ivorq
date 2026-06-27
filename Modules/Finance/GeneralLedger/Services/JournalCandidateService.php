@@ -74,9 +74,9 @@ class JournalCandidateService
     {
         $candidate = $this->candidateRepository->find($id);
 
-        if ($candidate->status === JournalCandidateStatusEnum::POSTED) {
+        if ($candidate->status === JournalCandidateStatusEnum::POSTED || $candidate->status === JournalCandidateStatusEnum::POSTED_LEGACY) {
             throw ValidationException::withMessages([
-                'status' => ['POSTED candidates cannot be rejected.']
+                'status' => ['POSTED or POSTED_LEGACY candidates cannot be rejected.']
             ]);
         }
 
@@ -96,19 +96,7 @@ class JournalCandidateService
 
     public function markPosted(string $id): JournalCandidate
     {
-        $candidate = $this->candidateRepository->find($id);
-
-        if ($candidate->status !== JournalCandidateStatusEnum::APPROVED) {
-            throw ValidationException::withMessages([
-                'status' => ['Only APPROVED candidates can be marked as POSTED.']
-            ]);
-        }
-
-        $this->validateBalance($candidate);
-
-        return $this->candidateRepository->update($id, [
-            'status' => JournalCandidateStatusEnum::POSTED->value,
-        ]);
+        throw new \RuntimeException('Directly marking a candidate as POSTED is disabled. Use JournalCandidateFinalizationService.');
     }
 
     public function markPostingFailed(string $id, string $reason): JournalCandidate

@@ -30,6 +30,8 @@ class JournalEntry extends Model
         'source_type',
         'source_id',
         'reversal_of_id',
+        'journal_candidate_id',
+        'posting_event',
     ];
 
     protected $casts = [

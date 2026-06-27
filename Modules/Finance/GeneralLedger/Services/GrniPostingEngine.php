@@ -37,23 +37,32 @@ class GrniPostingEngine
         });
 
         // Idempotency: Create Candidate
-        $candidate = JournalCandidate::firstOrCreate([
-            'source_type' => 'InventoryReceipt',
-            'source_id' => $receipt->id,
-            'posting_event' => 'InventoryReceiptAccrual',
-        ], [
-            'property_id' => $propertyId,
-            'status' => JournalCandidateStatusEnum::DRAFT->value,
-            'candidate_date' => $date->toDateString(),
-            'description' => "GRNI Accrual for Receipt {$receipt->receipt_number}",
-            'metadata' => [
-                'receipt_id' => $receipt->id,
-                'receipt_number' => $receipt->receipt_number,
-                'supplier_name' => $receipt->supplier_name,
-                'total_cost' => $totalCost,
-            ],
-            'created_by' => $receipt->posted_by,
-        ]);
+        try {
+            $candidate = JournalCandidate::firstOrCreate([
+                'property_id' => $propertyId,
+                'source_type' => 'InventoryReceipt',
+                'source_id' => $receipt->id,
+                'posting_event' => 'InventoryReceiptAccrual',
+            ], [
+                'status' => JournalCandidateStatusEnum::DRAFT->value,
+                'candidate_date' => $date->toDateString(),
+                'description' => "GRNI Accrual for Receipt {$receipt->receipt_number}",
+                'metadata' => [
+                    'receipt_id' => $receipt->id,
+                    'receipt_number' => $receipt->receipt_number,
+                    'supplier_name' => $receipt->supplier_name,
+                    'total_cost' => $totalCost,
+                ],
+                'created_by' => $receipt->posted_by,
+            ]);
+        } catch (\Illuminate\Database\QueryException $e) {
+            $candidate = JournalCandidate::where([
+                'property_id' => $propertyId,
+                'source_type' => 'InventoryReceipt',
+                'source_id' => $receipt->id,
+                'posting_event' => 'InventoryReceiptAccrual',
+            ])->firstOrFail();
+        }
 
         if (!in_array($candidate->status, [JournalCandidateStatusEnum::DRAFT, JournalCandidateStatusEnum::CONFIGURATION_ERROR])) {
             return;
