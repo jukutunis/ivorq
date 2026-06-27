@@ -14,15 +14,19 @@ class InventoryTransaction extends Model
     public const UPDATED_AT = null;
 
     protected $casts = [
-        'transaction_type' => \Modules\Operations\Inventory\Enums\TransactionTypeEnum::class,
-        'quantity_before'  => 'decimal:4',
-        'quantity_change'  => 'decimal:4',
-        'quantity_after'   => 'decimal:4',
-        'unit_cost'        => 'decimal:2',
-        'total_cost'       => 'decimal:2',
-        'posted_at'        => 'datetime',
-        'business_date'    => 'date',
-        'occurred_at'      => 'datetime',
+        'transaction_type'   => \Modules\Operations\Inventory\Enums\TransactionTypeEnum::class,
+        'quantity_before'    => 'decimal:4',
+        'quantity_change'    => 'decimal:4',
+        'quantity_after'     => 'decimal:4',
+        'unit_cost'          => 'decimal:2',
+        'total_cost'         => 'decimal:2',
+        'posted_at'          => 'datetime',
+        'business_date'      => 'date',
+        'occurred_at'        => 'datetime',
+        'currency_code'      => 'string',
+        'financial_period_id'=> 'string',
+        'valuation_scope'    => 'string',
+        'valuation_sequence' => 'integer',
     ];
 
     public function property()

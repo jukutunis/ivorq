@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use Modules\Operations\Inventory\Enums\ItemStatusEnum;
 use Modules\Foundation\Outbox\Repositories\OutboxRepository;
+use Modules\Operations\Inventory\Repositories\InventoryValuationSequenceRepository;
 
 class InventoryPostingControlCoordinator
 {
@@ -29,7 +30,8 @@ class InventoryPostingControlCoordinator
     public function __construct(
         private readonly InventoryTransactionRepository $transactionRepo,
         private readonly InventoryStockRepository $stockRepo,
-        private readonly OutboxRepository $outboxRepository
+        private readonly OutboxRepository $outboxRepository,
+        private readonly InventoryValuationSequenceRepository $sequenceRepo
     ) {
     }
 
@@ -87,7 +89,25 @@ class InventoryPostingControlCoordinator
                     ]);
                 }
 
-                $transaction = $this->transactionRepo->appendControlled($intent, $quantityBefore, $quantityAfter, $actorId);
+                $property = \Modules\Foundation\Property\Models\Property::findOrFail($intent->propertyId);
+                $currency = trim($property->currency);
+                if (!preg_match('/^[A-Z]{3}$/', $currency)) {
+                    throw new RuntimeException("Property currency is invalid or missing. Actual currency: '{$currency}'");
+                }
+
+                $valuationScope = "property:{$intent->propertyId}:location:{$intent->locationId}:item:{$intent->itemId}";
+                $valuationSequence = $this->sequenceRepo->allocateNext($intent->propertyId, $intent->locationId, $intent->itemId);
+
+                $transaction = $this->transactionRepo->appendControlled(
+                    $intent,
+                    $quantityBefore,
+                    $quantityAfter,
+                    $actorId,
+                    $currency,
+                    $period->id,
+                    $valuationScope,
+                    $valuationSequence
+                );
 
                 $this->outboxRepository->createPending([
                     'topic' => 'inventory.transaction.posted',

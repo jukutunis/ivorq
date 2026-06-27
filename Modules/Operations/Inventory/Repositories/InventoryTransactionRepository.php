@@ -70,13 +70,21 @@ class InventoryTransactionRepository
         \Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent $intent,
         string $quantityBefore,
         string $quantityAfter,
-        ?string $actorId = null
+        ?string $actorId = null,
+        ?string $currencyCode = null,
+        ?string $financialPeriodId = null,
+        ?string $valuationScope = null,
+        ?int $valuationSequence = null
     ): InventoryTransaction {
         $transaction = new InventoryTransaction();
 
         $transaction->property_id = $intent->propertyId;
         $transaction->item_id = $intent->itemId;
         $transaction->location_id = $intent->locationId;
+        $transaction->currency_code = $currencyCode;
+        $transaction->financial_period_id = $financialPeriodId;
+        $transaction->valuation_scope = $valuationScope;
+        $transaction->valuation_sequence = $valuationSequence;
 
         // Controlled fields
         $transaction->business_date = $intent->businessDate;
