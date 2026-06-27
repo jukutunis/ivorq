@@ -15,6 +15,7 @@ use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use Modules\Operations\Inventory\Enums\ItemStatusEnum;
+use Modules\Foundation\Outbox\Repositories\OutboxRepository;
 
 class InventoryPostingControlCoordinator
 {
@@ -27,7 +28,8 @@ class InventoryPostingControlCoordinator
 
     public function __construct(
         private readonly InventoryTransactionRepository $transactionRepo,
-        private readonly InventoryStockRepository $stockRepo
+        private readonly InventoryStockRepository $stockRepo,
+        private readonly OutboxRepository $outboxRepository
     ) {
     }
 
@@ -86,6 +88,13 @@ class InventoryPostingControlCoordinator
                 }
 
                 $transaction = $this->transactionRepo->appendControlled($intent, $quantityBefore, $quantityAfter, $actorId);
+
+                $this->outboxRepository->createPending([
+                    'topic' => 'inventory.transaction.posted',
+                    'source_inventory_transaction_id' => $transaction->id,
+                    'payload' => ['transactionId' => $transaction->id],
+                    'idempotency_key' => "inventory_transaction:{$transaction->id}:cost_ledger",
+                ]);
 
                 $status = (bccomp($quantityAfter, '0', 4) > 0) ? ItemStatusEnum::InStock : ItemStatusEnum::OutOfStock;
 
