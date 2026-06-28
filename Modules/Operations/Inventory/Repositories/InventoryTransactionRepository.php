@@ -191,4 +191,11 @@ class InventoryTransactionRepository
 
         return $transaction;
     }
+
+    public function findByIdempotency(string $propertyId, string $idempotencyKey): ?InventoryTransaction
+    {
+        return InventoryTransaction::where('property_id', $propertyId)
+            ->where('idempotency_key', $idempotencyKey)
+            ->first();
+    }
 }
