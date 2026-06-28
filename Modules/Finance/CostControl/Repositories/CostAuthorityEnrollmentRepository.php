@@ -222,6 +222,26 @@ class CostAuthorityEnrollmentRepository
         return $group;
     }
 
+    /**
+     * Return true if an ENROLLED group exists for the given property + item.
+     *
+     * Only ENROLLED status is treated as authority-active.
+     * DRAFT, APPROVED, REJECTED, and SUPERSEDED groups return false.
+     *
+     * Does not lock rows or mutate any enrollment state.
+     * Does not inspect snapshots or CostAvcoState.
+     * Safe to call outside a transaction.
+     */
+    public function hasEnrolledGroupForPropertyItem(
+        string $propertyId,
+        string $itemId
+    ): bool {
+        return CostAuthorityEnrollmentGroup::where('property_id', $propertyId)
+            ->where('item_id', $itemId)
+            ->where('status', CostAuthorityEnrollmentStatusEnum::Enrolled->value)
+            ->exists();
+    }
+
     private function requireTransaction(string $method): void
     {
         if (DB::transactionLevel() < 1) {

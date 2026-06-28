@@ -3,10 +3,12 @@
 namespace Modules\Finance\GeneralLedger\Services;
 
 use Exception;
+use RuntimeException;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Modules\Operations\Inventory\Models\InventoryTransaction;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
+use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
@@ -18,7 +20,8 @@ class VariancePostingEngine
 {
     public function __construct(
         private OperationalIdentityMappingService $mappingService,
-        private OperationalIdentityValidationService $validationService
+        private OperationalIdentityValidationService $validationService,
+        private CostAuthorityEnrollmentRepository $enrollmentRepository,
     ) {}
 
     public function process(InventoryTransaction $transaction): void
@@ -31,6 +34,17 @@ class VariancePostingEngine
         $propertyId = $transaction->property_id;
         $date = Carbon::parse($transaction->posted_at ?? $transaction->created_at);
         $totalCost = abs((float) $transaction->total_cost);
+
+        // Enrollment guard: fail closed before creating any GL candidate when
+        // CostControl authority is ENROLLED for this property + item scope.
+        // APPROVED (baseline-seeded) groups do not block legacy posting.
+        if ($this->enrollmentRepository->hasEnrolledGroupForPropertyItem($propertyId, $transaction->item_id)) {
+            throw new RuntimeException(
+                "Legacy inventory variance posting is blocked for property={$propertyId} " .
+                "item={$transaction->item_id}: CostControl authority is enrolled. " .
+                "GL candidates must not be created outside CostControl."
+            );
+        }
 
         // Idempotency
         try {
