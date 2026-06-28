@@ -86,4 +86,11 @@ Route::middleware(['web', 'auth'])
         // ── Stock Cards (read-only) ───────────────────────────────────────────
         Route::get('stock-cards',        [InventoryStockCardController::class, 'index'])->name('stock-cards.index');
         Route::get('stock-cards/{card}', [InventoryStockCardController::class, 'show'])->name('stock-cards.show');
+
+        // ── Reversals ─────────────────────────────────────────────────────────
+        Route::post('reversals/request', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalRequestController::class, 'request'])
+            ->name('reversals.request');
+
+        Route::post('reversals/{approvalRequest}/execute', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalExecutionController::class, 'execute'])
+            ->name('reversals.execute');
     });
