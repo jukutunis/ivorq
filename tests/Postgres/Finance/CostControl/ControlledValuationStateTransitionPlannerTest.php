@@ -435,4 +435,206 @@ class ControlledValuationStateTransitionPlannerTest extends PostgresTestCase
             }
         }
     }
+
+    /**
+     * 10. Valid issue from a non-zero controlled state produces correct plan.
+     */
+    public function test_valid_issue_from_non_zero_state(): void
+    {
+        $lastSeq = new ValuationSequence(
+            propertyId: 'prop_1',
+            itemId: 'item_1',
+            valuationScope: 'property:prop_1:location:loc_1:item:item_1',
+            businessDate: '2026-06-27',
+            ledgerSequence: 5
+        );
+
+        // Prevailing state: Qty = 10, carrying value = 100 => WAUC = 10
+        // We issue 3 units. Qty delta = -3, unit cost = 10, value delta = -30
+        $ledgerIntent = $this->makeLedgerIntent(
+            entryType: 'issue',
+            entrySequence: 6,
+            quantityDelta: '-3.0000',
+            unitCost: '10.0000',
+            valueDelta: '-30.0000',
+            businessDate: '2026-06-28'
+        );
+
+        $intent = new ControlledValuationStateTransitionIntent(
+            propertyId: 'prop_1',
+            locationId: 'loc_1',
+            itemId: 'item_1',
+            currentLastAppliedValuationSequence: $lastSeq,
+            currentQuantity: new AvcoDecimal('10.0000'),
+            currentCarryingValue: new AvcoDecimal('100.0000'),
+            costLedgerIntent: $ledgerIntent
+        );
+
+        $plan = $this->planner->plan($intent);
+
+        $this->assertInstanceOf(ControlledValuationStateTransitionPlan::class, $plan);
+        $this->assertEquals('7.0000', $plan->quantityAfter->getValue());
+        $this->assertEquals('70.0000', $plan->carryingValueAfter->getValue());
+        $this->assertEquals('10.0000', $plan->weightedAverageUnitCostAfter->getValue());
+        $this->assertEquals(6, $plan->lastAppliedValuationSequenceAfter->ledgerSequence);
+        $this->assertSame($ledgerIntent, $plan->costLedgerIntent);
+    }
+
+    /**
+     * 11. Valid issue that reduces quantity to zero follows zero-balance WAUC null rule.
+     */
+    public function test_issue_reduces_quantity_to_zero(): void
+    {
+        $lastSeq = new ValuationSequence(
+            propertyId: 'prop_1',
+            itemId: 'item_1',
+            valuationScope: 'property:prop_1:location:loc_1:item:item_1',
+            businessDate: '2026-06-27',
+            ledgerSequence: 5
+        );
+
+        // Prevailing state: Qty = 10, carrying value = 100 => WAUC = 10
+        // We issue 10 units. Qty delta = -10, unit cost = 10, value delta = -100
+        $ledgerIntent = $this->makeLedgerIntent(
+            entryType: 'issue',
+            entrySequence: 6,
+            quantityDelta: '-10.0000',
+            unitCost: '10.0000',
+            valueDelta: '-100.0000',
+            businessDate: '2026-06-28'
+        );
+
+        $intent = new ControlledValuationStateTransitionIntent(
+            propertyId: 'prop_1',
+            locationId: 'loc_1',
+            itemId: 'item_1',
+            currentLastAppliedValuationSequence: $lastSeq,
+            currentQuantity: new AvcoDecimal('10.0000'),
+            currentCarryingValue: new AvcoDecimal('100.0000'),
+            costLedgerIntent: $ledgerIntent
+        );
+
+        $plan = $this->planner->plan($intent);
+
+        $this->assertEquals('0.0000', $plan->quantityAfter->getValue());
+        $this->assertEquals('0.0000', $plan->carryingValueAfter->getValue());
+        $this->assertNull($plan->weightedAverageUnitCostAfter);
+    }
+
+    /**
+     * 12. Issue quantity greater than available quantity fails.
+     */
+    public function test_issue_exceeds_available_quantity_rejection(): void
+    {
+        $lastSeq = new ValuationSequence(
+            propertyId: 'prop_1',
+            itemId: 'item_1',
+            valuationScope: 'property:prop_1:location:loc_1:item:item_1',
+            businessDate: '2026-06-27',
+            ledgerSequence: 5
+        );
+
+        // Try to issue 11 units when only 10 are available.
+        $ledgerIntent = $this->makeLedgerIntent(
+            entryType: 'issue',
+            entrySequence: 6,
+            quantityDelta: '-11.0000',
+            unitCost: '10.0000',
+            valueDelta: '-110.0000',
+            businessDate: '2026-06-28'
+        );
+
+        $intent = new ControlledValuationStateTransitionIntent(
+            propertyId: 'prop_1',
+            locationId: 'loc_1',
+            itemId: 'item_1',
+            currentLastAppliedValuationSequence: $lastSeq,
+            currentQuantity: new AvcoDecimal('10.0000'),
+            currentCarryingValue: new AvcoDecimal('100.0000'),
+            costLedgerIntent: $ledgerIntent
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Issue quantity exceeds available quantity.');
+        $this->planner->plan($intent);
+    }
+
+    /**
+     * 13. Issue value delta or unit cost that does not match prevailing WAUC fails.
+     */
+    public function test_issue_cost_mismatch_rejection(): void
+    {
+        $lastSeq = new ValuationSequence(
+            propertyId: 'prop_1',
+            itemId: 'item_1',
+            valuationScope: 'property:prop_1:location:loc_1:item:item_1',
+            businessDate: '2026-06-27',
+            ledgerSequence: 5
+        );
+
+        // Prevailing state: Qty = 10, carrying value = 100 => WAUC = 10
+        // Unit cost is 11 (should be 10)
+        $ledgerIntent = $this->makeLedgerIntent(
+            entryType: 'issue',
+            entrySequence: 6,
+            quantityDelta: '-3.0000',
+            unitCost: '11.0000',
+            valueDelta: '-33.0000',
+            businessDate: '2026-06-28'
+        );
+
+        $intent = new ControlledValuationStateTransitionIntent(
+            propertyId: 'prop_1',
+            locationId: 'loc_1',
+            itemId: 'item_1',
+            currentLastAppliedValuationSequence: $lastSeq,
+            currentQuantity: new AvcoDecimal('10.0000'),
+            currentCarryingValue: new AvcoDecimal('100.0000'),
+            costLedgerIntent: $ledgerIntent
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Issue unit cost does not match prevailing carrying cost.');
+        $this->planner->plan($intent);
+    }
+
+    /**
+     * 14. Zero quantity, invalid sign, negative resulting carrying value, stale sequence, out-of-order date fail.
+     */
+    public function test_issue_invalid_parameters_rejection(): void
+    {
+        $lastSeq = new ValuationSequence(
+            propertyId: 'prop_1',
+            itemId: 'item_1',
+            valuationScope: 'property:prop_1:location:loc_1:item:item_1',
+            businessDate: '2026-06-27',
+            ledgerSequence: 5
+        );
+
+        // Positive quantity delta for issue
+        $ledgerIntent = $this->makeLedgerIntent(
+            entryType: 'issue',
+            entrySequence: 6,
+            quantityDelta: '3.0000',
+            unitCost: '10.0000',
+            valueDelta: '-30.0000'
+        );
+
+        $intent = new ControlledValuationStateTransitionIntent(
+            propertyId: 'prop_1',
+            locationId: 'loc_1',
+            itemId: 'item_1',
+            currentLastAppliedValuationSequence: $lastSeq,
+            currentQuantity: new AvcoDecimal('10.0000'),
+            currentCarryingValue: new AvcoDecimal('100.0000'),
+            costLedgerIntent: $ledgerIntent
+        );
+
+        try {
+            $this->planner->plan($intent);
+            $this->fail("Should fail on positive quantity delta for issue.");
+        } catch (InvalidArgumentException $e) {
+            $this->assertEquals('Issue quantity delta must be negative.', $e->getMessage());
+        }
+    }
 }

@@ -26,29 +26,14 @@ class ControlledValuationStateTransitionPlanner
     ): ControlledValuationStateTransitionPlan {
         $ledgerIntent = $intent->costLedgerIntent;
 
-        // 1. Receipt-only type validation
-        if ($ledgerIntent->entryType !== 'receipt') {
+        // 1. Entry type validation
+        if ($ledgerIntent->entryType !== 'receipt' && $ledgerIntent->entryType !== 'issue') {
             throw new InvalidArgumentException(
-                sprintf('Unsupported valuation movement type "%s". Only "receipt" is supported.', $ledgerIntent->entryType)
+                sprintf('Unsupported valuation movement type "%s". Only "receipt" and "issue" are supported.', $ledgerIntent->entryType)
             );
         }
 
-        // 2. Receipt quantity and value validation
-        if (!$ledgerIntent->quantityDelta->isPositive()) {
-            throw new InvalidArgumentException('Receipt quantity delta must be positive.');
-        }
-
-        if ($ledgerIntent->valueDelta->isNegative()) {
-            throw new InvalidArgumentException('Receipt value delta cannot be negative.');
-        }
-
-        // 3. Resulting quantity validation
-        $quantityAfter = $intent->currentQuantity->add($ledgerIntent->quantityDelta);
-        if (!$quantityAfter->isPositive()) {
-            throw new InvalidArgumentException('Resulting quantity must be positive.');
-        }
-
-        // 4. Source and idempotency evidence validation
+        // 2. Source and idempotency evidence validation
         if (trim($ledgerIntent->sourceInventoryTransactionId) === '') {
             throw new InvalidArgumentException('Source inventory transaction reference cannot be blank.');
         }
@@ -57,7 +42,7 @@ class ControlledValuationStateTransitionPlanner
             throw new InvalidArgumentException('Idempotency key cannot be blank.');
         }
 
-        // 5. Valuation sequence progression and chronological ordering validation
+        // 3. Valuation sequence progression and chronological ordering validation
         $nextSequence = new ValuationSequence(
             propertyId: $intent->propertyId,
             itemId: $intent->itemId,
@@ -92,9 +77,94 @@ class ControlledValuationStateTransitionPlanner
             }
         }
 
-        // 6. AVCO receipt calculation
-        $carryingValueAfter = $intent->currentCarryingValue->add($ledgerIntent->valueDelta);
-        $waucAfter = $carryingValueAfter->div($quantityAfter);
+        if ($ledgerIntent->entryType === 'receipt') {
+            // Receipt quantity and value validation
+            if (!$ledgerIntent->quantityDelta->isPositive()) {
+                throw new InvalidArgumentException('Receipt quantity delta must be positive.');
+            }
+
+            if ($ledgerIntent->valueDelta->isNegative()) {
+                throw new InvalidArgumentException('Receipt value delta cannot be negative.');
+            }
+
+            // Resulting quantity validation
+            $quantityAfter = $intent->currentQuantity->add($ledgerIntent->quantityDelta);
+            if (!$quantityAfter->isPositive()) {
+                throw new InvalidArgumentException('Resulting quantity must be positive.');
+            }
+
+            // AVCO receipt calculation
+            $carryingValueAfter = $intent->currentCarryingValue->add($ledgerIntent->valueDelta);
+            $waucAfter = $carryingValueAfter->div($quantityAfter);
+        } else {
+            // Issue validation
+            if (!$ledgerIntent->quantityDelta->isNegative()) {
+                throw new InvalidArgumentException('Issue quantity delta must be negative.');
+            }
+
+            if ($ledgerIntent->quantityDelta->isZero()) {
+                throw new InvalidArgumentException('Issue quantity delta cannot be zero.');
+            }
+
+            if (!$ledgerIntent->valueDelta->isNegative()) {
+                throw new InvalidArgumentException('Issue value delta must be negative.');
+            }
+
+            if (!$ledgerIntent->unitCost->isPositive()) {
+                throw new InvalidArgumentException('Issue unit cost must be positive.');
+            }
+
+            if ($intent->currentQuantity->isZero() || $intent->currentQuantity->isNegative()) {
+                throw new InvalidArgumentException('Cannot issue when current quantity is zero or negative.');
+            }
+
+            $issueQty = $ledgerIntent->quantityDelta->abs();
+
+            if ($intent->currentQuantity->compareTo($issueQty) < 0) {
+                throw new InvalidArgumentException('Issue quantity exceeds available quantity.');
+            }
+
+            // Calculate current WAUC
+            $currentWauc = $intent->currentCarryingValue->div($intent->currentQuantity);
+
+            if ($ledgerIntent->unitCost->compareTo($currentWauc) !== 0) {
+                throw new InvalidArgumentException('Issue unit cost does not match prevailing carrying cost.');
+            }
+
+            if ($intent->currentQuantity->compareTo($issueQty) === 0) {
+                // Zero-balance issue
+                $relievedValue = $intent->currentCarryingValue;
+                $expectedValueDelta = AvcoDecimal::zero()->sub($relievedValue);
+
+                if ($ledgerIntent->valueDelta->compareTo($expectedValueDelta) !== 0) {
+                    throw new InvalidArgumentException('Issue value delta does not match prevailing carrying cost.');
+                }
+
+                $quantityAfter = AvcoDecimal::zero();
+                $carryingValueAfter = AvcoDecimal::zero();
+                $waucAfter = null;
+            } else {
+                // Partial issue
+                $relievedValue = $issueQty->mul($currentWauc);
+                $expectedValueDelta = AvcoDecimal::zero()->sub($relievedValue);
+
+                if ($ledgerIntent->valueDelta->compareTo($expectedValueDelta) !== 0) {
+                    throw new InvalidArgumentException('Issue value delta does not match prevailing carrying cost.');
+                }
+
+                $quantityAfter = $intent->currentQuantity->add($ledgerIntent->quantityDelta);
+                $carryingValueAfter = $intent->currentCarryingValue->add($ledgerIntent->valueDelta);
+
+                if ($quantityAfter->isNegative()) {
+                    throw new InvalidArgumentException('Resulting quantity cannot be negative.');
+                }
+                if ($carryingValueAfter->isNegative()) {
+                    throw new InvalidArgumentException('Resulting carrying value cannot be negative.');
+                }
+
+                $waucAfter = $currentWauc;
+            }
+        }
 
         // 7. Produce plan
         return new ControlledValuationStateTransitionPlan(
