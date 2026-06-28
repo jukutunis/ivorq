@@ -298,6 +298,73 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
     }
 
     // -------------------------------------------------------------------------
+    // Proof 7: ReceivingLine with missing inventory_item_id fails before any
+    //          enrollment check, mutation, or partial posting
+    // -------------------------------------------------------------------------
+    public function test_integration_service_rejects_line_missing_item_id_before_enrollment_check(): void
+    {
+        $doc = $this->makeReceivingDocument();
+
+        // Line has destination_location_id but NO inventory_item_id.
+        ReceivingLine::create([
+            'receiving_document_id'   => $doc->id,
+            'inventory_item_id'       => null,
+            'destination_location_id' => $this->location->id,
+            'description'             => 'Missing item guard test line',
+            'received_quantity'       => '5.00',
+            'unit_cost'               => '12.00',
+            'line_total'              => '60.00',
+        ]);
+
+        $txBefore      = DB::table('inventory_transactions')->where('source_document_id', $doc->id)->count();
+        $stockBefore   = DB::table('inventory_stocks')->where('property_id', $this->property->id)->count();
+        $wacBefore     = (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost');
+        $enrollsBefore = DB::table('cost_authority_enrollment_groups')
+            ->where('property_id', $this->property->id)
+            ->count();
+
+        $exceptionThrown = false;
+        try {
+            $this->integrationService->syncToInventory($doc, $this->actorId);
+            $this->fail('Expected exception for missing inventory_item_id; none thrown.');
+        } catch (\Throwable $e) {
+            $exceptionThrown = true;
+            // Must not reach the enrollment check — guard message must not appear.
+            $this->assertStringNotContainsString(
+                'CostControl authority is enrolled',
+                $e->getMessage(),
+                'Enrollment guard must not be reached before line validation fails.'
+            );
+            $this->assertStringContainsString(
+                'missing item or destination location',
+                $e->getMessage()
+            );
+        }
+
+        $this->assertTrue($exceptionThrown);
+
+        // No InventoryTransaction
+        $this->assertEquals($txBefore, DB::table('inventory_transactions')->where('source_document_id', $doc->id)->count());
+
+        // No stock mutation
+        $this->assertEquals($stockBefore, DB::table('inventory_stocks')->where('property_id', $this->property->id)->count());
+
+        // No WAC mutation
+        $this->assertEquals(
+            $wacBefore,
+            (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost')
+        );
+
+        // No CostAuthority enrollment state mutation
+        $this->assertEquals(
+            $enrollsBefore,
+            DB::table('cost_authority_enrollment_groups')
+                ->where('property_id', $this->property->id)
+                ->count()
+        );
+    }
+
+    // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
 

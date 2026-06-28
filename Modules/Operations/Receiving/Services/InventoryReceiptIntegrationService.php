@@ -34,12 +34,17 @@ class InventoryReceiptIntegrationService
                 return;
             }
 
-            // Enrollment guard: validate all item scopes before businessDate lookup,
-            // context lock, or any coordinator write. Fail the entire operation if any
-            // line's item is enrolled; partial posting is not permitted.
+            // Pass 1: validate all line fields before any authority check or mutation.
+            foreach ($document->lines as $line) {
+                if (!$line->inventory_item_id || !$line->destination_location_id) {
+                    throw new BusinessLogicException("Receiving line is missing item or destination location.");
+                }
+            }
+
+            // Pass 2: enrollment guard — all lines confirmed valid; evaluate authority
+            // before businessDate lookup, coordinator lock, or any write.
             // Only ENROLLED status blocks. DRAFT/APPROVED/REJECTED/SUPERSEDED do not block.
             foreach ($document->lines as $line) {
-                if (!$line->inventory_item_id) continue;
                 if ($this->enrollmentRepository->hasEnrolledGroupForPropertyItem($document->property_id, $line->inventory_item_id)) {
                     throw new RuntimeException(
                         "Legacy receipt posting is blocked for property={$document->property_id} " .
@@ -83,12 +88,7 @@ class InventoryReceiptIntegrationService
                 ];
             }
 
-            $sortedLines = $document->lines->map(function($line) {
-                if (!$line->inventory_item_id || !$line->destination_location_id) {
-                    throw new BusinessLogicException("Receiving line is missing item or destination location.");
-                }
-                return $line;
-            })->sortBy([
+            $sortedLines = $document->lines->sortBy([
                 ['inventory_item_id', 'asc'],
                 ['destination_location_id', 'asc'],
             ]);
