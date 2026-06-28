@@ -174,4 +174,81 @@ class CostAvcoStateRepository
         $lockedRow->last_valuation_business_date    = $lastDate;
         $lockedRow->save();
     }
+
+    /**
+     * Lock all existing CostAvcoState rows for the given property + item across
+     * the specified location IDs, in deterministic location_id order.
+     *
+     * Returns a Collection keyed by location_id; missing scopes are absent.
+     * MUST be called inside an active outer transaction.
+     */
+    public function findLockedByScopesOrdered(
+        string $propertyId,
+        string $itemId,
+        array $locationIds
+    ): \Illuminate\Support\Collection {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'CostAvcoStateRepository::findLockedByScopesOrdered requires an active outer transaction.'
+            );
+        }
+
+        if (empty($locationIds)) {
+            return collect();
+        }
+
+        return CostAvcoState::where('property_id', $propertyId)
+            ->where('item_id', $itemId)
+            ->whereIn('location_id', $locationIds)
+            ->orderBy('location_id')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('location_id');
+    }
+
+    /**
+     * Create a new CostAvcoState row seeded from enrollment evidence.
+     *
+     * Opening values are taken verbatim from the approved scope snapshot.
+     * Baseline sequence N is null — proven from bootstrapAndLock initial state:
+     * last_valuation_sequence = null means no CostControl transaction has been
+     * processed for this scope. No fabricated N; no auto-creation.
+     *
+     * MUST NOT be called if a state already exists for this scope
+     * (uk_cost_avco_state_scope enforces this at DB level).
+     *
+     * MUST be called inside an active outer transaction.
+     */
+    public function createFromEnrollmentSnapshot(
+        string $propertyId,
+        string $locationId,
+        string $itemId,
+        string $valuationScope,
+        string $openingQuantity,
+        string $openingCarryingValue,
+        ?string $weightedAverageUnitCost,
+        string $enrollmentGroupId,
+        string $enrollmentScopeSnapshotId
+    ): CostAvcoState {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'CostAvcoStateRepository::createFromEnrollmentSnapshot requires an active outer transaction.'
+            );
+        }
+
+        return CostAvcoState::create([
+            'property_id'                     => $propertyId,
+            'location_id'                     => $locationId,
+            'item_id'                         => $itemId,
+            'valuation_scope'                 => $valuationScope,
+            'on_hand_quantity'                => $openingQuantity,
+            'carrying_value'                  => $openingCarryingValue,
+            'weighted_average_unit_cost'      => $weightedAverageUnitCost,
+            'unresolved_provisional_quantity' => '0.0000',
+            'last_valuation_sequence'         => null,
+            'last_valuation_business_date'    => null,
+            'enrollment_group_id'             => $enrollmentGroupId,
+            'enrollment_scope_snapshot_id'    => $enrollmentScopeSnapshotId,
+        ]);
+    }
 }

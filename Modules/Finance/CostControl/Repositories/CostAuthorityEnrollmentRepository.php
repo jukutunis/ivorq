@@ -182,6 +182,26 @@ class CostAuthorityEnrollmentRepository
     }
 
     /**
+     * Load and lock all scope snapshots for an enrollment group in deterministic
+     * location_id order.
+     *
+     * SELECT FOR UPDATE does not fire the snapshot lifecycle trigger; only
+     * INSERT / UPDATE / DELETE does. Locking is safe even when parent group
+     * status is Approved.
+     *
+     * MUST be called inside an active outer transaction.
+     */
+    public function findSnapshotsLockedByLocationOrder(string $groupId): \Illuminate\Support\Collection
+    {
+        $this->requireTransaction(__METHOD__);
+
+        return CostAuthorityEnrollmentScopeSnapshot::where('enrollment_group_id', $groupId)
+            ->orderBy('location_id')
+            ->lockForUpdate()
+            ->get();
+    }
+
+    /**
      * Lock and return the enrollment group row for update.
      * Requires an active outer transaction.
      */
