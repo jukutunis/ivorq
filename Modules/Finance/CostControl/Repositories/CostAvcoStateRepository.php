@@ -323,4 +323,116 @@ class CostAvcoStateRepository
 
         return $lockedState;
     }
+
+    /**
+     * Lock exactly two existing seeded CostAvcoState rows in location_id ASC order,
+     * then return them mapped as [sourceState, destState].
+     */
+    public function lockExistingSeededStatePair(
+        string $propertyId,
+        string $itemId,
+        string $sourceLocationId,
+        string $destinationLocationId
+    ): array {
+        if (trim($propertyId) === '') {
+            throw new InvalidArgumentException('propertyId cannot be blank.');
+        }
+        if (trim($itemId) === '') {
+            throw new InvalidArgumentException('itemId cannot be blank.');
+        }
+        if (trim($sourceLocationId) === '') {
+            throw new InvalidArgumentException('sourceLocationId cannot be blank.');
+        }
+        if (trim($destinationLocationId) === '') {
+            throw new InvalidArgumentException('destinationLocationId cannot be blank.');
+        }
+        if ($sourceLocationId === $destinationLocationId) {
+            throw new InvalidArgumentException('Source and destination locations cannot be the same.');
+        }
+
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'CostAvcoStateRepository::lockExistingSeededStatePair requires an active outer transaction.'
+            );
+        }
+
+        // Query exactly both rows with one query in location_id ASC order using lockForUpdate()
+        $states = CostAvcoState::where('property_id', $propertyId)
+            ->where('item_id', $itemId)
+            ->whereIn('location_id', [$sourceLocationId, $destinationLocationId])
+            ->orderBy('location_id', 'asc')
+            ->lockForUpdate()
+            ->get();
+
+        if ($states->count() !== 2) {
+            throw new RuntimeException('Failed to lock exactly two existing seeded CostAvcoState rows.');
+        }
+
+        foreach ($states as $state) {
+            $expectedScope = "property:{$propertyId}:location:{$state->location_id}:item:{$itemId}";
+            if ($state->valuation_scope !== $expectedScope) {
+                throw new RuntimeException(
+                    sprintf('Scope mismatch: expected "%s", got "%s".', $expectedScope, $state->valuation_scope)
+                );
+            }
+            if (empty($state->enrollment_group_id) || empty($state->enrollment_scope_snapshot_id)) {
+                throw new RuntimeException(
+                    sprintf('Seed provenance missing for CostAvcoState on scope "%s".', $state->valuation_scope)
+                );
+            }
+        }
+
+        $mapped = $states->keyBy('location_id');
+        $sourceState = $mapped->get($sourceLocationId);
+        $destState = $mapped->get($destinationLocationId);
+
+        if ($sourceState === null || $destState === null) {
+            throw new RuntimeException('Failed to map locked states by source/destination location.');
+        }
+
+        return [$sourceState, $destState];
+    }
+
+    /**
+     * Persist both transition states from a paired transfer plan.
+     */
+    public function persistPairedTransferTransition(
+        CostAvcoState $sourceState,
+        CostAvcoState $destState,
+        \Modules\Finance\CostControl\ValueObjects\ControlledTransferValuationPlan $plan
+    ): void {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'CostAvcoStateRepository::persistPairedTransferTransition requires an active outer transaction.'
+            );
+        }
+
+        if ($sourceState->valuation_scope !== $plan->sourceValuationScope) {
+            throw new InvalidArgumentException('Source valuation scope mismatch before persisting transition.');
+        }
+
+        if ($destState->valuation_scope !== $plan->destinationValuationScope) {
+            throw new InvalidArgumentException('Destination valuation scope mismatch before persisting transition.');
+        }
+
+        // Provenance verification
+        if (empty($sourceState->enrollment_group_id) || empty($sourceState->enrollment_scope_snapshot_id) ||
+            empty($destState->enrollment_group_id) || empty($destState->enrollment_scope_snapshot_id)) {
+            throw new RuntimeException('Seed provenance missing before persisting transition.');
+        }
+
+        $sourceState->on_hand_quantity                = $plan->sourceQuantityAfter->getValue();
+        $sourceState->carrying_value                  = $plan->sourceCarryingValueAfter->getValue();
+        $sourceState->weighted_average_unit_cost      = $plan->sourceWeightedAverageUnitCostAfter?->getValue();
+        $sourceState->last_valuation_sequence         = $plan->sourceLastAppliedValuationSequenceAfter->ledgerSequence;
+        $sourceState->last_valuation_business_date    = $plan->sourceLastAppliedValuationSequenceAfter->businessDate;
+        $sourceState->save();
+
+        $destState->on_hand_quantity                = $plan->destinationQuantityAfter->getValue();
+        $destState->carrying_value                  = $plan->destinationCarryingValueAfter->getValue();
+        $destState->weighted_average_unit_cost      = $plan->destinationWeightedAverageUnitCostAfter?->getValue();
+        $destState->last_valuation_sequence         = $plan->destinationLastAppliedValuationSequenceAfter->ledgerSequence;
+        $destState->last_valuation_business_date    = $plan->destinationLastAppliedValuationSequenceAfter->businessDate;
+        $destState->save();
+    }
 }
