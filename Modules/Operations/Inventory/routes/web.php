@@ -88,6 +88,9 @@ Route::middleware(['web', 'auth'])
         Route::get('stock-cards/{card}', [InventoryStockCardController::class, 'show'])->name('stock-cards.show');
 
         // ── Reversals ─────────────────────────────────────────────────────────
+        Route::get('reversals/{transaction}', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalWorkspaceController::class, 'index'])
+            ->name('reversals.show');
+
         Route::post('reversals/request', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalRequestController::class, 'request'])
             ->name('reversals.request');
 
