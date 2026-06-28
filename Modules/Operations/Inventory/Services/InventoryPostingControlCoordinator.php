@@ -136,6 +136,16 @@ class InventoryPostingControlCoordinator
         $docType = $intent->sourceDocumentType;
         $docId   = $intent->sourceDocumentId;
 
+        if ($type === TransactionTypeEnum::PurchaseReceipt) {
+            if ($docType !== 'inventory_receipt' && $docType !== 'receiving_document') {
+                throw new RuntimeException(
+                    "Controlled posting source-document-type mismatch: expected 'inventory_receipt' or 'receiving_document', got '{$docType}'."
+                );
+            }
+            $prefix = $docType === 'inventory_receipt' ? 'inventory_receipt' : 'receiving_document';
+            return ['approved', "{$prefix}:{$docId}:posted"];
+        }
+
         if ($type === TransactionTypeEnum::Issue) {
             if ($docType !== 'inventory_issue') {
                 throw new RuntimeException(

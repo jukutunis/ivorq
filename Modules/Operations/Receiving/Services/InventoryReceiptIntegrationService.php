@@ -41,93 +41,149 @@ class InventoryReceiptIntegrationService
                 }
             }
 
-            // Pass 2: enrollment guard — all lines confirmed valid; evaluate authority
-            // before businessDate lookup, coordinator lock, or any write.
-            // Only ENROLLED status blocks. DRAFT/APPROVED/REJECTED/SUPERSEDED do not block.
-            foreach ($document->lines as $line) {
-                if ($this->enrollmentRepository->hasEnrolledGroupForPropertyItem($document->property_id, $line->inventory_item_id)) {
-                    throw new RuntimeException(
-                        "Legacy receipt posting is blocked for property={$document->property_id} " .
-                        "item={$line->inventory_item_id}: CostControl authority is enrolled. " .
-                        "Receipt mutations must not occur outside CostControl."
-                    );
+            // Pass 2: enrollment classification
+            $propertyId = $document->property_id;
+            $lines = $document->lines;
+            $totalLines = $lines->count();
+            $enrolledCount = 0;
+            foreach ($lines as $line) {
+                if ($this->enrollmentRepository->hasEnrolledGroupForPropertyItem($propertyId, (string) $line->inventory_item_id)) {
+                    $enrolledCount++;
                 }
             }
 
-            $businessDate = PropertyBusinessDate::where('property_id', $document->property_id)
-                ->where('status', \Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum::Open)
-                ->where('is_open', true)
-                ->first();
-
-            if (!$businessDate) {
-                throw new BusinessLogicException("No open business date found for property.");
+            // Mixed enrollment fail closed
+            if ($enrolledCount > 0 && $enrolledCount < $totalLines) {
+                throw new RuntimeException("Mixed enrollment status detected across receiving lines. Fail closed.");
             }
 
-            if (!$approverId) {
-                throw new BusinessLogicException("Actual approver identity is required for controlled posting.");
-            }
+            $allEnrolled = ($enrolledCount === $totalLines);
 
-            $actorId = $approverId;
+            if (!$allEnrolled) {
+                // Legacy path remains unchanged
+                $businessDate = PropertyBusinessDate::where('property_id', $document->property_id)
+                    ->where('status', \Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum::Open)
+                    ->where('is_open', true)
+                    ->first();
 
-            $occurredAt = \Illuminate\Support\Carbon::parse($document->received_at ?? $document->created_at);
-            $this->coordinator->lockContext($document->property_id, $businessDate->business_date, $occurredAt);
+                if (!$businessDate) {
+                    throw new BusinessLogicException("No open business date found for property.");
+                }
 
-            $linesByItem = $document->lines->groupBy('inventory_item_id');
+                if (!$approverId) {
+                    throw new BusinessLogicException("Actual approver identity is required for controlled posting.");
+                }
 
-            $itemSnapshots = [];
-            foreach ($linesByItem as $itemId => $lines) {
-                if (!$itemId) continue;
-                $item = $this->itemRepository->find($itemId);
-                $oldWac = (float) $item->weighted_average_cost;
-                $oldQty = (float) $this->stockRepository->totalQuantityForPropertyItemLocked($document->property_id, $itemId);
+                $actorId = $approverId;
 
-                $itemSnapshots[$itemId] = [
-                    'item'   => $item,
-                    'oldWac' => $oldWac,
-                    'oldQty' => $oldQty,
-                ];
-            }
+                $occurredAt = \Illuminate\Support\Carbon::parse($document->received_at ?? $document->created_at);
+                $this->coordinator->lockContext($document->property_id, $businessDate->business_date, $occurredAt);
 
-            $sortedLines = $document->lines->sortBy([
-                ['inventory_item_id', 'asc'],
-                ['destination_location_id', 'asc'],
-            ]);
+                $linesByItem = $document->lines->groupBy('inventory_item_id');
 
-            foreach ($sortedLines as $line) {
-                $intent = new InventoryLedgerPostingIntent(
-                    propertyId: $document->property_id,
-                    sourceDocumentType: 'receiving_document',
-                    sourceDocumentId: $document->id,
-                    sourceLineType: 'receiving_line',
-                    sourceLineId: $line->id,
-                    movementRole: TransactionTypeEnum::PurchaseReceipt->value,
-                    itemId: $line->inventory_item_id,
-                    locationId: $line->destination_location_id,
-                    quantityChange: $line->received_quantity,
-                    unitCost: $line->unit_cost,
-                    totalCost: $line->line_total,
-                    occurredAt: $occurredAt,
-                    businessDate: $businessDate->business_date,
-                    idempotencyKey: "rcv_{$document->id}_{$line->id}_receipt",
-                    transactionType: TransactionTypeEnum::PurchaseReceipt,
-                    reference: $document->grn_number,
-                    notes: $document->remarks ?? 'Receiving Approval'
-                );
+                $itemSnapshots = [];
+                foreach ($linesByItem as $itemId => $lines) {
+                    if (!$itemId) continue;
+                    $item = $this->itemRepository->find($itemId);
+                    $oldWac = (float) $item->weighted_average_cost;
+                    $oldQty = (float) $this->stockRepository->totalQuantityForPropertyItemLocked($document->property_id, $itemId);
 
-                $this->coordinator->post($intent, $actorId);
-            }
+                    $itemSnapshots[$itemId] = [
+                        'item'   => $item,
+                        'oldWac' => $oldWac,
+                        'oldQty' => $oldQty,
+                    ];
+                }
 
-            foreach ($linesByItem as $itemId => $lines) {
-                if (!isset($itemSnapshots[$itemId])) continue;
+                $sortedLines = $document->lines->sortBy([
+                    ['inventory_item_id', 'asc'],
+                    ['destination_location_id', 'asc'],
+                ]);
 
-                ['item' => $item, 'oldWac' => $oldWac, 'oldQty' => $oldQty] = $itemSnapshots[$itemId];
+                foreach ($sortedLines as $line) {
+                    $intent = new InventoryLedgerPostingIntent(
+                        propertyId: $document->property_id,
+                        itemId: $line->inventory_item_id,
+                        locationId: $line->destination_location_id,
+                        businessDate: $businessDate->business_date,
+                        occurredAt: $occurredAt,
+                        sourceDocumentType: 'receiving_document',
+                        sourceDocumentId: $document->id,
+                        sourceLineType: 'receiving_line',
+                        sourceLineId: $line->id,
+                        movementRole: TransactionTypeEnum::PurchaseReceipt->value,
+                        idempotencyKey: "rcv_{$document->id}_{$line->id}_receipt",
+                        transactionType: TransactionTypeEnum::PurchaseReceipt,
+                        quantityChange: (string) $line->received_quantity,
+                        unitCost: (string) $line->unit_cost,
+                        totalCost: (string) $line->line_total,
+                        reference: $document->grn_number,
+                        notes: $document->remarks ?? 'Receiving Approval'
+                    );
 
-                $receiptQty   = $lines->sum(fn ($l) => (float) $l->received_quantity);
-                $receiptValue = $lines->sum(fn ($l) => (float) $l->received_quantity * (float) $l->unit_cost);
+                    $this->coordinator->post($intent, $actorId);
+                }
 
-                $newWac = $this->avcoCalculator->calculate($oldQty, $oldWac, $receiptQty, $receiptValue);
+                foreach ($linesByItem as $itemId => $lines) {
+                    if (!isset($itemSnapshots[$itemId])) continue;
 
-                $this->itemRepository->update($item->id, ['weighted_average_cost' => $newWac]);
+                    ['item' => $item, 'oldWac' => $oldWac, 'oldQty' => $oldQty] = $itemSnapshots[$itemId];
+
+                    $receiptQty   = $lines->sum(fn ($l) => (float) $l->received_quantity);
+                    $receiptValue = $lines->sum(fn ($l) => (float) $l->received_quantity * (float) $l->unit_cost);
+
+                    $newWac = $this->avcoCalculator->calculate($oldQty, $oldWac, $receiptQty, $receiptValue);
+
+                    $this->itemRepository->update($item->id, ['weighted_average_cost' => $newWac]);
+                }
+            } else {
+                // All ENROLLED path
+                $businessDate = PropertyBusinessDate::where('property_id', $document->property_id)
+                    ->where('status', \Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum::Open)
+                    ->where('is_open', true)
+                    ->first();
+
+                if (!$businessDate) {
+                    throw new BusinessLogicException("No open business date found for property.");
+                }
+
+                if (!$approverId) {
+                    throw new BusinessLogicException("Actual approver identity is required for controlled posting.");
+                }
+
+                $actorId = $approverId;
+                $occurredAt = \Illuminate\Support\Carbon::parse($document->received_at ?? $document->created_at);
+
+                $sortedLines = $document->lines->sortBy([
+                    ['inventory_item_id', 'asc'],
+                    ['destination_location_id', 'asc'],
+                ]);
+
+                $invocationService = app(\Modules\Finance\CostControl\Services\ControlledReceiptValuationInvocationService::class);
+
+                foreach ($sortedLines as $line) {
+                    $intent = new InventoryLedgerPostingIntent(
+                        propertyId: $document->property_id,
+                        itemId: $line->inventory_item_id,
+                        locationId: $line->destination_location_id,
+                        businessDate: $businessDate->business_date,
+                        occurredAt: $occurredAt,
+                        sourceDocumentType: 'receiving_document',
+                        sourceDocumentId: $document->id,
+                        sourceLineType: 'receiving_line',
+                        sourceLineId: $line->id,
+                        movementRole: TransactionTypeEnum::PurchaseReceipt->value,
+                        idempotencyKey: "rcv_{$document->id}_{$line->id}_receipt",
+                        transactionType: TransactionTypeEnum::PurchaseReceipt,
+                        quantityChange: (string) $line->received_quantity,
+                        unitCost: (string) $line->unit_cost,
+                        totalCost: (string) $line->line_total,
+                        reference: $document->grn_number,
+                        notes: $document->remarks ?? 'Receiving Approval'
+                    );
+
+                    $invocationService->invokeReceipt($propertyId, $line->destination_location_id, $line->inventory_item_id, $intent, $actorId);
+                }
             }
         });
     }

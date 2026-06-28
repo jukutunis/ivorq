@@ -1,0 +1,373 @@
+<?php
+
+namespace Tests\Postgres\Finance\CostControl;
+
+use Carbon\Carbon;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use InvalidArgumentException;
+use RuntimeException;
+use Tests\PostgresTestCase;
+use Modules\Operations\Inventory\Services\ReceiptService;
+use Modules\Operations\Receiving\Services\InventoryReceiptIntegrationService;
+use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
+use Modules\Finance\CostControl\Models\CostAvcoState;
+use Modules\Operations\Inventory\Models\InventoryReceipt;
+use Modules\Operations\Inventory\Models\InventoryReceiptLine;
+use Modules\Operations\Receiving\Models\ReceivingDocument;
+use Modules\Operations\Receiving\Models\ReceivingLine;
+use Modules\Operations\Inventory\Models\InventoryCategory;
+use Modules\Operations\Inventory\Models\InventoryItem;
+use Modules\Operations\Inventory\Models\InventoryLocation;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Operations\Purchasing\Models\Vendor;
+use Modules\Operations\Purchasing\Models\VendorCategory;
+
+class ControlledReceiptValuationInvocationTest extends PostgresTestCase
+{
+    use RefreshDatabase;
+
+    protected $seed = true;
+
+    private ReceiptService $receiptService;
+    private InventoryReceiptIntegrationService $integrationService;
+    private CostAuthorityEnrollmentRepository $enrollmentRepo;
+
+    private Property $property;
+    private InventoryItem $itemEnrolled;
+    private InventoryItem $itemUnenrolled;
+    private InventoryLocation $location;
+    private Vendor $vendor;
+    private string $actorId;
+    private string $businessDate;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->receiptService     = app(ReceiptService::class);
+        $this->integrationService = app(InventoryReceiptIntegrationService::class);
+        $this->enrollmentRepo     = app(CostAuthorityEnrollmentRepository::class);
+
+        $this->property = Property::first();
+        $this->actorId  = (string) Str::ulid();
+
+        $category = InventoryCategory::firstOrCreate([
+            'property_id' => $this->property->id,
+            'name'        => 'Invocation Test Category',
+        ]);
+
+        $this->itemEnrolled = InventoryItem::create([
+            'property_id'           => $this->property->id,
+            'category_id'           => $category->id,
+            'sku'                   => 'INVOC-ENR-001',
+            'name'                  => 'Invocation Enrolled Item',
+            'inventory_type'        => 'goods',
+            'weighted_average_cost' => '10.0000',
+            'is_active'             => true,
+        ]);
+
+        $this->itemUnenrolled = InventoryItem::create([
+            'property_id'           => $this->property->id,
+            'category_id'           => $category->id,
+            'sku'                   => 'INVOC-UNENR-001',
+            'name'                  => 'Invocation Unenrolled Item',
+            'inventory_type'        => 'goods',
+            'weighted_average_cost' => '10.0000',
+            'is_active'             => true,
+        ]);
+
+        $this->location = InventoryLocation::firstOrCreate(
+            ['property_id' => $this->property->id, 'name' => 'Invocation Test Location'],
+            ['type' => 'internal']
+        );
+
+        $vendorCategory = VendorCategory::firstOrCreate(
+            ['property_id' => $this->property->id, 'name' => 'Invocation Test Vendor Category'],
+            ['category_code' => 'GVC-INV']
+        );
+
+        $this->vendor = Vendor::firstOrCreate(
+            ['property_id' => $this->property->id, 'vendor_code' => 'GTV-INV-001'],
+            ['vendor_category_id' => $vendorCategory->id, 'name' => 'Invocation Test Vendor']
+        );
+
+        $this->businessDate = '2026-06-28';
+
+        // Seed property business date open
+        DB::table('property_business_dates')->insertOrIgnore([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'business_date' => $this->businessDate,
+            'status' => 'open',
+            'is_open' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Seed financial period open
+        DB::table('financial_periods')->insertOrIgnore([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'period_year' => 2026,
+            'period_month' => 6,
+            'status' => 'open',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createEnrolledGroup(string $itemId): string
+    {
+        $id = (string) Str::ulid();
+        DB::table('cost_authority_enrollment_groups')->insert([
+            'id' => $id,
+            'property_id' => $this->property->id,
+            'item_id' => $itemId,
+            'status' => 'enrolled',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Seed snapshot
+        $snapshotId = (string) Str::ulid();
+        $valuationScope = "property:{$this->property->id}:location:{$this->location->id}:item:{$itemId}";
+        DB::table('cost_authority_enrollment_scope_snapshots')->insert([
+            'id' => $snapshotId,
+            'enrollment_group_id' => $id,
+            'location_id' => $this->location->id,
+            'valuation_scope' => $valuationScope,
+            'opening_quantity' => '10.0000',
+            'opening_carrying_value' => '100.0000',
+            'currency_code' => 'USD',
+            'business_date' => $this->businessDate,
+            'financial_period_id' => 'fp_1',
+            'evidence_timestamp' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Seed CostAvcoState
+        DB::table('cost_avco_states')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'location_id' => $this->location->id,
+            'item_id' => $itemId,
+            'valuation_scope' => $valuationScope,
+            'on_hand_quantity' => '10.0000',
+            'carrying_value' => '100.0000',
+            'weighted_average_unit_cost' => '10.0000',
+            'unresolved_provisional_quantity' => '0.0000',
+            'last_valuation_sequence' => null,
+            'last_valuation_business_date' => null,
+            'enrollment_group_id' => $id,
+            'enrollment_scope_snapshot_id' => $snapshotId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    /**
+     * 1. All-enrolled ReceiptService receipt applies controlled path atomically
+     */
+    public function test_all_enrolled_receipt_service_atomic_apply(): void
+    {
+        $groupId = $this->createEnrolledGroup($this->itemEnrolled->id);
+
+        $receipt = InventoryReceipt::create([
+            'property_id'    => $this->property->id,
+            'receipt_number' => 'RCP-TEST-' . Str::ulid(),
+            'supplier_name'  => 'Test Supplier',
+            'status'         => 'draft',
+        ]);
+
+        InventoryReceiptLine::create([
+            'property_id' => $this->property->id,
+            'receipt_id'  => $receipt->id,
+            'item_id'     => $this->itemEnrolled->id,
+            'location_id' => $this->location->id,
+            'quantity'    => '5.000',
+            'unit_cost'   => '12.00',
+            'line_total'  => '60.00',
+        ]);
+
+        $posted = $this->receiptService->post($receipt->id, $this->actorId);
+
+        $this->assertEquals('posted', $posted->status->value);
+
+        // Exactly one Cost Ledger entry appended
+        $this->assertDatabaseCount('cost_ledger_entries', 1);
+
+        // State updated
+        $state = CostAvcoState::where('item_id', $this->itemEnrolled->id)->first();
+        $this->assertEquals('15.0000', $state->on_hand_quantity);
+        $this->assertEquals('160.0000', $state->carrying_value);
+        $this->assertEquals('10.6667', $state->weighted_average_unit_cost);
+    }
+
+    /**
+     * 2. All-enrolled InventoryReceiptIntegrationService receiving document applies controlled path
+     */
+    public function test_all_enrolled_receiving_integration_atomic_apply(): void
+    {
+        $groupId = $this->createEnrolledGroup($this->itemEnrolled->id);
+
+        $doc = ReceivingDocument::create([
+            'property_id' => $this->property->id,
+            'vendor_id'   => $this->vendor->id,
+            'grn_number'  => 'GRN-TEST-' . Str::ulid(),
+            'status'      => 'submitted',
+        ]);
+
+        ReceivingLine::create([
+            'receiving_document_id'   => $doc->id,
+            'inventory_item_id'       => $this->itemEnrolled->id,
+            'destination_location_id' => $this->location->id,
+            'description'             => 'Receiving line test',
+            'received_quantity'       => '5.00',
+            'unit_cost'               => '12.00',
+            'line_total'              => '60.00',
+        ]);
+
+        $this->integrationService->syncToInventory($doc, $this->actorId);
+
+        // Exactly one Cost Ledger entry appended
+        $this->assertDatabaseCount('cost_ledger_entries', 1);
+
+        // Item WAC remains unchanged (bypassed)
+        $this->assertEquals(
+            '10.0000',
+            (string) DB::table('inventory_items')->where('id', $this->itemEnrolled->id)->value('weighted_average_cost')
+        );
+    }
+
+    /**
+     * 3. All-unenrolled ReceiptService and Receiving documents preserve legacy behavior
+     */
+    public function test_all_unenrolled_preserve_legacy(): void
+    {
+        $receipt = InventoryReceipt::create([
+            'property_id'    => $this->property->id,
+            'receipt_number' => 'RCP-TEST-2-' . Str::ulid(),
+            'supplier_name'  => 'Test Supplier',
+            'status'         => 'draft',
+        ]);
+
+        InventoryReceiptLine::create([
+            'property_id' => $this->property->id,
+            'receipt_id'  => $receipt->id,
+            'item_id'     => $this->itemUnenrolled->id,
+            'location_id' => $this->location->id,
+            'quantity'    => '5.000',
+            'unit_cost'   => '12.00',
+            'line_total'  => '60.00',
+        ]);
+
+        $posted = $this->receiptService->post($receipt->id, $this->actorId);
+
+        $this->assertEquals('posted', $posted->status->value);
+        $this->assertDatabaseCount('cost_ledger_entries', 0); // No Cost Ledger appends!
+
+        // WAC updated on legacy item
+        $newWac = DB::table('inventory_items')->where('id', $this->itemUnenrolled->id)->value('weighted_average_cost');
+        $this->assertEquals('12.00', (string) $newWac); // since starting qty is 0, WAC becomes unit_cost
+    }
+
+    /**
+     * 4. Mixed enrollment document fails before any writes
+     */
+    public function test_mixed_enrollment_fails_closed(): void
+    {
+        $this->createEnrolledGroup($this->itemEnrolled->id);
+        // itemUnenrolled remains unenrolled
+
+        $receipt = InventoryReceipt::create([
+            'property_id'    => $this->property->id,
+            'receipt_number' => 'RCP-TEST-MIXED-' . Str::ulid(),
+            'supplier_name'  => 'Test Supplier',
+            'status'         => 'draft',
+        ]);
+
+        // Line 1: Enrolled
+        InventoryReceiptLine::create([
+            'property_id' => $this->property->id,
+            'receipt_id'  => $receipt->id,
+            'item_id'     => $this->itemEnrolled->id,
+            'location_id' => $this->location->id,
+            'quantity'    => '5.000',
+            'unit_cost'   => '12.00',
+            'line_total'  => '60.00',
+        ]);
+
+        // Line 2: Unenrolled
+        InventoryReceiptLine::create([
+            'property_id' => $this->property->id,
+            'receipt_id'  => $receipt->id,
+            'item_id'     => $this->itemUnenrolled->id,
+            'location_id' => $this->location->id,
+            'quantity'    => '10.000',
+            'unit_cost'   => '8.00',
+            'line_total'  => '80.00',
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Mixed enrollment status detected');
+
+        try {
+            $this->receiptService->post($receipt->id, $this->actorId);
+        } finally {
+            // Assert no entries written to DB
+            $this->assertDatabaseCount('cost_ledger_entries', 0);
+            $this->assertEquals('draft', DB::table('inventory_receipts')->where('id', $receipt->id)->value('status'));
+        }
+    }
+
+    /**
+     * 5. Failure after transaction evidence creation rolls back everything
+     */
+    public function test_failure_rolls_back_everything(): void
+    {
+        $this->createEnrolledGroup($this->itemEnrolled->id);
+
+        $receipt = InventoryReceipt::create([
+            'property_id'    => $this->property->id,
+            'receipt_number' => 'RCP-TEST-ROLLBACK-' . Str::ulid(),
+            'supplier_name'  => 'Test Supplier',
+            'status'         => 'draft',
+        ]);
+
+        InventoryReceiptLine::create([
+            'property_id' => $this->property->id,
+            'receipt_id'  => $receipt->id,
+            'item_id'     => $this->itemEnrolled->id,
+            'location_id' => $this->location->id,
+            'quantity'    => '5.000',
+            'unit_cost'   => '12.00',
+            'line_total'  => '60.00',
+        ]);
+
+        // Force sequence error by setting last sequence to 10 in CostAvcoState
+        // so that the planner throws sequence gap error because entry sequence will be 1
+        DB::table('cost_avco_states')
+            ->where('item_id', $this->itemEnrolled->id)
+            ->update(['last_valuation_sequence' => 10, 'last_valuation_business_date' => $this->businessDate]);
+
+        try {
+            $this->receiptService->post($receipt->id, $this->actorId);
+            $this->fail('Expected exception from sequence mismatch.');
+        } catch (\Throwable $e) {
+            $this->assertStringContainsString('Sequence gap detected', $e->getMessage());
+        }
+
+        // Verify rollback: no transaction posted, status remains draft, state untouched
+        $this->assertEquals('draft', DB::table('inventory_receipts')->where('id', $receipt->id)->value('status'));
+        $this->assertDatabaseCount('cost_ledger_entries', 0);
+        $this->assertDatabaseCount('inventory_transactions', 0);
+        $state = CostAvcoState::where('item_id', $this->itemEnrolled->id)->first();
+        $this->assertEquals(10, $state->last_valuation_sequence);
+        $this->assertEquals('10.0000', $state->on_hand_quantity);
+    }
+}

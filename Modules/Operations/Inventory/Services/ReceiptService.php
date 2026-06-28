@@ -46,67 +46,128 @@ class ReceiptService
             ]);
         }
 
-        // Enrollment guard: validate every item scope before any transaction or mutation.
-        // Only ENROLLED status blocks. DRAFT/APPROVED/REJECTED/SUPERSEDED do not block.
-        foreach ($receipt->lines->groupBy('item_id')->keys() as $itemId) {
-            if ($this->enrollmentRepository->hasEnrolledGroupForPropertyItem($receipt->property_id, (string) $itemId)) {
-                throw new RuntimeException(
-                    "Legacy receipt posting is blocked for property={$receipt->property_id} " .
-                    "item={$itemId}: CostControl authority is enrolled. " .
-                    "Receipt mutations must not occur outside CostControl."
-                );
+        // Enrollment guard: classify line items
+        $propertyId = $receipt->property_id;
+        $lines = $receipt->lines;
+        $totalLines = $lines->count();
+        $enrolledCount = 0;
+        foreach ($lines as $line) {
+            if ($this->enrollmentRepository->hasEnrolledGroupForPropertyItem($propertyId, (string) $line->item_id)) {
+                $enrolledCount++;
             }
         }
 
-        DB::transaction(function () use ($receipt, $userId) {
-            $linesByItem = $receipt->lines->groupBy('item_id');
+        // Mixed enrollment fail closed
+        if ($enrolledCount > 0 && $enrolledCount < $totalLines) {
+            throw new RuntimeException("Mixed enrollment status detected across receipt lines. Fail closed.");
+        }
 
-            // Lock and read old state for AVCO
-            $itemSnapshots = [];
-            foreach ($linesByItem as $itemId => $lines) {
-                $item   = $this->itemRepository->find($itemId);
-                $oldWac = (float) $item->weighted_average_cost;
-                $oldQty = (float) $this->stockRepository->totalQuantityForItemLocked($itemId);
+        $allEnrolled = ($enrolledCount === $totalLines);
 
-                $itemSnapshots[$itemId] = [
-                    'item'   => $item,
-                    'oldWac' => $oldWac,
-                    'oldQty' => $oldQty,
-                ];
-            }
+        if (!$allEnrolled) {
+            // Legacy path remains unchanged
+            DB::transaction(function () use ($receipt, $userId) {
+                $linesByItem = $receipt->lines->groupBy('item_id');
 
-            // Post movements into Ledger
-            foreach ($receipt->lines as $line) {
-                $this->stockMovementService->receive(
-                    $receipt->property_id,
-                    $line->item_id,
-                    $line->location_id,
-                    (string) $line->quantity,
-                    (string) $line->unit_cost,
-                    $receipt->id,
-                    $receipt->receipt_number,
-                    $userId
-                );
-            }
+                // Lock and read old state for AVCO
+                $itemSnapshots = [];
+                foreach ($linesByItem as $itemId => $lines) {
+                    $item   = $this->itemRepository->find($itemId);
+                    $oldWac = (float) $item->weighted_average_cost;
+                    $oldQty = (float) $this->stockRepository->totalQuantityForItemLocked($itemId);
 
-            // Compute AVCO exactly to formula via pure calculator service
-            foreach ($linesByItem as $itemId => $lines) {
-                ['item' => $item, 'oldWac' => $oldWac, 'oldQty' => $oldQty] = $itemSnapshots[$itemId];
+                    $itemSnapshots[$itemId] = [
+                        'item'   => $item,
+                        'oldWac' => $oldWac,
+                        'oldQty' => $oldQty,
+                    ];
+                }
 
-                $receiptQty   = $lines->sum(fn ($l) => (float) $l->quantity);
-                $receiptValue = $lines->sum(fn ($l) => (float) $l->quantity * (float) $l->unit_cost);
+                // Post movements into Ledger
+                foreach ($receipt->lines as $line) {
+                    $this->stockMovementService->receive(
+                        $receipt->property_id,
+                        $line->item_id,
+                        $line->location_id,
+                        (string) $line->quantity,
+                        (string) $line->unit_cost,
+                        $receipt->id,
+                        $receipt->receipt_number,
+                        $userId
+                    );
+                }
 
-                $newWac = $this->avcoCalculator->calculate($oldQty, $oldWac, $receiptQty, $receiptValue);
+                // Compute AVCO exactly to formula via pure calculator service
+                foreach ($linesByItem as $itemId => $lines) {
+                    ['item' => $item, 'oldWac' => $oldWac, 'oldQty' => $oldQty] = $itemSnapshots[$itemId];
 
-                $this->itemRepository->update($item->id, ['weighted_average_cost' => $newWac]);
-            }
+                    $receiptQty   = $lines->sum(fn ($l) => (float) $l->quantity);
+                    $receiptValue = $lines->sum(fn ($l) => (float) $l->quantity * (float) $l->unit_cost);
 
-            $this->receiptRepository->update($receipt->id, [
-                'status'    => ReceiptStatusEnum::Posted->value,
-                'posted_at' => now(),
-                'posted_by' => $userId ?? auth()->id(),
-            ]);
-        });
+                    $newWac = $this->avcoCalculator->calculate($oldQty, $oldWac, $receiptQty, $receiptValue);
+
+                    $this->itemRepository->update($item->id, ['weighted_average_cost' => $newWac]);
+                }
+
+                $this->receiptRepository->update($receipt->id, [
+                    'status'    => ReceiptStatusEnum::Posted->value,
+                    'posted_at' => now(),
+                    'posted_by' => $userId ?? auth()->id(),
+                ]);
+            });
+        } else {
+            // All ENROLLED path
+            DB::transaction(function () use ($receipt, $userId, $propertyId) {
+                // Resolve open business date
+                $businessDate = \Modules\Foundation\Property\Models\PropertyBusinessDate::where('property_id', $propertyId)
+                    ->where('status', \Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum::Open)
+                    ->where('is_open', true)
+                    ->first();
+
+                if (!$businessDate) {
+                    throw new RuntimeException("No open business date found for property.");
+                }
+
+                // Deadlock safety: sort lines deterministically
+                $sortedLines = $receipt->lines->sortBy([
+                    ['item_id', 'asc'],
+                    ['location_id', 'asc'],
+                ]);
+
+                $invocationService = app(\Modules\Finance\CostControl\Services\ControlledReceiptValuationInvocationService::class);
+
+                foreach ($sortedLines as $line) {
+                    $intent = new \Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent(
+                        propertyId: $propertyId,
+                        itemId: $line->item_id,
+                        locationId: $line->location_id,
+                        businessDate: $businessDate->business_date,
+                        occurredAt: \Illuminate\Support\Carbon::now(),
+                        sourceDocumentType: 'inventory_receipt',
+                        sourceDocumentId: $receipt->id,
+                        sourceLineType: 'inventory_receipt_line',
+                        sourceLineId: $line->id,
+                        movementRole: \Modules\Operations\Inventory\Enums\TransactionTypeEnum::PurchaseReceipt->value,
+                        idempotencyKey: "rcpt_{$receipt->id}_{$line->id}_receipt",
+                        transactionType: \Modules\Operations\Inventory\Enums\TransactionTypeEnum::PurchaseReceipt,
+                        quantityChange: (string) $line->quantity,
+                        unitCost: (string) $line->unit_cost,
+                        totalCost: (string) ($line->quantity * $line->unit_cost),
+                        reference: $receipt->receipt_number,
+                        notes: 'Controlled Receipt Posting'
+                    );
+
+                    $invocationService->invokeReceipt($propertyId, $line->location_id, $line->item_id, $intent, $userId);
+                }
+
+                // Update status
+                $this->receiptRepository->update($receipt->id, [
+                    'status'    => ReceiptStatusEnum::Posted->value,
+                    'posted_at' => now(),
+                    'posted_by' => $userId ?? auth()->id(),
+                ]);
+            });
+        }
 
         $postedReceipt = $this->receiptRepository->find($id);
 
