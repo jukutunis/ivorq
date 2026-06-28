@@ -1,9 +1,6 @@
 import IvorqLayout from '@/Layouts/IvorqLayout';
-import { useForm, Link } from '@inertiajs/react';
+import { useForm } from '@inertiajs/react';
 import React, { useState } from 'react';
-import StatusBadge from '@/Components/Ivorq/primitives/StatusBadge';
-import Button from '@/Components/Ivorq/primitives/Button';
-import Icon from '@/Components/Ivorq/primitives/Icon';
 
 interface InventoryTransaction {
     id: string;
@@ -26,6 +23,8 @@ interface ApprovalRequest {
         reversal_reason?: string;
         request_idempotency_key?: string;
     } | null;
+    requested_at: string | null;
+    completed_at: string | null;
 }
 
 interface Props {
@@ -35,6 +34,12 @@ interface Props {
     idempotencyKey: string | null;
     existingApproval: ApprovalRequest | null;
     existingReversal: InventoryTransaction | null;
+    requesterName: string | null;
+    approverName: string | null;
+    approvedAt: string | null;
+    workflowLabel: string | null;
+    isExecutionAvailable: boolean;
+    executionIdempotencyKey: string | null;
 }
 
 export default function InventoryReversalWorkspace({
@@ -44,21 +49,42 @@ export default function InventoryReversalWorkspace({
     idempotencyKey,
     existingApproval,
     existingReversal,
+    requesterName,
+    approverName,
+    approvedAt,
+    workflowLabel,
+    isExecutionAvailable,
+    executionIdempotencyKey,
 }: Props) {
-    const [showForm, setShowForm] = useState(false);
+    const [showRequestForm, setShowRequestForm] = useState(false);
+    const [showExecuteForm, setShowExecuteForm] = useState(false);
 
-    const { data, setData, post, processing, errors, reset } = useForm({
+    const requestForm = useForm({
         original_inventory_transaction_id: transaction.id,
         reversal_reason: '',
         request_idempotency_key: idempotencyKey || '',
     });
 
-    const onSubmit = (e: React.FormEvent) => {
+    const executeForm = useForm({
+        execution_idempotency_key: executionIdempotencyKey || '',
+    });
+
+    const onRequestSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        post(route('operations.inventory.reversals.request'), {
+        requestForm.post(route('operations.inventory.reversals.request'), {
             onSuccess: () => {
-                setShowForm(false);
-                reset('reversal_reason');
+                setShowRequestForm(false);
+                requestForm.reset('reversal_reason');
+            },
+        });
+    };
+
+    const onExecuteSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!existingApproval) return;
+        executeForm.post(route('operations.inventory.reversals.execute', { approvalRequest: existingApproval.id }), {
+            onSuccess: () => {
+                setShowExecuteForm(false);
             },
         });
     };
@@ -114,7 +140,7 @@ export default function InventoryReversalWorkspace({
                 <div className="bg-white p-4 rounded border border-gray-200 shadow-sm">
                     <span className="text-xs font-semibold uppercase text-gray-400 block mb-1">Controlled Actions</span>
                     <span className="text-sm font-bold text-gray-800">
-                        {isEligible ? 'Available' : 'Unavailable'}
+                        {isExecutionAvailable ? 'Execute Available' : (isEligible ? 'Request Available' : 'Unavailable')}
                     </span>
                 </div>
             </div>
@@ -177,14 +203,75 @@ export default function InventoryReversalWorkspace({
                             </div>
                         </div>
                     </div>
+
+                    {/* Approval Evidence Panel */}
+                    {existingApproval && (
+                        <div className="bg-white rounded border border-gray-200 shadow-sm p-6">
+                            <div className="flex items-center justify-between border-b border-gray-100 pb-4 mb-4">
+                                <h2 className="text-lg font-bold text-gray-900">Approval Evidence</h2>
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                    Workflow Evidence
+                                </span>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                                <div>
+                                    <span className="text-xs text-gray-400 block">Approval Reference</span>
+                                    <span className="text-sm font-semibold text-gray-800 break-all">{existingApproval.id}</span>
+                                </div>
+                                <div>
+                                    <span className="text-xs text-gray-400 block">Workflow Route</span>
+                                    <span className="text-sm font-semibold text-gray-800">{workflowLabel ?? 'N/A'}</span>
+                                </div>
+                                <div>
+                                    <span className="text-xs text-gray-400 block">Requested By</span>
+                                    <span className="text-sm font-semibold text-gray-800">{requesterName ?? 'N/A'}</span>
+                                </div>
+                                <div>
+                                    <span className="text-xs text-gray-400 block">Requested At</span>
+                                    <span className="text-sm font-semibold text-gray-800">{existingApproval.requested_at ?? 'N/A'}</span>
+                                </div>
+                                <div>
+                                    <span className="text-xs text-gray-400 block">Reversal Reason</span>
+                                    <span className="text-sm font-semibold text-gray-800">
+                                        {existingApproval.notes?.reversal_reason ?? 'N/A'}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="text-xs text-gray-400 block">Approval Status</span>
+                                    <span className="text-sm font-bold text-gray-800">{existingApproval.status}</span>
+                                </div>
+                                {approverName && (
+                                    <>
+                                        <div>
+                                            <span className="text-xs text-gray-400 block">Approved By</span>
+                                            <span className="text-sm font-semibold text-gray-800">{approverName}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-400 block">Approved At</span>
+                                            <span className="text-sm font-semibold text-gray-800">{approvedAt ?? 'N/A'}</span>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Right persistent action column */}
                 <div className="space-y-6">
                     {/* Eligibility & Guidance Panel */}
                     <div className="bg-white rounded border border-gray-200 shadow-sm p-6">
-                        <h3 className="text-md font-bold text-gray-900 mb-3">Reversal Eligibility</h3>
-                        {isEligible ? (
+                        <h3 className="text-md font-bold text-gray-900 mb-3">Controlled Execution</h3>
+                        {isExecutionAvailable ? (
+                            <div className="space-y-3">
+                                <div className="p-3 bg-blue-50 text-blue-800 rounded text-sm">
+                                    Final approval is recorded. Controlled execution will be revalidated by the backend when submitted.
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                    Next step: Click "Review and Execute Reversal" to perform controlled confirmation.
+                                </div>
+                            </div>
+                        ) : isEligible ? (
                             <div className="space-y-3">
                                 <div className="p-3 bg-green-50 text-green-800 rounded text-sm">
                                     This transaction can be submitted for approval. A final approved request is required before controlled reversal can occur.
@@ -199,7 +286,7 @@ export default function InventoryReversalWorkspace({
                                     <strong>Blocked:</strong> {blocker || 'This transaction cannot be reversed.'}
                                 </div>
                                 <div className="text-xs text-gray-500">
-                                     rechecking or corrections cannot bypass active blocker constraints.
+                                    Controlled checks cannot bypass active blocker constraints.
                                 </div>
                             </div>
                         )}
@@ -209,12 +296,20 @@ export default function InventoryReversalWorkspace({
                     <div className="bg-white rounded border border-gray-200 shadow-sm p-6">
                         <h3 className="text-md font-bold text-gray-900 mb-3">Context Actions</h3>
                         <div className="space-y-2">
-                            {isEligible && !showForm && (
+                            {isEligible && !showRequestForm && (
                                 <button
-                                    onClick={() => setShowForm(true)}
+                                    onClick={() => setShowRequestForm(true)}
                                     className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded transition-colors"
                                 >
                                     Request Reversal
+                                </button>
+                            )}
+                            {isExecutionAvailable && !showExecuteForm && (
+                                <button
+                                    onClick={() => setShowExecuteForm(true)}
+                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded transition-colors"
+                                >
+                                    Review and Execute Reversal
                                 </button>
                             )}
                             <button disabled className="w-full bg-gray-100 text-gray-400 text-sm font-medium py-2 px-4 rounded cursor-not-allowed">
@@ -223,22 +318,17 @@ export default function InventoryReversalWorkspace({
                             <button disabled className="w-full bg-gray-100 text-gray-400 text-sm font-medium py-2 px-4 rounded cursor-not-allowed">
                                 View Cost Evidence
                             </button>
-                            {existingApproval && (
-                                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
-                                    Linked Approval ID: <strong>{existingApproval.id}</strong>
-                                </div>
-                            )}
                         </div>
                     </div>
 
                     {/* Request Drawer / Form Panel */}
-                    {showForm && isEligible && (
+                    {showRequestForm && isEligible && (
                         <div className="bg-white rounded border border-gray-200 shadow-sm p-6 border-l-4 border-l-blue-500">
                             <h3 className="text-md font-bold text-gray-900 mb-2">Request Controlled Reversal</h3>
                             <p className="text-xs text-gray-500 mb-4">
                                 Submit approval request for original transaction. Note that all quantities, costs, and valuation sequence allocations are server-controlled and immutable.
                             </p>
-                            <form onSubmit={onSubmit} className="space-y-4">
+                            <form onSubmit={onRequestSubmit} className="space-y-4">
                                 <div>
                                     <label htmlFor="reversal_reason" className="block text-xs font-semibold text-gray-600 uppercase mb-1">
                                         Reversal Reason
@@ -246,23 +336,23 @@ export default function InventoryReversalWorkspace({
                                     <textarea
                                         id="reversal_reason"
                                         rows={3}
-                                        value={data.reversal_reason}
-                                        onChange={(e) => setData('reversal_reason', e.target.value)}
+                                        value={requestForm.data.reversal_reason}
+                                        onChange={(e) => requestForm.setData('reversal_reason', e.target.value)}
                                         className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                                         placeholder="Explain why this reversal is necessary..."
                                         required
                                     />
-                                    {errors.reversal_reason && (
-                                        <span className="text-xs text-red-500 mt-1 block">{errors.reversal_reason}</span>
+                                    {requestForm.errors.reversal_reason && (
+                                        <span className="text-xs text-red-500 mt-1 block">{requestForm.errors.reversal_reason}</span>
                                     )}
                                 </div>
-                                <input type="hidden" name="request_idempotency_key" value={data.request_idempotency_key} />
+                                <input type="hidden" name="request_idempotency_key" value={requestForm.data.request_idempotency_key} />
                                 <div className="flex gap-2">
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            setShowForm(false);
-                                            reset('reversal_reason');
+                                            setShowRequestForm(false);
+                                            requestForm.reset('reversal_reason');
                                         }}
                                         className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium py-2 rounded transition-colors"
                                     >
@@ -270,10 +360,82 @@ export default function InventoryReversalWorkspace({
                                     </button>
                                     <button
                                         type="submit"
-                                        disabled={processing}
+                                        disabled={requestForm.processing}
                                         className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded transition-colors disabled:opacity-50"
                                     >
-                                        {processing ? 'Submitting...' : 'Submit Request'}
+                                        {requestForm.processing ? 'Submitting...' : 'Submit Request'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    )}
+
+                    {/* Controlled Confirmation Panel (State 2 Execute) */}
+                    {showExecuteForm && isExecutionAvailable && existingApproval && (
+                        <div className="bg-white rounded border border-gray-200 shadow-sm p-6 border-l-4 border-l-green-500 space-y-4">
+                            <div>
+                                <h3 className="text-md font-bold text-gray-900">Review and Execute Reversal</h3>
+                                <p className="text-xs text-gray-500">
+                                    Review immutable transaction and approval evidence before controlled execution.
+                                </p>
+                            </div>
+
+                            <div className="bg-gray-50 p-3 rounded text-xs space-y-3">
+                                <div>
+                                    <strong className="block text-gray-400 uppercase tracking-wider text-[10px]">Original Transaction</strong>
+                                    <span className="block font-semibold text-gray-800 break-all">{transaction.id}</span>
+                                    <span className="block text-gray-600 capitalize">
+                                        Type: {transaction.transaction_type.replace('_', ' ')}
+                                    </span>
+                                    <span className="block text-gray-600">
+                                        Quantity Change: {transaction.quantity_change}
+                                    </span>
+                                    <span className="block text-gray-600">
+                                        Total Cost: {transaction.currency_code} {transaction.total_cost ?? '0.00'}
+                                    </span>
+                                </div>
+
+                                <div>
+                                    <strong className="block text-gray-400 uppercase tracking-wider text-[10px]">Final Approved Request</strong>
+                                    <span className="block font-semibold text-gray-800 break-all">{existingApproval.id}</span>
+                                    <span className="block text-gray-600">Requested by: {requesterName ?? 'N/A'}</span>
+                                    <span className="block text-gray-600">Reason: {existingApproval.notes?.reversal_reason}</span>
+                                    <span className="block text-gray-600">Approved by: {approverName ?? 'N/A'}</span>
+                                </div>
+
+                                <div>
+                                    <strong className="block text-gray-400 uppercase tracking-wider text-[10px]">Expected Operational Result</strong>
+                                    <span className="block text-gray-600">
+                                        • Original transaction remains immutable.
+                                    </span>
+                                    <span className="block text-gray-600">
+                                        • A new linked reversal transaction will be created.
+                                    </span>
+                                    <span className="block text-gray-600">
+                                        • Physical stock and carrying-value changes will be processed on the backend.
+                                    </span>
+                                    <span className="block text-gray-600">
+                                        • Backend will perform final controlled validation and record audit evidence.
+                                    </span>
+                                </div>
+                            </div>
+
+                            <form onSubmit={onExecuteSubmit} className="space-y-4">
+                                <input type="hidden" name="execution_idempotency_key" value={executeForm.data.execution_idempotency_key} />
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowExecuteForm(false)}
+                                        className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium py-2 rounded transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={executeForm.processing}
+                                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded transition-colors disabled:opacity-50"
+                                    >
+                                        {executeForm.processing ? 'Executing...' : 'Execute Reversal'}
                                     </button>
                                 </div>
                             </form>

@@ -87,6 +87,7 @@ class InventoryReversalWorkspaceTest extends PostgresTestCase
         ]);
 
         Permission::firstOrCreate(['name' => 'inventory.reversal.request', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'inventory.reversal.execute', 'guard_name' => 'web']);
     }
 
     private function createTransaction(
@@ -117,6 +118,63 @@ class InventoryReversalWorkspaceTest extends PostgresTestCase
         $tx->save();
 
         return $tx;
+    }
+
+    private function seedApproval(
+        string $id,
+        string $status,
+        string $approvableId,
+        string $approvableType,
+        string $reason
+    ): void {
+        DB::table('approval_workflows')->insertOrIgnore([
+            'id' => 'ui-reversal-wf',
+            'property_id' => $this->property->id,
+            'name' => 'Inventory Reversal Workflow',
+            'approvable_type' => $approvableType,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('approval_requests')->insert([
+            'id' => $id,
+            'property_id' => $this->property->id,
+            'approvable_type' => $approvableType,
+            'approvable_id' => $approvableId,
+            'workflow_id' => 'ui-reversal-wf',
+            'requester_id' => $this->user->id,
+            'status' => $status,
+            'notes' => json_encode([
+                'request_idempotency_key' => 'request-idem-key',
+                'reversal_reason' => $reason,
+                'original_transaction_id' => $approvableId,
+            ]),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        if ($status === 'Approved') {
+            DB::table('approval_steps')->insertOrIgnore([
+                'id' => 'ui-reversal-step',
+                'workflow_id' => 'ui-reversal-wf',
+                'sequence' => 1,
+                'name' => 'Manager Approval',
+                'required_approvals' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            DB::table('approval_actions')->insert([
+                'id' => (string) Str::ulid(),
+                'approval_request_id' => $id,
+                'approval_step_id' => 'ui-reversal-step',
+                'user_id' => $this->user->id,
+                'action_type' => 'Approved',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 
     public function test_unauthenticated_actor_cannot_open_workspace(): void
@@ -155,13 +213,14 @@ class InventoryReversalWorkspaceTest extends PostgresTestCase
             ->has('idempotencyKey')
             ->where('existingApproval', null)
             ->where('existingReversal', null)
+            ->where('isExecutionAvailable', false)
+            ->where('executionIdempotencyKey', null)
         );
     }
 
     public function test_blocked_original_transaction_type_renders_blocker(): void
     {
         $this->actingAs($this->user);
-        $this->user->givePermissionTo('inventory.request'); // wait, any random permission
         $this->user->givePermissionTo('inventory.reversal.request');
 
         $tx = $this->createTransaction(TransactionTypeEnum::AdjustmentIn, 1, '5.0000', '10.0000', '50.0000');
@@ -174,6 +233,79 @@ class InventoryReversalWorkspaceTest extends PostgresTestCase
             ->where('isEligible', false)
             ->where('blocker', 'Candidate transaction type is not eligible for Reversal v1.')
             ->where('idempotencyKey', null)
+        );
+    }
+
+    public function test_final_approved_linked_approval_request_renders_props(): void
+    {
+        $this->actingAs($this->user);
+        $this->user->givePermissionTo('inventory.reversal.execute');
+
+        $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
+
+        $approvalId = (string) Str::ulid();
+        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $this->seedApproval($approvalId, 'Approved', $tx->id, $txMorph, 'Correct reason');
+
+        $response = $this->get(route('operations.inventory.reversals.show', ['transaction' => $tx->id]));
+
+        $response->assertStatus(200);
+        $response->assertInertia(fn (Assert $page) => $page
+            ->component('Operations/Inventory/InventoryReversalWorkspace')
+            ->where('isEligible', false)
+            ->where('existingApproval.status', 'Approved')
+            ->where('isExecutionAvailable', true)
+            ->has('executionIdempotencyKey')
+            ->where('requesterName', $this->user->name)
+            ->where('approverName', $this->user->name)
+        );
+    }
+
+    public function test_non_final_approval_does_not_expose_execution(): void
+    {
+        $this->actingAs($this->user);
+        $this->user->givePermissionTo('inventory.reversal.execute');
+
+        $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
+
+        $approvalId = (string) Str::ulid();
+        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $this->seedApproval($approvalId, 'Pending', $tx->id, $txMorph, 'Correct reason');
+
+        $response = $this->get(route('operations.inventory.reversals.show', ['transaction' => $tx->id]));
+
+        $response->assertStatus(200);
+        $response->assertInertia(fn (Assert $page) => $page
+            ->component('Operations/Inventory/InventoryReversalWorkspace')
+            ->where('isExecutionAvailable', false)
+            ->where('executionIdempotencyKey', null)
+        );
+    }
+
+    public function test_existing_linked_reversal_does_not_expose_execution(): void
+    {
+        $this->actingAs($this->user);
+        $this->user->givePermissionTo('inventory.reversal.execute');
+
+        $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
+
+        $approvalId = (string) Str::ulid();
+        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $this->seedApproval($approvalId, 'Approved', $tx->id, $txMorph, 'Correct reason');
+
+        // Create mock reversal referencing the original
+        $reversalTx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 2, '-5.0000', '10.0000', '-50.0000');
+        $reversalTx->reverses_inventory_transaction_id = $tx->id;
+        $reversalTx->save();
+
+        $response = $this->get(route('operations.inventory.reversals.show', ['transaction' => $tx->id]));
+
+        $response->assertStatus(200);
+        $response->assertInertia(fn (Assert $page) => $page
+            ->component('Operations/Inventory/InventoryReversalWorkspace')
+            ->where('isExecutionAvailable', false)
+            ->where('executionIdempotencyKey', null)
+            ->where('blocker', 'This transaction has already been reversed.')
         );
     }
 }

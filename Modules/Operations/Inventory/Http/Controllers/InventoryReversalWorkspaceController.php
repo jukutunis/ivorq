@@ -20,7 +20,8 @@ class InventoryReversalWorkspaceController extends Controller
 
     public function index(InventoryTransaction $transaction): InertiaResponse
     {
-        if (!auth()->user()->hasPermissionTo('inventory.reversal.request')) {
+        if (!auth()->user()->hasPermissionTo('inventory.reversal.request') &&
+            !auth()->user()->hasPermissionTo('inventory.reversal.execute')) {
             abort(403, 'Unauthorized.');
         }
 
@@ -54,6 +55,46 @@ class InventoryReversalWorkspaceController extends Controller
 
         $idempotencyKey = $isEligible ? 'req_idem_' . (string) Str::uuid() : null;
 
+        // State 2: Final Approved & Controlled Execution readiness
+        $isExecutionAvailable = false;
+        $executionIdempotencyKey = null;
+        $requesterName = null;
+        $approverName = null;
+        $approvedAt = null;
+        $workflowLabel = null;
+
+        if ($existingApproval) {
+            $requester = DB::table('users')->where('id', $existingApproval->requester_id)->first();
+            if ($requester) {
+                $requesterName = $requester->name;
+            }
+
+            $workflow = DB::table('approval_workflows')->where('id', $existingApproval->workflow_id)->first();
+            if ($workflow) {
+                $workflowLabel = $workflow->name;
+            }
+
+            if ($existingApproval->status === 'Approved') {
+                $approveAction = DB::table('approval_actions')
+                    ->where('approval_request_id', $existingApproval->id)
+                    ->where('action_type', 'Approved')
+                    ->first();
+
+                if ($approveAction) {
+                    $approver = DB::table('users')->where('id', $approveAction->user_id)->first();
+                    if ($approver) {
+                        $approverName = $approver->name;
+                    }
+                    $approvedAt = $approveAction->created_at;
+                }
+
+                if (!$existingReversal && auth()->user()->hasPermissionTo('inventory.reversal.execute')) {
+                    $isExecutionAvailable = true;
+                    $executionIdempotencyKey = 'exec_idem_' . (string) Str::uuid();
+                }
+            }
+        }
+
         return Inertia::render('Operations/Inventory/InventoryReversalWorkspace', [
             'transaction' => $transaction,
             'isEligible' => $isEligible,
@@ -61,6 +102,12 @@ class InventoryReversalWorkspaceController extends Controller
             'idempotencyKey' => $idempotencyKey,
             'existingApproval' => $existingApproval,
             'existingReversal' => $existingReversal,
+            'requesterName' => $requesterName,
+            'approverName' => $approverName,
+            'approvedAt' => $approvedAt,
+            'workflowLabel' => $workflowLabel,
+            'isExecutionAvailable' => $isExecutionAvailable,
+            'executionIdempotencyKey' => $executionIdempotencyKey,
         ]);
     }
 }
