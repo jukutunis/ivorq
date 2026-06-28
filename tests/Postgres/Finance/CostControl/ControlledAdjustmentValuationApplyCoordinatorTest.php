@@ -592,6 +592,63 @@ class ControlledAdjustmentValuationApplyCoordinatorTest extends PostgresTestCase
     }
 
     /**
+     * 10. Prove post-append database rollback via numeric overflow.
+     */
+    public function test_post_append_failure_rolls_back_everything(): void
+    {
+        $groupId = $this->seedGroup('enrolled');
+        $snapshotId = $this->seedSnapshot($groupId);
+        // Seed state with maximum allowable quantity before overflow: 99999999999.0000 (11 digits before decimal)
+        $this->seedState($groupId, $snapshotId, null, null, '99999999999.0000', '100.0000', '0.0000');
+
+        $txId = (string) Str::ulid();
+        $this->seedTransaction($txId, 'adjustment_in', 1, '1.0000', '10.0000', '10.0000');
+
+        $costLedgerIntent = new ControlledValuationCostLedgerIntent(
+            propertyId: $this->property->id,
+            sourceInventoryTransactionId: $txId,
+            priorCostLedgerEntryId: null,
+            entryType: 'adjustment',
+            idempotencyKey: 'idem-overflow-test',
+            entrySequence: 1,
+            currencyCode: 'USD',
+            quantityDelta: new AvcoDecimal('1.0000'),
+            unitCost: new AvcoDecimal('10.0000'),
+            valueDelta: new AvcoDecimal('10.0000'),
+            businessDate: $this->businessDate,
+            occurredAt: $this->occurredAt
+        );
+
+        $requestedIntent = new ControlledAdjustmentValuationIntent(
+            propertyId: $this->property->id,
+            locationId: $this->location->id,
+            itemId: $this->item->id,
+            currentLastAppliedValuationSequence: null,
+            currentQuantity: new AvcoDecimal('99999999999.0000'),
+            currentCarryingValue: new AvcoDecimal('100.0000'),
+            costLedgerIntent: $costLedgerIntent
+        );
+
+        // Verify the cost ledger entry does not exist yet
+        $this->assertDatabaseCount('cost_ledger_entries', 0);
+
+        try {
+            $this->coordinator->apply($requestedIntent);
+            $this->fail('Should have failed due to database numeric overflow on cost_avco_states.');
+        } catch (\PDOException $e) {
+            // Confirm the error is indeed a numeric overflow (Postgres SQLSTATE 22003)
+            $this->assertEquals('22003', $e->getCode());
+        }
+
+        // Verify Rollback: the cost ledger entry was successfully rolled back (0 entries)
+        $this->assertDatabaseCount('cost_ledger_entries', 0);
+
+        // State remains unchanged
+        $stateClean = CostAvcoState::where('property_id', $this->property->id)->first();
+        $this->assertEquals('99999999999.0000', $stateClean->on_hand_quantity);
+    }
+
+    /**
      * 9. No production service references this coordinator.
      */
     public function test_no_production_service_references_coordinator(): void
