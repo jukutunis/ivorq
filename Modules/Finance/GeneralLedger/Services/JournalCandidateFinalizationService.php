@@ -83,7 +83,7 @@ class JournalCandidateFinalizationService
             }
 
             // 5. Resolve source_module only from approved source types
-            if (!in_array($candidate->source_type, ['InventoryTransaction', 'InventoryReceipt', 'CostLedgerEntry'])) {
+            if (!in_array($candidate->source_type, ['InventoryTransaction', 'InventoryReceipt'])) {
                 throw new Exception("Unsupported candidate source_type '{$candidate->source_type}' for finalization.");
             }
 
