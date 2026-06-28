@@ -251,4 +251,76 @@ class CostAvcoStateRepository
             'enrollment_scope_snapshot_id'    => $enrollmentScopeSnapshotId,
         ]);
     }
+
+    /**
+     * Lock an existing seeded CostAvcoState for property/location/item.
+     * Does not bootstrap or insert any row.
+     */
+    public function lockExistingSeededStateForScope(
+        string $propertyId,
+        string $locationId,
+        string $itemId
+    ): CostAvcoState {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'CostAvcoStateRepository::lockExistingSeededStateForScope requires an active outer transaction.'
+            );
+        }
+
+        $valuationScope = "property:{$propertyId}:location:{$locationId}:item:{$itemId}";
+
+        $state = CostAvcoState::where('property_id', $propertyId)
+            ->where('location_id', $locationId)
+            ->where('item_id', $itemId)
+            ->lockForUpdate()
+            ->first();
+
+        if ($state === null) {
+            throw new RuntimeException(
+                sprintf('CostAvcoState row missing for scope "%s".', $valuationScope)
+            );
+        }
+
+        if ($state->valuation_scope !== $valuationScope) {
+            throw new RuntimeException(
+                sprintf('Scope mismatch: expected "%s", got "%s".', $valuationScope, $state->valuation_scope)
+            );
+        }
+
+        if (empty($state->enrollment_group_id) || empty($state->enrollment_scope_snapshot_id)) {
+            throw new RuntimeException(
+                sprintf('Seed provenance missing for CostAvcoState on scope "%s".', $valuationScope)
+            );
+        }
+
+        return $state;
+    }
+
+    /**
+     * Persist an approved transition plan into the locked CostAvcoState.
+     */
+    public function persistPlannedControlledTransition(
+        CostAvcoState $lockedState,
+        \Modules\Finance\CostControl\ValueObjects\ControlledValuationStateTransitionPlan $plan
+    ): CostAvcoState {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'CostAvcoStateRepository::persistPlannedControlledTransition requires an active outer transaction.'
+            );
+        }
+
+        $expectedScope = "property:{$lockedState->property_id}:location:{$lockedState->location_id}:item:{$lockedState->item_id}";
+        if ($lockedState->valuation_scope !== $plan->valuationScope || $lockedState->valuation_scope !== $expectedScope) {
+            throw new InvalidArgumentException('Valuation scope mismatch before persisting transition.');
+        }
+
+        $lockedState->on_hand_quantity           = $plan->quantityAfter->getValue();
+        $lockedState->carrying_value             = $plan->carryingValueAfter->getValue();
+        $lockedState->weighted_average_unit_cost = $plan->weightedAverageUnitCostAfter?->getValue();
+        $lockedState->last_valuation_sequence    = $plan->lastAppliedValuationSequenceAfter->ledgerSequence;
+        $lockedState->last_valuation_business_date = $plan->lastAppliedValuationSequenceAfter->businessDate;
+        $lockedState->save();
+
+        return $lockedState;
+    }
 }

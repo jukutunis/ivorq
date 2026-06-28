@@ -242,6 +242,22 @@ class CostAuthorityEnrollmentRepository
             ->exists();
     }
 
+    /**
+     * Return true if the specified group ID matches the property + item
+     * and status is Enrolled.
+     */
+    public function isEnrolledGroupForPropertyItem(
+        string $enrollmentGroupId,
+        string $propertyId,
+        string $itemId
+    ): bool {
+        return CostAuthorityEnrollmentGroup::where('id', $enrollmentGroupId)
+            ->where('property_id', $propertyId)
+            ->where('item_id', $itemId)
+            ->where('status', CostAuthorityEnrollmentStatusEnum::Enrolled->value)
+            ->exists();
+    }
+
     private function requireTransaction(string $method): void
     {
         if (DB::transactionLevel() < 1) {
