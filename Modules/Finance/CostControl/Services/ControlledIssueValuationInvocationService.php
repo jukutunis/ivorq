@@ -20,7 +20,8 @@ final class ControlledIssueValuationInvocationService
     public function __construct(
         private readonly InventoryPostingControlCoordinator $postingCoordinator,
         private readonly ControlledValuationApplyCoordinator $applyCoordinator,
-        private readonly CostAvcoStateRepository $stateRepository
+        private readonly CostAvcoStateRepository $stateRepository,
+        private readonly \Modules\Finance\CostControl\Repositories\CostLedgerRepository $costLedgerRepository
     ) {}
 
     /**
@@ -105,5 +106,20 @@ final class ControlledIssueValuationInvocationService
         );
 
         $this->applyCoordinator->applyUsingLockedState($lockedState, $ledgerIntent);
+
+        // 8. Fetch the persisted CostLedgerEntry
+        $costLedgerEntry = $this->costLedgerRepository->findByIdempotency(
+            $tx->property_id,
+            $tx->idempotency_key,
+            (int) $tx->valuation_sequence
+        );
+
+        if (!$costLedgerEntry) {
+            throw new RuntimeException("Persisted CostLedgerEntry not found for sequence {$tx->valuation_sequence}.");
+        }
+
+        // 9. Generate GL JournalCandidate atomically
+        $postingEngine = app(\Modules\Finance\GeneralLedger\Services\CostIssuePostingEngine::class);
+        $postingEngine->process($costLedgerEntry);
     }
 }
