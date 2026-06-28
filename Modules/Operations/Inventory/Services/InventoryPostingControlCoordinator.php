@@ -2,10 +2,6 @@
 
 namespace Modules\Operations\Inventory\Services;
 
-/**
- * Coords inventory posting control.
- */
-
 use Throwable;
 use Modules\Operations\Inventory\Exceptions\InventoryPostingRetryableException;
 use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;

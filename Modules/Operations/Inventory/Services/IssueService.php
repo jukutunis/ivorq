@@ -161,47 +161,24 @@ class IssueService
                 $invocationService = app(\Modules\Finance\CostControl\Services\ControlledIssueValuationInvocationService::class);
 
                 foreach ($sortedLines as $line) {
-                    $scope = "property:{$propertyId}:location:{$line->location_id}:item:{$line->item_id}";
-                    $avcoState = DB::table('cost_avco_states')
-                        ->where('valuation_scope', $scope)
-                        ->first();
+                    $documentData = [
+                        'businessDate'   => $businessDate->business_date,
+                        'occurredAt'     => $occurredAt,
+                        'documentId'     => $issue->id,
+                        'lineId'         => $line->id,
+                        'idempotencyKey' => "iss_{$issue->id}_{$line->id}_post",
+                        'reference'      => $issue->issue_number,
+                        'notes'          => $issue->remarks ?? 'Inventory Issue Posting'
+                    ];
 
-                    if (!$avcoState) {
-                        throw new RuntimeException("CostAvcoState not found for scope {$scope}");
-                    }
-
-                    $wac = $avcoState->weighted_average_unit_cost;
-                    if ($wac === null) {
-                        throw new RuntimeException("No valid prevailing carrying cost found for enrolled item: {$line->item_id}");
-                    }
-
-                    // quantityChange = negative line quantity
-                    $qtyChange = (string) (-1 * abs((float) $line->quantity));
-
-                    // totalCost = qtyChange * unitCost
-                    $totalCost = bcmul($qtyChange, (string) $wac, 4);
-
-                    $intent = new InventoryLedgerPostingIntent(
-                        propertyId: $issue->property_id,
-                        itemId: $line->item_id,
-                        locationId: $line->location_id,
-                        businessDate: $businessDate->business_date,
-                        occurredAt: $occurredAt,
-                        sourceDocumentType: 'inventory_issue',
-                        sourceDocumentId: $issue->id,
-                        sourceLineType: 'inventory_issue_line',
-                        sourceLineId: $line->id,
-                        movementRole: TransactionTypeEnum::Issue->value,
-                        idempotencyKey: "iss_{$issue->id}_{$line->id}_post",
-                        transactionType: TransactionTypeEnum::Issue,
-                        quantityChange: $qtyChange,
-                        unitCost: (string) $wac,
-                        totalCost: $totalCost,
-                        reference: $issue->issue_number,
-                        notes: $issue->remarks ?? 'Inventory Issue Posting'
+                    $invocationService->invokeIssue(
+                        $propertyId,
+                        $line->location_id,
+                        $line->item_id,
+                        $documentData,
+                        (string) $line->quantity,
+                        $actorId
                     );
-
-                    $invocationService->invokeIssue($propertyId, $line->location_id, $line->item_id, $intent, $actorId);
                 }
 
                 $this->issueRepository->update($issue->id, [

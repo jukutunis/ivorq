@@ -191,6 +191,22 @@ class ControlledIssueValuationInvocationTest extends PostgresTestCase
     {
         $groupId = $this->createEnrolledGroup($this->itemEnrolled->id);
 
+        // Set intentionally different values:
+        // - CostAvcoState WAUC = source-proven Amount A (12.5000)
+        // - InventoryItem weighted_average_cost = Amount B (10.0000)
+        DB::table('cost_avco_states')
+            ->where('item_id', $this->itemEnrolled->id)
+            ->update([
+                'on_hand_quantity'           => '10.0000',
+                'carrying_value'             => '125.0000',
+                'weighted_average_unit_cost' => '12.5000',
+            ]);
+
+        $this->assertEquals(
+            '10.0000',
+            (string) DB::table('inventory_items')->where('id', $this->itemEnrolled->id)->value('weighted_average_cost')
+        );
+
         $issue = InventoryIssue::create([
             'property_id'  => $this->property->id,
             'issue_number' => 'ISS-TEST-' . Str::ulid(),
@@ -211,11 +227,26 @@ class ControlledIssueValuationInvocationTest extends PostgresTestCase
         // Exactly one Cost Ledger entry appended
         $this->assertDatabaseCount('cost_ledger_entries', 1);
 
-        // State updated (10 - 3 = 7 qty, 100 - 30 = 70 value, WAUC = 10)
+        // Assert canonical InventoryTransaction unit_cost equals A (12.5000), not B (10.0000)
+        $tx = DB::table('inventory_transactions')->where('item_id', $this->itemEnrolled->id)->first();
+        $this->assertNotNull($tx);
+        $this->assertEquals('12.5000', (string) $tx->unit_cost);
+        $this->assertNotEquals('10.0000', (string) $tx->unit_cost);
+
+        // Canonical InventoryTransaction total_cost equals exact negative quantity * exact locked CostAvcoState WAUC (-3.000 * 12.5000 = -37.5000)
+        $this->assertEquals('-37.5000', (string) $tx->total_cost);
+
+        // State updated (10 - 3 = 7 qty, 125 - 37.5 = 87.5 value, WAUC = 12.5)
         $state = CostAvcoState::where('item_id', $this->itemEnrolled->id)->first();
         $this->assertEquals('7.0000', $state->on_hand_quantity);
-        $this->assertEquals('70.0000', $state->carrying_value);
-        $this->assertEquals('10.0000', $state->weighted_average_unit_cost);
+        $this->assertEquals('87.5000', $state->carrying_value);
+        $this->assertEquals('12.5000', $state->weighted_average_unit_cost);
+
+        // Divergent caller/document/legacy-item cost is ignored (InventoryItem is still 10.0000)
+        $this->assertEquals(
+            '10.0000',
+            (string) DB::table('inventory_items')->where('id', $this->itemEnrolled->id)->value('weighted_average_cost')
+        );
     }
 
     /**
