@@ -140,4 +140,55 @@ class InventoryTransactionRepository
     {
         return InventoryTransaction::where('reverses_inventory_transaction_id', $id)->exists();
     }
+
+    public function appendReversal(
+        InventoryTransaction $original,
+        string $businessDate,
+        string $financialPeriodId,
+        int $valuationSequence,
+        string $quantityBefore,
+        string $quantityAfter,
+        string $valuationApprovalReference,
+        string $idempotencyKey,
+        ?string $actorId = null
+    ): InventoryTransaction {
+        $transaction = new InventoryTransaction();
+
+        $transaction->id = (string) \Illuminate\Support\Str::ulid();
+        $transaction->property_id = $original->property_id;
+        $transaction->item_id = $original->item_id;
+        $transaction->location_id = $original->location_id;
+        $transaction->currency_code = $original->currency_code;
+        $transaction->financial_period_id = $financialPeriodId;
+        $transaction->valuation_scope = $original->valuation_scope;
+        $transaction->valuation_sequence = $valuationSequence;
+        $transaction->valuation_approval_status = 'approved';
+        $transaction->valuation_approval_reference = $valuationApprovalReference;
+
+        // Reversal control fields
+        $transaction->business_date = $businessDate;
+        $transaction->occurred_at = now();
+        $transaction->source_document_type = $original->source_document_type;
+        $transaction->source_document_id = $original->source_document_id;
+        $transaction->source_line_type = $original->source_line_type;
+        $transaction->source_line_id = $original->source_line_id;
+        $transaction->movement_role = $original->movement_role;
+        $transaction->idempotency_key = $idempotencyKey;
+
+        // Cost and values negated
+        $transaction->transaction_type = \Modules\Operations\Inventory\Enums\TransactionTypeEnum::Reversal;
+        $transaction->quantity_before = $quantityBefore;
+        $transaction->quantity_change = bcmul((string) $original->quantity_change, '-1', 4);
+        $transaction->quantity_after = $quantityAfter;
+        $transaction->posted_by = $actorId;
+        $transaction->unit_cost = $original->unit_cost;
+        $transaction->total_cost = bcmul((string) $original->total_cost, '-1', 2);
+        $transaction->posted_at = now();
+
+        $transaction->reverses_inventory_transaction_id = $original->id;
+
+        $transaction->save();
+
+        return $transaction;
+    }
 }

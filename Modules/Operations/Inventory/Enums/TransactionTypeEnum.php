@@ -12,6 +12,7 @@ enum TransactionTypeEnum: string
     case AdjustmentIn    = 'adjustment_in';
     case AdjustmentOut   = 'adjustment_out';
     case Return          = 'return';
+    case Reversal        = 'reversal';
 
     public function label(): string
     {
@@ -24,6 +25,7 @@ enum TransactionTypeEnum: string
             self::AdjustmentIn    => 'Adjustment In',
             self::AdjustmentOut   => 'Adjustment Out',
             self::Return          => 'Return',
+            self::Reversal        => 'Reversal',
         };
     }
 }

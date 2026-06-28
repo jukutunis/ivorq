@@ -325,6 +325,34 @@ class CostAvcoStateRepository
     }
 
     /**
+     * Persist an approved reversal transition plan into the locked CostAvcoState.
+     */
+    public function persistPlannedReversalTransition(
+        CostAvcoState $lockedState,
+        \Modules\Finance\CostControl\ValueObjects\ControlledReversalValuationPlan $plan
+    ): CostAvcoState {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'CostAvcoStateRepository::persistPlannedReversalTransition requires an active outer transaction.'
+            );
+        }
+
+        $expectedScope = "property:{$lockedState->property_id}:location:{$lockedState->location_id}:item:{$lockedState->item_id}";
+        if ($lockedState->valuation_scope !== $plan->valuationScope || $lockedState->valuation_scope !== $expectedScope) {
+            throw new InvalidArgumentException('Valuation scope mismatch before persisting transition.');
+        }
+
+        $lockedState->on_hand_quantity           = $plan->quantityAfter->getValue();
+        $lockedState->carrying_value             = $plan->carryingValueAfter->getValue();
+        $lockedState->weighted_average_unit_cost = $plan->weightedAverageUnitCostAfter?->getValue();
+        $lockedState->last_valuation_sequence    = $plan->lastAppliedValuationSequenceAfter->ledgerSequence;
+        $lockedState->last_valuation_business_date = $plan->lastAppliedValuationSequenceAfter->businessDate;
+        $lockedState->save();
+
+        return $lockedState;
+    }
+
+    /**
      * Persist an approved adjustment transition plan into the locked CostAvcoState.
      */
     public function persistPlannedAdjustmentTransition(
