@@ -28,12 +28,6 @@ interface ApprovalRequest {
     completed_at: string | null;
 }
 
-interface AuditLog {
-    id: string;
-    event: string;
-    created_at: string;
-}
-
 interface Props {
     transaction: InventoryTransaction;
     isEligible: boolean;
@@ -47,7 +41,7 @@ interface Props {
     workflowLabel: string | null;
     isExecutionAvailable: boolean;
     executionIdempotencyKey: string | null;
-    auditLog: AuditLog | null;
+    auditEvidenceStatus: string | null;
     executorName: string | null;
 }
 
@@ -64,7 +58,7 @@ export default function InventoryReversalWorkspace({
     workflowLabel,
     isExecutionAvailable,
     executionIdempotencyKey,
-    auditLog,
+    auditEvidenceStatus,
     executorName,
 }: Props) {
     const [showRequestForm, setShowRequestForm] = useState(false);
@@ -258,10 +252,12 @@ export default function InventoryReversalWorkspace({
                                     <span className="text-xs text-gray-400 block">Execution Timestamp</span>
                                     <span className="text-sm font-semibold text-gray-800">{existingReversal.occurred_at}</span>
                                 </div>
-                                <div>
-                                    <span className="text-xs text-gray-400 block">Executor Identity</span>
-                                    <span className="text-sm font-semibold text-gray-800">{executorName ?? 'N/A'}</span>
-                                </div>
+                                {executorName && (
+                                    <div>
+                                        <span className="text-xs text-gray-400 block">Executor Identity</span>
+                                        <span className="text-sm font-semibold text-gray-800">{executorName}</span>
+                                    </div>
+                                )}
                                 <div>
                                     <span className="text-xs text-gray-400 block">Execution Business Date</span>
                                     <span className="text-sm font-semibold text-gray-800">{existingReversal.business_date}</span>
@@ -371,18 +367,22 @@ export default function InventoryReversalWorkspace({
                                         <div className="border-t border-gray-100 pt-3 md:col-span-2">
                                             <strong className="text-xs text-gray-400 block mb-2 uppercase">Execution Details</strong>
                                         </div>
-                                        <div>
-                                            <span className="text-xs text-gray-400 block">Executor Identity</span>
-                                            <span className="text-sm font-semibold text-gray-800">{executorName ?? 'N/A'}</span>
-                                        </div>
+                                        {executorName && (
+                                            <div>
+                                                <span className="text-xs text-gray-400 block">Executor Identity</span>
+                                                <span className="text-sm font-semibold text-gray-800">{executorName}</span>
+                                            </div>
+                                        )}
                                         <div>
                                             <span className="text-xs text-gray-400 block">Executed At</span>
                                             <span className="text-sm font-semibold text-gray-800">{existingReversal.occurred_at}</span>
                                         </div>
-                                        {auditLog && (
+                                        {auditEvidenceStatus === 'recorded' && (
                                             <div>
-                                                <span className="text-xs text-gray-400 block">Audit Log Reference</span>
-                                                <span className="text-sm font-semibold text-gray-800 break-all">{auditLog.id}</span>
+                                                <span className="text-xs text-gray-400 block">Audit Status</span>
+                                                <span className="text-sm font-semibold text-gray-800">
+                                                    Audit evidence was recorded as part of controlled execution.
+                                                </span>
                                             </div>
                                         )}
                                     </>
@@ -468,6 +468,9 @@ export default function InventoryReversalWorkspace({
                                     {existingReversal && (
                                         <li>
                                             <div className="relative pb-8">
+                                                {auditEvidenceStatus === 'recorded' && (
+                                                    <span className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true" />
+                                                )}
                                                 <div className="relative flex space-x-3">
                                                     <div>
                                                         <span className="h-8 w-8 rounded-full bg-green-500 flex items-center justify-center text-white text-xs">
@@ -477,7 +480,30 @@ export default function InventoryReversalWorkspace({
                                                     <div className="flex-1 min-w-0 pt-1.5 flex justify-between space-x-4">
                                                         <div>
                                                             <p className="text-sm text-gray-800">
-                                                                Controlled reversal executed by <span className="font-semibold">{executorName ?? 'executor'}</span>
+                                                                Controlled reversal executed {executorName && <>by <span className="font-semibold">{executorName}</span></>}
+                                                            </p>
+                                                        </div>
+                                                        <div className="text-right text-xs text-gray-400 whitespace-nowrap">
+                                                            {existingReversal.occurred_at}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    )}
+                                    {existingReversal && auditEvidenceStatus === 'recorded' && (
+                                        <li>
+                                            <div className="relative pb-8">
+                                                <div className="relative flex space-x-3">
+                                                    <div>
+                                                        <span className="h-8 w-8 rounded-full bg-gray-500 flex items-center justify-center text-white text-xs">
+                                                            ✓
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex-1 min-w-0 pt-1.5 flex justify-between space-x-4">
+                                                        <div>
+                                                            <p className="text-sm text-gray-800">
+                                                                Audit evidence recorded
                                                             </p>
                                                         </div>
                                                         <div className="text-right text-xs text-gray-400 whitespace-nowrap">

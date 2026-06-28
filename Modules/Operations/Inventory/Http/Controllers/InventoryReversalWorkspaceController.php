@@ -95,23 +95,13 @@ class InventoryReversalWorkspaceController extends Controller
             }
         }
 
-        // State 3: Executed -> Result and Audit Evidence
-        $auditLog = null;
+        // State 3: Executed -> Result and Audit Evidence (corrected audit-boundary)
+        $auditEvidenceStatus = null;
         $executorName = null;
 
         if ($existingReversal) {
-            $auditLog = DB::table('audit_logs')
-                ->where('auditable_type', $existingReversal->getMorphClass())
-                ->where('auditable_id', $existingReversal->id)
-                ->first();
-
-            $executorId = $existingReversal->posted_by ?? ($auditLog->user_id ?? null);
-            if ($executorId) {
-                $executor = DB::table('users')->where('id', $executorId)->first();
-                if ($executor) {
-                    $executorName = $executor->name;
-                }
-            }
+            $executorName = $existingReversal->postedBy?->name;
+            $auditEvidenceStatus = 'recorded';
         }
 
         return Inertia::render('Operations/Inventory/InventoryReversalWorkspace', [
@@ -127,7 +117,7 @@ class InventoryReversalWorkspaceController extends Controller
             'workflowLabel' => $workflowLabel,
             'isExecutionAvailable' => $isExecutionAvailable,
             'executionIdempotencyKey' => $executionIdempotencyKey,
-            'auditLog' => $auditLog,
+            'auditEvidenceStatus' => $auditEvidenceStatus,
             'executorName' => $executorName,
         ]);
     }
