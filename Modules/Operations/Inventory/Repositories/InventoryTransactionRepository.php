@@ -130,4 +130,14 @@ class InventoryTransactionRepository
 
         return $transaction;
     }
+
+    public function findAndLock(string $id): ?InventoryTransaction
+    {
+        return InventoryTransaction::where('id', $id)->lockForUpdate()->first();
+    }
+
+    public function hasReversal(string $id): bool
+    {
+        return InventoryTransaction::where('reverses_inventory_transaction_id', $id)->exists();
+    }
 }
