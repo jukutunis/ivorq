@@ -26,6 +26,25 @@ final class ControlledTransferValuationPlanner
         $outbound = $intent->outboundIntent;
         $inbound = $intent->inboundIntent;
 
+        // Match business date, occurred-at, and currency code exactly
+        if ($outbound->businessDate !== $inbound->businessDate) {
+            throw new InvalidArgumentException(
+                sprintf('Business date mismatch: outbound is "%s", inbound is "%s".', $outbound->businessDate, $inbound->businessDate)
+            );
+        }
+
+        if ($outbound->occurredAt !== $inbound->occurredAt) {
+            throw new InvalidArgumentException(
+                sprintf('Occurred-at mismatch: outbound is "%s", inbound is "%s".', $outbound->occurredAt, $inbound->occurredAt)
+            );
+        }
+
+        if ($outbound->currencyCode !== $inbound->currencyCode) {
+            throw new InvalidArgumentException(
+                sprintf('Currency code mismatch: outbound is "%s", inbound is "%s".', $outbound->currencyCode, $inbound->currencyCode)
+            );
+        }
+
         // 1. Validate entry types
         if ($outbound->entryType !== 'transfer' || !$outbound->quantityDelta->isNegative()) {
             throw new InvalidArgumentException('Outbound intent must be of entry type transfer with a negative quantity.');

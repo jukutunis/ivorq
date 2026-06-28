@@ -464,4 +464,166 @@ class ControlledTransferValuationPlannerTest extends PostgresTestCase
             $this->assertEquals($countsBefore[$table], DB::table($table)->count(), "Table '{$table}' was mutated!");
         }
     }
+
+    /**
+     * 10. Outbound and inbound business dates differ: planner rejects.
+     */
+    public function test_business_date_mismatch_rejection(): void
+    {
+        $outbound = $this->makeLedgerIntent(
+            businessDate: '2026-06-28'
+        );
+        $inbound = $this->makeLedgerIntent(
+            businessDate: '2026-06-29'
+        );
+
+        $intent = new ControlledTransferValuationIntent(
+            propertyId: 'prop_1',
+            itemId: 'item_1',
+            sourceLocationId: 'loc_src',
+            destinationLocationId: 'loc_dest',
+            sourceCurrentLastValuationSequence: null,
+            sourceCurrentQuantity: new AvcoDecimal('10.0000'),
+            sourceCurrentCarryingValue: new AvcoDecimal('100.0000'),
+            destinationCurrentLastValuationSequence: null,
+            destinationCurrentQuantity: new AvcoDecimal('5.0000'),
+            destinationCurrentCarryingValue: new AvcoDecimal('40.0000'),
+            outboundIntent: $outbound,
+            inboundIntent: $inbound
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Business date mismatch');
+        $this->planner->plan($intent);
+    }
+
+    /**
+     * 11. Outbound and inbound occurred-at timestamps differ: planner rejects.
+     */
+    public function test_occurred_at_mismatch_rejection(): void
+    {
+        $outbound = $this->makeLedgerIntent();
+
+        $inbound = new ControlledValuationCostLedgerIntent(
+            propertyId: 'prop_1',
+            sourceInventoryTransactionId: 'tx_1',
+            priorCostLedgerEntryId: null,
+            entryType: 'transfer',
+            idempotencyKey: 'idemp_' . uniqid(),
+            entrySequence: 1,
+            currencyCode: 'USD',
+            quantityDelta: new AvcoDecimal('2.0000'),
+            unitCost: new AvcoDecimal('10.0000'),
+            valueDelta: new AvcoDecimal('20.0000'),
+            businessDate: '2026-06-28',
+            occurredAt: '2026-06-28 12:00:05'
+        );
+
+        $intent = new ControlledTransferValuationIntent(
+            propertyId: 'prop_1',
+            itemId: 'item_1',
+            sourceLocationId: 'loc_src',
+            destinationLocationId: 'loc_dest',
+            sourceCurrentLastValuationSequence: null,
+            sourceCurrentQuantity: new AvcoDecimal('10.0000'),
+            sourceCurrentCarryingValue: new AvcoDecimal('100.0000'),
+            destinationCurrentLastValuationSequence: null,
+            destinationCurrentQuantity: new AvcoDecimal('5.0000'),
+            destinationCurrentCarryingValue: new AvcoDecimal('40.0000'),
+            outboundIntent: $outbound,
+            inboundIntent: $inbound
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Occurred-at mismatch');
+        $this->planner->plan($intent);
+    }
+
+    /**
+     * 12. Outbound and inbound currency codes differ: planner rejects.
+     */
+    public function test_currency_code_mismatch_rejection(): void
+    {
+        $outbound = $this->makeLedgerIntent();
+
+        $inbound = new ControlledValuationCostLedgerIntent(
+            propertyId: 'prop_1',
+            sourceInventoryTransactionId: 'tx_1',
+            priorCostLedgerEntryId: null,
+            entryType: 'transfer',
+            idempotencyKey: 'idemp_' . uniqid(),
+            entrySequence: 1,
+            currencyCode: 'EUR',
+            quantityDelta: new AvcoDecimal('2.0000'),
+            unitCost: new AvcoDecimal('10.0000'),
+            valueDelta: new AvcoDecimal('20.0000'),
+            businessDate: '2026-06-28',
+            occurredAt: '2026-06-28 12:00:00'
+        );
+
+        $intent = new ControlledTransferValuationIntent(
+            propertyId: 'prop_1',
+            itemId: 'item_1',
+            sourceLocationId: 'loc_src',
+            destinationLocationId: 'loc_dest',
+            sourceCurrentLastValuationSequence: null,
+            sourceCurrentQuantity: new AvcoDecimal('10.0000'),
+            sourceCurrentCarryingValue: new AvcoDecimal('100.0000'),
+            destinationCurrentLastValuationSequence: null,
+            destinationCurrentQuantity: new AvcoDecimal('5.0000'),
+            destinationCurrentCarryingValue: new AvcoDecimal('40.0000'),
+            outboundIntent: $outbound,
+            inboundIntent: $inbound
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Currency code mismatch');
+        $this->planner->plan($intent);
+    }
+
+    /**
+     * 13. Mismatch checks preserve database no-mutation boundary.
+     */
+    public function test_mismatch_database_no_mutation_boundary(): void
+    {
+        $tables = [
+            'cost_avco_states',
+            'cost_ledger_entries',
+            'inventory_transactions',
+            'outbox_messages',
+        ];
+
+        $countsBefore = [];
+        foreach ($tables as $table) {
+            $countsBefore[$table] = DB::table($table)->count();
+        }
+
+        $outbound = $this->makeLedgerIntent(businessDate: '2026-06-28');
+        $inbound = $this->makeLedgerIntent(businessDate: '2026-06-29');
+
+        $intent = new ControlledTransferValuationIntent(
+            propertyId: 'prop_1',
+            itemId: 'item_1',
+            sourceLocationId: 'loc_src',
+            destinationLocationId: 'loc_dest',
+            sourceCurrentLastValuationSequence: null,
+            sourceCurrentQuantity: new AvcoDecimal('10.0000'),
+            sourceCurrentCarryingValue: new AvcoDecimal('100.0000'),
+            destinationCurrentLastValuationSequence: null,
+            destinationCurrentQuantity: new AvcoDecimal('5.0000'),
+            destinationCurrentCarryingValue: new AvcoDecimal('40.0000'),
+            outboundIntent: $outbound,
+            inboundIntent: $inbound
+        );
+
+        try {
+            $this->planner->plan($intent);
+        } catch (InvalidArgumentException $e) {
+            // expected
+        }
+
+        foreach ($tables as $table) {
+            $this->assertEquals($countsBefore[$table], DB::table($table)->count(), "Table '{$table}' was mutated during mismatched plan check!");
+        }
+    }
 }
