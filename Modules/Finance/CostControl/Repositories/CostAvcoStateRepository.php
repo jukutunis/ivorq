@@ -552,4 +552,96 @@ class CostAvcoStateRepository
 
         return $map;
     }
+
+    /**
+     * Lock all existing seeded states for the given adjustment scopes.
+     * Returns a map keyed by scope identity: property:{property_id}:location:{location_id}:item:{item_id}
+     */
+    public function lockExistingSeededStateSetForAdjustmentScopes(
+        string $propertyId,
+        array $requestedScopes
+    ): array {
+        if (trim($propertyId) === '') {
+            throw new InvalidArgumentException('propertyId cannot be blank.');
+        }
+
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'CostAvcoStateRepository::lockExistingSeededStateSetForAdjustmentScopes requires an active outer transaction.'
+            );
+        }
+
+        $uniqueScopes = [];
+
+        foreach ($requestedScopes as $reqScope) {
+            $itemId = $reqScope['itemId'] ?? null;
+            $locationId = $reqScope['locationId'] ?? null;
+
+            if (empty($itemId) || empty($locationId)) {
+                throw new InvalidArgumentException('Scope item ID and location ID must not be blank.');
+            }
+
+            $key = "{$itemId}:{$locationId}";
+            $uniqueScopes[$key] = [
+                'itemId' => $itemId,
+                'locationId' => $locationId
+            ];
+        }
+
+        if (empty($uniqueScopes)) {
+            return [];
+        }
+
+        // Fetch and lock the scopes matching property and exact requested (item_id, location_id) pairs
+        // ordered by property_id ASC, item_id ASC, location_id ASC
+        $states = CostAvcoState::where('property_id', $propertyId)
+            ->where(function ($query) use ($uniqueScopes) {
+                foreach ($uniqueScopes as $scope) {
+                    $query->orWhere(function ($sub) use ($scope) {
+                        $sub->where('item_id', $scope['itemId'])
+                            ->where('location_id', $scope['locationId']);
+                    });
+                }
+            })
+            ->orderBy('property_id', 'asc')
+            ->orderBy('item_id', 'asc')
+            ->orderBy('location_id', 'asc')
+            ->lockForUpdate()
+            ->get();
+
+        // Validate that we retrieved exactly the states for each unique scope requested
+        $expectedCount = count($uniqueScopes);
+        $matchedStates = [];
+
+        foreach ($states as $state) {
+            $key = "{$state->item_id}:{$state->location_id}";
+            if (isset($uniqueScopes[$key])) {
+                $expectedScope = "property:{$propertyId}:location:{$state->location_id}:item:{$state->item_id}";
+                if ($state->valuation_scope !== $expectedScope) {
+                    throw new RuntimeException(
+                        sprintf('Scope mismatch: expected "%s", got "%s".', $expectedScope, $state->valuation_scope)
+                    );
+                }
+                if (empty($state->enrollment_group_id) || empty($state->enrollment_scope_snapshot_id)) {
+                    throw new RuntimeException(
+                        sprintf('Seed provenance missing for CostAvcoState on scope "%s".', $state->valuation_scope)
+                    );
+                }
+                $matchedStates[$key] = $state;
+            }
+        }
+
+        if (count($matchedStates) !== $expectedCount) {
+            throw new RuntimeException('Failed to retrieve all unique seeded adjustment scopes.');
+        }
+
+        // Map by canonical key: property:{property_id}:location:{location_id}:item:{item_id}
+        $map = [];
+        foreach ($matchedStates as $state) {
+            $canonicalKey = "property:{$propertyId}:location:{$state->location_id}:item:{$state->item_id}";
+            $map[$canonicalKey] = $state;
+        }
+
+        return $map;
+    }
 }

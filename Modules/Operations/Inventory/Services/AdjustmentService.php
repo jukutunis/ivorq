@@ -23,7 +23,8 @@ class AdjustmentService
         private InventoryAdjustmentRepository $adjustmentRepository,
         private InventoryPostingControlCoordinator $coordinator,
         private InventoryItemRepository $itemRepository,
-        private InventoryStockRepository $stockRepository
+        private InventoryStockRepository $stockRepository,
+        private readonly ?\Modules\Finance\CostControl\Services\ControlledAdjustmentValuationInvocationService $invocationService = null
     ) {}
 
     public function create(array $data): InventoryAdjustment
@@ -99,97 +100,175 @@ class AdjustmentService
 
         $occurredAt = \Illuminate\Support\Carbon::parse($adjustment->created_at ?? now());
 
-        DB::transaction(function () use ($adjustment, $sortedLines, $businessDate, $occurredAt, $actorId) {
-            // Lock context first
-            $this->coordinator->lockContext($adjustment->property_id, $businessDate->business_date, $occurredAt);
+        $enrollmentRepo = app(\Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository::class);
+        $enrolledCount = 0;
+        $unenrolledCount = 0;
+        foreach ($sortedLines as $line) {
+            if ($enrollmentRepo->hasEnrolledGroupForPropertyItem($adjustment->property_id, $line->item_id)) {
+                $enrolledCount++;
+            } else {
+                $unenrolledCount++;
+            }
+        }
 
-            $intents = [];
+        if ($enrolledCount > 0 && $unenrolledCount > 0) {
+            throw new \RuntimeException("Mixed enrolled and unenrolled item authority is forbidden.");
+        }
 
-            foreach ($sortedLines as $line) {
-                // Check idempotency first to allow re-post replay
-                $idemKey = "adj_{$adjustment->id}_{$line->id}_approve";
-                $existingTx = \Modules\Operations\Inventory\Models\InventoryTransaction::where('property_id', $adjustment->property_id)
-                    ->where('idempotency_key', $idemKey)
-                    ->lockForUpdate()
-                    ->first();
+        $isAllEnrolled = ($enrolledCount > 0);
 
-                if ($existingTx) {
-                    continue;
+        if ($isAllEnrolled) {
+            $service = $this->invocationService ?? app(\Modules\Finance\CostControl\Services\ControlledAdjustmentValuationInvocationService::class);
+
+            DB::transaction(function () use ($adjustment, $sortedLines, $businessDate, $occurredAt, $actorId, $service) {
+                // Lock context first
+                $this->coordinator->lockContext($adjustment->property_id, $businessDate->business_date, $occurredAt);
+
+                // Run validation for each line before any writes
+                foreach ($sortedLines as $line) {
+                    $idemKey = "adj_{$adjustment->id}_{$line->id}_approve";
+                    $existingTx = \Modules\Operations\Inventory\Models\InventoryTransaction::where('property_id', $adjustment->property_id)
+                        ->where('idempotency_key', $idemKey)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($existingTx) {
+                        continue;
+                    }
+
+                    // BR-065: staleness check
+                    $balance = $this->stockRepository->createOrLockControlled($adjustment->property_id, $line->item_id, $adjustment->location_id);
+                    $currentQty = (float) $balance->physical_quantity;
+
+                    if ($currentQty !== (float) $line->quantity_system) {
+                        throw ValidationException::withMessages([
+                            'staleness' => ["System quantity has changed for item {$line->item_id} since adjustment was created. Expected: {$line->quantity_system}, Actual: {$currentQty}"],
+                        ]);
+                    }
+
+                    $variance = (float) $line->quantity_variance;
+                    if ($variance == 0) {
+                        continue;
+                    }
+
+                    $item = $this->itemRepository->find($line->item_id);
+                    if (!$item) {
+                        throw new BusinessLogicException("Item not found: {$line->item_id}");
+                    }
                 }
 
-                // BR-065: staleness check — lock balance row for this item
-                $balance = $this->stockRepository->createOrLockControlled($adjustment->property_id, $line->item_id, $adjustment->location_id);
-                $currentQty = (float) $balance->physical_quantity;
-
-                if ($currentQty !== (float) $line->quantity_system) {
-                    throw ValidationException::withMessages([
-                        'staleness' => ["System quantity has changed for item {$line->item_id} since adjustment was created. Expected: {$line->quantity_system}, Actual: {$currentQty}"],
-                    ]);
-                }
-
-                $variance = (float) $line->quantity_variance;
-
-                // BR-063: skip zero-variance lines — no stock card written
-                if ($variance == 0) {
-                    continue;
-                }
-
-                $item = $this->itemRepository->find($line->item_id);
-                if (!$item) {
-                    throw new BusinessLogicException("Item not found: {$line->item_id}");
-                }
-
-                // BR-067: cost stamped at approval time using item.weighted_average_cost.
-                // positive adjustment may use unit_cost from the line if provided;
-                // negative adjustment always uses the item's weighted_average_cost.
-                $costToUse = $variance > 0 && $line->unit_cost !== null
-                    ? (string) $line->unit_cost
-                    : ($item->weighted_average_cost !== null ? (string) $item->weighted_average_cost : null);
-
-                if ($costToUse === null) {
-                    throw ValidationException::withMessages([
-                        'cost' => ["Item {$item->name} ({$item->sku}) does not have a valid cost."],
-                    ]);
-                }
-
-                $qtyChange = (string) $variance;
-                $totalCost = bcmul($qtyChange, $costToUse, 4);
-
-                $type = $variance > 0 ? TransactionTypeEnum::AdjustmentIn : TransactionTypeEnum::AdjustmentOut;
-
-                $intents[] = new InventoryLedgerPostingIntent(
+                // Invoke controlled valuation document orchestrator
+                $service->invokeAdjustmentDocument(
                     propertyId: $adjustment->property_id,
-                    itemId: $line->item_id,
+                    sortedLines: $sortedLines,
                     locationId: $adjustment->location_id,
                     businessDate: $businessDate->business_date,
                     occurredAt: $occurredAt,
-                    sourceDocumentType: 'inventory_adjustment',
-                    sourceDocumentId: $adjustment->id,
-                    sourceLineType: 'inventory_adjustment_line',
-                    sourceLineId: $line->id,
-                    movementRole: $type->value,
-                    idempotencyKey: "adj_{$adjustment->id}_{$line->id}_approve",
-                    transactionType: $type,
-                    quantityChange: $qtyChange,
-                    unitCost: $costToUse,
-                    totalCost: $totalCost,
-                    reference: $adjustment->adjustment_number,
-                    notes: 'Inventory Adjustment Posting'
+                    actorId: $actorId,
+                    adjustmentId: $adjustment->id,
+                    adjustmentNumber: $adjustment->adjustment_number
                 );
-            }
 
-            // Post all intents
-            foreach ($intents as $intent) {
-                $transaction = $this->coordinator->post($intent, $actorId);
-                InventoryAdjustmentPosted::dispatch($transaction);
-            }
+                $this->adjustmentRepository->update($adjustment->id, [
+                    'status'      => AdjustmentStatusEnum::Approved->value,
+                    'approved_at' => now(),
+                    'approved_by' => $actorId,
+                ]);
+            });
+        } else {
+            // Existing legacy behavior unchanged
+            DB::transaction(function () use ($adjustment, $sortedLines, $businessDate, $occurredAt, $actorId) {
+                // Lock context first
+                $this->coordinator->lockContext($adjustment->property_id, $businessDate->business_date, $occurredAt);
 
-            $this->adjustmentRepository->update($adjustment->id, [
-                'status'      => AdjustmentStatusEnum::Approved->value,
-                'approved_at' => now(),
-                'approved_by' => $actorId,
-            ]);
-        });
+                $intents = [];
+
+                foreach ($sortedLines as $line) {
+                    // Check idempotency first to allow re-post replay
+                    $idemKey = "adj_{$adjustment->id}_{$line->id}_approve";
+                    $existingTx = \Modules\Operations\Inventory\Models\InventoryTransaction::where('property_id', $adjustment->property_id)
+                        ->where('idempotency_key', $idemKey)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($existingTx) {
+                        continue;
+                    }
+
+                    // BR-065: staleness check — lock balance row for this item
+                    $balance = $this->stockRepository->createOrLockControlled($adjustment->property_id, $line->item_id, $adjustment->location_id);
+                    $currentQty = (float) $balance->physical_quantity;
+
+                    if ($currentQty !== (float) $line->quantity_system) {
+                        throw ValidationException::withMessages([
+                            'staleness' => ["System quantity has changed for item {$line->item_id} since adjustment was created. Expected: {$line->quantity_system}, Actual: {$currentQty}"],
+                        ]);
+                    }
+
+                    $variance = (float) $line->quantity_variance;
+
+                    // BR-063: skip zero-variance lines — no stock card written
+                    if ($variance == 0) {
+                        continue;
+                    }
+
+                    $item = $this->itemRepository->find($line->item_id);
+                    if (!$item) {
+                        throw new BusinessLogicException("Item not found: {$line->item_id}");
+                    }
+
+                    // BR-067: cost stamped at approval time using item.weighted_average_cost.
+                    // positive adjustment may use unit_cost from the line if provided;
+                    // negative adjustment always uses the item's weighted_average_cost.
+                    $costToUse = $variance > 0 && $line->unit_cost !== null
+                        ? (string) $line->unit_cost
+                        : ($item->weighted_average_cost !== null ? (string) $item->weighted_average_cost : null);
+
+                    if ($costToUse === null) {
+                        throw ValidationException::withMessages([
+                            'cost' => ["Item {$item->name} ({$item->sku}) does not have a valid cost."],
+                        ]);
+                    }
+
+                    $qtyChange = (string) $variance;
+                    $totalCost = bcmul($qtyChange, $costToUse, 4);
+
+                    $type = $variance > 0 ? TransactionTypeEnum::AdjustmentIn : TransactionTypeEnum::AdjustmentOut;
+
+                    $intents[] = new InventoryLedgerPostingIntent(
+                        propertyId: $adjustment->property_id,
+                        itemId: $line->item_id,
+                        locationId: $adjustment->location_id,
+                        businessDate: $businessDate->business_date,
+                        occurredAt: $occurredAt,
+                        sourceDocumentType: 'inventory_adjustment',
+                        sourceDocumentId: $adjustment->id,
+                        sourceLineType: 'inventory_adjustment_line',
+                        sourceLineId: $line->id,
+                        movementRole: $type->value,
+                        idempotencyKey: "adj_{$adjustment->id}_{$line->id}_approve",
+                        transactionType: $type,
+                        quantityChange: $qtyChange,
+                        unitCost: $costToUse,
+                        totalCost: $totalCost,
+                        reference: $adjustment->adjustment_number,
+                        notes: 'Inventory Adjustment Posting'
+                    );
+                }
+
+                // Post all intents
+                foreach ($intents as $intent) {
+                    $transaction = $this->coordinator->post($intent, $actorId);
+                    InventoryAdjustmentPosted::dispatch($transaction);
+                }
+
+                $this->adjustmentRepository->update($adjustment->id, [
+                    'status'      => AdjustmentStatusEnum::Approved->value,
+                    'approved_at' => now(),
+                    'approved_by' => $actorId,
+                ]);
+            });
+        }
 
         return $this->adjustmentRepository->find($id);
     }
