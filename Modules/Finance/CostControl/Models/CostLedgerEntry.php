@@ -4,32 +4,40 @@ namespace Modules\Finance\CostControl\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Shared\Traits\HasUlid;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
 
 class CostLedgerEntry extends Model
 {
     use HasUlid;
 
-    protected $table = 'cost_ledger_entries';
-
-    // Append-only: only created_at, no updated_at.
-    public $timestamps = false;
+    public $timestamps = false; // We use created_at only, no updated_at
 
     protected $guarded = [];
 
     protected $casts = [
-        // Sequence
-        'valuation_sequence'               => 'integer',
-
-        // Temporal
-        'business_date'                    => 'date',
-        'created_at'                       => 'datetime',
-
-        // AVCO state snapshot — decimal:4 matches AvcoDecimal::SCALE = 4
-        // and CostAvcoState on_hand_quantity / carrying_value precision
-        'quantity_before'                  => 'decimal:4',
-        'quantity_after'                   => 'decimal:4',
-        'carrying_value_before'            => 'decimal:4',
-        'carrying_value_after'             => 'decimal:4',
-        'weighted_average_unit_cost_after' => 'decimal:4',
+        'entry_sequence' => 'integer',
+        'quantity_delta' => 'decimal:4',
+        'unit_cost'      => 'decimal:4',
+        'value_delta'    => 'decimal:4',
+        'business_date'  => 'date',
+        'occurred_at'    => 'datetime',
+        'original_business_date' => 'date',
+        'metadata'       => 'array',
+        'created_at'     => 'datetime',
     ];
+
+    public function sourceInventoryTransaction()
+    {
+        return $this->belongsTo(InventoryTransaction::class, 'source_inventory_transaction_id');
+    }
+
+    public function priorEntry()
+    {
+        return $this->belongsTo(self::class, 'prior_cost_ledger_entry_id');
+    }
+
+    public function subsequentEntries()
+    {
+        return $this->hasMany(self::class, 'prior_cost_ledger_entry_id');
+    }
 }

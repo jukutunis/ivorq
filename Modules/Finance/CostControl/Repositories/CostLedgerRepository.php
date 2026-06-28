@@ -1,60 +1,33 @@
 <?php
-
 namespace Modules\Finance\CostControl\Repositories;
-
-use InvalidArgumentException;
 use Modules\Finance\CostControl\Models\CostLedgerEntry;
-
+use Modules\Finance\CostControl\ValueObjects\CostLedgerEntryIntent;
 class CostLedgerRepository
 {
-    private const REQUIRED_FIELDS = [
-        'property_id',
-        'location_id',
-        'item_id',
-        'valuation_scope',
-        'valuation_sequence',
-        'inventory_transaction_id',
-        'business_date',
-        'quantity_before',
-        'quantity_after',
-        'carrying_value_before',
-        'carrying_value_after',
-        'weighted_average_unit_cost_after',
-    ];
-
-    /**
-     * Append one immutable Cost Ledger entry.
-     *
-     * Accepts only an explicit full ledger row. All required fields must be
-     * present. valuation_sequence must be positive. No float arithmetic is
-     * performed. Duplicate constraint violations propagate as-is with no retry.
-     */
-    public function append(array $attributes): CostLedgerEntry
+    public function append(CostLedgerEntryIntent $intent): CostLedgerEntry
     {
-        foreach (self::REQUIRED_FIELDS as $field) {
-            if (!array_key_exists($field, $attributes)) {
-                throw new InvalidArgumentException(
-                    "CostLedgerRepository::append requires field: {$field}."
-                );
-            }
-        }
-
-        if ((int) $attributes['valuation_sequence'] <= 0) {
-            throw new InvalidArgumentException(
-                "CostLedgerRepository::append: valuation_sequence must be positive. " .
-                "Got: {$attributes['valuation_sequence']}."
-            );
-        }
-
-        return CostLedgerEntry::create($attributes);
+        return CostLedgerEntry::create([
+            'property_id' => $intent->propertyId,
+            'source_inventory_transaction_id' => $intent->sourceInventoryTransactionId,
+            'prior_cost_ledger_entry_id' => $intent->priorCostLedgerEntryId,
+            'entry_type' => $intent->entryType,
+            'idempotency_key' => $intent->idempotencyKey,
+            'entry_sequence' => $intent->entrySequence,
+            'currency_code' => $intent->currencyCode,
+            'quantity_delta' => $intent->quantityDelta->getValue(),
+            'unit_cost' => $intent->unitCost->getValue(),
+            'value_delta' => $intent->valueDelta->getValue(),
+            'business_date' => $intent->businessDate,
+            'occurred_at' => $intent->occurredAt,
+            'original_business_date' => $intent->originalBusinessDate,
+            'metadata' => $intent->metadata,
+        ]);
     }
-
-    /**
-     * Return the Cost Ledger entry sourced from the given InventoryTransaction,
-     * or null if none has been appended yet.
-     */
-    public function findByInventoryTransactionId(string $inventoryTransactionId): ?CostLedgerEntry
+    public function findByIdempotency(string $propertyId, string $idempotencyKey, int $sequence): ?CostLedgerEntry
     {
-        return CostLedgerEntry::where('inventory_transaction_id', $inventoryTransactionId)->first();
+        return CostLedgerEntry::where('property_id', $propertyId)
+            ->where('idempotency_key', $idempotencyKey)
+            ->where('entry_sequence', $sequence)
+            ->first();
     }
 }
