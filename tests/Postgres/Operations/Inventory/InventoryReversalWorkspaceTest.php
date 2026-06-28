@@ -177,6 +177,19 @@ class InventoryReversalWorkspaceTest extends PostgresTestCase
         }
     }
 
+    private function seedAuditLog(string $id, string $userId, string $type, string $auditableId): void
+    {
+        DB::table('audit_logs')->insert([
+            'id' => $id,
+            'property_id' => $this->property->id,
+            'user_id' => $userId,
+            'event' => 'reversal.posted',
+            'auditable_type' => $type,
+            'auditable_id' => $auditableId,
+            'created_at' => now(),
+        ]);
+    }
+
     public function test_unauthenticated_actor_cannot_open_workspace(): void
     {
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
@@ -306,6 +319,43 @@ class InventoryReversalWorkspaceTest extends PostgresTestCase
             ->where('isExecutionAvailable', false)
             ->where('executionIdempotencyKey', null)
             ->where('blocker', 'This transaction has already been reversed.')
+        );
+    }
+
+    public function test_executed_reversal_renders_state_3_evidence_correctly(): void
+    {
+        $this->actingAs($this->user);
+        $this->user->givePermissionTo('inventory.reversal.execute');
+
+        $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
+
+        $approvalId = (string) Str::ulid();
+        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $this->seedApproval($approvalId, 'Approved', $tx->id, $txMorph, 'Correct reason');
+
+        $reversalTx = $this->createTransaction(TransactionTypeEnum::Reversal, 2, '-5.0000', '10.0000', '-50.0000');
+        $reversalTx->reverses_inventory_transaction_id = $tx->id;
+        $reversalTx->posted_by = $this->user->id;
+        $reversalTx->save();
+
+        $auditId = (string) Str::ulid();
+        $this->seedAuditLog($auditId, $this->user->id, $txMorph, $reversalTx->id);
+
+        $response = $this->get(route('operations.inventory.reversals.show', ['transaction' => $tx->id]));
+
+        $response->assertStatus(200);
+        $response->assertInertia(fn (Assert $page) => $page
+            ->component('Operations/Inventory/InventoryReversalWorkspace')
+            ->where('isEligible', false)
+            ->where('blocker', 'This transaction has already been reversed.')
+            ->where('idempotencyKey', null)
+            ->where('isExecutionAvailable', false)
+            ->where('executionIdempotencyKey', null)
+            ->where('existingReversal.id', $reversalTx->id)
+            ->where('auditLog.id', $auditId)
+            ->where('executorName', $this->user->name)
+            ->where('requesterName', $this->user->name)
+            ->where('approverName', $this->user->name)
         );
     }
 }
