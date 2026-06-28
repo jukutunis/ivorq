@@ -150,6 +150,21 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
         ]);
     }
 
+    private function seedStock(string $qty = '10.0000'): void
+    {
+        DB::table('inventory_stocks')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'item_id' => $this->item->id,
+            'location_id' => $this->location->id,
+            'physical_quantity' => $qty,
+            'reserved_quantity' => '0.0000',
+            'status' => 'in_stock',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
     private function createTransaction(
         TransactionTypeEnum $type,
         int $valuationSeq = 1,
@@ -185,6 +200,7 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
         $groupId = $this->seedGroup('enrolled');
         $snapshotId = $this->seedSnapshot($groupId);
         $this->seedState($groupId, $snapshotId, '10.0000', '100.0000', 1, now()->toDateString());
+        $this->seedStock('10.0000');
 
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
 
@@ -214,6 +230,14 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
         $this->assertEquals('5.0000', (string) $freshState->on_hand_quantity);
         $this->assertEquals('50.0000', (string) $freshState->carrying_value);
 
+        // Verify physical stock was reduced by exactly original quantity (+5.0000 original -> -5.0000 delta)
+        $stock = DB::table('inventory_stocks')
+            ->where('property_id', $this->property->id)
+            ->where('item_id', $this->item->id)
+            ->where('location_id', $this->location->id)
+            ->first();
+        $this->assertEquals('5.0000', (string) $stock->physical_quantity);
+
         $this->assertNotNull($result->costLedgerEntry);
         $this->assertEquals('reversal', $result->costLedgerEntry->entry_type);
 
@@ -226,6 +250,7 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
         $groupId = $this->seedGroup('enrolled');
         $snapshotId = $this->seedSnapshot($groupId);
         $this->seedState($groupId, $snapshotId, '10.0000', '100.0000', 1, now()->toDateString());
+        $this->seedStock('10.0000');
 
         $tx = $this->createTransaction(TransactionTypeEnum::Issue, 1, '-5.0000', '10.0000', '-50.0000');
 
@@ -251,6 +276,14 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
 
         $this->assertEquals('15.0000', (string) $freshState->on_hand_quantity);
         $this->assertEquals('150.0000', (string) $freshState->carrying_value);
+
+        // Verify physical stock was increased by exactly absolute original quantity (-5.0000 original -> +5.0000 delta)
+        $stock = DB::table('inventory_stocks')
+            ->where('property_id', $this->property->id)
+            ->where('item_id', $this->item->id)
+            ->where('location_id', $this->location->id)
+            ->first();
+        $this->assertEquals('15.0000', (string) $stock->physical_quantity);
     }
 
     public function test_later_controlled_movement_blocks(): void
@@ -258,6 +291,7 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
         $groupId = $this->seedGroup('enrolled');
         $snapshotId = $this->seedSnapshot($groupId);
         $this->seedState($groupId, $snapshotId, '10.0000', '100.0000', 2, now()->toDateString());
+        $this->seedStock('10.0000');
 
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
         $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 2, '2.0000', '10.0000', '20.0000');
@@ -281,6 +315,7 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
         $groupId = $this->seedGroup('enrolled');
         $snapshotId = $this->seedSnapshot($groupId);
         $this->seedState($groupId, $snapshotId, '10.0000', '100.0000', 1, now()->toDateString());
+        $this->seedStock('10.0000');
 
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
 
@@ -307,6 +342,7 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
         $groupId = $this->seedGroup('enrolled');
         $snapshotId = $this->seedSnapshot($groupId);
         $this->seedState($groupId, $snapshotId, '10.0000', '100.0000', 1, now()->toDateString());
+        $this->seedStock('10.0000');
 
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
 
@@ -332,6 +368,7 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
         $groupId = $this->seedGroup('enrolled');
         $snapshotId = $this->seedSnapshot($groupId);
         $this->seedState($groupId, $snapshotId, '10.0000', '100.0000', 1, now()->toDateString());
+        $this->seedStock('10.0000');
 
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
 
@@ -364,5 +401,13 @@ class InventoryReversalPostingServiceTest extends PostgresTestCase
             ->first();
 
         $this->assertEquals('10.0000', (string) $freshState->on_hand_quantity);
+
+        // Verify physical stock was rolled back as well
+        $stock = DB::table('inventory_stocks')
+            ->where('property_id', $this->property->id)
+            ->where('item_id', $this->item->id)
+            ->where('location_id', $this->location->id)
+            ->first();
+        $this->assertEquals('10.0000', (string) $stock->physical_quantity);
     }
 }

@@ -6,10 +6,12 @@ use Illuminate\Support\Facades\DB;
 use Modules\Operations\Inventory\Models\InventoryTransaction;
 use Modules\Operations\Inventory\Repositories\InventoryTransactionRepository;
 use Modules\Operations\Inventory\Repositories\InventoryValuationSequenceRepository;
+use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
 use Modules\Operations\Inventory\Exceptions\InventoryReversalPostingRejectedException;
 use Modules\Operations\Inventory\ValueObjects\InventoryReversalPostingIntent;
 use Modules\Operations\Inventory\ValueObjects\InventoryReversalPostingResult;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
+use Modules\Operations\Inventory\Enums\ItemStatusEnum;
 use Modules\Foundation\Property\Models\PropertyBusinessDate;
 use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
 use Modules\Finance\CostControl\Repositories\CostAvcoStateRepository;
@@ -33,7 +35,8 @@ class InventoryReversalPostingService
         private readonly CostAuthorityEnrollmentRepository $enrollmentRepository,
         private readonly ControlledReversalValuationPlanner $planner,
         private readonly ControlledValuationCostLedgerAdapter $ledgerAdapter,
-        private readonly AuditService $auditService
+        private readonly AuditService $auditService,
+        private readonly InventoryStockRepository $stockRepo
     ) {}
 
     public function post(InventoryReversalPostingIntent $intent): InventoryReversalPostingResult
@@ -112,6 +115,29 @@ class InventoryReversalPostingService
                 );
             }
 
+            // 4b. Lock and update physical InventoryStock record
+            $stock = $this->stockRepo->createOrLockControlled(
+                $original->property_id,
+                $original->item_id,
+                $original->location_id
+            );
+
+            $reversalQuantityChange = bcmul((string) $original->quantity_change, '-1', 4);
+            $quantityBeforeStock = (string) $stock->physical_quantity;
+            $quantityAfterStock = bcadd($quantityBeforeStock, $reversalQuantityChange, 4);
+
+            if (bccomp($quantityAfterStock, '0', 4) < 0) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'stock' => ["Negative stock is not allowed for item {$original->item_id} at location {$original->location_id}"],
+                ]);
+            }
+
+            $stockStatus = (bccomp($quantityAfterStock, '0', 4) > 0)
+                ? ItemStatusEnum::InStock
+                : ItemStatusEnum::OutOfStock;
+
+            $this->stockRepo->updateBalance($stock->id, $quantityAfterStock, $stockStatus, now());
+
             // 5. Check if the original transaction itself has missing evidence
             if (
                 empty($original->property_id) ||
@@ -135,7 +161,6 @@ class InventoryReversalPostingService
 
             // 7. Calculate quantity changes
             $quantityBefore = (string) $lockedState->on_hand_quantity;
-            $reversalQuantityChange = bcmul((string) $original->quantity_change, '-1', 4);
             $quantityAfter = bcadd($quantityBefore, $reversalQuantityChange, 4);
 
             // 8. Create reversal transaction
