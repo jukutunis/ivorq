@@ -3,6 +3,8 @@
 namespace Modules\Operations\Receiving\Services;
 
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
+use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
 use Modules\Operations\Receiving\Models\ReceivingDocument;
 use Modules\Operations\Inventory\Services\InventoryPostingControlCoordinator;
 use Modules\Operations\Inventory\Services\AvcoValuationCalculator;
@@ -19,7 +21,8 @@ class InventoryReceiptIntegrationService
         protected InventoryPostingControlCoordinator $coordinator,
         protected InventoryStockRepository $stockRepository,
         protected InventoryItemRepository $itemRepository,
-        protected AvcoValuationCalculator $avcoCalculator
+        protected AvcoValuationCalculator $avcoCalculator,
+        protected CostAuthorityEnrollmentRepository $enrollmentRepository,
     ) {}
 
     public function syncToInventory(ReceivingDocument $document, ?string $approverId = null): void
@@ -29,6 +32,21 @@ class InventoryReceiptIntegrationService
 
             if ($document->lines->isEmpty()) {
                 return;
+            }
+
+            // Enrollment guard: validate all item scopes before businessDate lookup,
+            // context lock, or any coordinator write. Fail the entire operation if any
+            // line's item is enrolled; partial posting is not permitted.
+            // Only ENROLLED status blocks. DRAFT/APPROVED/REJECTED/SUPERSEDED do not block.
+            foreach ($document->lines as $line) {
+                if (!$line->inventory_item_id) continue;
+                if ($this->enrollmentRepository->hasEnrolledGroupForPropertyItem($document->property_id, $line->inventory_item_id)) {
+                    throw new RuntimeException(
+                        "Legacy receipt posting is blocked for property={$document->property_id} " .
+                        "item={$line->inventory_item_id}: CostControl authority is enrolled. " .
+                        "Receipt mutations must not occur outside CostControl."
+                    );
+                }
             }
 
             $businessDate = PropertyBusinessDate::where('property_id', $document->property_id)

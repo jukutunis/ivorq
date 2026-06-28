@@ -4,6 +4,8 @@ namespace Modules\Operations\Inventory\Services;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use RuntimeException;
+use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
 use Modules\Operations\Inventory\Enums\ReceiptStatusEnum;
 use Modules\Operations\Inventory\Models\InventoryReceipt;
 use Modules\Operations\Inventory\Events\InventoryReceiptPosted;
@@ -18,7 +20,8 @@ class ReceiptService
         private StockMovementService $stockMovementService,
         private InventoryItemRepository $itemRepository,
         private InventoryStockRepository $stockRepository,
-        private AvcoValuationCalculator $avcoCalculator
+        private AvcoValuationCalculator $avcoCalculator,
+        private CostAuthorityEnrollmentRepository $enrollmentRepository,
     ) {}
 
     public function create(array $data): InventoryReceipt
@@ -41,6 +44,18 @@ class ReceiptService
             throw ValidationException::withMessages([
                 'lines' => ['A receipt must have at least one line before it can be posted.'],
             ]);
+        }
+
+        // Enrollment guard: validate every item scope before any transaction or mutation.
+        // Only ENROLLED status blocks. DRAFT/APPROVED/REJECTED/SUPERSEDED do not block.
+        foreach ($receipt->lines->groupBy('item_id')->keys() as $itemId) {
+            if ($this->enrollmentRepository->hasEnrolledGroupForPropertyItem($receipt->property_id, (string) $itemId)) {
+                throw new RuntimeException(
+                    "Legacy receipt posting is blocked for property={$receipt->property_id} " .
+                    "item={$itemId}: CostControl authority is enrolled. " .
+                    "Receipt mutations must not occur outside CostControl."
+                );
+            }
         }
 
         DB::transaction(function () use ($receipt, $userId) {
