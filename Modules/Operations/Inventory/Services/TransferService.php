@@ -77,94 +77,149 @@ class TransferService
             ['id', 'asc'],
         ]);
 
-        $intents = [];
-        $occurredAt = \Illuminate\Support\Carbon::parse($transfer->created_at ?? now());
-
+        $enrollmentRepo = app(\Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository::class);
+        $enrolledCount = 0;
+        $totalLines = $sortedLines->count();
         foreach ($sortedLines as $line) {
-            $item = $this->itemRepository->find($line->item_id);
-            if (!$item) {
-                throw new BusinessLogicException("Item not found: {$line->item_id}");
+            if ($enrollmentRepo->hasEnrolledGroupForPropertyItem($transfer->property_id, (string) $line->item_id)) {
+                $enrolledCount++;
             }
-
-            $wac = $item->weighted_average_cost;
-            if ($wac === null) {
-                throw ValidationException::withMessages([
-                    'cost' => ["Item {$item->name} ({$item->sku}) does not have a valid weighted average cost."],
-                ]);
-            }
-
-            $qty = (string) abs((float) $line->quantity_requested);
-            $negQty = (string) (-1 * abs((float) $line->quantity_requested));
-            $totalCostOut = bcmul($negQty, (string) $wac, 4);
-            $totalCostIn = bcmul($qty, (string) $wac, 4);
-
-            // Intent Out
-            $intents[] = new InventoryLedgerPostingIntent(
-                propertyId: $transfer->property_id,
-                itemId: $line->item_id,
-                locationId: $transfer->from_location_id,
-                businessDate: $businessDate->business_date,
-                occurredAt: $occurredAt,
-                sourceDocumentType: 'inventory_transfer',
-                sourceDocumentId: $transfer->id,
-                sourceLineType: 'inventory_transfer_line',
-                sourceLineId: $line->id,
-                movementRole: TransactionTypeEnum::TransferOut->value,
-                idempotencyKey: "trf_{$transfer->id}_{$line->id}_out",
-                transactionType: TransactionTypeEnum::TransferOut,
-                quantityChange: $negQty,
-                unitCost: (string) $wac,
-                totalCost: $totalCostOut,
-                reference: $transfer->transfer_number,
-                notes: $transfer->notes ?? 'Inventory Transfer Posting'
-            );
-
-            // Intent In
-            $intents[] = new InventoryLedgerPostingIntent(
-                propertyId: $transfer->property_id,
-                itemId: $line->item_id,
-                locationId: $transfer->to_location_id,
-                businessDate: $businessDate->business_date,
-                occurredAt: $occurredAt,
-                sourceDocumentType: 'inventory_transfer',
-                sourceDocumentId: $transfer->id,
-                sourceLineType: 'inventory_transfer_line',
-                sourceLineId: $line->id,
-                movementRole: TransactionTypeEnum::TransferIn->value,
-                idempotencyKey: "trf_{$transfer->id}_{$line->id}_in",
-                transactionType: TransactionTypeEnum::TransferIn,
-                quantityChange: $qty,
-                unitCost: (string) $wac,
-                totalCost: $totalCostIn,
-                reference: $transfer->transfer_number,
-                notes: $transfer->notes ?? 'Inventory Transfer Posting'
-            );
         }
 
-        // Sort intents to guarantee deterministic lock order: itemId ASC -> locationId ASC
-        usort($intents, function (InventoryLedgerPostingIntent $a, InventoryLedgerPostingIntent $b) {
-            if ($a->itemId !== $b->itemId) {
-                return strcmp($a->itemId, $b->itemId);
+        if ($enrolledCount > 0 && $enrolledCount < $totalLines) {
+            throw new \RuntimeException("Mixed enrollment status detected across transfer lines. Fail closed.");
+        }
+
+        $allEnrolled = ($enrolledCount === $totalLines);
+        $occurredAt = \Illuminate\Support\Carbon::parse($transfer->created_at ?? now());
+
+        if (!$allEnrolled) {
+            $intents = [];
+
+            foreach ($sortedLines as $line) {
+                $item = $this->itemRepository->find($line->item_id);
+                if (!$item) {
+                    throw new BusinessLogicException("Item not found: {$line->item_id}");
+                }
+
+                $wac = $item->weighted_average_cost;
+                if ($wac === null) {
+                    throw ValidationException::withMessages([
+                        'cost' => ["Item {$item->name} ({$item->sku}) does not have a valid weighted average cost."],
+                    ]);
+                }
+
+                $qty = (string) abs((float) $line->quantity_requested);
+                $negQty = (string) (-1 * abs((float) $line->quantity_requested));
+                $totalCostOut = bcmul($negQty, (string) $wac, 4);
+                $totalCostIn = bcmul($qty, (string) $wac, 4);
+
+                // Intent Out
+                $intents[] = new InventoryLedgerPostingIntent(
+                    propertyId: $transfer->property_id,
+                    itemId: $line->item_id,
+                    locationId: $transfer->from_location_id,
+                    businessDate: $businessDate->business_date,
+                    occurredAt: $occurredAt,
+                    sourceDocumentType: 'inventory_transfer',
+                    sourceDocumentId: $transfer->id,
+                    sourceLineType: 'inventory_transfer_line',
+                    sourceLineId: $line->id,
+                    movementRole: TransactionTypeEnum::TransferOut->value,
+                    idempotencyKey: "trf_{$transfer->id}_{$line->id}_out",
+                    transactionType: TransactionTypeEnum::TransferOut,
+                    quantityChange: $negQty,
+                    unitCost: (string) $wac,
+                    totalCost: $totalCostOut,
+                    reference: $transfer->transfer_number,
+                    notes: $transfer->notes ?? 'Inventory Transfer Posting'
+                );
+
+                // Intent In
+                $intents[] = new InventoryLedgerPostingIntent(
+                    propertyId: $transfer->property_id,
+                    itemId: $line->item_id,
+                    locationId: $transfer->to_location_id,
+                    businessDate: $businessDate->business_date,
+                    occurredAt: $occurredAt,
+                    sourceDocumentType: 'inventory_transfer',
+                    sourceDocumentId: $transfer->id,
+                    sourceLineType: 'inventory_transfer_line',
+                    sourceLineId: $line->id,
+                    movementRole: TransactionTypeEnum::TransferIn->value,
+                    idempotencyKey: "trf_{$transfer->id}_{$line->id}_in",
+                    transactionType: TransactionTypeEnum::TransferIn,
+                    quantityChange: $qty,
+                    unitCost: (string) $wac,
+                    totalCost: $totalCostIn,
+                    reference: $transfer->transfer_number,
+                    notes: $transfer->notes ?? 'Inventory Transfer Posting'
+                );
             }
-            return strcmp($a->locationId, $b->locationId);
-        });
 
-        DB::transaction(function () use ($transfer, $intents, $businessDate, $occurredAt, $actorId) {
-            // Lock context first
-            $this->coordinator->lockContext($transfer->property_id, $businessDate->business_date, $occurredAt);
+            // Sort intents to guarantee deterministic lock order: itemId ASC -> locationId ASC
+            usort($intents, function (InventoryLedgerPostingIntent $a, InventoryLedgerPostingIntent $b) {
+                if ($a->itemId !== $b->itemId) {
+                    return strcmp($a->itemId, $b->itemId);
+                }
+                return strcmp($a->locationId, $b->locationId);
+            });
 
-            // Post all intents
-            foreach ($intents as $intent) {
-                $this->coordinator->post($intent, $actorId);
-            }
+            DB::transaction(function () use ($transfer, $intents, $businessDate, $occurredAt, $actorId) {
+                // Lock context first
+                $this->coordinator->lockContext($transfer->property_id, $businessDate->business_date, $occurredAt);
 
-            // Update transfer header
-            $this->transferRepository->update($transfer->id, [
-                'status'       => TransferStatusEnum::Completed->value,
-                'completed_at' => now(),
-                'completed_by' => $actorId,
-            ]);
-        });
+                // Post all intents
+                foreach ($intents as $intent) {
+                    $this->coordinator->post($intent, $actorId);
+                }
+
+                // Update transfer header
+                $this->transferRepository->update($transfer->id, [
+                    'status'       => TransferStatusEnum::Completed->value,
+                    'completed_at' => now(),
+                    'completed_by' => $actorId,
+                ]);
+            });
+        } else {
+            // All ENROLLED loop
+            DB::transaction(function () use ($transfer, $sortedLines, $businessDate, $occurredAt, $actorId) {
+                // Lock context first
+                $this->coordinator->lockContext($transfer->property_id, $businessDate->business_date, $occurredAt);
+
+                $invocationService = app(\Modules\Finance\CostControl\Services\ControlledTransferValuationInvocationService::class);
+
+                foreach ($sortedLines as $line) {
+                    $documentData = [
+                        'businessDate'            => $businessDate->business_date,
+                        'occurredAt'              => $occurredAt->format('Y-m-d H:i:s'),
+                        'documentId'              => $transfer->id,
+                        'lineId'                  => $line->id,
+                        'outboundIdempotencyKey'  => "trf_{$transfer->id}_{$line->id}_out",
+                        'inboundIdempotencyKey'   => "trf_{$transfer->id}_{$line->id}_in",
+                        'reference'               => $transfer->transfer_number,
+                        'notes'                   => $transfer->notes ?? 'Inventory Transfer Posting'
+                    ];
+
+                    $invocationService->invokeTransfer(
+                        $transfer->property_id,
+                        $line->item_id,
+                        $transfer->from_location_id,
+                        $transfer->to_location_id,
+                        $documentData,
+                        (string) $line->quantity_requested,
+                        $actorId
+                    );
+                }
+
+                // Update transfer header
+                $this->transferRepository->update($transfer->id, [
+                    'status'       => TransferStatusEnum::Completed->value,
+                    'completed_at' => now(),
+                    'completed_by' => $actorId,
+                ]);
+            });
+        }
 
         return $this->transferRepository->find($id);
     }
