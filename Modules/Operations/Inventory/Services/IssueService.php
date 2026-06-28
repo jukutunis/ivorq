@@ -14,13 +14,15 @@ use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
 use Modules\Foundation\Property\Models\PropertyBusinessDate;
 use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
 use Shared\Exceptions\BusinessLogicException;
+use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
 
 class IssueService
 {
     public function __construct(
         private InventoryIssueRepository $issueRepository,
         private InventoryPostingControlCoordinator $coordinator,
-        private InventoryItemRepository $itemRepository
+        private InventoryItemRepository $itemRepository,
+        private CostAuthorityEnrollmentRepository $enrollmentRepository
     ) {}
 
     public function create(array $data): InventoryIssue
