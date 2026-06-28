@@ -189,28 +189,33 @@ class TransferService
 
                 $invocationService = app(\Modules\Finance\CostControl\Services\ControlledTransferValuationInvocationService::class);
 
+                $linesData = [];
                 foreach ($sortedLines as $line) {
-                    $documentData = [
-                        'businessDate'            => $businessDate->business_date,
-                        'occurredAt'              => $occurredAt->format('Y-m-d H:i:s'),
-                        'documentId'              => $transfer->id,
+                    $linesData[] = [
+                        'itemId'                  => $line->item_id,
+                        'quantityRequested'       => (string) $line->quantity_requested,
                         'lineId'                  => $line->id,
                         'outboundIdempotencyKey'  => "trf_{$transfer->id}_{$line->id}_out",
                         'inboundIdempotencyKey'   => "trf_{$transfer->id}_{$line->id}_in",
-                        'reference'               => $transfer->transfer_number,
-                        'notes'                   => $transfer->notes ?? 'Inventory Transfer Posting'
                     ];
-
-                    $invocationService->invokeTransfer(
-                        $transfer->property_id,
-                        $line->item_id,
-                        $transfer->from_location_id,
-                        $transfer->to_location_id,
-                        $documentData,
-                        (string) $line->quantity_requested,
-                        $actorId
-                    );
                 }
+
+                $documentData = [
+                    'businessDate' => $businessDate->business_date,
+                    'occurredAt'   => $occurredAt->format('Y-m-d H:i:s'),
+                    'documentId'   => $transfer->id,
+                    'reference'    => $transfer->transfer_number,
+                    'notes'        => $transfer->notes ?? 'Inventory Transfer Posting'
+                ];
+
+                $invocationService->invokeTransferDocument(
+                    $transfer->property_id,
+                    $transfer->from_location_id,
+                    $transfer->to_location_id,
+                    $documentData,
+                    $linesData,
+                    $actorId
+                );
 
                 // Update transfer header
                 $this->transferRepository->update($transfer->id, [

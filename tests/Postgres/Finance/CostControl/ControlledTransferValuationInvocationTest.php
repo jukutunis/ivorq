@@ -393,6 +393,157 @@ class ControlledTransferValuationInvocationTest extends PostgresTestCase
     }
 
     /**
+     * 7. Multi-line transfer document with more than one transfer pair locks and processes correctly.
+     */
+    public function test_multi_line_transfer_invocation_succeeds(): void
+    {
+        $otherItem = InventoryItem::create([
+            'property_id'           => $this->property->id,
+            'category_id'           => $this->item->category_id,
+            'sku'                   => 'XFER-INVOKE-002',
+            'name'                  => 'Other Transfer Item',
+            'inventory_type'        => 'goods',
+            'weighted_average_cost' => '15.0000',
+            'is_active'             => true,
+        ]);
+
+        $groupId1 = $this->seedGroup($this->item->id);
+        $snapSrcId1 = $this->seedSnapshot($groupId1, $this->locationSrc->id, '10.0000', '100.0000');
+        $this->seedState($groupId1, $snapSrcId1, $this->locationSrc->id, null, null, '10.0000', '100.0000', '10.0000');
+
+        $snapDestId1 = $this->seedSnapshot($groupId1, $this->locationDest->id, '5.0000', '40.0000');
+        $this->seedState($groupId1, $snapDestId1, $this->locationDest->id, null, null, '5.0000', '40.0000', '8.0000');
+
+        $groupId2 = $this->seedGroup($otherItem->id);
+        $snapshotSrc2 = (string) Str::ulid();
+        DB::table('cost_authority_enrollment_scope_snapshots')->insert([
+            'id' => $snapshotSrc2,
+            'enrollment_group_id' => $groupId2,
+            'location_id' => $this->locationSrc->id,
+            'valuation_scope' => "property:{$this->property->id}:location:{$this->locationSrc->id}:item:{$otherItem->id}",
+            'opening_quantity' => '20.0000',
+            'opening_carrying_value' => '300.0000',
+            'currency_code' => 'USD',
+            'business_date' => $this->businessDate,
+            'financial_period_id' => 'fp_1',
+            'evidence_timestamp' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('cost_avco_states')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'location_id' => $this->locationSrc->id,
+            'item_id' => $otherItem->id,
+            'valuation_scope' => "property:{$this->property->id}:location:{$this->locationSrc->id}:item:{$otherItem->id}",
+            'on_hand_quantity' => '20.0000',
+            'carrying_value' => '300.0000',
+            'weighted_average_unit_cost' => '15.0000',
+            'unresolved_provisional_quantity' => '0.0000',
+            'last_valuation_sequence' => null,
+            'last_valuation_business_date' => null,
+            'enrollment_group_id' => $groupId2,
+            'enrollment_scope_snapshot_id' => $snapshotSrc2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $snapshotDest2 = (string) Str::ulid();
+        DB::table('cost_authority_enrollment_scope_snapshots')->insert([
+            'id' => $snapshotDest2,
+            'enrollment_group_id' => $groupId2,
+            'location_id' => $this->locationDest->id,
+            'valuation_scope' => "property:{$this->property->id}:location:{$this->locationDest->id}:item:{$otherItem->id}",
+            'opening_quantity' => '10.0000',
+            'opening_carrying_value' => '150.0000',
+            'currency_code' => 'USD',
+            'business_date' => $this->businessDate,
+            'financial_period_id' => 'fp_1',
+            'evidence_timestamp' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('cost_avco_states')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'location_id' => $this->locationDest->id,
+            'item_id' => $otherItem->id,
+            'valuation_scope' => "property:{$this->property->id}:location:{$this->locationDest->id}:item:{$otherItem->id}",
+            'on_hand_quantity' => '10.0000',
+            'carrying_value' => '150.0000',
+            'weighted_average_unit_cost' => '15.0000',
+            'unresolved_provisional_quantity' => '0.0000',
+            'last_valuation_sequence' => null,
+            'last_valuation_business_date' => null,
+            'enrollment_group_id' => $groupId2,
+            'enrollment_scope_snapshot_id' => $snapshotDest2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->seedStock($this->locationSrc->id, '10.0000');
+        $this->seedStock($this->locationDest->id, '5.0000');
+
+        // Seed stock for otherItem
+        DB::table('inventory_stocks')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'location_id' => $this->locationSrc->id,
+            'item_id' => $otherItem->id,
+            'physical_quantity' => '20.0000',
+            'reserved_quantity' => '0.0000',
+            'status' => 'in_stock',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('inventory_stocks')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'location_id' => $this->locationDest->id,
+            'item_id' => $otherItem->id,
+            'physical_quantity' => '10.0000',
+            'reserved_quantity' => '0.0000',
+            'status' => 'in_stock',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $transfer = InventoryTransfer::create([
+            'property_id'      => $this->property->id,
+            'transfer_number'  => 'XFER-005',
+            'from_location_id' => $this->locationSrc->id,
+            'to_location_id'   => $this->locationDest->id,
+            'status'           => \Modules\Operations\Inventory\Enums\TransferStatusEnum::Draft->value,
+        ]);
+
+        $transfer->lines()->create([
+            'property_id'        => $this->property->id,
+            'item_id'            => $this->item->id,
+            'quantity_requested' => '2.0000',
+        ]);
+
+        $transfer->lines()->create([
+            'property_id'        => $this->property->id,
+            'item_id'            => $otherItem->id,
+            'quantity_requested' => '5.0000',
+        ]);
+
+        $completed = $this->transferService->complete($transfer->id);
+
+        $this->assertEquals(\Modules\Operations\Inventory\Enums\TransferStatusEnum::Completed, $completed->status);
+
+        // Verify that 4 inventory transactions and 4 cost ledger entries are written
+        $this->assertDatabaseCount('inventory_transactions', 4);
+        $this->assertDatabaseCount('cost_ledger_entries', 4);
+
+        $state1 = CostAvcoState::where('location_id', $this->locationSrc->id)->where('item_id', $this->item->id)->first();
+        $this->assertEquals('8.0000', $state1->on_hand_quantity);
+
+        $state2 = CostAvcoState::where('location_id', $this->locationSrc->id)->where('item_id', $otherItem->id)->first();
+        $this->assertEquals('15.0000', $state2->on_hand_quantity);
+    }
+
+    /**
      * 8. No production service outside the one resolved transfer service invokes ControlledTransferValuationInvocationService.
      */
     public function test_no_production_service_references_invocation_service(): void

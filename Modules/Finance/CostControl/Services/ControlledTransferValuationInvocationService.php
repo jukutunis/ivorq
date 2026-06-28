@@ -29,176 +29,198 @@ final class ControlledTransferValuationInvocationService
     ) {}
 
     /**
-     * Lock state, read WAUC, post transaction legs, and apply valuation plan.
+     * Lock all scopes, resolve line-by-line logical states, post transaction legs,
+     * and apply valuation plans.
      */
-    public function invokeTransfer(
+    public function invokeTransferDocument(
         string $propertyId,
-        string $itemId,
-        string $sourceLocationId,
-        string $destinationLocationId,
+        string $fromLocationId,
+        string $toLocationId,
         array $documentData,
-        string $qtyStr,
+        array $linesData,
         ?string $actorId = null
-    ): ControlledTransferValuationPlan {
+    ): void {
         if (DB::transactionLevel() < 1) {
-            throw new RuntimeException('ControlledTransferValuationInvocationService::invokeTransfer requires an active transaction.');
+            throw new RuntimeException('ControlledTransferValuationInvocationService::invokeTransferDocument requires an active transaction.');
         }
 
-        // 1. Lock existing seeded state pair before reading WAUC or creating transaction
-        [$lockedSourceState, $lockedDestState] = $this->stateRepository->lockExistingSeededStatePair(
+        // 1. Build list of requested scopes for locking
+        $requestedScopes = [];
+        foreach ($linesData as $line) {
+            $itemId = $line['itemId'];
+            $requestedScopes[] = ['itemId' => $itemId, 'locationId' => $fromLocationId];
+            $requestedScopes[] = ['itemId' => $itemId, 'locationId' => $toLocationId];
+        }
+
+        // 2. Call lockExistingSeededStateSetForTransferScopes exactly once
+        $lockedStatesMap = $this->stateRepository->lockExistingSeededStateSetForTransferScopes(
             $propertyId,
-            $itemId,
-            $sourceLocationId,
-            $destinationLocationId
+            $requestedScopes
         );
 
-        // 2. Validate locked source state facts
-        $qtyBefore = new AvcoDecimal((string) $lockedSourceState->on_hand_quantity);
-        if ($qtyBefore->isZero() || $qtyBefore->isNegative()) {
-            throw new RuntimeException("Cannot transfer from zero or negative stock.");
-        }
+        // 3. Process transfer lines in the pre-existing source-proven document line order
+        foreach ($linesData as $line) {
+            $itemId = $line['itemId'];
+            $qtyStr = $line['quantityRequested'];
 
-        if ($lockedSourceState->weighted_average_unit_cost === null) {
-            throw new RuntimeException("Weighted average unit cost is null for locked source state.");
-        }
+            $sourceKey = "property:{$propertyId}:location:{$fromLocationId}:item:{$itemId}";
+            $destKey = "property:{$propertyId}:location:{$toLocationId}:item:{$itemId}";
 
-        $wac = new AvcoDecimal((string) $lockedSourceState->weighted_average_unit_cost);
-        if ($wac->isZero() || $wac->isNegative()) {
-            throw new RuntimeException("Weighted average unit cost is zero or negative for locked source state.");
-        }
+            $lockedSourceState = $lockedStatesMap[$sourceKey] ?? null;
+            $lockedDestState = $lockedStatesMap[$destKey] ?? null;
 
-        // Validate sufficient quantity and carrying value
-        $reqQty = new AvcoDecimal(abs((float) $qtyStr));
-        if ($qtyBefore->compareTo($reqQty) < 0) {
-            throw new RuntimeException("Sufficient source quantity is not available.");
-        }
+            if ($lockedSourceState === null || $lockedDestState === null) {
+                throw new RuntimeException("Failed to find locked states in map for item {$itemId}.");
+            }
 
-        // 3. Derive unit cost and total value
-        $qtyOut = new AvcoDecimal((string) (-1 * abs((float) $qtyStr)));
-        $valueOut = AvcoDecimal::zero()->sub($reqQty->mul($wac));
+            // Validate locked source state facts
+            $qtyBefore = new AvcoDecimal((string) $lockedSourceState->on_hand_quantity);
+            if ($qtyBefore->isZero() || $qtyBefore->isNegative()) {
+                throw new RuntimeException("Cannot transfer from zero or negative stock.");
+            }
 
-        $qtyIn = $reqQty;
-        $valueIn = $reqQty->mul($wac);
+            if ($lockedSourceState->weighted_average_unit_cost === null) {
+                throw new RuntimeException("Weighted average unit cost is null for locked source state.");
+            }
 
-        // 4. Create canonical immutable outbound transfer transaction
-        $outIntent = new InventoryLedgerPostingIntent(
-            propertyId: $propertyId,
-            itemId: $itemId,
-            locationId: $sourceLocationId,
-            businessDate: $documentData['businessDate'],
-            occurredAt: $documentData['occurredAt'],
-            sourceDocumentType: 'inventory_transfer',
-            sourceDocumentId: $documentData['documentId'],
-            sourceLineType: 'inventory_transfer_line',
-            sourceLineId: $documentData['lineId'],
-            movementRole: TransactionTypeEnum::TransferOut->value,
-            idempotencyKey: $documentData['outboundIdempotencyKey'],
-            transactionType: TransactionTypeEnum::TransferOut,
-            quantityChange: $qtyOut->getValue(),
-            unitCost: $wac->getValue(),
-            totalCost: $valueOut->getValue(),
-            reference: $documentData['reference'],
-            notes: $documentData['notes'] ?? 'Inventory Transfer Posting'
-        );
+            $wac = new AvcoDecimal((string) $lockedSourceState->weighted_average_unit_cost);
+            if ($wac->isZero() || $wac->isNegative()) {
+                throw new RuntimeException("Weighted average unit cost is zero or negative for locked source state.");
+            }
 
-        $txOut = $this->postingCoordinator->post($outIntent, $actorId);
+            // Validate sufficient quantity
+            $reqQty = new AvcoDecimal(abs((float) $qtyStr));
+            if ($qtyBefore->compareTo($reqQty) < 0) {
+                throw new RuntimeException("Sufficient source quantity is not available.");
+            }
 
-        // 5. Create canonical immutable inbound transfer transaction
-        $inIntent = new InventoryLedgerPostingIntent(
-            propertyId: $propertyId,
-            itemId: $itemId,
-            locationId: $destinationLocationId,
-            businessDate: $documentData['businessDate'],
-            occurredAt: $documentData['occurredAt'],
-            sourceDocumentType: 'inventory_transfer',
-            sourceDocumentId: $documentData['documentId'],
-            sourceLineType: 'inventory_transfer_line',
-            sourceLineId: $documentData['lineId'],
-            movementRole: TransactionTypeEnum::TransferIn->value,
-            idempotencyKey: $documentData['inboundIdempotencyKey'],
-            transactionType: TransactionTypeEnum::TransferIn,
-            quantityChange: $qtyIn->getValue(),
-            unitCost: $wac->getValue(),
-            totalCost: $valueIn->getValue(),
-            reference: $documentData['reference'],
-            notes: $documentData['notes'] ?? 'Inventory Transfer Posting'
-        );
+            // Derive unit cost and total value
+            $qtyOut = new AvcoDecimal((string) (-1 * abs((float) $qtyStr)));
+            $valueOut = AvcoDecimal::zero()->sub($reqQty->mul($wac));
 
-        $txIn = $this->postingCoordinator->post($inIntent, $actorId);
+            $qtyIn = $reqQty;
+            $valueIn = $reqQty->mul($wac);
 
-        // 6. Construct ControlledTransferValuationIntent from locked states and transaction facts
-        $sourceSeq = null;
-        if ($lockedSourceState->last_valuation_sequence !== null && $lockedSourceState->last_valuation_business_date !== null) {
-            $sourceSeq = new ValuationSequence(
+            // Create canonical outbound transfer transaction
+            $outIntent = new InventoryLedgerPostingIntent(
                 propertyId: $propertyId,
                 itemId: $itemId,
-                valuationScope: $lockedSourceState->valuation_scope,
-                businessDate: $lockedSourceState->last_valuation_business_date->format('Y-m-d'),
-                ledgerSequence: (int) $lockedSourceState->last_valuation_sequence
+                locationId: $fromLocationId,
+                businessDate: $documentData['businessDate'],
+                occurredAt: $documentData['occurredAt'],
+                sourceDocumentType: 'inventory_transfer',
+                sourceDocumentId: $documentData['documentId'],
+                sourceLineType: 'inventory_transfer_line',
+                sourceLineId: $line['lineId'],
+                movementRole: TransactionTypeEnum::TransferOut->value,
+                idempotencyKey: $line['outboundIdempotencyKey'],
+                transactionType: TransactionTypeEnum::TransferOut,
+                quantityChange: $qtyOut->getValue(),
+                unitCost: $wac->getValue(),
+                totalCost: $valueOut->getValue(),
+                reference: $documentData['reference'],
+                notes: $documentData['notes'] ?? 'Inventory Transfer Posting'
             );
-        }
 
-        $destSeq = null;
-        if ($lockedDestState->last_valuation_sequence !== null && $lockedDestState->last_valuation_business_date !== null) {
-            $destSeq = new ValuationSequence(
+            $txOut = $this->postingCoordinator->post($outIntent, $actorId);
+
+            // Create canonical inbound transfer transaction
+            $inIntent = new InventoryLedgerPostingIntent(
                 propertyId: $propertyId,
                 itemId: $itemId,
-                valuationScope: $lockedDestState->valuation_scope,
-                businessDate: $lockedDestState->last_valuation_business_date->format('Y-m-d'),
-                ledgerSequence: (int) $lockedDestState->last_valuation_sequence
+                locationId: $toLocationId,
+                businessDate: $documentData['businessDate'],
+                occurredAt: $documentData['occurredAt'],
+                sourceDocumentType: 'inventory_transfer',
+                sourceDocumentId: $documentData['documentId'],
+                sourceLineType: 'inventory_transfer_line',
+                sourceLineId: $line['lineId'],
+                movementRole: TransactionTypeEnum::TransferIn->value,
+                idempotencyKey: $line['inboundIdempotencyKey'],
+                transactionType: TransactionTypeEnum::TransferIn,
+                quantityChange: $qtyIn->getValue(),
+                unitCost: $wac->getValue(),
+                totalCost: $valueIn->getValue(),
+                reference: $documentData['reference'],
+                notes: $documentData['notes'] ?? 'Inventory Transfer Posting'
+            );
+
+            $txIn = $this->postingCoordinator->post($inIntent, $actorId);
+
+            // Reconstruct authoritative transfer intent from current locked state values and transaction facts
+            $sourceSeq = null;
+            if ($lockedSourceState->last_valuation_sequence !== null && $lockedSourceState->last_valuation_business_date !== null) {
+                $sourceSeq = new ValuationSequence(
+                    propertyId: $propertyId,
+                    itemId: $itemId,
+                    valuationScope: $lockedSourceState->valuation_scope,
+                    businessDate: $lockedSourceState->last_valuation_business_date->format('Y-m-d'),
+                    ledgerSequence: (int) $lockedSourceState->last_valuation_sequence
+                );
+            }
+
+            $destSeq = null;
+            if ($lockedDestState->last_valuation_sequence !== null && $lockedDestState->last_valuation_business_date !== null) {
+                $destSeq = new ValuationSequence(
+                    propertyId: $propertyId,
+                    itemId: $itemId,
+                    valuationScope: $lockedDestState->valuation_scope,
+                    businessDate: $lockedDestState->last_valuation_business_date->format('Y-m-d'),
+                    ledgerSequence: (int) $lockedDestState->last_valuation_sequence
+                );
+            }
+
+            $outboundLedgerIntent = new ControlledValuationCostLedgerIntent(
+                propertyId: $txOut->property_id,
+                sourceInventoryTransactionId: $txOut->id,
+                priorCostLedgerEntryId: null,
+                entryType: 'transfer',
+                idempotencyKey: $txOut->idempotency_key,
+                entrySequence: (int) $txOut->valuation_sequence,
+                currencyCode: $txOut->currency_code,
+                quantityDelta: $qtyOut,
+                unitCost: $wac,
+                valueDelta: $valueOut,
+                businessDate: $txOut->business_date->format('Y-m-d'),
+                occurredAt: $txOut->occurred_at->format('Y-m-d H:i:s')
+            );
+
+            $inboundLedgerIntent = new ControlledValuationCostLedgerIntent(
+                propertyId: $txIn->property_id,
+                sourceInventoryTransactionId: $txIn->id,
+                priorCostLedgerEntryId: null,
+                entryType: 'transfer',
+                idempotencyKey: $txIn->idempotency_key,
+                entrySequence: (int) $txIn->valuation_sequence,
+                currencyCode: $txIn->currency_code,
+                quantityDelta: $qtyIn,
+                unitCost: $wac,
+                valueDelta: $valueIn,
+                businessDate: $txIn->business_date->format('Y-m-d'),
+                occurredAt: $txIn->occurred_at->format('Y-m-d H:i:s')
+            );
+
+            $requestedIntent = new ControlledTransferValuationIntent(
+                propertyId: $propertyId,
+                itemId: $itemId,
+                sourceLocationId: $fromLocationId,
+                destinationLocationId: $toLocationId,
+                sourceCurrentLastValuationSequence: $sourceSeq,
+                sourceCurrentQuantity: new AvcoDecimal((string) $lockedSourceState->on_hand_quantity),
+                sourceCurrentCarryingValue: new AvcoDecimal((string) $lockedSourceState->carrying_value),
+                destinationCurrentLastValuationSequence: $destSeq,
+                destinationCurrentQuantity: new AvcoDecimal((string) $lockedDestState->on_hand_quantity),
+                destinationCurrentCarryingValue: new AvcoDecimal((string) $lockedDestState->carrying_value),
+                outboundIntent: $outboundLedgerIntent,
+                inboundIntent: $inboundLedgerIntent
+            );
+
+            // Apply using the apply coordinator
+            $this->applyCoordinator->applyUsingLockedStates(
+                $lockedSourceState,
+                $lockedDestState,
+                $requestedIntent
             );
         }
-
-        $outboundLedgerIntent = new ControlledValuationCostLedgerIntent(
-            propertyId: $txOut->property_id,
-            sourceInventoryTransactionId: $txOut->id,
-            priorCostLedgerEntryId: null,
-            entryType: 'transfer',
-            idempotencyKey: $txOut->idempotency_key,
-            entrySequence: (int) $txOut->valuation_sequence,
-            currencyCode: $txOut->currency_code,
-            quantityDelta: $qtyOut,
-            unitCost: $wac,
-            valueDelta: $valueOut,
-            businessDate: $txOut->business_date->format('Y-m-d'),
-            occurredAt: $txOut->occurred_at->format('Y-m-d H:i:s')
-        );
-
-        $inboundLedgerIntent = new ControlledValuationCostLedgerIntent(
-            propertyId: $txIn->property_id,
-            sourceInventoryTransactionId: $txIn->id,
-            priorCostLedgerEntryId: null,
-            entryType: 'transfer',
-            idempotencyKey: $txIn->idempotency_key,
-            entrySequence: (int) $txIn->valuation_sequence,
-            currencyCode: $txIn->currency_code,
-            quantityDelta: $qtyIn,
-            unitCost: $wac,
-            valueDelta: $valueIn,
-            businessDate: $txIn->business_date->format('Y-m-d'),
-            occurredAt: $txIn->occurred_at->format('Y-m-d H:i:s')
-        );
-
-        $requestedIntent = new ControlledTransferValuationIntent(
-            propertyId: $propertyId,
-            itemId: $itemId,
-            sourceLocationId: $sourceLocationId,
-            destinationLocationId: $destinationLocationId,
-            sourceCurrentLastValuationSequence: $sourceSeq,
-            sourceCurrentQuantity: new AvcoDecimal((string) $lockedSourceState->on_hand_quantity),
-            sourceCurrentCarryingValue: new AvcoDecimal((string) $lockedSourceState->carrying_value),
-            destinationCurrentLastValuationSequence: $destSeq,
-            destinationCurrentQuantity: new AvcoDecimal((string) $lockedDestState->on_hand_quantity),
-            destinationCurrentCarryingValue: new AvcoDecimal((string) $lockedDestState->carrying_value),
-            outboundIntent: $outboundLedgerIntent,
-            inboundIntent: $inboundLedgerIntent
-        );
-
-        // 7. Apply using the apply coordinator
-        return $this->applyCoordinator->applyUsingLockedStates(
-            $lockedSourceState,
-            $lockedDestState,
-            $requestedIntent
-        );
     }
 }

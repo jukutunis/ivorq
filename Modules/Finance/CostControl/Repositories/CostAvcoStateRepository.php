@@ -435,4 +435,96 @@ class CostAvcoStateRepository
         $destState->last_valuation_business_date    = $plan->destinationLastAppliedValuationSequenceAfter->businessDate;
         $destState->save();
     }
+
+    /**
+     * Lock all requested unique transfer scopes across property, item, and locations,
+     * sorted canonically in ORDER BY property_id, item_id, location_id ASC.
+     * Returns a map keyed by scope identity: property:{property_id}:location:{location_id}:item:{item_id}
+     */
+    public function lockExistingSeededStateSetForTransferScopes(
+        string $propertyId,
+        array $requestedScopes
+    ): array {
+        if (trim($propertyId) === '') {
+            throw new InvalidArgumentException('propertyId cannot be blank.');
+        }
+
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'CostAvcoStateRepository::lockExistingSeededStateSetForTransferScopes requires an active outer transaction.'
+            );
+        }
+
+        // requestedScopes is array of arrays: [['itemId' => '...', 'locationId' => '...'], ...]
+        $uniqueScopes = [];
+        $itemIds = [];
+        $locationIds = [];
+
+        foreach ($requestedScopes as $reqScope) {
+            $itemId = $reqScope['itemId'] ?? null;
+            $locationId = $reqScope['locationId'] ?? null;
+
+            if (empty($itemId) || empty($locationId)) {
+                throw new InvalidArgumentException('Scope item ID and location ID must not be blank.');
+            }
+
+            $key = "{$itemId}:{$locationId}";
+            $uniqueScopes[$key] = [
+                'itemId' => $itemId,
+                'locationId' => $locationId
+            ];
+
+            $itemIds[] = $itemId;
+            $locationIds[] = $locationId;
+        }
+
+        $itemIds = array_unique($itemIds);
+        $locationIds = array_unique($locationIds);
+
+        // Fetch and lock the scopes matching property and requested items/locations
+        // ordered by property_id ASC, item_id ASC, location_id ASC
+        $states = CostAvcoState::where('property_id', $propertyId)
+            ->whereIn('item_id', $itemIds)
+            ->whereIn('location_id', $locationIds)
+            ->orderBy('property_id', 'asc')
+            ->orderBy('item_id', 'asc')
+            ->orderBy('location_id', 'asc')
+            ->lockForUpdate()
+            ->get();
+
+        // Validate that we retrieved exactly the states for each unique scope requested
+        $expectedCount = count($uniqueScopes);
+        $matchedStates = [];
+
+        foreach ($states as $state) {
+            $key = "{$state->item_id}:{$state->location_id}";
+            if (isset($uniqueScopes[$key])) {
+                $expectedScope = "property:{$propertyId}:location:{$state->location_id}:item:{$state->item_id}";
+                if ($state->valuation_scope !== $expectedScope) {
+                    throw new RuntimeException(
+                        sprintf('Scope mismatch: expected "%s", got "%s".', $expectedScope, $state->valuation_scope)
+                    );
+                }
+                if (empty($state->enrollment_group_id) || empty($state->enrollment_scope_snapshot_id)) {
+                    throw new RuntimeException(
+                        sprintf('Seed provenance missing for CostAvcoState on scope "%s".', $state->valuation_scope)
+                    );
+                }
+                $matchedStates[$key] = $state;
+            }
+        }
+
+        if (count($matchedStates) !== $expectedCount) {
+            throw new RuntimeException('Failed to retrieve all unique seeded transfer scopes.');
+        }
+
+        // Map by canonical key: property:{property_id}:location:{location_id}:item:{item_id}
+        $map = [];
+        foreach ($matchedStates as $state) {
+            $canonicalKey = "property:{$propertyId}:location:{$state->location_id}:item:{$state->item_id}";
+            $map[$canonicalKey] = $state;
+        }
+
+        return $map;
+    }
 }
