@@ -78,60 +78,139 @@ class IssueService
             ['id', 'asc'],
         ]);
 
-        DB::transaction(function () use ($issue, $sortedLines, $businessDate, $actorId) {
-            $occurredAt = \Illuminate\Support\Carbon::parse($issue->issued_at ?? $issue->created_at ?? now());
-
-            // Acquire business date and financial period locks
-            $this->coordinator->lockContext($issue->property_id, $businessDate->business_date, $occurredAt);
-
-            foreach ($sortedLines as $line) {
-                $item = $this->itemRepository->find($line->item_id);
-                if (!$item) {
-                    throw new BusinessLogicException("Item not found: {$line->item_id}");
-                }
-
-                $wac = $item->weighted_average_cost;
-                if ($wac === null) {
-                    throw ValidationException::withMessages([
-                        'cost' => ["Item {$item->name} ({$item->sku}) does not have a valid weighted average cost."],
-                    ]);
-                }
-
-                // quantityChange = negative line quantity
-                $qtyChange = (string) (-1 * abs((float) $line->quantity));
-
-                // totalCost = qtyChange * unitCost
-                $totalCost = bcmul($qtyChange, (string) $wac, 4);
-
-                $intent = new InventoryLedgerPostingIntent(
-                    propertyId: $issue->property_id,
-                    itemId: $line->item_id,
-                    locationId: $line->location_id,
-                    businessDate: $businessDate->business_date,
-                    occurredAt: $occurredAt,
-                    sourceDocumentType: 'inventory_issue',
-                    sourceDocumentId: $issue->id,
-                    sourceLineType: 'inventory_issue_line',
-                    sourceLineId: $line->id,
-                    movementRole: TransactionTypeEnum::Issue->value,
-                    idempotencyKey: "iss_{$issue->id}_{$line->id}_post",
-                    transactionType: TransactionTypeEnum::Issue,
-                    quantityChange: $qtyChange,
-                    unitCost: (string) $wac,
-                    totalCost: $totalCost,
-                    reference: $issue->issue_number,
-                    notes: $issue->remarks ?? 'Inventory Issue Posting'
-                );
-
-                $this->coordinator->post($intent, $actorId);
+        // Enrollment guard and classification
+        $propertyId = $issue->property_id;
+        $totalLines = $sortedLines->count();
+        $enrolledCount = 0;
+        foreach ($sortedLines as $line) {
+            if ($this->enrollmentRepository->hasEnrolledGroupForPropertyItem($propertyId, (string) $line->item_id)) {
+                $enrolledCount++;
             }
+        }
 
-            $this->issueRepository->update($issue->id, [
-                'status'    => IssueStatusEnum::Posted->value,
-                'posted_at' => now(),
-                'posted_by' => $actorId,
-            ]);
-        });
+        if ($enrolledCount > 0 && $enrolledCount < $totalLines) {
+            throw new RuntimeException("Mixed enrollment status detected across issue lines. Fail closed.");
+        }
+
+        $allEnrolled = ($enrolledCount === $totalLines);
+
+        if (!$allEnrolled) {
+            // Legacy path remains unchanged
+            DB::transaction(function () use ($issue, $sortedLines, $businessDate, $actorId) {
+                $occurredAt = \Illuminate\Support\Carbon::parse($issue->issued_at ?? $issue->created_at ?? now());
+
+                // Acquire business date and financial period locks
+                $this->coordinator->lockContext($issue->property_id, $businessDate->business_date, $occurredAt);
+
+                foreach ($sortedLines as $line) {
+                    $item = $this->itemRepository->find($line->item_id);
+                    if (!$item) {
+                        throw new BusinessLogicException("Item not found: {$line->item_id}");
+                    }
+
+                    $wac = $item->weighted_average_cost;
+                    if ($wac === null) {
+                        throw ValidationException::withMessages([
+                            'cost' => ["Item {$item->name} ({$item->sku}) does not have a valid weighted average cost."],
+                        ]);
+                    }
+
+                    // quantityChange = negative line quantity
+                    $qtyChange = (string) (-1 * abs((float) $line->quantity));
+
+                    // totalCost = qtyChange * unitCost
+                    $totalCost = bcmul($qtyChange, (string) $wac, 4);
+
+                    $intent = new InventoryLedgerPostingIntent(
+                        propertyId: $issue->property_id,
+                        itemId: $line->item_id,
+                        locationId: $line->location_id,
+                        businessDate: $businessDate->business_date,
+                        occurredAt: $occurredAt,
+                        sourceDocumentType: 'inventory_issue',
+                        sourceDocumentId: $issue->id,
+                        sourceLineType: 'inventory_issue_line',
+                        sourceLineId: $line->id,
+                        movementRole: TransactionTypeEnum::Issue->value,
+                        idempotencyKey: "iss_{$issue->id}_{$line->id}_post",
+                        transactionType: TransactionTypeEnum::Issue,
+                        quantityChange: $qtyChange,
+                        unitCost: (string) $wac,
+                        totalCost: $totalCost,
+                        reference: $issue->issue_number,
+                        notes: $issue->remarks ?? 'Inventory Issue Posting'
+                    );
+
+                    $this->coordinator->post($intent, $actorId);
+                }
+
+                $this->issueRepository->update($issue->id, [
+                    'status'    => IssueStatusEnum::Posted->value,
+                    'posted_at' => now(),
+                    'posted_by' => $actorId,
+                ]);
+            });
+        } else {
+            // All ENROLLED loop
+            DB::transaction(function () use ($issue, $sortedLines, $businessDate, $actorId, $propertyId) {
+                $occurredAt = \Illuminate\Support\Carbon::parse($issue->issued_at ?? $issue->created_at ?? now());
+
+                // Acquire business date and financial period locks
+                $this->coordinator->lockContext($issue->property_id, $businessDate->business_date, $occurredAt);
+
+                $invocationService = app(\Modules\Finance\CostControl\Services\ControlledIssueValuationInvocationService::class);
+
+                foreach ($sortedLines as $line) {
+                    $scope = "property:{$propertyId}:location:{$line->location_id}:item:{$line->item_id}";
+                    $avcoState = DB::table('cost_avco_states')
+                        ->where('valuation_scope', $scope)
+                        ->first();
+
+                    if (!$avcoState) {
+                        throw new RuntimeException("CostAvcoState not found for scope {$scope}");
+                    }
+
+                    $wac = $avcoState->weighted_average_unit_cost;
+                    if ($wac === null) {
+                        throw new RuntimeException("No valid prevailing carrying cost found for enrolled item: {$line->item_id}");
+                    }
+
+                    // quantityChange = negative line quantity
+                    $qtyChange = (string) (-1 * abs((float) $line->quantity));
+
+                    // totalCost = qtyChange * unitCost
+                    $totalCost = bcmul($qtyChange, (string) $wac, 4);
+
+                    $intent = new InventoryLedgerPostingIntent(
+                        propertyId: $issue->property_id,
+                        itemId: $line->item_id,
+                        locationId: $line->location_id,
+                        businessDate: $businessDate->business_date,
+                        occurredAt: $occurredAt,
+                        sourceDocumentType: 'inventory_issue',
+                        sourceDocumentId: $issue->id,
+                        sourceLineType: 'inventory_issue_line',
+                        sourceLineId: $line->id,
+                        movementRole: TransactionTypeEnum::Issue->value,
+                        idempotencyKey: "iss_{$issue->id}_{$line->id}_post",
+                        transactionType: TransactionTypeEnum::Issue,
+                        quantityChange: $qtyChange,
+                        unitCost: (string) $wac,
+                        totalCost: $totalCost,
+                        reference: $issue->issue_number,
+                        notes: $issue->remarks ?? 'Inventory Issue Posting'
+                    );
+
+                    $invocationService->invokeIssue($propertyId, $line->location_id, $line->item_id, $intent, $actorId);
+                }
+
+                $this->issueRepository->update($issue->id, [
+                    'status'    => IssueStatusEnum::Posted->value,
+                    'posted_at' => now(),
+                    'posted_by' => $actorId,
+                ]);
+            });
+        }
 
         return $this->issueRepository->find($id);
     }

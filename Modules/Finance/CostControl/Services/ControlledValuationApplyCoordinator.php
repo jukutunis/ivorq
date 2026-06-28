@@ -86,9 +86,17 @@ class ControlledValuationApplyCoordinator
                 throw new InvalidArgumentException('Item mismatch on transaction evidence.');
             }
 
-            // Enforce purchase receipt type
-            if ($tx->transaction_type->value !== 'purchase_receipt') {
-                throw new InvalidArgumentException('Transaction type is not purchase_receipt.');
+            // Enforce correct transaction type
+            if ($costLedgerIntent->entryType === 'receipt') {
+                if ($tx->transaction_type->value !== 'purchase_receipt') {
+                    throw new InvalidArgumentException('Transaction type is not purchase_receipt for receipt entry.');
+                }
+            } elseif ($costLedgerIntent->entryType === 'issue') {
+                if ($tx->transaction_type->value !== 'issue') {
+                    throw new InvalidArgumentException('Transaction type is not issue for issue entry.');
+                }
+            } else {
+                throw new InvalidArgumentException(sprintf('Unsupported entry type "%s".', $costLedgerIntent->entryType));
             }
 
             if ($tx->valuation_sequence !== $costLedgerIntent->entrySequence) {
