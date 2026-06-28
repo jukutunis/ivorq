@@ -544,7 +544,123 @@ class ControlledTransferValuationInvocationTest extends PostgresTestCase
     }
 
     /**
-     * 8. No production service outside the one resolved transfer service invokes ControlledTransferValuationInvocationService.
+     * 8. Exact composite pair lock verification: does not query/lock Cartesian product rows.
+     */
+    public function test_lock_set_filters_exact_composite_pairs_only(): void
+    {
+        $otherItem = InventoryItem::create([
+            'property_id'           => $this->property->id,
+            'category_id'           => $this->item->category_id,
+            'sku'                   => 'XFER-INVOKE-003',
+            'name'                  => 'Third Transfer Item',
+            'inventory_type'        => 'goods',
+            'weighted_average_cost' => '15.0000',
+            'is_active'             => true,
+        ]);
+
+        $groupId1 = $this->seedGroup($this->item->id);
+        $snapSrcId1 = $this->seedSnapshot($groupId1, $this->locationSrc->id, '10.0000', '100.0000');
+        $this->seedState($groupId1, $snapSrcId1, $this->locationSrc->id, null, null, '10.0000', '100.0000', '10.0000');
+
+        $snapDestId1 = $this->seedSnapshot($groupId1, $this->locationDest->id, '5.0000', '40.0000');
+        $this->seedState($groupId1, $snapDestId1, $this->locationDest->id, null, null, '5.0000', '40.0000', '8.0000');
+
+        $groupId2 = $this->seedGroup($otherItem->id);
+        $snapshotSrc2 = (string) Str::ulid();
+        DB::table('cost_authority_enrollment_scope_snapshots')->insert([
+            'id' => $snapshotSrc2,
+            'enrollment_group_id' => $groupId2,
+            'location_id' => $this->locationSrc->id,
+            'valuation_scope' => "property:{$this->property->id}:location:{$this->locationSrc->id}:item:{$otherItem->id}",
+            'opening_quantity' => '20.0000',
+            'opening_carrying_value' => '300.0000',
+            'currency_code' => 'USD',
+            'business_date' => $this->businessDate,
+            'financial_period_id' => 'fp_1',
+            'evidence_timestamp' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('cost_avco_states')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'location_id' => $this->locationSrc->id,
+            'item_id' => $otherItem->id,
+            'valuation_scope' => "property:{$this->property->id}:location:{$this->locationSrc->id}:item:{$otherItem->id}",
+            'on_hand_quantity' => '20.0000',
+            'carrying_value' => '300.0000',
+            'weighted_average_unit_cost' => '15.0000',
+            'unresolved_provisional_quantity' => '0.0000',
+            'last_valuation_sequence' => null,
+            'last_valuation_business_date' => null,
+            'enrollment_group_id' => $groupId2,
+            'enrollment_scope_snapshot_id' => $snapshotSrc2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $snapshotDest2 = (string) Str::ulid();
+        DB::table('cost_authority_enrollment_scope_snapshots')->insert([
+            'id' => $snapshotDest2,
+            'enrollment_group_id' => $groupId2,
+            'location_id' => $this->locationDest->id,
+            'valuation_scope' => "property:{$this->property->id}:location:{$this->locationDest->id}:item:{$otherItem->id}",
+            'opening_quantity' => '10.0000',
+            'opening_carrying_value' => '150.0000',
+            'currency_code' => 'USD',
+            'business_date' => $this->businessDate,
+            'financial_period_id' => 'fp_1',
+            'evidence_timestamp' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('cost_avco_states')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'location_id' => $this->locationDest->id,
+            'item_id' => $otherItem->id,
+            'valuation_scope' => "property:{$this->property->id}:location:{$this->locationDest->id}:item:{$otherItem->id}",
+            'on_hand_quantity' => '10.0000',
+            'carrying_value' => '150.0000',
+            'weighted_average_unit_cost' => '15.0000',
+            'unresolved_provisional_quantity' => '0.0000',
+            'last_valuation_sequence' => null,
+            'last_valuation_business_date' => null,
+            'enrollment_group_id' => $groupId2,
+            'enrollment_scope_snapshot_id' => $snapshotDest2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $requested = [
+            ['itemId' => $this->item->id, 'locationId' => $this->locationSrc->id],
+            ['itemId' => $otherItem->id, 'locationId' => $this->locationDest->id],
+        ];
+
+        DB::transaction(function () use ($requested, $otherItem) {
+            $map = $this->stateRepository->lockExistingSeededStateSetForTransferScopes(
+                $this->property->id,
+                $requested
+            );
+
+            $this->assertCount(2, $map);
+
+            $key1 = "property:{$this->property->id}:location:{$this->locationSrc->id}:item:{$this->item->id}";
+            $key2 = "property:{$this->property->id}:location:{$this->locationDest->id}:item:{$otherItem->id}";
+
+            $this->assertArrayHasKey($key1, $map);
+            $this->assertArrayHasKey($key2, $map);
+
+            $crossKey1 = "property:{$this->property->id}:location:{$this->locationDest->id}:item:{$this->item->id}";
+            $crossKey2 = "property:{$this->property->id}:location:{$this->locationSrc->id}:item:{$otherItem->id}";
+
+            $this->assertArrayNotHasKey($crossKey1, $map);
+            $this->assertArrayNotHasKey($crossKey2, $map);
+        });
+    }
+
+    /**
+     * 9. No production service outside the one resolved transfer service invokes ControlledTransferValuationInvocationService.
      */
     public function test_no_production_service_references_invocation_service(): void
     {

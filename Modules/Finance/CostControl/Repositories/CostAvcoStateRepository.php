@@ -455,10 +455,7 @@ class CostAvcoStateRepository
             );
         }
 
-        // requestedScopes is array of arrays: [['itemId' => '...', 'locationId' => '...'], ...]
         $uniqueScopes = [];
-        $itemIds = [];
-        $locationIds = [];
 
         foreach ($requestedScopes as $reqScope) {
             $itemId = $reqScope['itemId'] ?? null;
@@ -473,19 +470,19 @@ class CostAvcoStateRepository
                 'itemId' => $itemId,
                 'locationId' => $locationId
             ];
-
-            $itemIds[] = $itemId;
-            $locationIds[] = $locationId;
         }
 
-        $itemIds = array_unique($itemIds);
-        $locationIds = array_unique($locationIds);
-
-        // Fetch and lock the scopes matching property and requested items/locations
+        // Fetch and lock the scopes matching property and exact requested (item_id, location_id) pairs
         // ordered by property_id ASC, item_id ASC, location_id ASC
         $states = CostAvcoState::where('property_id', $propertyId)
-            ->whereIn('item_id', $itemIds)
-            ->whereIn('location_id', $locationIds)
+            ->where(function ($query) use ($uniqueScopes) {
+                foreach ($uniqueScopes as $scope) {
+                    $query->orWhere(function ($sub) use ($scope) {
+                        $sub->where('item_id', $scope['itemId'])
+                            ->where('location_id', $scope['locationId']);
+                    });
+                }
+            })
             ->orderBy('property_id', 'asc')
             ->orderBy('item_id', 'asc')
             ->orderBy('location_id', 'asc')
