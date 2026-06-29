@@ -612,4 +612,248 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertEquals(10, $state->last_valuation_sequence);
         $this->assertEquals('10.0000', $state->on_hand_quantity);
     }
+
+    public function test_authorized_actor_approves_pending_review_candidate(): void
+    {
+        $candidate = JournalCandidate::create([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => (string) Str::ulid(),
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+            'candidate_date' => now()->format('Y-m-d'),
+            'description' => 'Test Candidate',
+        ]);
+
+        $user = \Modules\Foundation\User\Models\User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Reviewer User 1',
+            'email' => 'reviewer1-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+        ]);
+        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
+            'name' => 'finance.journal-candidate.review',
+            'guard_name' => 'web',
+        ]);
+        $user->givePermissionTo('finance.journal-candidate.review');
+
+        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $updated = $reviewService->approve($candidate->id, $user->id);
+
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $updated->status);
+        $this->assertEquals($user->id, $updated->approved_by);
+        $this->assertNotNull($updated->approved_at);
+        $this->assertNull($updated->rejected_by);
+
+        $this->assertDatabaseCount('gl_journal_entries', 0);
+    }
+
+    public function test_authorized_actor_rejects_pending_review_candidate_with_reason(): void
+    {
+        $candidate = JournalCandidate::create([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => (string) Str::ulid(),
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+            'candidate_date' => now()->format('Y-m-d'),
+            'description' => 'Test Candidate',
+        ]);
+
+        $user = \Modules\Foundation\User\Models\User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Reviewer User 2',
+            'email' => 'reviewer2-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+        ]);
+        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
+            'name' => 'finance.journal-candidate.review',
+            'guard_name' => 'web',
+        ]);
+        $user->givePermissionTo('finance.journal-candidate.review');
+
+        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $updated = $reviewService->reject($candidate->id, 'Invalid account mapping', $user->id);
+
+        $this->assertEquals(JournalCandidateStatusEnum::REJECTED, $updated->status);
+        $this->assertEquals($user->id, $updated->rejected_by);
+        $this->assertNotNull($updated->rejected_at);
+        $this->assertEquals('Invalid account mapping', $updated->rejection_reason);
+        $this->assertNull($updated->approved_by);
+
+        $this->assertDatabaseCount('gl_journal_entries', 0);
+    }
+
+    public function test_rejection_without_reason_fails_and_leaves_candidate_unchanged(): void
+    {
+        $candidate = JournalCandidate::create([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => (string) Str::ulid(),
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+            'candidate_date' => now()->format('Y-m-d'),
+            'description' => 'Test Candidate',
+        ]);
+
+        $user = \Modules\Foundation\User\Models\User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Reviewer User 3',
+            'email' => 'reviewer3-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+        ]);
+        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
+            'name' => 'finance.journal-candidate.review',
+            'guard_name' => 'web',
+        ]);
+        $user->givePermissionTo('finance.journal-candidate.review');
+
+        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+
+        try {
+            $reviewService->reject($candidate->id, ' ', $user->id);
+            $this->fail("Expected rejection without a reason to fail.");
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString("rejection reason is mandatory", $e->getMessage());
+        }
+
+        $candidate = $candidate->fresh();
+        $this->assertEquals(JournalCandidateStatusEnum::PENDING_REVIEW, $candidate->status);
+        $this->assertNull($candidate->rejected_by);
+    }
+
+    public function test_final_candidate_cannot_be_decided_again_with_conflicting_decision(): void
+    {
+        $candidate = JournalCandidate::create([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => (string) Str::ulid(),
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+            'candidate_date' => now()->format('Y-m-d'),
+            'description' => 'Test Candidate',
+        ]);
+
+        $user1 = \Modules\Foundation\User\Models\User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Reviewer User 4a',
+            'email' => 'reviewer4a-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+        ]);
+        $user2 = \Modules\Foundation\User\Models\User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Reviewer User 4b',
+            'email' => 'reviewer4b-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+        ]);
+        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
+            'name' => 'finance.journal-candidate.review',
+            'guard_name' => 'web',
+        ]);
+        $user1->givePermissionTo('finance.journal-candidate.review');
+        $user2->givePermissionTo('finance.journal-candidate.review');
+
+        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $reviewService->approve($candidate->id, $user1->id);
+
+        try {
+            $reviewService->reject($candidate->id, 'Should be rejected now', $user2->id);
+            $this->fail("Expected conflicting review decision to fail.");
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString("Conflicting review payload", $e->getMessage());
+        }
+
+        try {
+            $reviewService->approve($candidate->id, $user2->id);
+            $this->fail("Expected conflicting review actor to fail.");
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString("Conflicting review payload", $e->getMessage());
+        }
+
+        $candidate = $candidate->fresh();
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->status);
+        $this->assertEquals($user1->id, $candidate->approved_by);
+    }
+
+    public function test_identical_repeated_decision_is_idempotent(): void
+    {
+        $candidate = JournalCandidate::create([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => (string) Str::ulid(),
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+            'candidate_date' => now()->format('Y-m-d'),
+            'description' => 'Test Candidate',
+        ]);
+
+        $user = \Modules\Foundation\User\Models\User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Reviewer User 5',
+            'email' => 'reviewer5-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+        ]);
+        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
+            'name' => 'finance.journal-candidate.review',
+            'guard_name' => 'web',
+        ]);
+        $user->givePermissionTo('finance.journal-candidate.review');
+
+        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $first = $reviewService->approve($candidate->id, $user->id);
+        $approvedAt = $first->approved_at;
+
+        $second = $reviewService->approve($candidate->id, $user->id);
+
+        $this->assertEquals($first->id, $second->id);
+        $this->assertEquals($approvedAt, $second->approved_at);
+        $this->assertDatabaseCount('gl_journal_entries', 0);
+    }
+
+    public function test_unauthorized_actor_fails_closed(): void
+    {
+        $candidate = JournalCandidate::create([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => (string) Str::ulid(),
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+            'candidate_date' => now()->format('Y-m-d'),
+            'description' => 'Test Candidate',
+        ]);
+
+        $user = \Modules\Foundation\User\Models\User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Unauthorized User',
+            'email' => 'unauth-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+        ]);
+
+        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+
+        try {
+            $reviewService->approve($candidate->id, $user->id);
+            $this->fail("Expected unauthorized actor to fail.");
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            $this->assertStringContainsString("Unauthorized", $e->getMessage());
+        }
+
+        try {
+            $reviewService->reject($candidate->id, 'Rejected reason', $user->id);
+            $this->fail("Expected unauthorized actor to fail.");
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            $this->assertStringContainsString("Unauthorized", $e->getMessage());
+        }
+
+        $candidate = $candidate->fresh();
+        $this->assertEquals(JournalCandidateStatusEnum::PENDING_REVIEW, $candidate->status);
+        $this->assertNull($candidate->approved_by);
+        $this->assertNull($candidate->rejected_by);
+    }
 }
