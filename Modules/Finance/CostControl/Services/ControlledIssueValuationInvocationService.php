@@ -102,7 +102,7 @@ final class ControlledIssueValuationInvocationService
             unitCost: $wac,
             valueDelta: $valueDeltaDec,
             businessDate: $tx->business_date->format('Y-m-d'),
-            occurredAt: $tx->occurred_at->format('Y-m-d H:i:s')
+            occurredAt: $tx->fresh()->occurred_at->toIso8601String()
         );
 
         $this->applyCoordinator->applyUsingLockedState($lockedState, $ledgerIntent);
