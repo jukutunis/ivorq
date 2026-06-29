@@ -23,7 +23,7 @@ return new class extends Migration
         //    correct — do not silently merge or delete rows.
         // ----------------------------------------------------------------
         DB::statement(
-            'DROP INDEX IF EXISTS uk_caess_group_location_scope'
+            'ALTER TABLE cost_authority_enrollment_scope_snapshots DROP CONSTRAINT IF EXISTS uk_caess_group_location_scope'
         );
 
         DB::statement(
@@ -76,7 +76,9 @@ return new class extends Migration
                 RETURN NEW;
             END;
             \$\$ LANGUAGE plpgsql;
+        ");
 
+        DB::statement("
             CREATE TRIGGER trg_caess_canonical_scope
             BEFORE INSERT OR UPDATE ON cost_authority_enrollment_scope_snapshots
             FOR EACH ROW EXECUTE FUNCTION guard_caess_canonical_scope();
@@ -104,8 +106,9 @@ return new class extends Migration
 
         // 3. Recreate the original three-column unique index.
         DB::statement(
-            'CREATE UNIQUE INDEX uk_caess_group_location_scope
-             ON cost_authority_enrollment_scope_snapshots (enrollment_group_id, location_id, valuation_scope)'
+            'ALTER TABLE cost_authority_enrollment_scope_snapshots
+             ADD CONSTRAINT uk_caess_group_location_scope
+             UNIQUE (enrollment_group_id, location_id, valuation_scope)'
         );
     }
 };

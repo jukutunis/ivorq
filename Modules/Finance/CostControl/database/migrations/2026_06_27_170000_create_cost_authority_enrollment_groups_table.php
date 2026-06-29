@@ -139,7 +139,9 @@ return new class extends Migration
                     RETURN NEW;
                 END;
                 \$\$ LANGUAGE plpgsql;
+            ");
 
+            DB::statement("
                 CREATE TRIGGER trg_caeg_guard_lifecycle
                 BEFORE UPDATE ON cost_authority_enrollment_groups
                 FOR EACH ROW EXECUTE FUNCTION guard_caeg_lifecycle();
@@ -158,7 +160,9 @@ return new class extends Migration
                     RETURN OLD;
                 END;
                 \$\$ LANGUAGE plpgsql;
+            ");
 
+            DB::statement("
                 CREATE TRIGGER trg_caeg_no_delete
                 BEFORE DELETE ON cost_authority_enrollment_groups
                 FOR EACH ROW EXECUTE FUNCTION guard_caeg_no_delete();

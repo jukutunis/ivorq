@@ -96,7 +96,9 @@ return new class extends Migration
                     RETURN NEW;
                 END;
                 \$\$ LANGUAGE plpgsql;
+            ");
 
+            DB::statement("
                 CREATE TRIGGER trg_caess_guard_parent_draft
                 BEFORE INSERT OR UPDATE OR DELETE ON cost_authority_enrollment_scope_snapshots
                 FOR EACH ROW EXECUTE FUNCTION guard_caess_parent_draft();

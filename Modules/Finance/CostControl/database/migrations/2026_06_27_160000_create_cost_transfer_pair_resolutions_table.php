@@ -98,7 +98,9 @@ return new class extends Migration
                     RETURN NEW;
                 END;
                 \$\$ LANGUAGE plpgsql;
+            ");
 
+            DB::statement("
                 CREATE TRIGGER trg_ctpr_guard_immutability
                 BEFORE UPDATE ON cost_transfer_pair_resolutions
                 FOR EACH ROW EXECUTE FUNCTION guard_ctpr_immutability();
