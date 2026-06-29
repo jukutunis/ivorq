@@ -12,6 +12,8 @@ use Modules\Operations\Purchasing\Repositories\PurchaseOrderRepository;
 use Modules\Operations\Inventory\Services\ReceiptService as InventoryReceiptService;
 use Modules\Operations\Inventory\Models\InventoryReceiptLine;
 use Modules\Operations\Inventory\Models\InventoryReceipt;
+use Modules\Operations\Receiving\Models\ReceivingDocument;
+use Modules\Operations\Receiving\Models\ReceivingLine;
 use Shared\Exceptions\BusinessLogicException;
 
 class ReceivingService
@@ -45,11 +47,22 @@ class ReceivingService
             
             $grn = $this->goodsReceiptRepository->create($grnData);
 
+            $receivingDocument = ReceivingDocument::create([
+                'property_id' => $po->property_id,
+                'vendor_id' => $po->vendor_id,
+                'purchase_order_id' => $po->id,
+                'grn_number' => $grn->grn_no,
+                'received_at' => $grn->received_date,
+                'status' => 'submitted',
+                'remarks' => $data['remarks'] ?? null,
+            ]);
+
             $inventoryReceiptData = [
                 'property_id' => $po->property_id,
                 'receipt_number' => $grn->grn_no,
                 'supplier_name' => $po->vendor->name,
                 'external_reference' => $grn->grn_no,
+                'receiving_document_id' => $receivingDocument->id,
                 'received_at' => $grn->received_date,
                 'remarks' => 'Auto-generated from ' . $grn->grn_no,
             ];
@@ -86,6 +99,17 @@ class ReceivingService
                     'inventory_item_id' => $poLine->inventory_item_id,
                     'location_id' => $lineData['location_id'],
                     'quantity_received' => $quantityReceived,
+                    'unit_cost' => $poLine->unit_cost,
+                    'line_total' => $lineTotal,
+                ]);
+
+                ReceivingLine::create([
+                    'receiving_document_id' => $receivingDocument->id,
+                    'purchase_order_line_id' => $poLine->id,
+                    'inventory_item_id' => $poLine->inventory_item_id,
+                    'destination_location_id' => $lineData['location_id'],
+                    'description' => $poLine->description ?? 'Purchase order receipt',
+                    'received_quantity' => $quantityReceived,
                     'unit_cost' => $poLine->unit_cost,
                     'line_total' => $lineTotal,
                 ]);

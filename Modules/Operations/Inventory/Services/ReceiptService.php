@@ -134,6 +134,7 @@ class ReceiptService
                     ['location_id', 'asc'],
                 ]);
 
+                $occurredAt = \Illuminate\Support\Carbon::now()->startOfSecond();
                 $invocationService = app(\Modules\Finance\CostControl\Services\ControlledReceiptValuationInvocationService::class);
 
                 foreach ($sortedLines as $line) {
@@ -142,18 +143,18 @@ class ReceiptService
                         itemId: $line->item_id,
                         locationId: $line->location_id,
                         businessDate: $businessDate->business_date,
-                        occurredAt: \Illuminate\Support\Carbon::now(),
+                        occurredAt: $occurredAt,
                         sourceDocumentType: 'inventory_receipt',
                         sourceDocumentId: $receipt->id,
                         sourceLineType: 'inventory_receipt_line',
                         sourceLineId: $line->id,
                         movementRole: \Modules\Operations\Inventory\Enums\TransactionTypeEnum::PurchaseReceipt->value,
-                        idempotencyKey: "rcpt_{$receipt->id}_{$line->id}_receipt",
+                        idempotencyKey: (string) $line->id,
                         transactionType: \Modules\Operations\Inventory\Enums\TransactionTypeEnum::PurchaseReceipt,
                         quantityChange: (string) $line->quantity,
                         unitCost: (string) $line->unit_cost,
                         totalCost: (string) ($line->quantity * $line->unit_cost),
-                        reference: $receipt->receipt_number,
+                        reference: $receipt->id,
                         notes: 'Controlled Receipt Posting'
                     );
 

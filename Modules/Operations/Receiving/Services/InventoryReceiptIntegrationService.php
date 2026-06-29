@@ -112,12 +112,12 @@ class InventoryReceiptIntegrationService
                         sourceLineType: 'receiving_line',
                         sourceLineId: $line->id,
                         movementRole: TransactionTypeEnum::PurchaseReceipt->value,
-                        idempotencyKey: "rcv_{$document->id}_{$line->id}_receipt",
+                        idempotencyKey: $line->id,
                         transactionType: TransactionTypeEnum::PurchaseReceipt,
                         quantityChange: (string) $line->received_quantity,
                         unitCost: (string) $line->unit_cost,
                         totalCost: (string) $line->line_total,
-                        reference: $document->grn_number,
+                        reference: $document->id,
                         notes: $document->remarks ?? 'Receiving Approval'
                     );
 
@@ -161,7 +161,13 @@ class InventoryReceiptIntegrationService
 
                 $invocationService = app(\Modules\Finance\CostControl\Services\ControlledReceiptValuationInvocationService::class);
 
+                $txRepo = app(\Modules\Operations\Inventory\Repositories\InventoryTransactionRepository::class);
+
                 foreach ($sortedLines as $line) {
+                    if ($txRepo->findByIdempotency($propertyId, $line->id)) {
+                        continue;
+                    }
+
                     $intent = new InventoryLedgerPostingIntent(
                         propertyId: $document->property_id,
                         itemId: $line->inventory_item_id,
@@ -173,12 +179,12 @@ class InventoryReceiptIntegrationService
                         sourceLineType: 'receiving_line',
                         sourceLineId: $line->id,
                         movementRole: TransactionTypeEnum::PurchaseReceipt->value,
-                        idempotencyKey: "rcv_{$document->id}_{$line->id}_receipt",
+                        idempotencyKey: $line->id,
                         transactionType: TransactionTypeEnum::PurchaseReceipt,
                         quantityChange: (string) $line->received_quantity,
                         unitCost: (string) $line->unit_cost,
                         totalCost: (string) $line->line_total,
-                        reference: $document->grn_number,
+                        reference: $document->id,
                         notes: $document->remarks ?? 'Receiving Approval'
                     );
 

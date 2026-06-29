@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Enums\ReceiptStatusEnum;
+use Modules\Operations\Receiving\Models\ReceivingDocument;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
@@ -24,6 +25,7 @@ class InventoryReceipt extends Model
         'receipt_number',
         'supplier_name',
         'external_reference',
+        'receiving_document_id',
         'status',
         'received_at',
         'remarks',
@@ -48,6 +50,11 @@ class InventoryReceipt extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(InventoryReceiptLine::class, 'receipt_id');
+    }
+
+    public function receivingDocument(): BelongsTo
+    {
+        return $this->belongsTo(ReceivingDocument::class, 'receiving_document_id');
     }
 
     public function postedBy(): BelongsTo

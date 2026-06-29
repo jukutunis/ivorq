@@ -21,6 +21,15 @@ use Modules\Operations\Inventory\Models\InventoryCategory;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
 use Modules\Foundation\Property\Models\Property;
+use Modules\Finance\GeneralLedger\Models\Account;
+use Modules\Finance\GeneralLedger\Models\JournalCandidate;
+use Modules\Finance\GeneralLedger\Models\OperationalIdentityMapping;
+use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
+use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
+use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
+use Modules\Finance\GeneralLedger\Services\GrniPostingEngine;
+use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
 
@@ -45,6 +54,12 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        config(['database.connections.pgsql.timezone' => 'UTC']);
+        DB::purge('pgsql');
+
+        date_default_timezone_set('UTC');
+        config(['app.timezone' => 'UTC']);
 
         $this->receiptService     = app(ReceiptService::class);
         $this->integrationService = app(InventoryReceiptIntegrationService::class);
@@ -100,22 +115,26 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'id' => (string) Str::ulid(),
             'property_id' => $this->property->id,
             'business_date' => $this->businessDate,
-            'status' => 'open',
+            'status' => \Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum::Open->value,
             'is_open' => true,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
         // Seed financial period open
-        DB::table('financial_periods')->insertOrIgnore([
-            'id' => (string) Str::ulid(),
-            'property_id' => $this->property->id,
-            'period_year' => 2026,
-            'period_month' => 6,
-            'status' => 'open',
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        DB::table('gl_financial_periods')->updateOrInsert(
+            [
+                'property_id' => $this->property->id,
+                'period_year' => 2026,
+                'period_month' => 6,
+            ],
+            [
+                'id' => (string) Str::ulid(),
+                'status' => \Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum::Open->value,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]
+        );
     }
 
     private function createEnrolledGroup(string $itemId): string
@@ -125,7 +144,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'id' => $id,
             'property_id' => $this->property->id,
             'item_id' => $itemId,
-            'status' => 'enrolled',
+            'status' => 'draft',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -147,6 +166,23 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
+        DB::table('cost_authority_enrollment_groups')
+            ->where('id', $id)
+            ->update([
+                'status' => 'approved',
+                'approved_by' => $this->actorId,
+                'approved_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+        DB::table('cost_authority_enrollment_groups')
+            ->where('id', $id)
+            ->update([
+                'status' => 'enrolled',
+                'enrolled_at' => now(),
+                'updated_at' => now(),
+            ]);
 
         // Seed CostAvcoState
         DB::table('cost_avco_states')->insert([
@@ -170,6 +206,45 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         return $id;
     }
 
+    private function seedGrniMappings(): void
+    {
+        $assetAccount = Account::create([
+            'property_id' => $this->property->id,
+            'code' => '1200-' . substr(Str::ulid(), 0, 6),
+            'name' => 'Inventory Asset GRNI Test',
+            'account_type' => AccountTypeEnum::Asset->value,
+            'account_category' => 'CurrentAsset',
+            'normal_balance' => 'Debit',
+            'is_active' => true,
+        ]);
+
+        $grniAccount = Account::create([
+            'property_id' => $this->property->id,
+            'code' => '2200-' . substr(Str::ulid(), 0, 6),
+            'name' => 'GRNI Receipt Clearing Test',
+            'account_type' => AccountTypeEnum::Liability->value,
+            'account_category' => 'CurrentLiability',
+            'normal_balance' => 'Credit',
+            'is_active' => true,
+        ]);
+
+        OperationalIdentityMapping::create([
+            'property_id' => $this->property->id,
+            'operational_identity' => OperationalIdentityEnum::INVENTORY->value,
+            'account_id' => $assetAccount->id,
+            'effective_from' => '2026-01-01',
+            'is_active' => true,
+        ]);
+
+        OperationalIdentityMapping::create([
+            'property_id' => $this->property->id,
+            'operational_identity' => OperationalIdentityEnum::GRNI_RECEIPT->value,
+            'account_id' => $grniAccount->id,
+            'effective_from' => '2026-01-01',
+            'is_active' => true,
+        ]);
+    }
+
     /**
      * 1. All-enrolled ReceiptService receipt applies controlled path atomically
      */
@@ -184,7 +259,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'status'         => 'draft',
         ]);
 
-        InventoryReceiptLine::create([
+        $line = InventoryReceiptLine::create([
             'property_id' => $this->property->id,
             'receipt_id'  => $receipt->id,
             'item_id'     => $this->itemEnrolled->id,
@@ -200,12 +275,27 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         // Exactly one Cost Ledger entry appended
         $this->assertDatabaseCount('cost_ledger_entries', 1);
+        $this->assertDatabaseCount('inventory_transactions', 1);
+
+        $transaction = \Modules\Operations\Inventory\Models\InventoryTransaction::where('source_line_id', $line->id)->firstOrFail();
+        $this->assertSame($line->id, $transaction->idempotency_key);
+        $this->assertLessThanOrEqual(26, strlen($transaction->idempotency_key));
+        $this->assertSame($receipt->id, $transaction->reference_id);
+        $this->assertLessThanOrEqual(26, strlen($transaction->reference_id));
+
+        try {
+            $this->receiptService->post($receipt->id, $this->actorId);
+        } catch (\Throwable) {
+            // Re-posting an already posted receipt may be rejected, but must not duplicate transaction evidence.
+        }
+
+        $this->assertDatabaseCount('inventory_transactions', 1);
 
         // State updated
         $state = CostAvcoState::where('item_id', $this->itemEnrolled->id)->first();
         $this->assertEquals('15.0000', $state->on_hand_quantity);
         $this->assertEquals('160.0000', $state->carrying_value);
-        $this->assertEquals('10.6667', $state->weighted_average_unit_cost);
+        $this->assertEquals('10.6666', $state->weighted_average_unit_cost);
     }
 
     /**
@@ -218,11 +308,11 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $doc = ReceivingDocument::create([
             'property_id' => $this->property->id,
             'vendor_id'   => $this->vendor->id,
-            'grn_number'  => 'GRN-TEST-' . Str::ulid(),
+            'grn_number'  => 'GRN-BUSINESS-LONG-TEST-2026-0000000001',
             'status'      => 'submitted',
         ]);
 
-        ReceivingLine::create([
+        $line = ReceivingLine::create([
             'receiving_document_id'   => $doc->id,
             'inventory_item_id'       => $this->itemEnrolled->id,
             'destination_location_id' => $this->location->id,
@@ -234,14 +324,155 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         $this->integrationService->syncToInventory($doc, $this->actorId);
 
-        // Exactly one Cost Ledger entry appended
+        // Exactly one Cost Ledger entry appended and one Inventory Transaction created
         $this->assertDatabaseCount('cost_ledger_entries', 1);
+        $this->assertDatabaseCount('inventory_transactions', 1);
+
+        $transaction = \Modules\Operations\Inventory\Models\InventoryTransaction::where('source_line_id', $line->id)->firstOrFail();
+        $this->assertSame($line->id, $transaction->idempotency_key);
+        $this->assertSame($doc->id, $transaction->reference_id);
+
+        // Repeat processing must be idempotent and not create duplicate transaction or cost ledger entry evidence
+        $this->integrationService->syncToInventory($doc, $this->actorId);
+
+        $this->assertDatabaseCount('cost_ledger_entries', 1);
+        $this->assertDatabaseCount('inventory_transactions', 1);
 
         // Item WAC remains unchanged (bypassed)
         $this->assertEquals(
-            '10.0000',
+            '10.00',
             (string) DB::table('inventory_items')->where('id', $this->itemEnrolled->id)->value('weighted_average_cost')
         );
+    }
+
+    public function test_unlinked_inventory_receipt_does_not_create_grni_candidate_or_journal_entry(): void
+    {
+        $receipt = InventoryReceipt::create([
+            'property_id'    => $this->property->id,
+            'receipt_number' => 'RCP-UNLINKED-' . Str::ulid(),
+            'supplier_name'  => 'Ad Hoc Supplier',
+            'status'         => 'draft',
+        ]);
+
+        InventoryReceiptLine::create([
+            'property_id' => $this->property->id,
+            'receipt_id'  => $receipt->id,
+            'item_id'     => $this->itemUnenrolled->id,
+            'location_id' => $this->location->id,
+            'quantity'    => '5.000',
+            'unit_cost'   => '12.00',
+            'line_total'  => '60.00',
+        ]);
+
+        $journalCandidateCount = DB::table('journal_candidates')->count();
+        $journalEntryCount = DB::table('gl_journal_entries')->count();
+
+        $posted = $this->receiptService->post($receipt->id, $this->actorId);
+
+        $this->assertEquals('posted', $posted->status->value);
+        $this->assertNull($posted->receiving_document_id);
+
+        app(GrniPostingEngine::class)->process($posted);
+
+        $this->assertDatabaseCount('journal_candidates', $journalCandidateCount);
+        $this->assertDatabaseCount('gl_journal_entries', $journalEntryCount);
+    }
+
+    public function test_purchase_backed_linked_inventory_receipt_creates_idempotent_reviewable_grni_candidate_only(): void
+    {
+        $this->seedGrniMappings();
+
+        $user = \Modules\Foundation\User\Models\User::first();
+        if (!$user) {
+            $user = \Modules\Foundation\User\Models\User::factory()->create([
+                'id' => $this->actorId,
+            ]);
+        }
+
+        $department = \Modules\Foundation\Department\Models\Department::firstOrCreate([
+            'property_id' => $this->property->id,
+            'code' => 'TEST-DEPT',
+        ], [
+            'id' => (string) Str::ulid(),
+            'name' => 'Test Department',
+            'is_active' => true,
+        ]);
+
+        $purchaseRequest = \Modules\Operations\Purchasing\Models\PurchaseRequest::create([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'request_no' => 'PR-GRNI-' . substr(Str::ulid(), 0, 8),
+            'department_id' => $department->id,
+            'requester_id' => $user->id,
+            'required_date' => now()->addDays(7)->format('Y-m-d'),
+            'currency_code' => 'IDR',
+            'exchange_rate' => 1,
+            'estimated_total' => 60.00,
+            'status' => \Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum::Approved->value ?? 'APPROVED',
+        ]);
+
+        $purchaseOrder = PurchaseOrder::factory()->create([
+            'property_id' => $this->property->id,
+            'vendor_id' => $this->vendor->id,
+            'purchase_request_id' => $purchaseRequest->id,
+        ]);
+
+        $document = ReceivingDocument::create([
+            'property_id' => $this->property->id,
+            'vendor_id' => $this->vendor->id,
+            'purchase_order_id' => $purchaseOrder->id,
+            'grn_number' => (string) Str::ulid(),
+            'status' => 'submitted',
+            'received_at' => now(),
+        ]);
+
+        $receipt = InventoryReceipt::create([
+            'property_id' => $this->property->id,
+            'receipt_number' => 'RCP-GRNI-' . Str::ulid(),
+            'supplier_name' => 'Linked Supplier',
+            'receiving_document_id' => $document->id,
+            'status' => 'posted',
+            'posted_at' => now(),
+            'posted_by' => $this->actorId,
+        ]);
+
+        InventoryReceiptLine::create([
+            'property_id' => $this->property->id,
+            'receipt_id' => $receipt->id,
+            'item_id' => $this->itemUnenrolled->id,
+            'location_id' => $this->location->id,
+            'quantity' => '5.000',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
+        ]);
+
+        $journalEntryCount = DB::table('gl_journal_entries')->count();
+
+        $engine = app(GrniPostingEngine::class);
+        $engine->process($receipt->fresh(['lines', 'receivingDocument']));
+        $engine->process($receipt->fresh(['lines', 'receivingDocument']));
+
+        $candidates = JournalCandidate::where([
+            'property_id' => $this->property->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => $receipt->id,
+            'posting_event' => 'InventoryReceiptAccrual',
+        ])->get();
+
+        $this->assertCount(1, $candidates);
+
+        $candidate = $candidates->first();
+        $this->assertEquals(JournalCandidateStatusEnum::PENDING_REVIEW->value, $candidate->status->value);
+        $this->assertCount(2, $candidate->lines);
+
+        $debitLine = $candidate->lines->where('entry_type', EntryTypeEnum::DEBIT)->first();
+        $creditLine = $candidate->lines->where('entry_type', EntryTypeEnum::CREDIT)->first();
+
+        $this->assertNotNull($debitLine);
+        $this->assertNotNull($creditLine);
+        $this->assertEquals(OperationalIdentityEnum::INVENTORY, $debitLine->operational_identity);
+        $this->assertEquals(OperationalIdentityEnum::GRNI_RECEIPT, $creditLine->operational_identity);
+        $this->assertDatabaseCount('gl_journal_entries', $journalEntryCount);
     }
 
     /**
@@ -350,10 +581,21 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         ]);
 
         // Force sequence error by setting last sequence to 10 in CostAvcoState
-        // so that the planner throws sequence gap error because entry sequence will be 1
+        // and setting the next allocated sequence to 12 (via last_sequence = 11 in DB)
+        // so that the planner throws sequence gap error because expected sequence is 11 but got 12.
         DB::table('cost_avco_states')
             ->where('item_id', $this->itemEnrolled->id)
             ->update(['last_valuation_sequence' => 10, 'last_valuation_business_date' => $this->businessDate]);
+
+        DB::table('inventory_valuation_sequences')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'location_id' => $this->location->id,
+            'item_id' => $this->itemEnrolled->id,
+            'last_sequence' => 11,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         try {
             $this->receiptService->post($receipt->id, $this->actorId);

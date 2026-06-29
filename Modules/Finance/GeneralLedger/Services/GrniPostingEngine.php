@@ -28,6 +28,10 @@ class GrniPostingEngine
 
     public function process(InventoryReceipt $receipt): void
     {
+        if (!$this->isEligibleForGrni($receipt)) {
+            return;
+        }
+
         $propertyId = $receipt->property_id;
         $date = Carbon::parse($receipt->posted_at ?? $receipt->created_at);
         
@@ -115,6 +119,17 @@ class GrniPostingEngine
         } catch (Exception $e) {
             $this->logConfigurationError($candidate, $e);
         }
+    }
+
+    public function isEligibleForGrni(InventoryReceipt $receipt): bool
+    {
+        $receipt->loadMissing('receivingDocument');
+
+        $document = $receipt->receivingDocument;
+
+        return $document !== null
+            && !empty($document->vendor_id)
+            && !empty($document->purchase_order_id);
     }
 
     private function logConfigurationError(JournalCandidate $candidate, Exception $e): void
