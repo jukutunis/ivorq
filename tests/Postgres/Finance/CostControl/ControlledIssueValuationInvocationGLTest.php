@@ -53,7 +53,7 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
         $this->property = Property::first();
 
         // Mock authentication for IssueService::post
-        $user = \App\Models\User::firstOrCreate(
+        $user = \Modules\Foundation\User\Models\User::firstOrCreate(
             ['email' => 'operator@ivorq.test'],
             [
                 'name' => 'Operator',
@@ -62,6 +62,20 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
         );
         $this->actorId = $user->id;
         $this->actingAs($user);
+
+        // Associate user with property to satisfy defaultProperty relationship
+        DB::table('property_user')->insertOrIgnore([
+            'property_id' => $this->property->id,
+            'user_id' => $user->id,
+            'is_default' => true,
+            'status' => 'active',
+            'joined_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Explicitly override CurrentPropertyService context
+        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
 
         $category = InventoryCategory::firstOrCreate([
             'property_id' => $this->property->id,
@@ -90,19 +104,19 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
             'id' => (string) Str::ulid(),
             'property_id' => $this->property->id,
             'business_date' => $this->businessDate,
-            'status' => 'open',
+            'status' => 'Open',
             'is_open' => true,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
         // Seed financial period open
-        DB::table('financial_periods')->insertOrIgnore([
+        DB::table('gl_financial_periods')->insertOrIgnore([
             'id' => (string) Str::ulid(),
             'property_id' => $this->property->id,
             'period_year' => 2026,
             'period_month' => 6,
-            'status' => 'open',
+            'status' => 'Open',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -167,7 +181,7 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
             'id' => $id,
             'property_id' => $this->property->id,
             'item_id' => $itemId,
-            'status' => 'enrolled',
+            'status' => 'draft',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -209,6 +223,23 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
             'updated_at' => now(),
         ]);
 
+        // Now set to approved
+        DB::table('cost_authority_enrollment_groups')
+            ->where('id', $id)
+            ->update([
+                'status' => 'approved',
+                'approved_by' => $this->actorId,
+                'approved_at' => now(),
+            ]);
+
+        // Now set to enrolled
+        DB::table('cost_authority_enrollment_groups')
+            ->where('id', $id)
+            ->update([
+                'status' => 'enrolled',
+                'enrolled_at' => now(),
+            ]);
+
         return $id;
     }
 
@@ -229,7 +260,7 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
 
         $issue = InventoryIssue::create([
             'property_id'  => $this->property->id,
-            'issue_number' => 'ISS-GLTEST-' . Str::ulid(),
+            'issue_number' => 'ISS-GLTEST-' . substr(Str::ulid(), 0, 15),
             'status'       => 'draft',
         ]);
 
@@ -271,8 +302,8 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
         $this->assertEquals('37.5000', (string) $debitLine->amount);
         $this->assertEquals('37.5000', (string) $creditLine->amount);
 
-        $this->assertEquals(OperationalIdentityEnum::COST_OF_CONSUMPTION->value, $debitLine->operational_identity);
-        $this->assertEquals(OperationalIdentityEnum::INVENTORY->value, $creditLine->operational_identity);
+        $this->assertEquals(OperationalIdentityEnum::COST_OF_CONSUMPTION, $debitLine->operational_identity);
+        $this->assertEquals(OperationalIdentityEnum::INVENTORY, $creditLine->operational_identity);
     }
 
     /**
@@ -326,7 +357,7 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
 
         $issue = InventoryIssue::create([
             'property_id'  => $this->property->id,
-            'issue_number' => 'ISS-FAILCLOSED-' . Str::ulid(),
+            'issue_number' => 'ISS-FAILCLOSED-' . substr(Str::ulid(), 0, 11),
             'status'       => 'draft',
         ]);
 
@@ -360,11 +391,11 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
         // Close the business date
         DB::table('property_business_dates')
             ->where('property_id', $this->property->id)
-            ->update(['status' => 'closed', 'is_open' => false]);
+            ->update(['status' => 'Closed', 'is_open' => null]);
 
         $issue = InventoryIssue::create([
             'property_id'  => $this->property->id,
-            'issue_number' => 'ISS-BDGUARD-' . Str::ulid(),
+            'issue_number' => 'ISS-BDGUARD-' . substr(Str::ulid(), 0, 14),
             'status'       => 'draft',
         ]);
 
@@ -375,8 +406,8 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
             'quantity'    => '3.000',
         ]);
 
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessageMatches('/is not Open/i');
+        $this->expectException(\Shared\Exceptions\BusinessLogicException::class);
+        $this->expectExceptionMessage('No open business date found for property.');
 
         try {
             $this->issueService->post($issue->id, $this->actorId);
@@ -395,7 +426,7 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
 
         $issue = InventoryIssue::create([
             'property_id'  => $this->property->id,
-            'issue_number' => 'ISS-NONGOAL-' . Str::ulid(),
+            'issue_number' => 'ISS-NONGOAL-' . substr(Str::ulid(), 0, 14),
             'status'       => 'draft',
         ]);
 
