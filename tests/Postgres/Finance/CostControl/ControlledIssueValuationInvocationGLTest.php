@@ -417,6 +417,55 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
         }
     }
 
+    public function test_closed_financial_period_fails_closed_without_partial_persistence(): void
+    {
+        $this->createEnrolledGroup($this->itemEnrolled->id);
+
+        $costLedgerEntryCount = DB::table('cost_ledger_entries')->count();
+        $journalCandidateCount = DB::table('journal_candidates')->count();
+        $journalEntryCount = DB::table('gl_journal_entries')->count();
+
+        $this->assertDatabaseHas('property_business_dates', [
+            'property_id' => $this->property->id,
+            'business_date' => $this->businessDate,
+            'status' => 'Open',
+            'is_open' => true,
+        ]);
+
+        DB::table('gl_financial_periods')
+            ->where('property_id', $this->property->id)
+            ->where('period_year', 2026)
+            ->where('period_month', 6)
+            ->update([
+                'status' => \Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum::Closed->value,
+            ]);
+
+        $issue = InventoryIssue::create([
+            'property_id'  => $this->property->id,
+            'issue_number' => 'ISS-FPGUARD-' . substr(Str::ulid(), 0, 14),
+            'status'       => 'draft',
+        ]);
+
+        InventoryIssueLine::create([
+            'issue_id'    => $issue->id,
+            'item_id'     => $this->itemEnrolled->id,
+            'location_id' => $this->location->id,
+            'quantity'    => '3.000',
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Financial period is closed or missing.');
+
+        try {
+            $this->issueService->post($issue->id, $this->actorId);
+        } finally {
+            $this->assertDatabaseCount('cost_ledger_entries', $costLedgerEntryCount);
+            $this->assertDatabaseCount('journal_candidates', $journalCandidateCount);
+            $this->assertDatabaseCount('gl_journal_entries', $journalEntryCount);
+            $this->assertEquals('draft', DB::table('inventory_issues')->where('id', $issue->id)->value('status'));
+        }
+    }
+
     /**
      * Proof 5: Non-goal protection - no JournalEntry is automatically posted.
      */
