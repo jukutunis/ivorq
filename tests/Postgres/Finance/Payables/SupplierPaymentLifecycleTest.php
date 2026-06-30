@@ -496,6 +496,28 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         }
     }
 
+    public function test_cash_only_supplier_payment_posting_creates_no_reconciliation_or_bank_statement_source(): void
+    {
+        $context = $this->makeSupplierPaymentDraftContext();
+        $draft = $context['payment_draft'];
+        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
+        $this->draftAuthorizationService->authorize($draft->id, $this->actor->id);
+        $before = $this->controlledSnapshot();
+
+        $posted = $this->postingService->post($draft->id, $this->actor->id);
+
+        $this->assertSame('Posted', $posted->status->value);
+        $this->assertControlledSnapshotUnchangedExcept($before, [
+            'gl_ledger_balances' => 1,
+        ]);
+        $this->assertSame(0, DB::table('bank_accounts')->count());
+        $this->assertSame(0, DB::table('bank_statements')->count());
+        $this->assertSame(0, DB::table('bank_statement_lines')->count());
+        $this->assertSame(0, DB::table('reconciliation_sessions')->count());
+        $this->assertSame(0, DB::table('reconciliation_matches')->count());
+        $this->assertFalse(method_exists($context['execution'], 'reconciliationMatch'));
+    }
+
     private function paymentLifecyclePermissions(): array
     {
         return [
@@ -1284,6 +1306,11 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             'receiving_lines',
             'cashier_sessions',
             'cashier_payment_instruments',
+            'bank_accounts',
+            'bank_statements',
+            'bank_statement_lines',
+            'reconciliation_sessions',
+            'reconciliation_matches',
         ];
 
         $snapshot = [];
