@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Finance\GeneralLedger\Services\GrniClearingApLiabilityCandidateService;
+use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationService;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService;
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
@@ -35,6 +36,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private GrniClearingAllocationEligibilityService $grniEligibilityService;
     private GrniClearingApLiabilityCandidateService $grniCandidateService;
     private JournalCandidateReviewService $candidateReviewService;
+    private JournalCandidateDraftMaterializationService $draftMaterializationService;
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -61,6 +63,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->grniEligibilityService = app(GrniClearingAllocationEligibilityService::class);
         $this->grniCandidateService = app(GrniClearingApLiabilityCandidateService::class);
         $this->candidateReviewService = app(JournalCandidateReviewService::class);
+        $this->draftMaterializationService = app(JournalCandidateDraftMaterializationService::class);
     }
 
     public function test_authorized_actor_registers_supplier_invoice_and_matched_result_without_accounting_mutation(): void
@@ -1105,6 +1108,89 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertControlledSnapshotUnchanged($before);
     }
 
+    public function test_authorized_actor_materializes_approved_grni_ap_candidate_to_single_draft(): void
+    {
+        $context = $this->makeApprovedGrniApCandidate();
+        $candidate = $this->candidateReviewService->approve($context['candidate']->id, $this->actor->id);
+        $before = $this->controlledSnapshot();
+
+        $draft = $this->draftMaterializationService->materialize($candidate->id, $this->actor->id);
+
+        $this->assertSame('Draft', $draft->status->value);
+        $this->assertSame($this->property->id, $draft->property_id);
+        $this->assertSame('Payables', $draft->source_module);
+        $this->assertSame('SupplierInvoice', $draft->source_type);
+        $this->assertSame($context['invoice']->id, $draft->source_id);
+        $this->assertSame($candidate->id, $draft->journal_candidate_id);
+        $this->assertSame('SupplierInvoiceGrniClearingApLiability', $draft->posting_event);
+        $this->assertNull($draft->posting_date);
+        $this->assertNull($draft->posted_by);
+        $this->assertNull($draft->posted_at);
+
+        $lines = $draft->lines->values();
+        $this->assertCount(2, $lines);
+        $this->assertSame($context['accounts']['grni_account_id'], $lines[0]->account_id);
+        $this->assertEquals(125.0, (float) $lines[0]->debit_amount);
+        $this->assertEquals(0.0, (float) $lines[0]->credit_amount);
+        $this->assertSame($context['accounts']['ap_account_id'], $lines[1]->account_id);
+        $this->assertEquals(0.0, (float) $lines[1]->debit_amount);
+        $this->assertEquals(125.0, (float) $lines[1]->credit_amount);
+        $this->assertSame($context['grni']['journal_candidate_id'], $candidate->source_grni_candidate_id);
+        $this->assertSame($context['grni']['journal_entry_id'], $candidate->source_grni_journal_entry_id);
+
+        $this->assertControlledSnapshotUnchangedExcept($before, [
+            'gl_journal_entries' => 1,
+            'gl_journal_entry_lines' => 2,
+        ]);
+
+        $repeat = $this->draftMaterializationService->materialize($candidate->id, $this->actor->id);
+        $this->assertSame($draft->id, $repeat->id);
+        $this->assertSame(1, DB::table('gl_journal_entries')->where('journal_candidate_id', $candidate->id)->count());
+        $this->assertSame(2, DB::table('gl_journal_entry_lines')->where('journal_entry_id', $draft->id)->count());
+    }
+
+    public function test_grni_ap_candidate_materialization_requires_approved_candidate_and_valid_actor_scope(): void
+    {
+        $context = $this->makeApprovedGrniApCandidate();
+        $candidate = $context['candidate'];
+
+        try {
+            $this->draftMaterializationService->materialize($candidate->id, $this->actor->id);
+            $this->fail('Pending-review GRNI/AP candidate must not materialize.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('APPROVED', $exception->getMessage());
+        }
+
+        $rejectedContext = $this->makeApprovedGrniApCandidate($context['accounts']);
+        $rejected = $this->candidateReviewService->reject($rejectedContext['candidate']->id, 'Rejected before draft.', $this->actor->id);
+
+        try {
+            $this->draftMaterializationService->materialize($rejected->id, $this->actor->id);
+            $this->fail('Rejected GRNI/AP candidate must not materialize.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('APPROVED', $exception->getMessage());
+        }
+
+        $approved = $this->candidateReviewService->approve($candidate->id, $this->actor->id);
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $unresolved = $this->makeAuthorizedActor($this->property);
+        $unresolved->delete();
+        $crossProperty = $this->makeAuthorizedActor($this->makeProperty());
+
+        foreach ([$unauthorized, $disabled, $unresolved, $crossProperty] as $invalidActor) {
+            $before = $this->controlledSnapshot();
+
+            try {
+                $this->draftMaterializationService->materialize($approved->id, $invalidActor->id);
+                $this->fail('Invalid materialization actor must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertControlledSnapshotUnchanged($before);
+            }
+        }
+    }
+
     private function attachActorToProperty(User $actor, Property $property): void
     {
         $actor->properties()->syncWithoutDetaching([
@@ -1569,10 +1655,10 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         ];
     }
 
-    private function makeApprovedGrniApCandidate(): array
+    private function makeApprovedGrniApCandidate(?array $accounts = null): array
     {
         $fixture = $this->makePurchasingFixture($this->property);
-        $accounts = $this->makeGrniClearingAccountMappings($this->property);
+        $accounts ??= $this->makeGrniClearingAccountMappings($this->property);
         $result = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
         $invoice = $this->approvalService->approve($result['invoice']->id, $this->actor);
         $grni = $this->makePostedGrniEvidence($fixture, [

@@ -26,19 +26,19 @@ class JournalCandidateDraftMaterializationService
     public function materialize(string $candidateId, string $actorId): JournalEntry
     {
         return DB::transaction(function () use ($candidateId, $actorId) {
+            $actor = $this->resolveAuthorizedActor($actorId);
+
             $candidate = JournalCandidate::where('id', $candidateId)
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            $actor = $this->resolveAuthorizedActor($actorId);
+            $this->assertActorCanAccessProperty($actor, $candidate->property_id);
 
             if ($candidate->status !== JournalCandidateStatusEnum::APPROVED) {
                 throw new RuntimeException('Only APPROVED GRNI journal candidates can be materialized as draft JournalEntries.');
             }
 
-            if ($candidate->source_type !== 'InventoryReceipt' || $candidate->posting_event !== 'InventoryReceiptAccrual') {
-                throw new RuntimeException('Only approved InventoryReceipt GRNI accrual candidates can be materialized as draft JournalEntries.');
-            }
+            $this->assertSupportedCandidateType($candidate);
 
             if (strlen((string) $candidate->source_id) > 26) {
                 throw new RuntimeException('Candidate source_id is too long for JournalEntry provenance.');
@@ -67,7 +67,7 @@ class JournalCandidateDraftMaterializationService
                 'transaction_date' => $candidate->candidate_date->toDateString(),
                 'description' => $candidate->description,
                 'status' => JournalStatusEnum::Draft,
-                'source_module' => 'Inventory',
+                'source_module' => $this->sourceModuleForCandidate($candidate),
                 'source_type' => $candidate->source_type,
                 'source_id' => $candidate->source_id,
                 'journal_candidate_id' => $candidate->id,
@@ -117,6 +117,35 @@ class JournalCandidateDraftMaterializationService
         }
 
         return $actor;
+    }
+
+    private function assertActorCanAccessProperty(User $actor, string $propertyId): void
+    {
+        $hasPropertyAccess = $actor->properties()
+            ->where('properties.id', $propertyId)
+            ->wherePivot('status', 'active')
+            ->exists();
+
+        if (!$hasPropertyAccess) {
+            throw new AuthorizationException('Unauthorized to materialize journal candidate drafts.');
+        }
+    }
+
+    private function assertSupportedCandidateType(JournalCandidate $candidate): void
+    {
+        if (
+            ($candidate->source_type === 'InventoryReceipt' && $candidate->posting_event === 'InventoryReceiptAccrual') ||
+            ($candidate->source_type === 'SupplierInvoice' && $candidate->posting_event === 'SupplierInvoiceGrniClearingApLiability')
+        ) {
+            return;
+        }
+
+        throw new RuntimeException('Only approved GRNI journal candidates can be materialized as draft JournalEntries.');
+    }
+
+    private function sourceModuleForCandidate(JournalCandidate $candidate): string
+    {
+        return $candidate->source_type === 'SupplierInvoice' ? 'Payables' : 'Inventory';
     }
 
     /**
@@ -198,7 +227,7 @@ class JournalCandidateDraftMaterializationService
             $journal->property_id !== $candidate->property_id ||
             $transactionDate !== $candidate->candidate_date->toDateString() ||
             $journal->description !== $candidate->description ||
-            $journal->source_module !== 'Inventory' ||
+            $journal->source_module !== $this->sourceModuleForCandidate($candidate) ||
             $journal->source_type !== $candidate->source_type ||
             $journal->source_id !== $candidate->source_id ||
             $journal->journal_candidate_id !== $candidate->id ||
@@ -236,7 +265,7 @@ class JournalCandidateDraftMaterializationService
     private function assertNoProvenanceCollision(JournalCandidate $candidate): void
     {
         $collision = JournalEntry::where('property_id', $candidate->property_id)
-            ->where('source_module', 'Inventory')
+            ->where('source_module', $this->sourceModuleForCandidate($candidate))
             ->where('source_type', $candidate->source_type)
             ->where('source_id', $candidate->source_id)
             ->where('posting_event', $candidate->posting_event)
