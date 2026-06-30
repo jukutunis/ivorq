@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
+use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
+use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
 use Modules\Finance\Payables\Services\SupplierInvoiceRegistrationService;
 use Modules\Finance\Payables\Services\ThreeWayMatchingEngine;
 use Modules\Foundation\Authorization\Models\Permission;
@@ -25,6 +27,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private Property $property;
     private User $actor;
     private SupplierInvoiceRegistrationService $service;
+    private SupplierInvoiceExceptionReviewService $exceptionReviewService;
+    private SupplierInvoiceApprovalService $approvalService;
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -35,15 +39,19 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->actor = $this->makeUser();
         $this->attachActorToProperty($this->actor, $this->property);
 
-        Permission::firstOrCreate([
-            'name' => SupplierInvoiceRegistrationService::PERMISSION,
-            'guard_name' => 'web',
-        ]);
+        foreach ($this->supplierInvoicePermissions() as $permission) {
+            Permission::firstOrCreate([
+                'name' => $permission,
+                'guard_name' => 'web',
+            ]);
+        }
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
-        $this->actor->givePermissionTo(SupplierInvoiceRegistrationService::PERMISSION);
+        $this->actor->givePermissionTo($this->supplierInvoicePermissions());
 
         $this->service = app(SupplierInvoiceRegistrationService::class);
+        $this->exceptionReviewService = app(SupplierInvoiceExceptionReviewService::class);
+        $this->approvalService = app(SupplierInvoiceApprovalService::class);
     }
 
     public function test_authorized_actor_registers_supplier_invoice_and_matched_result_without_accounting_mutation(): void
@@ -277,6 +285,267 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertSame($sourceBefore, $this->sourceSnapshot($fixture));
     }
 
+    public function test_authorized_actor_resolves_supplier_invoice_exception_with_evidence_preservation(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture, [], [
+            'quantity' => 8,
+            'unit_price' => 12.50,
+        ]), $this->actor);
+        $invoice = $result['invoice'];
+        $match = $result['match'];
+        $controlledBefore = $this->controlledSnapshot();
+        $sourceBefore = $this->sourceSnapshot($fixture);
+        $matchBefore = $this->matchEvidenceSnapshot($match->id);
+        $invoiceBusinessBefore = $this->invoiceBusinessSnapshot($invoice->id);
+
+        $resolved = $this->exceptionReviewService->resolveException(
+            $invoice->id,
+            $this->actor,
+            'Quantity variance reviewed against receiving evidence.'
+        );
+
+        $this->assertSame($invoice->id, $resolved->id);
+        $this->assertSame('REGISTERED', $resolved->status);
+        $this->assertSame($this->actor->id, $resolved->exception_resolved_by);
+        $this->assertNotNull($resolved->exception_resolved_at);
+        $this->assertSame('Quantity variance reviewed against receiving evidence.', $resolved->exception_resolution_reason);
+        $this->assertNull($resolved->approved_by);
+        $this->assertNull($resolved->rejected_by);
+        $this->assertSame($matchBefore, $this->matchEvidenceSnapshot($match->id));
+        $this->assertSame($invoiceBusinessBefore, $this->invoiceBusinessSnapshot($invoice->id));
+        $this->assertSame($sourceBefore, $this->sourceSnapshot($fixture));
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+    }
+
+    public function test_exception_resolution_requires_reason_and_leaves_invoice_unchanged(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture, [], [
+            'quantity' => 8,
+            'unit_price' => 12.50,
+        ]), $this->actor);
+        $invoice = $result['invoice'];
+        $before = $this->invoiceLifecycleSnapshot($invoice->id);
+        $matchBefore = $this->matchEvidenceSnapshot($result['match']->id);
+        $controlledBefore = $this->controlledSnapshot();
+
+        try {
+            $this->exceptionReviewService->resolveException($invoice->id, $this->actor, '   ');
+            $this->fail('Exception resolution without a reason must fail.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('reason', $exception->getMessage());
+        }
+
+        $this->assertSame($before, $this->invoiceLifecycleSnapshot($invoice->id));
+        $this->assertSame($matchBefore, $this->matchEvidenceSnapshot($result['match']->id));
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+    }
+
+    public function test_matched_invoice_can_be_approved_by_authorized_actor_without_accounting_mutation(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $invoice = $result['invoice'];
+        $controlledBefore = $this->controlledSnapshot();
+        $sourceBefore = $this->sourceSnapshot($fixture);
+        $matchBefore = $this->matchEvidenceSnapshot($result['match']->id);
+
+        $approved = $this->approvalService->approve($invoice->id, $this->actor);
+
+        $this->assertSame('APPROVED', $approved->status);
+        $this->assertSame($this->actor->id, $approved->approved_by);
+        $this->assertNotNull($approved->approved_at);
+        $this->assertNull($approved->rejected_by);
+        $this->assertNull($approved->exception_resolved_by);
+        $this->assertSame($matchBefore, $this->matchEvidenceSnapshot($result['match']->id));
+        $this->assertSame($sourceBefore, $this->sourceSnapshot($fixture));
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+    }
+
+    public function test_matched_invoice_can_be_rejected_by_authorized_actor_with_reason_without_accounting_mutation(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $invoice = $result['invoice'];
+        $controlledBefore = $this->controlledSnapshot();
+        $sourceBefore = $this->sourceSnapshot($fixture);
+        $matchBefore = $this->matchEvidenceSnapshot($result['match']->id);
+
+        $rejected = $this->approvalService->reject($invoice->id, $this->actor, 'Supplier invoice rejected by Finance.');
+
+        $this->assertSame('REJECTED', $rejected->status);
+        $this->assertSame($this->actor->id, $rejected->rejected_by);
+        $this->assertNotNull($rejected->rejected_at);
+        $this->assertSame('Supplier invoice rejected by Finance.', $rejected->rejection_reason);
+        $this->assertNull($rejected->approved_by);
+        $this->assertSame($matchBefore, $this->matchEvidenceSnapshot($result['match']->id));
+        $this->assertSame($sourceBefore, $this->sourceSnapshot($fixture));
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+    }
+
+    public function test_unresolved_exception_cannot_be_approved_and_resolved_exception_can_be_approved(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture, [], [
+            'unit_price' => 13,
+        ]), $this->actor);
+        $invoice = $result['invoice'];
+        $before = $this->invoiceLifecycleSnapshot($invoice->id);
+
+        try {
+            $this->approvalService->approve($invoice->id, $this->actor);
+            $this->fail('Unresolved exception invoice approval must fail.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('resolved', $exception->getMessage());
+        }
+
+        $this->assertSame($before, $this->invoiceLifecycleSnapshot($invoice->id));
+
+        $this->exceptionReviewService->resolveException($invoice->id, $this->actor, 'Price variance accepted by Finance.');
+        $approved = $this->approvalService->approve($invoice->id, $this->actor);
+
+        $this->assertSame('APPROVED', $approved->status);
+        $this->assertSame($this->actor->id, $approved->approved_by);
+        $this->assertSame('Price variance accepted by Finance.', $approved->exception_resolution_reason);
+    }
+
+    public function test_invoice_rejection_requires_reason_and_leaves_invoice_unchanged(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $invoice = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor)['invoice'];
+        $before = $this->invoiceLifecycleSnapshot($invoice->id);
+        $controlledBefore = $this->controlledSnapshot();
+
+        try {
+            $this->approvalService->reject($invoice->id, $this->actor, '  ');
+            $this->fail('Invoice rejection without a reason must fail.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('reason', $exception->getMessage());
+        }
+
+        $this->assertSame($before, $this->invoiceLifecycleSnapshot($invoice->id));
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+    }
+
+    public function test_terminal_invoice_decisions_are_idempotent_and_conflicting_decisions_fail(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $invoice = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor)['invoice'];
+        $approved = $this->approvalService->approve($invoice->id, $this->actor);
+        $approvedSnapshot = $this->invoiceLifecycleSnapshot($invoice->id);
+        $otherActor = $this->makeAuthorizedActor($this->property);
+
+        $repeatApproval = $this->approvalService->approve($invoice->id, $this->actor);
+
+        $this->assertSame($approved->approved_at->toDateTimeString(), $repeatApproval->approved_at->toDateTimeString());
+        $this->assertSame($approvedSnapshot, $this->invoiceLifecycleSnapshot($invoice->id));
+
+        foreach ([
+            fn () => $this->approvalService->approve($invoice->id, $otherActor),
+            fn () => $this->approvalService->reject($invoice->id, $this->actor, 'Changed decision.'),
+        ] as $decision) {
+            try {
+                $decision();
+                $this->fail('Conflicting terminal invoice decision must fail.');
+            } catch (DomainException) {
+                $this->assertSame($approvedSnapshot, $this->invoiceLifecycleSnapshot($invoice->id));
+            }
+        }
+
+        $secondFixture = $this->makePurchasingFixture($this->property);
+        $rejectedInvoice = $this->service->registerAndMatch($this->invoicePayload($secondFixture), $this->actor)['invoice'];
+        $rejected = $this->approvalService->reject($rejectedInvoice->id, $this->actor, 'Rejected by Finance.');
+        $rejectedSnapshot = $this->invoiceLifecycleSnapshot($rejectedInvoice->id);
+        $repeatRejection = $this->approvalService->reject($rejectedInvoice->id, $this->actor, 'Rejected by Finance.');
+
+        $this->assertSame($rejected->rejected_at->toDateTimeString(), $repeatRejection->rejected_at->toDateTimeString());
+        $this->assertSame($rejectedSnapshot, $this->invoiceLifecycleSnapshot($rejectedInvoice->id));
+
+        foreach ([
+            fn () => $this->approvalService->reject($rejectedInvoice->id, $this->actor, 'Different reason.'),
+            fn () => $this->approvalService->reject($rejectedInvoice->id, $otherActor, 'Rejected by Finance.'),
+            fn () => $this->approvalService->approve($rejectedInvoice->id, $this->actor),
+        ] as $decision) {
+            try {
+                $decision();
+                $this->fail('Conflicting terminal invoice decision must fail.');
+            } catch (DomainException) {
+                $this->assertSame($rejectedSnapshot, $this->invoiceLifecycleSnapshot($rejectedInvoice->id));
+            }
+        }
+    }
+
+    public function test_exception_resolution_is_idempotent_and_conflicting_repeat_fails(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture, [], [
+            'quantity' => 8,
+        ]), $this->actor);
+        $invoice = $result['invoice'];
+        $resolved = $this->exceptionReviewService->resolveException($invoice->id, $this->actor, 'Variance resolved.');
+        $resolvedSnapshot = $this->invoiceLifecycleSnapshot($invoice->id);
+        $matchBefore = $this->matchEvidenceSnapshot($result['match']->id);
+        $otherActor = $this->makeAuthorizedActor($this->property);
+
+        $repeatResolution = $this->exceptionReviewService->resolveException($invoice->id, $this->actor, 'Variance resolved.');
+
+        $this->assertSame($resolved->exception_resolved_at->toDateTimeString(), $repeatResolution->exception_resolved_at->toDateTimeString());
+        $this->assertSame($resolvedSnapshot, $this->invoiceLifecycleSnapshot($invoice->id));
+        $this->assertSame($matchBefore, $this->matchEvidenceSnapshot($result['match']->id));
+
+        foreach ([
+            fn () => $this->exceptionReviewService->resolveException($invoice->id, $this->actor, 'Different resolution.'),
+            fn () => $this->exceptionReviewService->resolveException($invoice->id, $otherActor, 'Variance resolved.'),
+        ] as $review) {
+            try {
+                $review();
+                $this->fail('Conflicting exception resolution must fail.');
+            } catch (DomainException) {
+                $this->assertSame($resolvedSnapshot, $this->invoiceLifecycleSnapshot($invoice->id));
+                $this->assertSame($matchBefore, $this->matchEvidenceSnapshot($result['match']->id));
+            }
+        }
+    }
+
+    public function test_review_and_decision_authorization_failures_leave_invoice_and_accounting_unchanged(): void
+    {
+        $exceptionFixture = $this->makePurchasingFixture($this->property);
+        $exceptionResult = $this->service->registerAndMatch($this->invoicePayload($exceptionFixture, [], [
+            'quantity' => 8,
+        ]), $this->actor);
+        $matchedFixture = $this->makePurchasingFixture($this->property);
+        $matchedInvoice = $this->service->registerAndMatch($this->invoicePayload($matchedFixture), $this->actor)['invoice'];
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $unresolved = $this->makeAuthorizedActor($this->property);
+        $unresolved->delete();
+        $otherProperty = $this->makeProperty();
+        $crossProperty = $this->makeAuthorizedActor($otherProperty);
+
+        foreach ([$unauthorized, $disabled, $unresolved, $crossProperty] as $invalidActor) {
+            $exceptionBefore = $this->invoiceLifecycleSnapshot($exceptionResult['invoice']->id);
+            $matchedBefore = $this->invoiceLifecycleSnapshot($matchedInvoice->id);
+            $controlledBefore = $this->controlledSnapshot();
+
+            foreach ([
+                fn () => $this->exceptionReviewService->resolveException($exceptionResult['invoice']->id, $invalidActor, 'Resolution attempt.'),
+                fn () => $this->approvalService->approve($matchedInvoice->id, $invalidActor),
+                fn () => $this->approvalService->reject($matchedInvoice->id, $invalidActor, 'Rejected attempt.'),
+            ] as $action) {
+                try {
+                    $action();
+                    $this->fail('Supplier invoice review and decision actions must fail closed for invalid actors.');
+                } catch (AuthorizationException) {
+                    $this->assertSame($exceptionBefore, $this->invoiceLifecycleSnapshot($exceptionResult['invoice']->id));
+                    $this->assertSame($matchedBefore, $this->invoiceLifecycleSnapshot($matchedInvoice->id));
+                    $this->assertControlledSnapshotUnchanged($controlledBefore);
+                }
+            }
+        }
+    }
+
     private function attachActorToProperty(User $actor, Property $property): void
     {
         $actor->properties()->syncWithoutDetaching([
@@ -286,6 +555,32 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
                 'joined_at' => now(),
             ],
         ]);
+    }
+
+    private function supplierInvoicePermissions(): array
+    {
+        return [
+            SupplierInvoiceRegistrationService::PERMISSION,
+            SupplierInvoiceExceptionReviewService::PERMISSION,
+            SupplierInvoiceApprovalService::PERMISSION,
+        ];
+    }
+
+    private function makeAuthorizedActor(Property $property, bool $active = true): User
+    {
+        $actor = $this->makeUser($active);
+        $this->attachActorToProperty($actor, $property);
+
+        if ($active) {
+            $actor->givePermissionTo($this->supplierInvoicePermissions());
+        } else {
+            $actor->givePermissionTo([
+                SupplierInvoiceExceptionReviewService::PERMISSION,
+                SupplierInvoiceApprovalService::PERMISSION,
+            ]);
+        }
+
+        return $actor;
     }
 
     private function makeProperty(): Property
@@ -620,6 +915,93 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private function assertControlledSnapshotUnchanged(array $before): void
     {
         $this->assertSame($before, $this->controlledSnapshot());
+    }
+
+    private function invoiceLifecycleSnapshot(string $invoiceId): array
+    {
+        return (array) DB::table('vendor_invoices')
+            ->where('id', $invoiceId)
+            ->first([
+                'status',
+                'exception_resolved_by',
+                'exception_resolved_at',
+                'exception_resolution_reason',
+                'approved_by',
+                'approved_at',
+                'rejected_by',
+                'rejected_at',
+                'rejection_reason',
+                'updated_by',
+            ]);
+    }
+
+    private function invoiceBusinessSnapshot(string $invoiceId): array
+    {
+        return (array) DB::table('vendor_invoices')
+            ->where('id', $invoiceId)
+            ->first([
+                'property_id',
+                'vendor_id',
+                'purchase_order_id',
+                'goods_receipt_id',
+                'invoice_number',
+                'invoice_date',
+                'due_date',
+                'currency_code',
+                'subtotal',
+                'tax_amount',
+                'discount_amount',
+                'grand_total',
+                'remarks',
+                'created_by',
+            ]);
+    }
+
+    private function matchEvidenceSnapshot(string $matchId): array
+    {
+        $match = (array) DB::table('three_way_matches')
+            ->where('id', $matchId)
+            ->first([
+                'property_id',
+                'vendor_invoice_id',
+                'purchase_order_id',
+                'goods_receipt_id',
+                'status',
+                'exception_code',
+                'total_quantity_variance',
+                'total_price_variance',
+                'total_amount_variance',
+                'remarks',
+                'created_by',
+                'updated_by',
+            ]);
+
+        $lines = DB::table('three_way_match_lines')
+            ->where('three_way_match_id', $matchId)
+            ->orderBy('id')
+            ->get([
+                'vendor_invoice_line_id',
+                'purchase_order_line_id',
+                'goods_receipt_line_id',
+                'inventory_item_id',
+                'po_quantity',
+                'po_price',
+                'grn_quantity',
+                'invoice_quantity',
+                'invoice_price',
+                'quantity_variance',
+                'price_variance',
+                'amount_variance',
+                'created_by',
+                'updated_by',
+            ])
+            ->map(fn (object $line): array => (array) $line)
+            ->all();
+
+        return [
+            'match' => $match,
+            'lines' => $lines,
+        ];
     }
 
     private function sourceSnapshot(array $fixture): array
