@@ -23,12 +23,14 @@ class JournalEntryControlledPostingService
     public function post(string $journalEntryId, string $actorId): JournalEntry
     {
         return DB::transaction(function () use ($journalEntryId, $actorId) {
+            $actor = $this->resolveAuthorizedActor($actorId);
+
             $journal = JournalEntry::with('lines')
                 ->where('id', $journalEntryId)
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            $actor = $this->resolveAuthorizedActor($actorId);
+            $this->assertActorCanAccessProperty($actor, $journal->property_id);
 
             if ($journal->status === JournalStatusEnum::Posted) {
                 $this->assertPostedReplayMatches($journal, $actor);
@@ -69,6 +71,18 @@ class JournalEntryControlledPostingService
         }
 
         return $actor;
+    }
+
+    private function assertActorCanAccessProperty(User $actor, string $propertyId): void
+    {
+        $hasPropertyAccess = $actor->properties()
+            ->where('properties.id', $propertyId)
+            ->wherePivot('status', 'active')
+            ->exists();
+
+        if (!$hasPropertyAccess) {
+            throw new AuthorizationException('Unauthorized to execute JournalEntry posting.');
+        }
     }
 
     private function assertPostedReplayMatches(JournalEntry $journal, User $actor): void
@@ -125,8 +139,8 @@ class JournalEntryControlledPostingService
             throw new RuntimeException('Only approved JournalCandidate-derived drafts can be posted.');
         }
 
-        if ($candidate->source_type !== 'InventoryReceipt' || $candidate->posting_event !== 'InventoryReceiptAccrual') {
-            throw new RuntimeException('Only GRNI InventoryReceipt accrual JournalCandidates can be posted through this action.');
+        if (!$this->isSupportedCandidate($candidate)) {
+            throw new RuntimeException('Only GRNI JournalCandidates can be posted through this action.');
         }
 
         if (
@@ -137,6 +151,18 @@ class JournalEntryControlledPostingService
         ) {
             throw new RuntimeException('JournalEntry provenance conflicts with source JournalCandidate.');
         }
+    }
+
+    private function isSupportedCandidate(JournalCandidate $candidate): bool
+    {
+        if ($candidate->source_type === 'InventoryReceipt' && $candidate->posting_event === 'InventoryReceiptAccrual') {
+            return true;
+        }
+
+        return $candidate->source_type === 'SupplierInvoice'
+            && $candidate->posting_event === 'SupplierInvoiceGrniClearingApLiability'
+            && $candidate->source_grni_candidate_id !== null
+            && $candidate->source_grni_journal_entry_id !== null;
     }
 
     private function assertBalancedLines(JournalEntry $journal): void

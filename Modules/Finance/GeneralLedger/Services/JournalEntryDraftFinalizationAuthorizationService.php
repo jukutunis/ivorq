@@ -20,12 +20,14 @@ class JournalEntryDraftFinalizationAuthorizationService
     public function authorize(string $journalEntryId, string $actorId): JournalEntry
     {
         return DB::transaction(function () use ($journalEntryId, $actorId) {
+            $actor = $this->resolveAuthorizedActor($actorId);
+
             $journal = JournalEntry::with('lines')
                 ->where('id', $journalEntryId)
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            $actor = $this->resolveAuthorizedActor($actorId);
+            $this->assertActorCanAccessProperty($actor, $journal->property_id);
 
             $this->assertDraftIsAuthorizable($journal);
             $this->assertApprovedCandidateProvenance($journal);
@@ -74,6 +76,18 @@ class JournalEntryDraftFinalizationAuthorizationService
         return $actor;
     }
 
+    private function assertActorCanAccessProperty(User $actor, string $propertyId): void
+    {
+        $hasPropertyAccess = $actor->properties()
+            ->where('properties.id', $propertyId)
+            ->wherePivot('status', 'active')
+            ->exists();
+
+        if (!$hasPropertyAccess) {
+            throw new AuthorizationException('Unauthorized to authorize JournalEntry draft finalization.');
+        }
+    }
+
     private function assertDraftIsAuthorizable(JournalEntry $journal): void
     {
         if ($journal->status !== JournalStatusEnum::Draft) {
@@ -111,6 +125,10 @@ class JournalEntryDraftFinalizationAuthorizationService
             throw new RuntimeException('Only approved JournalCandidate-derived drafts can be finalization-authorized.');
         }
 
+        if (!$this->isSupportedCandidate($candidate)) {
+            throw new RuntimeException('Only approved GRNI JournalCandidate-derived drafts can be finalization-authorized.');
+        }
+
         if (
             $journal->property_id !== $candidate->property_id ||
             $journal->source_type !== $candidate->source_type ||
@@ -119,6 +137,18 @@ class JournalEntryDraftFinalizationAuthorizationService
         ) {
             throw new RuntimeException('JournalEntry draft conflicts with source JournalCandidate provenance.');
         }
+    }
+
+    private function isSupportedCandidate(JournalCandidate $candidate): bool
+    {
+        if ($candidate->source_type === 'InventoryReceipt' && $candidate->posting_event === 'InventoryReceiptAccrual') {
+            return true;
+        }
+
+        return $candidate->source_type === 'SupplierInvoice'
+            && $candidate->posting_event === 'SupplierInvoiceGrniClearingApLiability'
+            && $candidate->source_grni_candidate_id !== null
+            && $candidate->source_grni_journal_entry_id !== null;
     }
 
     private function assertBalancedLines(JournalEntry $journal): void

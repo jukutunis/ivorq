@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Finance\GeneralLedger\Services\GrniClearingApLiabilityCandidateService;
+use Modules\Finance\GeneralLedger\Services\JournalEntryControlledPostingService;
+use Modules\Finance\GeneralLedger\Services\JournalEntryDraftFinalizationAuthorizationService;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationService;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService;
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
@@ -37,6 +39,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private GrniClearingApLiabilityCandidateService $grniCandidateService;
     private JournalCandidateReviewService $candidateReviewService;
     private JournalCandidateDraftMaterializationService $draftMaterializationService;
+    private JournalEntryDraftFinalizationAuthorizationService $draftFinalizationAuthorizationService;
+    private JournalEntryControlledPostingService $controlledPostingService;
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -64,6 +68,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->grniCandidateService = app(GrniClearingApLiabilityCandidateService::class);
         $this->candidateReviewService = app(JournalCandidateReviewService::class);
         $this->draftMaterializationService = app(JournalCandidateDraftMaterializationService::class);
+        $this->draftFinalizationAuthorizationService = app(JournalEntryDraftFinalizationAuthorizationService::class);
+        $this->controlledPostingService = app(JournalEntryControlledPostingService::class);
     }
 
     public function test_authorized_actor_registers_supplier_invoice_and_matched_result_without_accounting_mutation(): void
@@ -1191,6 +1197,126 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         }
     }
 
+    public function test_authorized_actor_finalizes_and_posts_grni_ap_draft_once(): void
+    {
+        $context = $this->makeApprovedGrniApDraft();
+        $draft = $context['draft'];
+        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
+        $beforeAuthorization = $this->controlledSnapshot();
+
+        $authorizedDraft = $this->draftFinalizationAuthorizationService->authorize($draft->id, $this->actor->id);
+
+        $this->assertSame('Draft', $authorizedDraft->status->value);
+        $this->assertSame($this->actor->id, $authorizedDraft->draft_finalization_authorized_by);
+        $this->assertNotNull($authorizedDraft->draft_finalization_authorized_at);
+        $this->assertNull($authorizedDraft->posting_date);
+        $this->assertNull($authorizedDraft->posted_by);
+        $this->assertControlledSnapshotUnchanged($beforeAuthorization);
+
+        $beforePost = $this->controlledSnapshot();
+        $posted = $this->controlledPostingService->post($draft->id, $this->actor->id);
+
+        $this->assertSame('Posted', $posted->status->value);
+        $this->assertSame($this->actor->id, $posted->posted_by);
+        $this->assertNotNull($posted->posted_at);
+        $this->assertSame($context['candidate']->id, $posted->journal_candidate_id);
+        $this->assertSame('SupplierInvoiceGrniClearingApLiability', $posted->posting_event);
+        $this->assertControlledSnapshotUnchangedExcept($beforePost, [
+            'gl_ledger_balances' => 2,
+        ]);
+
+        $balances = $this->ledgerBalancesFor($this->property, [
+            $context['accounts']['grni_account_id'],
+            $context['accounts']['ap_account_id'],
+        ]);
+        $this->assertEquals(125.0, (float) $balances[$context['accounts']['grni_account_id']]->debit_total);
+        $this->assertEquals(0.0, (float) $balances[$context['accounts']['grni_account_id']]->credit_total);
+        $this->assertEquals(0.0, (float) $balances[$context['accounts']['ap_account_id']]->debit_total);
+        $this->assertEquals(125.0, (float) $balances[$context['accounts']['ap_account_id']]->credit_total);
+
+        $afterPost = $this->controlledSnapshot();
+        $repeat = $this->controlledPostingService->post($draft->id, $this->actor->id);
+        $this->assertSame($posted->id, $repeat->id);
+        $this->assertControlledSnapshotUnchanged($afterPost);
+
+        $otherActor = $this->makeAuthorizedActor($this->property);
+        try {
+            $this->controlledPostingService->post($draft->id, $otherActor->id);
+            $this->fail('Conflicting posting replay must fail controlled.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('Conflicting', $exception->getMessage());
+        }
+    }
+
+    public function test_grni_ap_draft_authorization_and_posting_fail_closed_for_invalid_state_actor_and_guards(): void
+    {
+        $context = $this->makeApprovedGrniApDraft();
+        $draft = $context['draft'];
+        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $unresolved = $this->makeAuthorizedActor($this->property);
+        $unresolved->delete();
+        $crossProperty = $this->makeAuthorizedActor($this->makeProperty());
+
+        foreach ([$unauthorized, $disabled, $unresolved, $crossProperty] as $invalidActor) {
+            $before = $this->controlledSnapshot();
+
+            try {
+                $this->draftFinalizationAuthorizationService->authorize($draft->id, $invalidActor->id);
+                $this->fail('Invalid finalization actor must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertControlledSnapshotUnchanged($before);
+            }
+        }
+
+        try {
+            $this->controlledPostingService->post($draft->id, $this->actor->id);
+            $this->fail('Draft without finalization authorization must not post.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('finalization-authorized', $exception->getMessage());
+        }
+
+        $authorized = $this->draftFinalizationAuthorizationService->authorize($draft->id, $this->actor->id);
+        $this->closeFinancialPeriod($this->property, $authorized->transaction_date->toDateString());
+        $beforeClosedPeriod = $this->controlledSnapshot();
+
+        try {
+            $this->controlledPostingService->post($draft->id, $this->actor->id);
+            $this->fail('Closed Financial Period must block posting.');
+        } catch (\Throwable $exception) {
+            $this->assertStringContainsString('FinancialPeriod', $exception->getMessage());
+            $this->assertControlledSnapshotUnchanged($beforeClosedPeriod);
+        }
+
+        $this->openPostingControls($this->property, $authorized->transaction_date->toDateString());
+        $this->closeBusinessDate($this->property, $authorized->transaction_date->toDateString());
+        $beforeClosedBusinessDate = $this->controlledSnapshot();
+
+        try {
+            $this->controlledPostingService->post($draft->id, $this->actor->id);
+            $this->fail('Closed Business Date must block posting.');
+        } catch (\Throwable $exception) {
+            $this->assertStringContainsString('PropertyBusinessDate', $exception->getMessage());
+            $this->assertControlledSnapshotUnchanged($beforeClosedBusinessDate);
+        }
+
+        $this->openPostingControls($this->property, $authorized->transaction_date->toDateString());
+        DB::table('gl_accounts')
+            ->where('id', $context['accounts']['ap_account_id'])
+            ->update(['is_active' => false]);
+        $beforeInactiveAccount = $this->controlledSnapshot();
+
+        try {
+            $this->controlledPostingService->post($draft->id, $this->actor->id);
+            $this->fail('Inactive AP account must block posting.');
+        } catch (\Throwable $exception) {
+            $this->assertStringContainsString('inactive account', $exception->getMessage());
+            $this->assertControlledSnapshotUnchanged($beforeInactiveAccount);
+        }
+    }
+
     private function attachActorToProperty(User $actor, Property $property): void
     {
         $actor->properties()->syncWithoutDetaching([
@@ -1676,6 +1802,93 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'grni' => $grni,
             'candidate' => $candidate,
         ];
+    }
+
+    private function makeApprovedGrniApDraft(): array
+    {
+        $context = $this->makeApprovedGrniApCandidate();
+        $candidate = $this->candidateReviewService->approve($context['candidate']->id, $this->actor->id);
+        $draft = $this->draftMaterializationService->materialize($candidate->id, $this->actor->id);
+
+        return $context + [
+            'candidate' => $candidate,
+            'draft' => $draft,
+        ];
+    }
+
+    private function openPostingControls(Property $property, string $date): void
+    {
+        $timestamp = now();
+        $year = (int) date('Y', strtotime($date));
+        $month = (int) date('m', strtotime($date));
+
+        DB::table('gl_financial_periods')->updateOrInsert(
+            [
+                'property_id' => $property->id,
+                'period_year' => $year,
+                'period_month' => $month,
+            ],
+            [
+                'id' => (string) Str::ulid(),
+                'status' => 'Open',
+                'opened_at' => $timestamp,
+                'closed_at' => null,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ]
+        );
+
+        DB::table('property_business_dates')->updateOrInsert(
+            [
+                'property_id' => $property->id,
+                'business_date' => $date,
+            ],
+            [
+                'id' => (string) Str::ulid(),
+                'status' => 'Open',
+                'is_open' => true,
+                'opened_at' => $timestamp,
+                'closed_at' => null,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ]
+        );
+    }
+
+    private function closeFinancialPeriod(Property $property, string $date): void
+    {
+        DB::table('gl_financial_periods')
+            ->where('property_id', $property->id)
+            ->where('period_year', (int) date('Y', strtotime($date)))
+            ->where('period_month', (int) date('m', strtotime($date)))
+            ->update([
+                'status' => 'Closed',
+                'closed_at' => now(),
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function closeBusinessDate(Property $property, string $date): void
+    {
+        DB::table('property_business_dates')
+            ->where('property_id', $property->id)
+            ->where('business_date', $date)
+            ->update([
+                'status' => 'Closed',
+                'is_open' => null,
+                'closed_at' => now(),
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function ledgerBalancesFor(Property $property, array $accountIds): array
+    {
+        return DB::table('gl_ledger_balances')
+            ->where('property_id', $property->id)
+            ->whereIn('account_id', $accountIds)
+            ->get()
+            ->keyBy('account_id')
+            ->all();
     }
 
     private function makeAccount(
