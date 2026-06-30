@@ -27,11 +27,14 @@ use Modules\Finance\GeneralLedger\Models\OperationalIdentityMapping;
 use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
 use Modules\Finance\GeneralLedger\Services\GrniPostingEngine;
+use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationService;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
+use Modules\Foundation\User\Models\User;
 
 class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 {
@@ -243,6 +246,76 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'effective_from' => '2026-01-01',
             'is_active' => true,
         ]);
+    }
+
+    private function createMaterializationUser(bool $authorized = true, bool $active = true): User
+    {
+        $user = User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Journal Materialization User ' . substr(Str::ulid(), 0, 8),
+            'email' => 'materializer-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+            'is_active' => $active,
+        ]);
+
+        if ($authorized) {
+            $user->givePermissionTo(JournalCandidateDraftMaterializationService::PERMISSION);
+        }
+
+        return $user;
+    }
+
+    private function createGrniCandidate(JournalCandidateStatusEnum $status = JournalCandidateStatusEnum::APPROVED): JournalCandidate
+    {
+        $reviewer = User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'GRNI Reviewer ' . substr(Str::ulid(), 0, 8),
+            'email' => 'grni-reviewer-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+        ]);
+
+        $attributes = [
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => (string) Str::ulid(),
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => $status->value,
+            'candidate_date' => $this->businessDate,
+            'description' => 'Approved GRNI accrual candidate',
+            'created_by' => $reviewer->id,
+        ];
+
+        if ($status === JournalCandidateStatusEnum::APPROVED) {
+            $attributes['approved_by'] = $reviewer->id;
+            $attributes['approved_at'] = Carbon::parse($this->businessDate . ' 10:00:00', 'UTC');
+        }
+
+        if ($status === JournalCandidateStatusEnum::REJECTED) {
+            $attributes['rejected_by'] = $reviewer->id;
+            $attributes['rejected_at'] = Carbon::parse($this->businessDate . ' 10:00:00', 'UTC');
+            $attributes['rejection_reason'] = 'Rejected during review';
+        }
+
+        $candidate = JournalCandidate::create($attributes);
+
+        $candidate->lines()->create([
+            'operational_identity' => OperationalIdentityEnum::INVENTORY->value,
+            'entry_type' => EntryTypeEnum::DEBIT->value,
+            'amount' => '60.0000',
+            'cost_center_id' => null,
+            'notes' => 'Inventory receipt asset recognition',
+        ]);
+
+        $candidate->lines()->create([
+            'operational_identity' => OperationalIdentityEnum::GRNI_RECEIPT->value,
+            'entry_type' => EntryTypeEnum::CREDIT->value,
+            'amount' => '60.0000',
+            'cost_center_id' => null,
+            'notes' => 'GRNI receipt clearing accrual',
+        ]);
+
+        return $candidate->fresh('lines');
     }
 
     /**
@@ -864,5 +937,180 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         // Prove no JournalEntry exists or is created for the candidate
         $this->assertDatabaseCount('gl_journal_entries', 0);
+    }
+
+    public function test_authorized_actor_materializes_approved_grni_candidate_into_idempotent_journal_entry_draft(): void
+    {
+        $this->seedGrniMappings();
+        $candidate = $this->createGrniCandidate();
+        $actor = $this->createMaterializationUser();
+        $service = app(JournalCandidateDraftMaterializationService::class);
+
+        $this->assertDatabaseHas('permissions', [
+            'name' => JournalCandidateDraftMaterializationService::PERMISSION,
+            'guard_name' => 'web',
+        ]);
+
+        $entryCount = DB::table('gl_journal_entries')->count();
+        $lineCount = DB::table('gl_journal_entry_lines')->count();
+        $ledgerBalanceCount = DB::table('gl_ledger_balances')->count();
+        $candidateBefore = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $candidateLineAmountsBefore = DB::table('journal_candidate_lines')
+            ->where('journal_candidate_id', $candidate->id)
+            ->orderBy('id')
+            ->pluck('amount', 'id')
+            ->all();
+
+        $journal = $service->materialize($candidate->id, $actor->id);
+
+        $this->assertSame($entryCount + 1, DB::table('gl_journal_entries')->count());
+        $this->assertSame($lineCount + 2, DB::table('gl_journal_entry_lines')->count());
+        $this->assertEquals(JournalStatusEnum::Draft, $journal->status);
+        $this->assertSame($candidate->id, $journal->journal_candidate_id);
+        $this->assertSame('Inventory', $journal->source_module);
+        $this->assertSame($candidate->source_type, $journal->source_type);
+        $this->assertSame($candidate->source_id, $journal->source_id);
+        $this->assertSame($candidate->posting_event, $journal->posting_event);
+        $this->assertSame($actor->id, $journal->created_by);
+        $this->assertNull($journal->posting_date);
+
+        $journalLines = DB::table('gl_journal_entry_lines')
+            ->where('journal_entry_id', $journal->id)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get();
+        $candidateLines = $candidate->lines()
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get()
+            ->values();
+
+        $this->assertCount(2, $journalLines);
+
+        foreach ($journalLines->values() as $index => $journalLine) {
+            $candidateLine = $candidateLines[$index];
+            $mapping = OperationalIdentityMapping::where('property_id', $candidate->property_id)
+                ->where('operational_identity', $candidateLine->operational_identity->value)
+                ->firstOrFail();
+
+            $this->assertSame($candidate->property_id, $journalLine->property_id);
+            $this->assertSame($mapping->account_id, $journalLine->account_id);
+            $this->assertSame($candidateLine->cost_center_id, $journalLine->department_id);
+            $this->assertSame($candidateLine->notes, $journalLine->memo);
+            $this->assertSame($actor->id, $journalLine->created_by);
+
+            if ($candidateLine->entry_type === EntryTypeEnum::DEBIT) {
+                $this->assertEquals(60.00, (float) $journalLine->debit_amount);
+                $this->assertEquals(0.00, (float) $journalLine->credit_amount);
+            } else {
+                $this->assertEquals(0.00, (float) $journalLine->debit_amount);
+                $this->assertEquals(60.00, (float) $journalLine->credit_amount);
+            }
+        }
+
+        $this->assertEquals(
+            DB::table('gl_journal_entry_lines')->where('journal_entry_id', $journal->id)->sum('debit_amount'),
+            DB::table('gl_journal_entry_lines')->where('journal_entry_id', $journal->id)->sum('credit_amount')
+        );
+        $this->assertSame($ledgerBalanceCount, DB::table('gl_ledger_balances')->count());
+
+        $journalRowBeforeRepeat = DB::table('gl_journal_entries')->where('id', $journal->id)->first();
+        $journalLineIdsBeforeRepeat = DB::table('gl_journal_entry_lines')
+            ->where('journal_entry_id', $journal->id)
+            ->orderBy('id')
+            ->pluck('id')
+            ->all();
+
+        $second = $service->materialize($candidate->id, $actor->id);
+
+        $this->assertSame($journal->id, $second->id);
+        $this->assertSame($entryCount + 1, DB::table('gl_journal_entries')->count());
+        $this->assertSame($lineCount + 2, DB::table('gl_journal_entry_lines')->count());
+        $this->assertSame($journalRowBeforeRepeat->created_at, DB::table('gl_journal_entries')->where('id', $journal->id)->value('created_at'));
+        $this->assertSame($journalRowBeforeRepeat->updated_at, DB::table('gl_journal_entries')->where('id', $journal->id)->value('updated_at'));
+        $this->assertSame(
+            $journalLineIdsBeforeRepeat,
+            DB::table('gl_journal_entry_lines')
+                ->where('journal_entry_id', $journal->id)
+                ->orderBy('id')
+                ->pluck('id')
+                ->all()
+        );
+
+        $candidateAfter = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $this->assertSame($candidateBefore->status, $candidateAfter->status);
+        $this->assertSame($candidateBefore->approved_by, $candidateAfter->approved_by);
+        $this->assertSame($candidateBefore->approved_at, $candidateAfter->approved_at);
+        $this->assertSame($candidateBefore->rejected_by, $candidateAfter->rejected_by);
+        $this->assertSame($candidateBefore->rejected_at, $candidateAfter->rejected_at);
+        $this->assertSame($candidateBefore->rejection_reason, $candidateAfter->rejection_reason);
+        $this->assertSame(
+            $candidateLineAmountsBefore,
+            DB::table('journal_candidate_lines')
+                ->where('journal_candidate_id', $candidate->id)
+                ->orderBy('id')
+                ->pluck('amount', 'id')
+                ->all()
+        );
+
+        $this->assertSame(JournalCandidateStatusEnum::APPROVED->value, $candidateAfter->status);
+        $this->assertNull(DB::table('gl_journal_entries')->where('id', $journal->id)->value('posting_date'));
+        $this->assertSame(JournalStatusEnum::Draft->value, DB::table('gl_journal_entries')->where('id', $journal->id)->value('status'));
+        $this->assertSame($ledgerBalanceCount, DB::table('gl_ledger_balances')->count());
+    }
+
+    public function test_pending_review_candidate_cannot_materialize_draft(): void
+    {
+        $this->seedGrniMappings();
+        $candidate = $this->createGrniCandidate(JournalCandidateStatusEnum::PENDING_REVIEW);
+        $actor = $this->createMaterializationUser();
+
+        try {
+            app(JournalCandidateDraftMaterializationService::class)->materialize($candidate->id, $actor->id);
+            $this->fail('Expected pending-review candidate materialization to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Only APPROVED', $e->getMessage());
+        }
+
+        $this->assertDatabaseCount('gl_journal_entries', 0);
+        $this->assertEquals(JournalCandidateStatusEnum::PENDING_REVIEW, $candidate->fresh()->status);
+    }
+
+    public function test_rejected_candidate_cannot_materialize_draft(): void
+    {
+        $this->seedGrniMappings();
+        $candidate = $this->createGrniCandidate(JournalCandidateStatusEnum::REJECTED);
+        $actor = $this->createMaterializationUser();
+
+        try {
+            app(JournalCandidateDraftMaterializationService::class)->materialize($candidate->id, $actor->id);
+            $this->fail('Expected rejected candidate materialization to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Only APPROVED', $e->getMessage());
+        }
+
+        $this->assertDatabaseCount('gl_journal_entries', 0);
+        $this->assertEquals(JournalCandidateStatusEnum::REJECTED, $candidate->fresh()->status);
+    }
+
+    public function test_materialization_unauthorized_disabled_or_unresolved_actor_fails_closed(): void
+    {
+        $this->seedGrniMappings();
+        $candidate = $this->createGrniCandidate();
+        $unauthorized = $this->createMaterializationUser(authorized: false);
+        $disabled = $this->createMaterializationUser(authorized: true, active: false);
+        $service = app(JournalCandidateDraftMaterializationService::class);
+
+        foreach ([$unauthorized->id, $disabled->id, (string) Str::ulid()] as $actorId) {
+            try {
+                $service->materialize($candidate->id, $actorId);
+                $this->fail('Expected unauthorized materialization actor to fail.');
+            } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+                $this->assertStringContainsString('Unauthorized', $e->getMessage());
+            }
+        }
+
+        $this->assertDatabaseCount('gl_journal_entries', 0);
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->fresh()->status);
     }
 }
