@@ -33,6 +33,9 @@ class PermissionSeeder extends Seeder
 
             // Logbook & Supervisory Scope
             'logbook.clarify', 'department.supervisors.manage',
+
+            // Finance & GL Review Lifecycle
+            'finance.journal-candidate.review',
         ];
 
         foreach ($permissions as $name) {

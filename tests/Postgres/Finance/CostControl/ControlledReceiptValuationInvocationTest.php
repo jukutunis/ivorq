@@ -632,10 +632,13 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'email' => 'reviewer1-' . uniqid() . '@example.com',
             'password' => bcrypt('password'),
         ]);
-        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
+
+        // Verify the permission is registered in PermissionSeeder
+        $this->assertDatabaseHas('permissions', [
             'name' => 'finance.journal-candidate.review',
             'guard_name' => 'web',
         ]);
+
         $user->givePermissionTo('finance.journal-candidate.review');
 
         $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
@@ -645,8 +648,12 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertEquals($user->id, $updated->approved_by);
         $this->assertNotNull($updated->approved_at);
         $this->assertNull($updated->rejected_by);
+        $this->assertNull($updated->rejected_at);
+        $this->assertNull($updated->rejection_reason);
 
+        // Prove no JournalEntry exists or is created for the candidate
         $this->assertDatabaseCount('gl_journal_entries', 0);
+        $this->assertNull(DB::table('gl_journal_entries')->where('journal_candidate_id', $candidate->id)->first());
     }
 
     public function test_authorized_actor_rejects_pending_review_candidate_with_reason(): void
@@ -668,10 +675,6 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'email' => 'reviewer2-' . uniqid() . '@example.com',
             'password' => bcrypt('password'),
         ]);
-        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
-            'name' => 'finance.journal-candidate.review',
-            'guard_name' => 'web',
-        ]);
         $user->givePermissionTo('finance.journal-candidate.review');
 
         $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
@@ -682,8 +685,11 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertNotNull($updated->rejected_at);
         $this->assertEquals('Invalid account mapping', $updated->rejection_reason);
         $this->assertNull($updated->approved_by);
+        $this->assertNull($updated->approved_at);
 
+        // Prove no JournalEntry exists or is created for the candidate
         $this->assertDatabaseCount('gl_journal_entries', 0);
+        $this->assertNull(DB::table('gl_journal_entries')->where('journal_candidate_id', $candidate->id)->first());
     }
 
     public function test_rejection_without_reason_fails_and_leaves_candidate_unchanged(): void
@@ -705,10 +711,6 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'email' => 'reviewer3-' . uniqid() . '@example.com',
             'password' => bcrypt('password'),
         ]);
-        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
-            'name' => 'finance.journal-candidate.review',
-            'guard_name' => 'web',
-        ]);
         $user->givePermissionTo('finance.journal-candidate.review');
 
         $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
@@ -723,6 +725,10 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $candidate = $candidate->fresh();
         $this->assertEquals(JournalCandidateStatusEnum::PENDING_REVIEW, $candidate->status);
         $this->assertNull($candidate->rejected_by);
+        $this->assertNull($candidate->rejected_at);
+        $this->assertNull($candidate->rejection_reason);
+
+        $this->assertDatabaseCount('gl_journal_entries', 0);
     }
 
     public function test_final_candidate_cannot_be_decided_again_with_conflicting_decision(): void
@@ -750,10 +756,6 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'email' => 'reviewer4b-' . uniqid() . '@example.com',
             'password' => bcrypt('password'),
         ]);
-        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
-            'name' => 'finance.journal-candidate.review',
-            'guard_name' => 'web',
-        ]);
         $user1->givePermissionTo('finance.journal-candidate.review');
         $user2->givePermissionTo('finance.journal-candidate.review');
 
@@ -777,6 +779,8 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $candidate = $candidate->fresh();
         $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->status);
         $this->assertEquals($user1->id, $candidate->approved_by);
+
+        $this->assertDatabaseCount('gl_journal_entries', 0);
     }
 
     public function test_identical_repeated_decision_is_idempotent(): void
@@ -798,20 +802,19 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'email' => 'reviewer5-' . uniqid() . '@example.com',
             'password' => bcrypt('password'),
         ]);
-        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
-            'name' => 'finance.journal-candidate.review',
-            'guard_name' => 'web',
-        ]);
         $user->givePermissionTo('finance.journal-candidate.review');
 
         $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
         $first = $reviewService->approve($candidate->id, $user->id);
-        $approvedAt = $first->approved_at;
+        $approvedAt = $first->approved_at->toIso8601String();
 
         $second = $reviewService->approve($candidate->id, $user->id);
 
         $this->assertEquals($first->id, $second->id);
-        $this->assertEquals($approvedAt, $second->approved_at);
+        $this->assertEquals($approvedAt, $second->approved_at->toIso8601String());
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $second->status);
+
+        // Prove no JournalEntry exists or is created for the candidate
         $this->assertDatabaseCount('gl_journal_entries', 0);
     }
 
@@ -854,6 +857,12 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $candidate = $candidate->fresh();
         $this->assertEquals(JournalCandidateStatusEnum::PENDING_REVIEW, $candidate->status);
         $this->assertNull($candidate->approved_by);
+        $this->assertNull($candidate->approved_at);
         $this->assertNull($candidate->rejected_by);
+        $this->assertNull($candidate->rejected_at);
+        $this->assertNull($candidate->rejection_reason);
+
+        // Prove no JournalEntry exists or is created for the candidate
+        $this->assertDatabaseCount('gl_journal_entries', 0);
     }
 }
