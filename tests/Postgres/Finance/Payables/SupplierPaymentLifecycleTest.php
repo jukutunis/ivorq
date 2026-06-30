@@ -405,6 +405,97 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         }
     }
 
+    public function test_authorized_actor_finalizes_and_posts_supplier_payment_draft_once(): void
+    {
+        $context = $this->makeSupplierPaymentDraftContext();
+        $draft = $context['payment_draft'];
+        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
+        $beforeAuthorization = $this->controlledSnapshot();
+
+        $authorized = $this->draftAuthorizationService->authorize($draft->id, $this->actor->id);
+
+        $this->assertSame($this->actor->id, $authorized->draft_finalization_authorized_by);
+        $this->assertNotNull($authorized->draft_finalization_authorized_at);
+        $this->assertControlledSnapshotUnchanged($beforeAuthorization);
+
+        $authorizationSnapshot = $this->journalEntrySnapshot($draft->id);
+        $repeatAuthorization = $this->draftAuthorizationService->authorize($draft->id, $this->actor->id);
+        $this->assertSame($draft->id, $repeatAuthorization->id);
+        $this->assertSame($authorizationSnapshot, $this->journalEntrySnapshot($draft->id));
+
+        $beforePosting = $this->controlledSnapshot();
+        $posted = $this->postingService->post($draft->id, $this->actor->id);
+
+        $this->assertSame('Posted', $posted->status->value);
+        $this->assertSame($this->actor->id, $posted->posted_by);
+        $this->assertNotNull($posted->posted_at);
+        $this->assertSame($draft->transaction_date->toDateString(), $posted->posting_date->toDateString());
+        $this->assertSame('GeneralCashier', $posted->source_module);
+        $this->assertSame('PaymentExecution', $posted->source_type);
+        $this->assertSame('SupplierPaymentCashDisbursement', $posted->posting_event);
+
+        $this->assertControlledSnapshotUnchangedExcept($beforePosting, [
+            'gl_ledger_balances' => 1,
+        ]);
+
+        $postedSnapshot = $this->journalEntrySnapshot($posted->id);
+        $repeatPosting = $this->postingService->post($posted->id, $this->actor->id);
+        $this->assertSame($posted->id, $repeatPosting->id);
+        $this->assertSame($postedSnapshot, $this->journalEntrySnapshot($posted->id));
+    }
+
+    public function test_supplier_payment_draft_authorization_and_posting_fail_closed_for_invalid_state_actor_and_period_guards(): void
+    {
+        $context = $this->makeSupplierPaymentDraftContext();
+        $draft = $context['payment_draft'];
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $crossProperty = $this->makeAuthorizedActor($this->makeProperty());
+
+        foreach ([$unauthorized, $disabled, $crossProperty] as $invalidActor) {
+            $before = $this->journalEntrySnapshot($draft->id);
+
+            try {
+                $this->draftAuthorizationService->authorize($draft->id, $invalidActor->id);
+                $this->fail('Invalid supplier payment draft finalization actor must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertSame($before, $this->journalEntrySnapshot($draft->id));
+            }
+        }
+
+        try {
+            $this->postingService->post($draft->id, $this->actor->id);
+            $this->fail('Supplier payment draft must not post before finalization authorization.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('finalization-authorized', $exception->getMessage());
+        }
+
+        $this->draftAuthorizationService->authorize($draft->id, $this->actor->id);
+        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
+        $this->closeFinancialPeriod($this->property, $draft->transaction_date->toDateString());
+
+        try {
+            $this->postingService->post($draft->id, $this->actor->id);
+            $this->fail('Closed Financial Period must block supplier payment posting.');
+        } catch (\Throwable $exception) {
+            $this->assertStringContainsString('FinancialPeriod', $exception->getMessage());
+        }
+
+        $secondContext = $this->makeSupplierPaymentDraftContext($context['accounts']);
+        $secondDraft = $secondContext['payment_draft'];
+        $this->draftAuthorizationService->authorize($secondDraft->id, $this->actor->id);
+        $this->openPostingControls($this->property, $secondDraft->transaction_date->toDateString());
+        $this->closeBusinessDate($this->property, $secondDraft->transaction_date->toDateString());
+
+        try {
+            $this->postingService->post($secondDraft->id, $this->actor->id);
+            $this->fail('Closed Business Date must block supplier payment posting.');
+        } catch (\Throwable $exception) {
+            $this->assertStringContainsString('PropertyBusinessDate', $exception->getMessage());
+        }
+    }
+
     private function paymentLifecyclePermissions(): array
     {
         return [
@@ -461,6 +552,32 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
 
         return $context + [
             'payment_candidate' => $candidate,
+        ];
+    }
+
+    private function makeSupplierPaymentDraftContext(?array $accounts = null): array
+    {
+        $context = $this->makeApprovedPaymentProposalContext($accounts);
+        $cashier = $this->makeCashierContext($this->actor, $context['accounts']['cash_account_id']);
+        $execution = $this->paymentExecutionService->recordCashExecution(
+            $context['proposal_item_id'],
+            $cashier['session_id'],
+            $cashier['instrument_id'],
+            $this->actor
+        );
+        $context += [
+            'cashier' => $cashier,
+            'execution' => $execution,
+        ];
+
+        $this->actingAs($this->actor);
+        $candidate = $this->supplierPaymentCandidateService->createForPaymentExecution($execution->id);
+        $candidate = $this->candidateReviewService->approve($candidate->id, $this->actor->id);
+        $draft = $this->draftMaterializationService->materialize($candidate->id, $this->actor->id);
+
+        return $context + [
+            'payment_candidate' => $candidate,
+            'payment_draft' => $draft,
         ];
     }
 
@@ -670,6 +787,32 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
                 'updated_at' => $timestamp,
             ]
         );
+    }
+
+    private function closeFinancialPeriod(Property $property, string $date): void
+    {
+        DB::table('gl_financial_periods')
+            ->where('property_id', $property->id)
+            ->where('period_year', (int) date('Y', strtotime($date)))
+            ->where('period_month', (int) date('m', strtotime($date)))
+            ->update([
+                'status' => 'Closed',
+                'closed_at' => now(),
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function closeBusinessDate(Property $property, string $date): void
+    {
+        DB::table('property_business_dates')
+            ->where('property_id', $property->id)
+            ->where('business_date', $date)
+            ->update([
+                'status' => 'Closed',
+                'is_open' => null,
+                'closed_at' => now(),
+                'updated_at' => now(),
+            ]);
     }
 
     private function makePostedGrniEvidence(array $fixture, array $overrides): array

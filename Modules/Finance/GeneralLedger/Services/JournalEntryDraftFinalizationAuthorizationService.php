@@ -126,7 +126,7 @@ class JournalEntryDraftFinalizationAuthorizationService
         }
 
         if (!$this->isSupportedCandidate($candidate)) {
-            throw new RuntimeException('Only approved GRNI JournalCandidate-derived drafts can be finalization-authorized.');
+            throw new RuntimeException('Only approved supported JournalCandidate-derived drafts can be finalization-authorized.');
         }
 
         if (
@@ -145,10 +145,12 @@ class JournalEntryDraftFinalizationAuthorizationService
             return true;
         }
 
-        return $candidate->source_type === 'SupplierInvoice'
+        return ($candidate->source_type === 'SupplierInvoice'
             && $candidate->posting_event === 'SupplierInvoiceGrniClearingApLiability'
             && $candidate->source_grni_candidate_id !== null
-            && $candidate->source_grni_journal_entry_id !== null;
+            && $candidate->source_grni_journal_entry_id !== null)
+            || ($candidate->source_type === 'PaymentExecution'
+            && $candidate->posting_event === 'SupplierPaymentCashDisbursement');
     }
 
     private function assertBalancedLines(JournalEntry $journal): void

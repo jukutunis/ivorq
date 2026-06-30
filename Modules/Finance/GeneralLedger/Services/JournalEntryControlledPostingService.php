@@ -34,14 +34,14 @@ class JournalEntryControlledPostingService
 
             if ($journal->status === JournalStatusEnum::Posted) {
                 $this->assertPostedReplayMatches($journal, $actor);
-                $this->assertApprovedGrniCandidateProvenance($journal);
+                $this->assertApprovedCandidateProvenance($journal);
                 $this->assertBalancedLines($journal);
 
                 return $this->loadOrderedLines($journal);
             }
 
             $this->assertDraftReadyForPosting($journal);
-            $this->assertApprovedGrniCandidateProvenance($journal);
+            $this->assertApprovedCandidateProvenance($journal);
             $this->assertBalancedLines($journal);
 
             $posted = $this->generalLedgerService->postJournalEntry($journal->id, $actor->id);
@@ -101,7 +101,7 @@ class JournalEntryControlledPostingService
     private function assertDraftReadyForPosting(JournalEntry $journal): void
     {
         if ($journal->status !== JournalStatusEnum::Draft) {
-            throw new RuntimeException('Only Draft JournalEntries can be posted through controlled GRNI posting.');
+            throw new RuntimeException('Only Draft JournalEntries can be posted through controlled posting.');
         }
 
         if ($journal->posting_date !== null || $journal->posted_by !== null || $journal->posted_at !== null) {
@@ -117,10 +117,10 @@ class JournalEntryControlledPostingService
         }
     }
 
-    private function assertApprovedGrniCandidateProvenance(JournalEntry $journal): void
+    private function assertApprovedCandidateProvenance(JournalEntry $journal): void
     {
         if ($journal->journal_candidate_id === null) {
-            throw new RuntimeException('Controlled GRNI posting requires JournalCandidate provenance.');
+            throw new RuntimeException('Controlled posting requires JournalCandidate provenance.');
         }
 
         $candidate = JournalCandidate::where('id', $journal->journal_candidate_id)
@@ -140,7 +140,7 @@ class JournalEntryControlledPostingService
         }
 
         if (!$this->isSupportedCandidate($candidate)) {
-            throw new RuntimeException('Only GRNI JournalCandidates can be posted through this action.');
+            throw new RuntimeException('Only supported JournalCandidates can be posted through this action.');
         }
 
         if (
@@ -159,10 +159,12 @@ class JournalEntryControlledPostingService
             return true;
         }
 
-        return $candidate->source_type === 'SupplierInvoice'
+        return ($candidate->source_type === 'SupplierInvoice'
             && $candidate->posting_event === 'SupplierInvoiceGrniClearingApLiability'
             && $candidate->source_grni_candidate_id !== null
-            && $candidate->source_grni_journal_entry_id !== null;
+            && $candidate->source_grni_journal_entry_id !== null)
+            || ($candidate->source_type === 'PaymentExecution'
+            && $candidate->posting_event === 'SupplierPaymentCashDisbursement');
     }
 
     private function assertBalancedLines(JournalEntry $journal): void
