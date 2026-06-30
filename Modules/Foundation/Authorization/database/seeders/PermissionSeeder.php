@@ -42,6 +42,7 @@ class PermissionSeeder extends Seeder
             'finance.payables.supplier-invoice.register',
             'finance.payables.supplier-invoice.review-exception',
             'finance.payables.supplier-invoice.approve',
+            'finance.payables.grni-clearing.candidate.create',
         ];
 
         foreach ($permissions as $name) {

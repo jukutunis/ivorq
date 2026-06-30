@@ -8,11 +8,12 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Modules\Finance\GeneralLedger\Services\GrniClearingApLiabilityCandidateService;
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
+use Modules\Finance\Payables\Services\GrniClearingAllocationEligibilityService;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
-use Modules\Finance\Payables\Services\GrniClearingAllocationEligibilityService;
 use Modules\Finance\Payables\Services\SupplierInvoiceRegistrationService;
 use Modules\Finance\Payables\Services\ThreeWayMatchingEngine;
 use Modules\Foundation\Authorization\Models\Permission;
@@ -31,6 +32,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private SupplierInvoiceExceptionReviewService $exceptionReviewService;
     private SupplierInvoiceApprovalService $approvalService;
     private GrniClearingAllocationEligibilityService $grniEligibilityService;
+    private GrniClearingApLiabilityCandidateService $grniCandidateService;
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -55,6 +57,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->exceptionReviewService = app(SupplierInvoiceExceptionReviewService::class);
         $this->approvalService = app(SupplierInvoiceApprovalService::class);
         $this->grniEligibilityService = app(GrniClearingAllocationEligibilityService::class);
+        $this->grniCandidateService = app(GrniClearingApLiabilityCandidateService::class);
     }
 
     public function test_authorized_actor_registers_supplier_invoice_and_matched_result_without_accounting_mutation(): void
@@ -751,6 +754,242 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertControlledSnapshotUnchanged($controlledBefore);
     }
 
+    public function test_authorized_actor_creates_pending_review_grni_clearing_ap_liability_candidate(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $accounts = $this->makeGrniClearingAccountMappings($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $invoice = $this->approvalService->approve($result['invoice']->id, $this->actor);
+        $grni = $this->makePostedGrniEvidence($fixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+        ]);
+        $sourceBefore = $this->sourceSnapshot($fixture);
+        $matchBefore = $this->matchEvidenceSnapshot($result['match']->id);
+        $invoiceBefore = $this->invoiceLifecycleSnapshot($invoice->id);
+        $controlledBefore = $this->controlledSnapshot();
+
+        $this->actingAs($this->actor);
+        $candidate = $this->grniCandidateService->createForSupplierInvoice($invoice->id);
+
+        $this->assertSame('PENDING_REVIEW', $candidate->status->value);
+        $this->assertSame($this->property->id, $candidate->property_id);
+        $this->assertSame('SupplierInvoice', $candidate->source_type);
+        $this->assertSame($invoice->id, $candidate->source_id);
+        $this->assertSame('SupplierInvoiceGrniClearingApLiability', $candidate->posting_event);
+        $this->assertSame($this->actor->id, $candidate->created_by);
+        $this->assertNull($candidate->approved_by);
+        $this->assertSame('IDR', $candidate->metadata['currency_code']);
+        $this->assertSame('125.00', $candidate->metadata['amount']);
+        $this->assertSame($invoice->id, $candidate->metadata['supplier_invoice']['id']);
+        $this->assertSame($result['invoice']->lines->first()->id, $candidate->metadata['supplier_invoice_line']['id']);
+        $this->assertSame($fixture['purchase_order_id'], $candidate->metadata['purchase_order']['id']);
+        $this->assertSame($fixture['purchase_order_line_id'], $candidate->metadata['purchase_order']['line_id']);
+        $this->assertSame($fixture['goods_receipt_id'], $candidate->metadata['receiving']['document_id']);
+        $this->assertSame($fixture['goods_receipt_line_id'], $candidate->metadata['receiving']['line_id']);
+        $this->assertSame($grni['journal_candidate_id'], $candidate->metadata['source_grni']['candidate_id']);
+        $this->assertSame($grni['journal_entry_id'], $candidate->metadata['source_grni']['journal_entry_id']);
+        $this->assertSame($accounts['grni_account_id'], $candidate->metadata['accounts']['grni_liability']['account_id']);
+        $this->assertSame($accounts['ap_account_id'], $candidate->metadata['accounts']['ap_liability_control']['account_id']);
+
+        $lines = $candidate->lines->values();
+        $this->assertCount(2, $lines);
+        $this->assertSame('GRNI_RECEIPT', $lines[0]->operational_identity->value);
+        $this->assertSame('DEBIT', $lines[0]->entry_type->value);
+        $this->assertEquals('125.0000', $lines[0]->amount);
+        $this->assertSame('AP_CONTROL', $lines[1]->operational_identity->value);
+        $this->assertSame('CREDIT', $lines[1]->entry_type->value);
+        $this->assertEquals('125.0000', $lines[1]->amount);
+
+        $this->assertSame(1, DB::table('journal_candidates')
+            ->where('property_id', $this->property->id)
+            ->where('source_type', 'SupplierInvoice')
+            ->where('source_id', $invoice->id)
+            ->where('posting_event', 'SupplierInvoiceGrniClearingApLiability')
+            ->count());
+        $this->assertSame(0, DB::table('gl_journal_entries')->where('journal_candidate_id', $candidate->id)->count());
+        $this->assertCandidateCreationOnlyAddedCandidate($controlledBefore);
+        $this->assertSame($sourceBefore, $this->sourceSnapshot($fixture));
+        $this->assertSame($matchBefore, $this->matchEvidenceSnapshot($result['match']->id));
+        $this->assertSame($invoiceBefore, $this->invoiceLifecycleSnapshot($invoice->id));
+    }
+
+    public function test_grni_clearing_ap_liability_candidate_creation_is_idempotent_and_conflict_safe(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $accounts = $this->makeGrniClearingAccountMappings($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $invoice = $this->approvalService->approve($result['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($fixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+        ]);
+
+        $this->actingAs($this->actor);
+        $candidate = $this->grniCandidateService->createForSupplierInvoice($invoice->id);
+        $snapshot = $this->candidateSnapshot($candidate->id);
+        $controlledBeforeRepeat = $this->controlledSnapshot();
+
+        $repeat = $this->grniCandidateService->createForSupplierInvoice($invoice->id);
+
+        $this->assertSame($candidate->id, $repeat->id);
+        $this->assertSame($snapshot, $this->candidateSnapshot($candidate->id));
+        $this->assertControlledSnapshotUnchanged($controlledBeforeRepeat);
+
+        $newApAccountId = $this->makeAccount($this->property, 'APX-' . $this->sequence++, 'Changed AP Control', 'Liability', 'CurrentLiability', 'Credit');
+        DB::table('gl_operational_identity_mappings')
+            ->where('id', $accounts['ap_mapping_id'])
+            ->update(['account_id' => $newApAccountId]);
+
+        try {
+            $this->grniCandidateService->createForSupplierInvoice($invoice->id);
+            $this->fail('Conflicting AP liability mapping must fail controlled.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('conflicts', $exception->getMessage());
+        }
+
+        $this->assertSame($snapshot, $this->candidateSnapshot($candidate->id));
+    }
+
+    public function test_grni_clearing_ap_liability_candidate_creation_fails_closed_for_invalid_sources(): void
+    {
+        $accounts = $this->makeGrniClearingAccountMappings($this->property);
+        $cases = [];
+
+        $registeredFixture = $this->makePurchasingFixture($this->property);
+        $registeredResult = $this->service->registerAndMatch($this->invoicePayload($registeredFixture), $this->actor);
+        $this->makePostedGrniEvidence($registeredFixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+        ]);
+        $cases[] = [$registeredResult['invoice']->id, 'not eligible'];
+
+        $exceptionFixture = $this->makePurchasingFixture($this->property);
+        $exceptionResult = $this->service->registerAndMatch($this->invoicePayload($exceptionFixture, [], [
+            'unit_price' => 13,
+        ]), $this->actor);
+        $this->exceptionReviewService->resolveException($exceptionResult['invoice']->id, $this->actor, 'Reviewed price exception.');
+        $exceptionInvoice = $this->approvalService->approve($exceptionResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($exceptionFixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+        ]);
+        $cases[] = [$exceptionInvoice->id, 'not eligible'];
+
+        $missingJournalFixture = $this->makePurchasingFixture($this->property);
+        $missingJournalResult = $this->service->registerAndMatch($this->invoicePayload($missingJournalFixture), $this->actor);
+        $missingJournalInvoice = $this->approvalService->approve($missingJournalResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($missingJournalFixture, [
+            'include_journal' => false,
+        ]);
+        $cases[] = [$missingJournalInvoice->id, 'not eligible'];
+
+        $amountFixture = $this->makePurchasingFixture($this->property);
+        $amountResult = $this->service->registerAndMatch($this->invoicePayload($amountFixture), $this->actor);
+        $amountInvoice = $this->approvalService->approve($amountResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($amountFixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+            'grni_credit_amount' => 124,
+        ]);
+        $cases[] = [$amountInvoice->id, 'amounts do not match'];
+
+        $taxFixture = $this->makePurchasingFixture($this->property);
+        $taxResult = $this->service->registerAndMatch($this->invoicePayload($taxFixture, [
+            'tax_amount' => 5,
+        ]), $this->actor);
+        $taxInvoice = $this->approvalService->approve($taxResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($taxFixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+        ]);
+        $cases[] = [$taxInvoice->id, 'not eligible'];
+
+        $ambiguousFixture = $this->makePurchasingFixture($this->property);
+        $ambiguousResult = $this->service->registerAndMatch($this->invoicePayload($ambiguousFixture), $this->actor);
+        $ambiguousInvoice = $this->approvalService->approve($ambiguousResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($ambiguousFixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+        ]);
+        $this->makePostedGrniEvidence($ambiguousFixture, [
+            'include_candidate' => false,
+        ]);
+        $cases[] = [$ambiguousInvoice->id, 'not eligible'];
+
+        $this->actingAs($this->actor);
+
+        foreach ($cases as [$invoiceId, $expectedMessage]) {
+            $before = $this->controlledSnapshot();
+
+            try {
+                $this->grniCandidateService->createForSupplierInvoice($invoiceId);
+                $this->fail('Invalid GRNI clearing AP liability candidate source must fail closed.');
+            } catch (DomainException $exception) {
+                $this->assertStringContainsString($expectedMessage, $exception->getMessage());
+            }
+
+            $this->assertControlledSnapshotUnchanged($before);
+        }
+    }
+
+    public function test_grni_clearing_ap_liability_candidate_creation_requires_authorized_active_actor_and_accounts(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $accounts = $this->makeGrniClearingAccountMappings($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $invoice = $this->approvalService->approve($result['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($fixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+        ]);
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $unresolved = $this->makeAuthorizedActor($this->property);
+        $unresolved->delete();
+        $otherProperty = $this->makeProperty();
+        $crossProperty = $this->makeAuthorizedActor($otherProperty);
+
+        foreach ([$unauthorized, $disabled, $unresolved, $crossProperty] as $invalidActor) {
+            $this->actingAs($invalidActor);
+            $before = $this->controlledSnapshot();
+
+            try {
+                $this->grniCandidateService->createForSupplierInvoice($invoice->id);
+                $this->fail('Unauthorized GRNI clearing AP liability candidate creation must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertControlledSnapshotUnchanged($before);
+            }
+        }
+
+        auth()->logout();
+        $before = $this->controlledSnapshot();
+
+        try {
+            $this->grniCandidateService->createForSupplierInvoice($invoice->id);
+            $this->fail('Missing actor GRNI clearing AP liability candidate creation must fail closed.');
+        } catch (AuthorizationException) {
+            $this->assertControlledSnapshotUnchanged($before);
+        }
+
+        DB::table('gl_operational_identity_mappings')
+            ->where('id', $accounts['grni_mapping_id'])
+            ->update(['is_active' => false]);
+
+        $this->actingAs($this->actor);
+        $before = $this->controlledSnapshot();
+
+        try {
+            $this->grniCandidateService->createForSupplierInvoice($invoice->id);
+            $this->fail('Inactive GRNI account mapping must fail controlled.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('account evidence is unavailable', $exception->getMessage());
+        }
+
+        $this->assertControlledSnapshotUnchanged($before);
+    }
+
     private function attachActorToProperty(User $actor, Property $property): void
     {
         $actor->properties()->syncWithoutDetaching([
@@ -768,6 +1007,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             SupplierInvoiceRegistrationService::PERMISSION,
             SupplierInvoiceExceptionReviewService::PERMISSION,
             SupplierInvoiceApprovalService::PERMISSION,
+            GrniClearingApLiabilityCandidateService::PERMISSION,
         ];
     }
 
@@ -782,6 +1022,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             $actor->givePermissionTo([
                 SupplierInvoiceExceptionReviewService::PERMISSION,
                 SupplierInvoiceApprovalService::PERMISSION,
+                GrniClearingApLiabilityCandidateService::PERMISSION,
             ]);
         }
 
@@ -1097,6 +1338,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'gl_journal_entries',
             'gl_journal_entry_lines',
             'gl_ledger_balances',
+            'gl_accounts',
+            'gl_operational_identity_mappings',
             'financial_periods',
             'gl_financial_periods',
             'property_business_dates',
@@ -1121,6 +1364,127 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private function assertControlledSnapshotUnchanged(array $before): void
     {
         $this->assertSame($before, $this->controlledSnapshot());
+    }
+
+    private function assertCandidateCreationOnlyAddedCandidate(array $before): void
+    {
+        $after = $this->controlledSnapshot();
+
+        foreach ($before as $table => $count) {
+            $expected = match ($table) {
+                'journal_candidates' => $count + 1,
+                'journal_candidate_lines' => $count + 2,
+                default => $count,
+            };
+
+            $this->assertSame($expected, $after[$table], $table);
+        }
+    }
+
+    private function candidateSnapshot(string $candidateId): array
+    {
+        $candidate = (array) DB::table('journal_candidates')
+            ->where('id', $candidateId)
+            ->first([
+                'property_id',
+                'source_type',
+                'source_id',
+                'posting_event',
+                'status',
+                'candidate_date',
+                'description',
+                'created_by',
+                'created_at',
+                'metadata',
+            ]);
+
+        $lines = DB::table('journal_candidate_lines')
+            ->where('journal_candidate_id', $candidateId)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get([
+                'operational_identity',
+                'entry_type',
+                'amount',
+                'cost_center_id',
+                'notes',
+            ])
+            ->map(fn (object $line): array => (array) $line)
+            ->all();
+
+        return [
+            'candidate' => $candidate,
+            'lines' => $lines,
+        ];
+    }
+
+    private function makeGrniClearingAccountMappings(Property $property): array
+    {
+        $inventoryAccountId = $this->makeAccount($property, 'INV-' . $this->sequence++, 'Inventory Control', 'Asset', 'CurrentAsset', 'Debit');
+        $grniAccountId = $this->makeAccount($property, 'GRNI-' . $this->sequence++, 'GRNI Receipt Liability', 'Liability', 'CurrentLiability', 'Credit');
+        $apAccountId = $this->makeAccount($property, 'AP-' . $this->sequence++, 'AP Control Liability', 'Liability', 'CurrentLiability', 'Credit');
+
+        return [
+            'inventory_account_id' => $inventoryAccountId,
+            'grni_account_id' => $grniAccountId,
+            'ap_account_id' => $apAccountId,
+            'inventory_mapping_id' => $this->makeOperationalIdentityMapping($property, 'INVENTORY', $inventoryAccountId),
+            'grni_mapping_id' => $this->makeOperationalIdentityMapping($property, 'GRNI_RECEIPT', $grniAccountId),
+            'ap_mapping_id' => $this->makeOperationalIdentityMapping($property, 'AP_CONTROL', $apAccountId),
+        ];
+    }
+
+    private function makeAccount(
+        Property $property,
+        string $code,
+        string $name,
+        string $accountType,
+        string $accountCategory,
+        string $normalBalance,
+        bool $active = true,
+    ): string {
+        $accountId = (string) Str::ulid();
+        $timestamp = now();
+
+        DB::table('gl_accounts')->insert([
+            'id' => $accountId,
+            'property_id' => $property->id,
+            'code' => $code,
+            'name' => $name,
+            'normal_balance' => $normalBalance,
+            'account_type' => $accountType,
+            'account_category' => $accountCategory,
+            'is_active' => $active,
+            'is_cash_equivalent' => false,
+            'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
+        return $accountId;
+    }
+
+    private function makeOperationalIdentityMapping(Property $property, string $identity, string $accountId, bool $active = true): string
+    {
+        $mappingId = (string) Str::ulid();
+        $timestamp = now();
+
+        DB::table('gl_operational_identity_mappings')->insert([
+            'id' => $mappingId,
+            'property_id' => $property->id,
+            'operational_identity' => $identity,
+            'account_id' => $accountId,
+            'effective_from' => '2026-01-01',
+            'effective_to' => null,
+            'is_active' => $active,
+            'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
+        return $mappingId;
     }
 
     private function makePostedGrniEvidence(array $fixture, array $overrides = []): array
@@ -1226,6 +1590,16 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             ];
         }
 
+        $hasJournalLines = isset($overrides['inventory_account_id'], $overrides['grni_account_id']);
+        $targetJournalStatus = $overrides['journal_status'] ?? 'Posted';
+        $insertJournalAsDraft = $hasJournalLines && $targetJournalStatus === 'Posted';
+        $journalPostedBy = array_key_exists('journal_posted_by', $overrides)
+            ? $overrides['journal_posted_by']
+            : $this->actor->id;
+        $journalPostedAt = array_key_exists('journal_posted_at', $overrides)
+            ? $overrides['journal_posted_at']
+            : $timestamp;
+
         DB::table('gl_journal_entries')->insert([
             'id' => $journalEntryId,
             'property_id' => $journalPropertyId,
@@ -1233,7 +1607,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'posting_date' => '2026-06-30',
             'reference' => $receiptId,
             'description' => 'Posted GRNI accrual source',
-            'status' => $overrides['journal_status'] ?? 'Posted',
+            'status' => $insertJournalAsDraft ? 'Draft' : $targetJournalStatus,
             'source_module' => 'Inventory',
             'source_type' => 'InventoryReceipt',
             'source_id' => $receiptId,
@@ -1241,17 +1615,55 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'posting_event' => 'InventoryReceiptAccrual',
             'draft_finalization_authorized_by' => $this->actor->id,
             'draft_finalization_authorized_at' => $timestamp,
-            'posted_by' => array_key_exists('journal_posted_by', $overrides)
-                ? $overrides['journal_posted_by']
-                : $this->actor->id,
-            'posted_at' => array_key_exists('journal_posted_at', $overrides)
-                ? $overrides['journal_posted_at']
-                : $timestamp,
+            'posted_by' => $insertJournalAsDraft ? null : $journalPostedBy,
+            'posted_at' => $insertJournalAsDraft ? null : $journalPostedAt,
             'created_by' => $this->actor->id,
             'updated_by' => $this->actor->id,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
         ]);
+
+        if ($hasJournalLines) {
+            DB::table('gl_journal_entry_lines')->insert([
+                [
+                    'id' => (string) Str::ulid(),
+                    'property_id' => $journalPropertyId,
+                    'journal_entry_id' => $journalEntryId,
+                    'account_id' => $overrides['inventory_account_id'],
+                    'debit_amount' => $overrides['inventory_debit_amount'] ?? 125,
+                    'credit_amount' => 0,
+                    'memo' => 'Posted inventory receipt debit source',
+                    'created_by' => $this->actor->id,
+                    'updated_by' => $this->actor->id,
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ],
+                [
+                    'id' => (string) Str::ulid(),
+                    'property_id' => $journalPropertyId,
+                    'journal_entry_id' => $journalEntryId,
+                    'account_id' => $overrides['grni_account_id'],
+                    'debit_amount' => 0,
+                    'credit_amount' => $overrides['grni_credit_amount'] ?? 125,
+                    'memo' => 'Posted GRNI liability credit source',
+                    'created_by' => $this->actor->id,
+                    'updated_by' => $this->actor->id,
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ],
+            ]);
+
+            if ($insertJournalAsDraft) {
+                DB::table('gl_journal_entries')
+                    ->where('id', $journalEntryId)
+                    ->update([
+                        'status' => $targetJournalStatus,
+                        'posted_by' => $journalPostedBy,
+                        'posted_at' => $journalPostedAt,
+                        'updated_at' => $timestamp,
+                    ]);
+            }
+        }
 
         return [
             'inventory_receipt_id' => $receiptId,
