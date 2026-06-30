@@ -20,6 +20,8 @@ class JournalCandidate extends Model
         'property_id',
         'source_type',
         'source_id',
+        'source_grni_candidate_id',
+        'source_grni_journal_entry_id',
         'posting_event',
         'status',
         'candidate_date',

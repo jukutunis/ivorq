@@ -2,33 +2,34 @@
 
 namespace Modules\Finance\GeneralLedger\Services;
 
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Foundation\User\Models\User;
+use Throwable;
 
 class JournalCandidateReviewService
 {
+    public const PERMISSION = 'finance.journal-candidate.review';
+
     /**
      * Approve a PENDING_REVIEW journal candidate.
      */
     public function approve(string $id, string $userId): JournalCandidate
     {
         return DB::transaction(function () use ($id, $userId) {
+            $user = $this->resolveAuthorizedActor($userId);
+
             $candidate = JournalCandidate::where('id', $id)
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            // 1. Resolve and validate the actor
-            $user = User::findOrFail($userId);
-            if (!$user->can('finance.journal-candidate.review') && !$user->can('general-ledger.journal-candidate.review')) {
-                throw new \Illuminate\Auth\Access\AuthorizationException("Unauthorized to review journal candidates.");
-            }
+            $this->assertActorCanAccessProperty($user, $candidate->property_id);
 
             // 2. Safe idempotent retry / conflict check
             if ($candidate->status === JournalCandidateStatusEnum::APPROVED) {
-                if ($candidate->approved_by === $userId) {
+                if ($candidate->approved_by === $user->id) {
                     return $candidate;
                 }
                 throw new \RuntimeException("Conflicting review payload: already approved by another user.");
@@ -50,7 +51,7 @@ class JournalCandidateReviewService
             // 4. Update status and evidence atomically
             $candidate->update([
                 'status' => JournalCandidateStatusEnum::APPROVED->value,
-                'approved_by' => $userId,
+                'approved_by' => $user->id,
                 'approved_at' => now(),
             ]);
 
@@ -68,19 +69,17 @@ class JournalCandidateReviewService
         }
 
         return DB::transaction(function () use ($id, $reason, $userId) {
+            $user = $this->resolveAuthorizedActor($userId);
+
             $candidate = JournalCandidate::where('id', $id)
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            // 1. Resolve and validate the actor
-            $user = User::findOrFail($userId);
-            if (!$user->can('finance.journal-candidate.review') && !$user->can('general-ledger.journal-candidate.review')) {
-                throw new \Illuminate\Auth\Access\AuthorizationException("Unauthorized to review journal candidates.");
-            }
+            $this->assertActorCanAccessProperty($user, $candidate->property_id);
 
             // 2. Safe idempotent retry / conflict check
             if ($candidate->status === JournalCandidateStatusEnum::REJECTED) {
-                if ($candidate->rejected_by === $userId && $candidate->rejection_reason === $reason) {
+                if ($candidate->rejected_by === $user->id && $candidate->rejection_reason === $reason) {
                     return $candidate;
                 }
                 throw new \RuntimeException("Conflicting review payload: already rejected with a different reason or actor.");
@@ -102,12 +101,47 @@ class JournalCandidateReviewService
             // 4. Update status and evidence atomically
             $candidate->update([
                 'status' => JournalCandidateStatusEnum::REJECTED->value,
-                'rejected_by' => $userId,
+                'rejected_by' => $user->id,
                 'rejected_at' => now(),
                 'rejection_reason' => $reason,
             ]);
 
             return $candidate;
         });
+    }
+
+    private function resolveAuthorizedActor(string $userId): User
+    {
+        $user = User::where('id', $userId)
+            ->where('is_active', true)
+            ->first();
+
+        if (!$user) {
+            throw new AuthorizationException('Unauthorized to review journal candidates.');
+        }
+
+        try {
+            $authorized = $user->can(self::PERMISSION);
+        } catch (Throwable) {
+            throw new AuthorizationException('Unauthorized to review journal candidates.');
+        }
+
+        if (!$authorized) {
+            throw new AuthorizationException('Unauthorized to review journal candidates.');
+        }
+
+        return $user;
+    }
+
+    private function assertActorCanAccessProperty(User $user, string $propertyId): void
+    {
+        $hasPropertyAccess = $user->properties()
+            ->where('properties.id', $propertyId)
+            ->wherePivot('status', 'active')
+            ->exists();
+
+        if (!$hasPropertyAccess) {
+            throw new AuthorizationException('Unauthorized to review journal candidates.');
+        }
     }
 }

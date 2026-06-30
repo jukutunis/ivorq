@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Finance\GeneralLedger\Services\GrniClearingApLiabilityCandidateService;
+use Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService;
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
 use Modules\Finance\Payables\Services\GrniClearingAllocationEligibilityService;
@@ -33,6 +34,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private SupplierInvoiceApprovalService $approvalService;
     private GrniClearingAllocationEligibilityService $grniEligibilityService;
     private GrniClearingApLiabilityCandidateService $grniCandidateService;
+    private JournalCandidateReviewService $candidateReviewService;
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -58,6 +60,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->approvalService = app(SupplierInvoiceApprovalService::class);
         $this->grniEligibilityService = app(GrniClearingAllocationEligibilityService::class);
         $this->grniCandidateService = app(GrniClearingApLiabilityCandidateService::class);
+        $this->candidateReviewService = app(JournalCandidateReviewService::class);
     }
 
     public function test_authorized_actor_registers_supplier_invoice_and_matched_result_without_accounting_mutation(): void
@@ -776,6 +779,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertSame($this->property->id, $candidate->property_id);
         $this->assertSame('SupplierInvoice', $candidate->source_type);
         $this->assertSame($invoice->id, $candidate->source_id);
+        $this->assertSame($grni['journal_candidate_id'], $candidate->source_grni_candidate_id);
+        $this->assertSame($grni['journal_entry_id'], $candidate->source_grni_journal_entry_id);
         $this->assertSame('SupplierInvoiceGrniClearingApLiability', $candidate->posting_event);
         $this->assertSame($this->actor->id, $candidate->created_by);
         $this->assertNull($candidate->approved_by);
@@ -990,6 +995,116 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertControlledSnapshotUnchanged($before);
     }
 
+    public function test_authorized_actor_reviews_grni_clearing_ap_liability_candidate_without_accounting_mutation(): void
+    {
+        $context = $this->makeApprovedGrniApCandidate();
+        $candidate = $context['candidate'];
+        $snapshot = $this->candidateSnapshot($candidate->id);
+        $controlledBefore = $this->controlledSnapshot();
+
+        $approved = $this->candidateReviewService->approve($candidate->id, $this->actor->id);
+
+        $this->assertSame('APPROVED', $approved->status->value);
+        $this->assertSame($this->actor->id, $approved->approved_by);
+        $this->assertNotNull($approved->approved_at);
+        $this->assertSame($snapshot['candidate']['source_grni_candidate_id'], $approved->source_grni_candidate_id);
+        $this->assertSame($snapshot['candidate']['source_grni_journal_entry_id'], $approved->source_grni_journal_entry_id);
+        $this->assertSame($snapshot['candidate']['metadata'], $this->candidateSnapshot($candidate->id)['candidate']['metadata']);
+
+        $this->assertControlledSnapshotUnchangedExcept($controlledBefore, [
+            'journal_candidates' => 0,
+        ]);
+
+        $reviewedSnapshot = $this->candidateSnapshot($candidate->id);
+        $repeat = $this->candidateReviewService->approve($candidate->id, $this->actor->id);
+        $this->assertSame($approved->id, $repeat->id);
+        $this->assertSame($reviewedSnapshot, $this->candidateSnapshot($candidate->id));
+    }
+
+    public function test_authorized_actor_rejects_grni_clearing_ap_liability_candidate_and_blocks_draft_or_posting(): void
+    {
+        $context = $this->makeApprovedGrniApCandidate();
+        $candidate = $context['candidate'];
+        $controlledBefore = $this->controlledSnapshot();
+
+        $rejected = $this->candidateReviewService->reject($candidate->id, 'Invoice will be corrected before AP clearing.', $this->actor->id);
+
+        $this->assertSame('REJECTED', $rejected->status->value);
+        $this->assertSame($this->actor->id, $rejected->rejected_by);
+        $this->assertNotNull($rejected->rejected_at);
+        $this->assertSame('Invoice will be corrected before AP clearing.', $rejected->rejection_reason);
+        $this->assertSame($candidate->source_grni_candidate_id, $rejected->source_grni_candidate_id);
+        $this->assertSame($candidate->source_grni_journal_entry_id, $rejected->source_grni_journal_entry_id);
+
+        $this->assertControlledSnapshotUnchangedExcept($controlledBefore, [
+            'journal_candidates' => 0,
+        ]);
+
+        $repeat = $this->candidateReviewService->reject($candidate->id, 'Invoice will be corrected before AP clearing.', $this->actor->id);
+        $this->assertSame($rejected->id, $repeat->id);
+
+        try {
+            $this->candidateReviewService->approve($candidate->id, $this->actor->id);
+            $this->fail('Conflicting review decision must fail controlled.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('already rejected', $exception->getMessage());
+        }
+    }
+
+    public function test_grni_ap_candidate_review_fails_closed_for_invalid_actor_and_cross_property(): void
+    {
+        $context = $this->makeApprovedGrniApCandidate();
+        $candidate = $context['candidate'];
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $unresolved = $this->makeAuthorizedActor($this->property);
+        $unresolved->delete();
+        $crossProperty = $this->makeAuthorizedActor($this->makeProperty());
+
+        foreach ([$unauthorized, $disabled, $unresolved, $crossProperty] as $invalidActor) {
+            $before = $this->candidateSnapshot($candidate->id);
+
+            try {
+                $this->candidateReviewService->approve($candidate->id, $invalidActor->id);
+                $this->fail('Invalid candidate reviewer must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertSame($before, $this->candidateSnapshot($candidate->id));
+            }
+        }
+    }
+
+    public function test_posted_grni_source_cannot_create_two_grni_ap_candidates(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $accounts = $this->makeGrniClearingAccountMappings($this->property);
+        $firstResult = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $firstInvoice = $this->approvalService->approve($firstResult['invoice']->id, $this->actor);
+        $secondResult = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $secondInvoice = $this->approvalService->approve($secondResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($fixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+        ]);
+
+        $this->actingAs($this->actor);
+        $firstCandidate = $this->grniCandidateService->createForSupplierInvoice($firstInvoice->id);
+        $before = $this->controlledSnapshot();
+
+        try {
+            $this->grniCandidateService->createForSupplierInvoice($secondInvoice->id);
+            $this->fail('A posted GRNI source must not create a second GRNI/AP clearing candidate.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('already has', $exception->getMessage());
+        }
+
+        $this->assertSame(1, DB::table('journal_candidates')
+            ->where('source_grni_journal_entry_id', $firstCandidate->source_grni_journal_entry_id)
+            ->where('posting_event', 'SupplierInvoiceGrniClearingApLiability')
+            ->count());
+        $this->assertControlledSnapshotUnchanged($before);
+    }
+
     private function attachActorToProperty(User $actor, Property $property): void
     {
         $actor->properties()->syncWithoutDetaching([
@@ -1008,6 +1123,10 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             SupplierInvoiceExceptionReviewService::PERMISSION,
             SupplierInvoiceApprovalService::PERMISSION,
             GrniClearingApLiabilityCandidateService::PERMISSION,
+            JournalCandidateReviewService::PERMISSION,
+            'finance.journal-candidate.materialize-draft',
+            'finance.journal-entry-draft.authorize-finalization',
+            'finance.journal-entry.post',
         ];
     }
 
@@ -1366,6 +1485,15 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertSame($before, $this->controlledSnapshot());
     }
 
+    private function assertControlledSnapshotUnchangedExcept(array $before, array $allowedDeltas): void
+    {
+        $after = $this->controlledSnapshot();
+
+        foreach ($before as $table => $count) {
+            $this->assertSame($count + ($allowedDeltas[$table] ?? 0), $after[$table], $table);
+        }
+    }
+
     private function assertCandidateCreationOnlyAddedCandidate(array $before): void
     {
         $after = $this->controlledSnapshot();
@@ -1389,11 +1517,18 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
                 'property_id',
                 'source_type',
                 'source_id',
+                'source_grni_candidate_id',
+                'source_grni_journal_entry_id',
                 'posting_event',
                 'status',
                 'candidate_date',
                 'description',
                 'created_by',
+                'approved_by',
+                'approved_at',
+                'rejected_by',
+                'rejected_at',
+                'rejection_reason',
                 'created_at',
                 'metadata',
             ]);
@@ -1431,6 +1566,29 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'inventory_mapping_id' => $this->makeOperationalIdentityMapping($property, 'INVENTORY', $inventoryAccountId),
             'grni_mapping_id' => $this->makeOperationalIdentityMapping($property, 'GRNI_RECEIPT', $grniAccountId),
             'ap_mapping_id' => $this->makeOperationalIdentityMapping($property, 'AP_CONTROL', $apAccountId),
+        ];
+    }
+
+    private function makeApprovedGrniApCandidate(): array
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $accounts = $this->makeGrniClearingAccountMappings($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $invoice = $this->approvalService->approve($result['invoice']->id, $this->actor);
+        $grni = $this->makePostedGrniEvidence($fixture, [
+            'inventory_account_id' => $accounts['inventory_account_id'],
+            'grni_account_id' => $accounts['grni_account_id'],
+        ]);
+
+        $this->actingAs($this->actor);
+        $candidate = $this->grniCandidateService->createForSupplierInvoice($invoice->id);
+
+        return [
+            'fixture' => $fixture,
+            'accounts' => $accounts,
+            'invoice' => $invoice,
+            'grni' => $grni,
+            'candidate' => $candidate,
         ];
     }
 

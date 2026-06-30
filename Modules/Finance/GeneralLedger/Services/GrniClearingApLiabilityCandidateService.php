@@ -54,18 +54,21 @@ class GrniClearingApLiabilityCandidateService
             $amount = $this->assertSupportedAmount($invoice, $source, $accountEvidence);
             $metadata = $this->candidateMetadata($invoice, $eligibility, $source, $accountEvidence, $amount);
             $identity = $this->candidateIdentity($invoice->property_id, $invoice->id);
+            $sourceIdentity = $this->sourceGrniIdentity($source);
 
             $existing = JournalCandidate::where($identity)
                 ->lockForUpdate()
                 ->first();
 
             if ($existing) {
-                $this->assertExistingCandidateMatches($existing, $metadata, $amount);
+                $this->assertExistingCandidateMatches($existing, $metadata, $amount, $sourceIdentity);
 
                 return $existing->fresh(['lines']);
             }
 
-            $candidate = new JournalCandidate($identity + [
+            $this->assertNoSourceGrniReuse($invoice->property_id, $sourceIdentity);
+
+            $candidate = new JournalCandidate($identity + $sourceIdentity + [
                 'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
                 'candidate_date' => $candidateDate,
                 'description' => 'GRNI Clearing and AP Liability Candidate for Supplier Invoice ' . $invoice->invoice_number,
@@ -338,13 +341,39 @@ class GrniClearingApLiabilityCandidateService
         ];
     }
 
-    private function assertExistingCandidateMatches(JournalCandidate $candidate, array $metadata, string $amount): void
+    private function sourceGrniIdentity(array $source): array
+    {
+        return [
+            'source_grni_candidate_id' => $source['source_grni_candidate']->id,
+            'source_grni_journal_entry_id' => $source['posted_journal']->id,
+        ];
+    }
+
+    private function assertNoSourceGrniReuse(string $propertyId, array $sourceIdentity): void
+    {
+        $collision = JournalCandidate::where('property_id', $propertyId)
+            ->where('posting_event', self::POSTING_EVENT)
+            ->where(function ($query) use ($sourceIdentity) {
+                $query->where('source_grni_candidate_id', $sourceIdentity['source_grni_candidate_id'])
+                    ->orWhere('source_grni_journal_entry_id', $sourceIdentity['source_grni_journal_entry_id']);
+            })
+            ->lockForUpdate()
+            ->first();
+
+        if ($collision) {
+            throw new DomainException('Posted GRNI source already has a GRNI clearing AP liability candidate.');
+        }
+    }
+
+    private function assertExistingCandidateMatches(JournalCandidate $candidate, array $metadata, string $amount, array $sourceIdentity): void
     {
         if ($candidate->status !== JournalCandidateStatusEnum::PENDING_REVIEW) {
             throw new DomainException('Existing GRNI clearing AP liability candidate is no longer PENDING_REVIEW.');
         }
 
-        if ($candidate->metadata !== $metadata) {
+        if ($candidate->source_grni_candidate_id !== $sourceIdentity['source_grni_candidate_id']
+            || $candidate->source_grni_journal_entry_id !== $sourceIdentity['source_grni_journal_entry_id']
+            || $candidate->metadata !== $metadata) {
             throw new DomainException('Existing GRNI clearing AP liability candidate conflicts with current source evidence.');
         }
 
