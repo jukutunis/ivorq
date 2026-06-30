@@ -47,6 +47,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
     Route::prefix('finance')->group(function () {
         Route::get('/revenue-cash', [FinanceController::class, 'revenueCash']);
         Route::get('/accounts-payable', [FinanceController::class, 'accountsPayable']);
+        Route::get('/payables/ap-grni-settlement-control', [\Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController::class, 'index'])
+            ->name('finance.payables.ap-grni-settlement-control');
         Route::get('/accounts-receivable', [FinanceController::class, 'accountsReceivable']);
         Route::get('/budget-watch', [FinanceController::class, 'budgetWatch']);
         Route::get('/general-ledger/grni-control', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'index'])

@@ -15,6 +15,7 @@ use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationS
 use Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService;
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
+use Modules\Finance\Payables\Services\ApGrniSettlementAgingProjectionService;
 use Modules\Finance\Payables\Services\GrniClearingAllocationEligibilityService;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
@@ -41,6 +42,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private JournalCandidateDraftMaterializationService $draftMaterializationService;
     private JournalEntryDraftFinalizationAuthorizationService $draftFinalizationAuthorizationService;
     private JournalEntryControlledPostingService $controlledPostingService;
+    private ApGrniSettlementAgingProjectionService $settlementProjectionService;
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -70,6 +72,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->draftMaterializationService = app(JournalCandidateDraftMaterializationService::class);
         $this->draftFinalizationAuthorizationService = app(JournalEntryDraftFinalizationAuthorizationService::class);
         $this->controlledPostingService = app(JournalEntryControlledPostingService::class);
+        $this->settlementProjectionService = app(ApGrniSettlementAgingProjectionService::class);
     }
 
     public function test_authorized_actor_registers_supplier_invoice_and_matched_result_without_accounting_mutation(): void
@@ -1315,6 +1318,91 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             $this->assertStringContainsString('inactive account', $exception->getMessage());
             $this->assertControlledSnapshotUnchanged($beforeInactiveAccount);
         }
+    }
+
+    public function test_ap_grni_settlement_projection_is_property_scoped_and_read_only(): void
+    {
+        $context = $this->makeApprovedGrniApDraft();
+        $draft = $context['draft'];
+        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
+        $this->draftFinalizationAuthorizationService->authorize($draft->id, $this->actor->id);
+        $posted = $this->controlledPostingService->post($draft->id, $this->actor->id);
+
+        $heldContext = $this->makeApprovedGrniApCandidate($context['accounts']);
+        $exceptionFixture = $this->makePurchasingFixture($this->property);
+        $exceptionResult = $this->service->registerAndMatch($this->invoicePayload($exceptionFixture, [], [
+            'unit_price' => 13,
+        ]), $this->actor);
+        $this->exceptionReviewService->resolveException($exceptionResult['invoice']->id, $this->actor, 'Reviewed exception for visibility.');
+        $this->approvalService->approve($exceptionResult['invoice']->id, $this->actor);
+
+        $otherProperty = $this->makeProperty();
+        $otherActor = $this->makeAuthorizedActor($otherProperty);
+        $otherFixture = $this->makePurchasingFixture($otherProperty);
+        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($otherProperty->id);
+        $otherResult = $this->service->registerAndMatch($this->invoicePayload($otherFixture), $otherActor);
+        $this->approvalService->approve($otherResult['invoice']->id, $otherActor);
+        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
+
+        $before = $this->controlledSnapshot();
+        $projection = $this->settlementProjectionService->project($this->property->id);
+
+        $this->assertSame(1, $projection['summary']['ready_count']);
+        $this->assertSame(1, $projection['summary']['aging_count']);
+        $this->assertGreaterThanOrEqual(2, $projection['summary']['history_count']);
+        $this->assertGreaterThanOrEqual(2, $projection['summary']['held_count']);
+
+        $ready = $projection['queues']['ready'][0];
+        $this->assertSame($context['invoice']->invoice_number, $ready['invoice_number']);
+        $this->assertSame($context['invoice']->vendor->name, $ready['vendor']['name']);
+        $this->assertSame('IDR', $ready['currency_code']);
+        $this->assertSame('125.00', $ready['amount']);
+        $this->assertSame('Posted', $ready['journal']['status']);
+        $this->assertSame($posted->transaction_date->toDateString(), $ready['age']['posted_business_date']);
+        $this->assertTrue($ready['age']['available']);
+        $this->assertSame($context['grni']['journal_candidate_id'], $ready['candidate']['source_grni_candidate_id']);
+        $this->assertSame($context['grni']['journal_entry_id'], $ready['candidate']['source_grni_journal_entry_id']);
+        $this->assertSame($context['fixture']['goods_receipt_id'], $ready['source']['receiving']['document_id']);
+
+        $heldReasons = collect($projection['queues']['held'])->pluck('reason')->all();
+        $this->assertContains('GRNI/AP candidate is pending Finance review.', $heldReasons);
+        $this->assertContains('Supplier Invoice has unresolved or exception match evidence.', $heldReasons);
+        $this->assertStringNotContainsString($otherResult['invoice']->invoice_number, json_encode($projection));
+        $this->assertControlledSnapshotUnchanged($before);
+        $this->assertSame('PENDING_REVIEW', $this->candidateSnapshot($heldContext['candidate']->id)['candidate']['status']);
+    }
+
+    public function test_ap_grni_settlement_projection_uses_unavailable_age_when_current_business_date_is_missing(): void
+    {
+        $context = $this->makeApprovedGrniApDraft();
+        $draft = $context['draft'];
+        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
+        $this->draftFinalizationAuthorizationService->authorize($draft->id, $this->actor->id);
+        $this->controlledPostingService->post($draft->id, $this->actor->id);
+        DB::table('property_business_dates')
+            ->where('property_id', $this->property->id)
+            ->delete();
+
+        $before = $this->controlledSnapshot();
+        $projection = $this->settlementProjectionService->project($this->property->id);
+
+        $this->assertFalse($projection['queues']['aging'][0]['age']['available']);
+        $this->assertNull($projection['queues']['aging'][0]['age']['days']);
+        $this->assertSame('Age unavailable.', $projection['queues']['aging'][0]['age']['label']);
+        $this->assertControlledSnapshotUnchanged($before);
+    }
+
+    public function test_ap_grni_settlement_workspace_requires_safe_visibility_permission(): void
+    {
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $request = \Illuminate\Http\Request::create('/finance/payables/ap-grni-settlement-control', 'GET');
+        $request->setUserResolver(fn () => $unauthorized);
+
+        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectExceptionMessage('Unauthorized.');
+
+        app(\Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController::class)->index($request);
     }
 
     private function attachActorToProperty(User $actor, Property $property): void
