@@ -17,6 +17,7 @@ use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
 use Modules\Finance\Payables\Services\ApGrniSettlementAgingProjectionService;
 use Modules\Finance\Payables\Services\GrniClearingAllocationEligibilityService;
+use Modules\Finance\Payables\Services\PaymentProposalApprovalService;
 use Modules\Finance\Payables\Services\PaymentProposalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
@@ -45,6 +46,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private JournalEntryControlledPostingService $controlledPostingService;
     private ApGrniSettlementAgingProjectionService $settlementProjectionService;
     private PaymentProposalService $paymentProposalService;
+    private PaymentProposalApprovalService $paymentProposalApprovalService;
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -76,6 +78,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->controlledPostingService = app(JournalEntryControlledPostingService::class);
         $this->settlementProjectionService = app(ApGrniSettlementAgingProjectionService::class);
         $this->paymentProposalService = app(PaymentProposalService::class);
+        $this->paymentProposalApprovalService = app(PaymentProposalApprovalService::class);
     }
 
     public function test_authorized_actor_registers_supplier_invoice_and_matched_result_without_accounting_mutation(): void
@@ -1520,6 +1523,156 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         }
     }
 
+    public function test_authorized_creator_submits_draft_payment_proposal_for_approval(): void
+    {
+        $context = $this->makePostedApLiabilityContext();
+        $proposal = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+        $sourceBefore = $this->sourceSnapshot($context['fixture']);
+        $invoiceBefore = $this->invoiceLifecycleSnapshot($context['invoice']->id);
+        $journalBefore = (array) DB::table('gl_journal_entries')->where('id', $context['posted']->id)->first();
+        $controlledBefore = $this->controlledSnapshot();
+
+        $submitted = $this->paymentProposalApprovalService->submit($proposal->id, $this->actor);
+
+        $this->assertSame('PENDING_APPROVAL', $submitted->status->value);
+        $this->assertSame($this->actor->id, $submitted->submitted_by);
+        $this->assertNotNull($submitted->submitted_at);
+        $this->assertNull($submitted->approved_by);
+        $this->assertNull($submitted->rejected_by);
+        $this->assertSame($sourceBefore, $this->sourceSnapshot($context['fixture']));
+        $this->assertSame($invoiceBefore, $this->invoiceLifecycleSnapshot($context['invoice']->id));
+        $this->assertSame($journalBefore, (array) DB::table('gl_journal_entries')->where('id', $context['posted']->id)->first());
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+
+        $snapshot = $this->paymentProposalSnapshot($proposal->id);
+        $repeat = $this->paymentProposalApprovalService->submit($proposal->id, $this->actor);
+
+        $this->assertSame($proposal->id, $repeat->id);
+        $this->assertSame($snapshot, $this->paymentProposalSnapshot($proposal->id));
+    }
+
+    public function test_payment_proposal_creator_cannot_approve_and_independent_actor_approves_pending_proposal(): void
+    {
+        $context = $this->makePostedApLiabilityContext();
+        $proposal = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+        $this->paymentProposalApprovalService->submit($proposal->id, $this->actor);
+        $approver = $this->makeAuthorizedActor($this->property);
+        $before = $this->controlledSnapshot();
+
+        try {
+            $this->paymentProposalApprovalService->approve($proposal->id, $this->actor);
+            $this->fail('Payment Proposal creator must not approve their own proposal.');
+        } catch (AuthorizationException $exception) {
+            $this->assertStringContainsString('creator cannot approve', $exception->getMessage());
+            $this->assertSame('PENDING_APPROVAL', DB::table('payment_proposals')->where('id', $proposal->id)->value('status'));
+        }
+
+        $approved = $this->paymentProposalApprovalService->approve($proposal->id, $approver);
+
+        $this->assertSame('APPROVED', $approved->status->value);
+        $this->assertSame($approver->id, $approved->approved_by);
+        $this->assertNotNull($approved->approved_at);
+        $this->assertNull($approved->rejected_by);
+        $this->assertControlledSnapshotUnchanged($before);
+
+        $snapshot = $this->paymentProposalSnapshot($proposal->id);
+        $repeat = $this->paymentProposalApprovalService->approve($proposal->id, $approver);
+
+        $this->assertSame($proposal->id, $repeat->id);
+        $this->assertSame($snapshot, $this->paymentProposalSnapshot($proposal->id));
+
+        try {
+            $this->paymentProposalApprovalService->reject($proposal->id, $approver, 'Changed decision.');
+            $this->fail('Approved Payment Proposal must not receive conflicting rejection.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('Approved', $exception->getMessage());
+            $this->assertSame($snapshot, $this->paymentProposalSnapshot($proposal->id));
+        }
+    }
+
+    public function test_independent_actor_rejects_pending_payment_proposal_with_reason(): void
+    {
+        $context = $this->makePostedApLiabilityContext();
+        $proposal = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+        $this->paymentProposalApprovalService->submit($proposal->id, $this->actor);
+        $rejector = $this->makeAuthorizedActor($this->property);
+        $before = $this->paymentProposalSnapshot($proposal->id);
+
+        try {
+            $this->paymentProposalApprovalService->reject($proposal->id, $rejector, ' ');
+            $this->fail('Payment Proposal rejection without reason must fail.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('meaningful reason', $exception->getMessage());
+            $this->assertSame($before, $this->paymentProposalSnapshot($proposal->id));
+        }
+
+        $rejected = $this->paymentProposalApprovalService->reject($proposal->id, $rejector, 'Supplier bank details require review.');
+
+        $this->assertSame('REJECTED', $rejected->status->value);
+        $this->assertSame($rejector->id, $rejected->rejected_by);
+        $this->assertNotNull($rejected->rejected_at);
+        $this->assertSame('Supplier bank details require review.', $rejected->rejection_reason);
+
+        $snapshot = $this->paymentProposalSnapshot($proposal->id);
+        $repeat = $this->paymentProposalApprovalService->reject($proposal->id, $rejector, 'Supplier bank details require review.');
+
+        $this->assertSame($proposal->id, $repeat->id);
+        $this->assertSame($snapshot, $this->paymentProposalSnapshot($proposal->id));
+
+        try {
+            $this->paymentProposalApprovalService->approve($proposal->id, $rejector);
+            $this->fail('Rejected Payment Proposal must not receive conflicting approval.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('Rejected', $exception->getMessage());
+            $this->assertSame($snapshot, $this->paymentProposalSnapshot($proposal->id));
+        }
+    }
+
+    public function test_payment_proposal_approval_lifecycle_fails_closed_for_invalid_actor_and_terminal_states(): void
+    {
+        $context = $this->makePostedApLiabilityContext();
+        $proposal = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $crossProperty = $this->makeAuthorizedActor($this->makeProperty());
+
+        foreach ([null, $unauthorized, $disabled, $crossProperty] as $invalidActor) {
+            $before = $this->paymentProposalSnapshot($proposal->id);
+            $controlledBefore = $this->controlledSnapshot();
+
+            try {
+                $this->paymentProposalApprovalService->submit($proposal->id, $invalidActor);
+                $this->fail('Invalid Payment Proposal approval actor must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertSame($before, $this->paymentProposalSnapshot($proposal->id));
+                $this->assertControlledSnapshotUnchanged($controlledBefore);
+            }
+        }
+
+        $cancelled = $this->paymentProposalService->cancelDraft($proposal->id, $this->actor, 'Selection cancelled before approval.');
+
+        try {
+            $this->paymentProposalApprovalService->submit($cancelled->id, $this->actor);
+            $this->fail('Cancelled Payment Proposal must not be submitted or executed.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('Only Draft', $exception->getMessage());
+        }
+
+        $rejectedContext = $this->makePostedApLiabilityContext($context['accounts']);
+        $rejectedProposal = $this->paymentProposalService->createDraft([$rejectedContext['posted']->id], $this->actor);
+        $this->paymentProposalApprovalService->submit($rejectedProposal->id, $this->actor);
+        $rejector = $this->makeAuthorizedActor($this->property);
+        $this->paymentProposalApprovalService->reject($rejectedProposal->id, $rejector, 'Rejected before execution.');
+
+        try {
+            $this->paymentProposalApprovalService->submit($rejectedProposal->id, $this->actor);
+            $this->fail('Rejected Payment Proposal must not be resubmitted or executed.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('Only Draft', $exception->getMessage());
+        }
+    }
+
     private function attachActorToProperty(User $actor, Property $property): void
     {
         $actor->properties()->syncWithoutDetaching([
@@ -1544,6 +1697,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'finance.journal-entry.post',
             PaymentProposalService::CREATE_PERMISSION,
             PaymentProposalService::CANCEL_PERMISSION,
+            PaymentProposalApprovalService::SUBMIT_PERMISSION,
+            PaymentProposalApprovalService::APPROVE_PERMISSION,
         ];
     }
 
@@ -2021,9 +2176,9 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         ];
     }
 
-    private function makePostedApLiabilityContext(): array
+    private function makePostedApLiabilityContext(?array $accounts = null): array
     {
-        $context = $this->makeApprovedGrniApDraft();
+        $context = $this->makeApprovedGrniApDraft($accounts);
         $draft = $context['draft'];
         $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
         $this->draftFinalizationAuthorizationService->authorize($draft->id, $this->actor->id);
@@ -2121,6 +2276,13 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
                 'status',
                 'source_fingerprint',
                 'total_amount',
+                'submitted_by',
+                'submitted_at',
+                'approved_by',
+                'approved_at',
+                'rejected_by',
+                'rejected_at',
+                'rejection_reason',
                 'created_by',
                 'created_at',
                 'cancelled_by',

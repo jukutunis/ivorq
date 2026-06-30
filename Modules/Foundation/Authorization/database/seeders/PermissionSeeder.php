@@ -45,6 +45,8 @@ class PermissionSeeder extends Seeder
             'finance.payables.grni-clearing.candidate.create',
             'finance.payables.payment-proposal.create',
             'finance.payables.payment-proposal.cancel',
+            'finance.payables.payment-proposal.submit',
+            'finance.payables.payment-proposal.approve',
         ];
 
         foreach ($permissions as $name) {

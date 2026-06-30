@@ -25,6 +25,13 @@ class PaymentProposal extends Model
         'status',
         'source_fingerprint',
         'total_amount',
+        'submitted_by',
+        'submitted_at',
+        'approved_by',
+        'approved_at',
+        'rejected_by',
+        'rejected_at',
+        'rejection_reason',
         'cancelled_by',
         'cancelled_at',
         'cancellation_reason',
@@ -33,6 +40,9 @@ class PaymentProposal extends Model
     protected $casts = [
         'status' => PaymentProposalStatusEnum::class,
         'total_amount' => 'decimal:2',
+        'submitted_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'rejected_at' => 'datetime',
         'cancelled_at' => 'datetime',
     ];
 
@@ -49,6 +59,21 @@ class PaymentProposal extends Model
     public function items(): HasMany
     {
         return $this->hasMany(PaymentProposalItem::class);
+    }
+
+    public function submitter(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'submitted_by');
+    }
+
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function rejector(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'rejected_by');
     }
 
     public function canceller(): BelongsTo
