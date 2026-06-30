@@ -38,6 +38,7 @@ class PermissionSeeder extends Seeder
             'finance.journal-candidate.review',
             'finance.journal-candidate.materialize-draft',
             'finance.journal-entry-draft.authorize-finalization',
+            'finance.journal-entry.post',
         ];
 
         foreach ($permissions as $name) {

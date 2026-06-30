@@ -2,29 +2,38 @@
 
 namespace Modules\Finance\GeneralLedger\Services;
 
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
+use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\GeneralLedger\Models\LedgerBalance;
+use Modules\Foundation\User\Models\User;
 use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\NormalBalanceEnum;
 use Modules\Finance\GeneralLedger\Exceptions\PeriodClosedException;
 use Modules\Foundation\Property\Models\PropertyBusinessDate;
 use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
 use Exception;
+use Throwable;
 
 class GeneralLedgerService
 {
-    public function postJournalEntry(string $journalEntryId): JournalEntry
+    public function postJournalEntry(string $journalEntryId, ?string $postingActorId = null): JournalEntry
     {
-        return DB::transaction(function () use ($journalEntryId) {
+        return DB::transaction(function () use ($journalEntryId, $postingActorId) {
             $entry = JournalEntry::with('lines')->lockForUpdate()->findOrFail($journalEntryId);
 
             if ($entry->status === JournalStatusEnum::Posted) {
                 throw new Exception('Journal entry is already posted and immutable.');
+            }
+
+            if ($entry->journal_candidate_id !== null) {
+                $this->assertCandidateEntryReadyForPosting($entry, $postingActorId);
             }
 
             $propertyId  = $entry->property_id;
@@ -142,11 +151,88 @@ class GeneralLedgerService
                 $balance->save();
             }
 
+            $postedAt = now();
+
             $entry->status       = JournalStatusEnum::Posted;
-            $entry->posting_date = now()->toDateString();
+            $entry->posting_date = $postedAt->toDateString();
+            if ($postingActorId !== null) {
+                $entry->posted_by = $postingActorId;
+                $entry->posted_at = $postedAt;
+            }
             $entry->save();
 
             return $entry;
         });
+    }
+
+    private function assertCandidateEntryReadyForPosting(JournalEntry $entry, ?string $postingActorId): void
+    {
+        if ($postingActorId === null) {
+            throw new Exception('Candidate-provenanced JournalEntries require controlled posting actor evidence.');
+        }
+
+        $this->assertPostingActorIsAuthorized($postingActorId);
+
+        if ($entry->status !== JournalStatusEnum::Draft) {
+            throw new Exception('Only Draft candidate-provenanced JournalEntries can be posted.');
+        }
+
+        if ($entry->posting_date !== null || $entry->posted_by !== null || $entry->posted_at !== null) {
+            throw new Exception('Candidate-provenanced JournalEntry already contains posting evidence.');
+        }
+
+        if ($entry->reversal_of_id !== null) {
+            throw new Exception('Candidate-provenanced reversal JournalEntries cannot be posted.');
+        }
+
+        if ($entry->draft_finalization_authorized_by === null || $entry->draft_finalization_authorized_at === null) {
+            throw new Exception('Candidate-provenanced JournalEntries require draft finalization authorization before posting.');
+        }
+
+        $candidate = JournalCandidate::where('id', $entry->journal_candidate_id)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$candidate) {
+            throw new Exception('Source JournalCandidate provenance is missing.');
+        }
+
+        if (
+            $candidate->status !== JournalCandidateStatusEnum::APPROVED ||
+            $candidate->approved_by === null ||
+            $candidate->approved_at === null
+        ) {
+            throw new Exception('Only approved candidate-provenanced JournalEntries can be posted.');
+        }
+
+        if (
+            $entry->property_id !== $candidate->property_id ||
+            $entry->source_type !== $candidate->source_type ||
+            $entry->source_id !== $candidate->source_id ||
+            $entry->posting_event !== $candidate->posting_event
+        ) {
+            throw new Exception('JournalEntry provenance conflicts with source JournalCandidate.');
+        }
+    }
+
+    private function assertPostingActorIsAuthorized(string $postingActorId): void
+    {
+        $actor = User::where('id', $postingActorId)
+            ->where('is_active', true)
+            ->first();
+
+        if (!$actor) {
+            throw new AuthorizationException('Unauthorized to execute JournalEntry posting.');
+        }
+
+        try {
+            $authorized = $actor->can(JournalEntryControlledPostingService::PERMISSION);
+        } catch (Throwable) {
+            throw new AuthorizationException('Unauthorized to execute JournalEntry posting.');
+        }
+
+        if (!$authorized) {
+            throw new AuthorizationException('Unauthorized to execute JournalEntry posting.');
+        }
     }
 }

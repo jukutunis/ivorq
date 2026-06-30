@@ -36,6 +36,8 @@ class JournalEntry extends Model
         'posting_event',
         'draft_finalization_authorized_by',
         'draft_finalization_authorized_at',
+        'posted_by',
+        'posted_at',
     ];
 
     protected $casts = [
@@ -43,6 +45,7 @@ class JournalEntry extends Model
         'posting_date' => 'date',
         'status' => JournalStatusEnum::class,
         'draft_finalization_authorized_at' => 'datetime',
+        'posted_at' => 'datetime',
     ];
 
     public function lines(): HasMany
@@ -58,6 +61,11 @@ class JournalEntry extends Model
     public function draftFinalizationAuthorizer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'draft_finalization_authorized_by');
+    }
+
+    public function postingActor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'posted_by');
     }
 
     public function getActivitylogOptions(): LogOptions

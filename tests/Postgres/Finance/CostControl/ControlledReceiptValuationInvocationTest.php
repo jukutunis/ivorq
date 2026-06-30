@@ -32,6 +32,7 @@ use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
 use Modules\Finance\GeneralLedger\Services\GrniPostingEngine;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationService;
+use Modules\Finance\GeneralLedger\Services\JournalEntryControlledPostingService;
 use Modules\Finance\GeneralLedger\Services\JournalEntryDraftFinalizationAuthorizationService;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\Vendor;
@@ -284,6 +285,23 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         return $user;
     }
 
+    private function createPostingExecutionUser(bool $authorized = true, bool $active = true): User
+    {
+        $user = User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Journal Posting User ' . substr(Str::ulid(), 0, 8),
+            'email' => 'journal-poster-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+            'is_active' => $active,
+        ]);
+
+        if ($authorized) {
+            $user->givePermissionTo(JournalEntryControlledPostingService::PERMISSION);
+        }
+
+        return $user;
+    }
+
     /**
      * @return array{0: JournalCandidate, 1: JournalEntry, 2: User}
      */
@@ -295,6 +313,19 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             ->materialize($candidate->id, $materializer->id);
 
         return [$candidate->fresh('lines'), $journal->fresh('lines'), $materializer];
+    }
+
+    /**
+     * @return array{0: JournalCandidate, 1: JournalEntry, 2: User, 3: User}
+     */
+    private function authorizeApprovedGrniDraft(): array
+    {
+        [$candidate, $journal, $materializer] = $this->materializeApprovedGrniDraft();
+        $authorizer = $this->createDraftFinalizationAuthorizationUser();
+        $authorized = app(JournalEntryDraftFinalizationAuthorizationService::class)
+            ->authorize($journal->id, $authorizer->id);
+
+        return [$candidate->fresh('lines'), $authorized->fresh('lines'), $materializer, $authorizer];
     }
 
     private function journalLineSnapshot(string $journalEntryId): array
@@ -317,6 +348,64 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
                 'updated_at',
             ])
             ->map(fn ($line) => (array) $line)
+            ->all();
+    }
+
+    private function journalEntrySnapshot(string $journalEntryId): array
+    {
+        return (array) DB::table('gl_journal_entries')
+            ->where('id', $journalEntryId)
+            ->first([
+                'id',
+                'property_id',
+                'transaction_date',
+                'posting_date',
+                'status',
+                'source_module',
+                'source_type',
+                'source_id',
+                'reversal_of_id',
+                'journal_candidate_id',
+                'posting_event',
+                'draft_finalization_authorized_by',
+                'draft_finalization_authorized_at',
+                'posted_by',
+                'posted_at',
+                'created_by',
+                'updated_by',
+                'created_at',
+                'updated_at',
+            ]);
+    }
+
+    private function ledgerBalanceSnapshotForJournal(string $journalEntryId): array
+    {
+        $journal = DB::table('gl_journal_entries')->where('id', $journalEntryId)->first();
+        $accountIds = DB::table('gl_journal_entry_lines')
+            ->where('journal_entry_id', $journalEntryId)
+            ->orderBy('account_id')
+            ->pluck('account_id')
+            ->all();
+
+        if (!$journal || $accountIds === []) {
+            return [];
+        }
+
+        return DB::table('gl_ledger_balances')
+            ->where('property_id', $journal->property_id)
+            ->where('period_year', (int) Carbon::parse($journal->transaction_date)->format('Y'))
+            ->where('period_month', (int) Carbon::parse($journal->transaction_date)->format('m'))
+            ->whereIn('account_id', $accountIds)
+            ->orderBy('account_id')
+            ->get([
+                'account_id',
+                'debit_total',
+                'credit_total',
+                'ending_balance',
+                'created_at',
+                'updated_at',
+            ])
+            ->map(fn ($balance) => (array) $balance)
             ->all();
     }
 
@@ -1426,5 +1515,289 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertSame($candidateBefore->status, $candidateAfter->status);
         $this->assertSame($candidateBefore->approved_by, $candidateAfter->approved_by);
         $this->assertSame($candidateBefore->approved_at, $candidateAfter->approved_at);
+    }
+
+    public function test_authorized_actor_posts_finalization_authorized_grni_journal_entry_draft_once(): void
+    {
+        $this->seedGrniMappings();
+        [$candidate, $journal, , $authorizer] = $this->authorizeApprovedGrniDraft();
+        $poster = $this->createPostingExecutionUser();
+        $service = app(JournalEntryControlledPostingService::class);
+
+        $this->assertDatabaseHas('permissions', [
+            'name' => JournalEntryControlledPostingService::PERMISSION,
+            'guard_name' => 'web',
+        ]);
+
+        $entryCount = DB::table('gl_journal_entries')->count();
+        $lineCount = DB::table('gl_journal_entry_lines')->count();
+        $lineSnapshotBefore = $this->journalLineSnapshot($journal->id);
+        $ledgerSnapshotBefore = $this->ledgerBalanceSnapshotForJournal($journal->id);
+        $candidateBefore = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $candidateLineAmountsBefore = DB::table('journal_candidate_lines')
+            ->where('journal_candidate_id', $candidate->id)
+            ->orderBy('id')
+            ->pluck('amount', 'id')
+            ->all();
+        $authorizedAt = $journal->draft_finalization_authorized_at->toIso8601String();
+
+        $posted = $service->post($journal->id, $poster->id);
+
+        $this->assertSame($journal->id, $posted->id);
+        $this->assertEquals(JournalStatusEnum::Posted, $posted->status);
+        $this->assertSame($poster->id, $posted->posted_by);
+        $this->assertNotNull($posted->posted_at);
+        $this->assertNotNull($posted->posting_date);
+        $this->assertSame($candidate->id, $posted->journal_candidate_id);
+        $this->assertSame($authorizer->id, $posted->draft_finalization_authorized_by);
+        $this->assertSame($authorizedAt, $posted->draft_finalization_authorized_at->toIso8601String());
+        $this->assertSame($entryCount, DB::table('gl_journal_entries')->count());
+        $this->assertSame($lineCount, DB::table('gl_journal_entry_lines')->count());
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+
+        $ledgerSnapshotAfter = $this->ledgerBalanceSnapshotForJournal($journal->id);
+        $this->assertCount(count($ledgerSnapshotBefore) + 2, $ledgerSnapshotAfter);
+        $this->assertEquals(
+            DB::table('gl_journal_entry_lines')->where('journal_entry_id', $journal->id)->sum('debit_amount'),
+            DB::table('gl_journal_entry_lines')->where('journal_entry_id', $journal->id)->sum('credit_amount')
+        );
+
+        $postedLineRows = DB::table('gl_journal_entry_lines')
+            ->where('journal_entry_id', $journal->id)
+            ->get()
+            ->keyBy('account_id');
+        foreach ($ledgerSnapshotAfter as $balance) {
+            $line = $postedLineRows[$balance['account_id']];
+            $this->assertEquals((float) $line->debit_amount, (float) $balance['debit_total']);
+            $this->assertEquals((float) $line->credit_amount, (float) $balance['credit_total']);
+        }
+
+        $candidateAfter = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $this->assertSame($candidateBefore->status, $candidateAfter->status);
+        $this->assertSame($candidateBefore->approved_by, $candidateAfter->approved_by);
+        $this->assertSame($candidateBefore->approved_at, $candidateAfter->approved_at);
+        $this->assertSame($candidateBefore->rejected_by, $candidateAfter->rejected_by);
+        $this->assertSame($candidateBefore->rejected_at, $candidateAfter->rejected_at);
+        $this->assertSame($candidateBefore->rejection_reason, $candidateAfter->rejection_reason);
+        $this->assertSame(
+            $candidateLineAmountsBefore,
+            DB::table('journal_candidate_lines')
+                ->where('journal_candidate_id', $candidate->id)
+                ->orderBy('id')
+                ->pluck('amount', 'id')
+                ->all()
+        );
+
+        $postedAt = $posted->posted_at->toIso8601String();
+        $entrySnapshotAfterPost = $this->journalEntrySnapshot($journal->id);
+        $ledgerSnapshotAfterPost = $this->ledgerBalanceSnapshotForJournal($journal->id);
+
+        $repeated = $service->post($journal->id, $poster->id);
+
+        $this->assertSame($journal->id, $repeated->id);
+        $this->assertSame($poster->id, $repeated->posted_by);
+        $this->assertSame($postedAt, $repeated->posted_at->toIso8601String());
+        $this->assertSame($entrySnapshotAfterPost, $this->journalEntrySnapshot($journal->id));
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+        $this->assertSame($ledgerSnapshotAfterPost, $this->ledgerBalanceSnapshotForJournal($journal->id));
+        $this->assertSame($entryCount, DB::table('gl_journal_entries')->count());
+        $this->assertSame($lineCount, DB::table('gl_journal_entry_lines')->count());
+    }
+
+    public function test_finalization_unauthorized_grni_journal_entry_draft_cannot_be_posted(): void
+    {
+        $this->seedGrniMappings();
+        [$candidate, $journal] = $this->materializeApprovedGrniDraft();
+        $poster = $this->createPostingExecutionUser();
+        $lineSnapshotBefore = $this->journalLineSnapshot($journal->id);
+        $entrySnapshotBefore = $this->journalEntrySnapshot($journal->id);
+        $ledgerSnapshotBefore = $this->ledgerBalanceSnapshotForJournal($journal->id);
+        $candidateBefore = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+
+        try {
+            app(JournalEntryControlledPostingService::class)->post($journal->id, $poster->id);
+            $this->fail('Expected finalization-unauthorized draft posting to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('finalization-authorized', $e->getMessage());
+        }
+
+        $this->assertSame($entrySnapshotBefore, $this->journalEntrySnapshot($journal->id));
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+        $this->assertSame($ledgerSnapshotBefore, $this->ledgerBalanceSnapshotForJournal($journal->id));
+        $candidateAfter = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $this->assertSame($candidateBefore->status, $candidateAfter->status);
+        $this->assertSame($candidateBefore->approved_by, $candidateAfter->approved_by);
+        $this->assertSame($candidateBefore->approved_at, $candidateAfter->approved_at);
+    }
+
+    public function test_non_approved_candidate_derived_authorized_draft_cannot_be_posted(): void
+    {
+        $this->seedGrniMappings();
+        [$candidate, $journal] = $this->authorizeApprovedGrniDraft();
+        $poster = $this->createPostingExecutionUser();
+
+        DB::table('journal_candidates')
+            ->where('id', $candidate->id)
+            ->update([
+                'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+                'approved_by' => null,
+                'approved_at' => null,
+                'updated_at' => now(),
+            ]);
+
+        $entrySnapshotBefore = $this->journalEntrySnapshot($journal->id);
+        $lineSnapshotBefore = $this->journalLineSnapshot($journal->id);
+        $ledgerSnapshotBefore = $this->ledgerBalanceSnapshotForJournal($journal->id);
+
+        try {
+            app(JournalEntryControlledPostingService::class)->post($journal->id, $poster->id);
+            $this->fail('Expected non-approved candidate-derived posting to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('approved JournalCandidate-derived', $e->getMessage());
+        }
+
+        $this->assertSame($entrySnapshotBefore, $this->journalEntrySnapshot($journal->id));
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+        $this->assertSame($ledgerSnapshotBefore, $this->ledgerBalanceSnapshotForJournal($journal->id));
+    }
+
+    public function test_controlled_posting_actor_failures_are_closed(): void
+    {
+        $this->seedGrniMappings();
+        [$candidate, $journal] = $this->authorizeApprovedGrniDraft();
+        $unauthorized = $this->createPostingExecutionUser(authorized: false);
+        $disabled = $this->createPostingExecutionUser(authorized: true, active: false);
+        $service = app(JournalEntryControlledPostingService::class);
+        $entrySnapshotBefore = $this->journalEntrySnapshot($journal->id);
+        $lineSnapshotBefore = $this->journalLineSnapshot($journal->id);
+        $ledgerSnapshotBefore = $this->ledgerBalanceSnapshotForJournal($journal->id);
+        $candidateBefore = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+
+        foreach ([$unauthorized->id, $disabled->id, (string) Str::ulid()] as $actorId) {
+            try {
+                $service->post($journal->id, $actorId);
+                $this->fail('Expected unauthorized controlled posting actor to fail.');
+            } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+                $this->assertStringContainsString('Unauthorized', $e->getMessage());
+            }
+        }
+
+        $this->assertSame($entrySnapshotBefore, $this->journalEntrySnapshot($journal->id));
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+        $this->assertSame($ledgerSnapshotBefore, $this->ledgerBalanceSnapshotForJournal($journal->id));
+        $candidateAfter = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $this->assertSame($candidateBefore->status, $candidateAfter->status);
+        $this->assertSame($candidateBefore->approved_by, $candidateAfter->approved_by);
+        $this->assertSame($candidateBefore->approved_at, $candidateAfter->approved_at);
+    }
+
+    public function test_closed_financial_period_or_business_date_rejects_controlled_posting_without_mutation(): void
+    {
+        $this->seedGrniMappings();
+        $poster = $this->createPostingExecutionUser();
+        $service = app(JournalEntryControlledPostingService::class);
+
+        [, $periodJournal] = $this->authorizeApprovedGrniDraft();
+        DB::table('gl_financial_periods')
+            ->where('property_id', $this->property->id)
+            ->where('period_year', 2026)
+            ->where('period_month', 6)
+            ->update(['status' => \Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum::Closed->value, 'updated_at' => now()]);
+
+        $periodEntryBefore = $this->journalEntrySnapshot($periodJournal->id);
+        $periodLinesBefore = $this->journalLineSnapshot($periodJournal->id);
+        $periodBalancesBefore = $this->ledgerBalanceSnapshotForJournal($periodJournal->id);
+
+        try {
+            $service->post($periodJournal->id, $poster->id);
+            $this->fail('Expected closed Financial Period posting to fail.');
+        } catch (\Throwable $e) {
+            $this->assertStringContainsString('FinancialPeriod', $e->getMessage());
+        }
+
+        $this->assertSame($periodEntryBefore, $this->journalEntrySnapshot($periodJournal->id));
+        $this->assertSame($periodLinesBefore, $this->journalLineSnapshot($periodJournal->id));
+        $this->assertSame($periodBalancesBefore, $this->ledgerBalanceSnapshotForJournal($periodJournal->id));
+
+        DB::table('gl_financial_periods')
+            ->where('property_id', $this->property->id)
+            ->where('period_year', 2026)
+            ->where('period_month', 6)
+            ->update(['status' => \Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum::Open->value, 'updated_at' => now()]);
+
+        [, $businessDateJournal] = $this->authorizeApprovedGrniDraft();
+        DB::table('property_business_dates')
+            ->where('property_id', $this->property->id)
+            ->where('business_date', $this->businessDate)
+            ->update([
+                'status' => \Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum::Closed->value,
+                'is_open' => null,
+                'updated_at' => now(),
+            ]);
+
+        $businessDateEntryBefore = $this->journalEntrySnapshot($businessDateJournal->id);
+        $businessDateLinesBefore = $this->journalLineSnapshot($businessDateJournal->id);
+        $businessDateBalancesBefore = $this->ledgerBalanceSnapshotForJournal($businessDateJournal->id);
+
+        try {
+            $service->post($businessDateJournal->id, $poster->id);
+            $this->fail('Expected closed Business Date posting to fail.');
+        } catch (\Throwable $e) {
+            $this->assertStringContainsString('PropertyBusinessDate', $e->getMessage());
+        }
+
+        $this->assertSame($businessDateEntryBefore, $this->journalEntrySnapshot($businessDateJournal->id));
+        $this->assertSame($businessDateLinesBefore, $this->journalLineSnapshot($businessDateJournal->id));
+        $this->assertSame($businessDateBalancesBefore, $this->ledgerBalanceSnapshotForJournal($businessDateJournal->id));
+    }
+
+    public function test_conflicting_posted_voided_or_reversal_entries_cannot_be_posted_without_mutation(): void
+    {
+        $this->seedGrniMappings();
+        $poster = $this->createPostingExecutionUser();
+        $differentPoster = $this->createPostingExecutionUser();
+        $service = app(JournalEntryControlledPostingService::class);
+
+        [, $postedJournal] = $this->authorizeApprovedGrniDraft();
+        $service->post($postedJournal->id, $poster->id);
+
+        try {
+            $service->post($postedJournal->id, $differentPoster->id);
+            $this->fail('Expected conflicting posted replay to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Conflicting', $e->getMessage());
+        }
+
+        [, $voidedJournal] = $this->authorizeApprovedGrniDraft();
+        DB::table('gl_journal_entries')
+            ->where('id', $voidedJournal->id)
+            ->update(['status' => JournalStatusEnum::Voided->value, 'updated_at' => now()]);
+
+        [, $originalJournal] = $this->authorizeApprovedGrniDraft();
+        $service->post($originalJournal->id, $poster->id);
+        [, $reversalJournal] = $this->authorizeApprovedGrniDraft();
+        DB::table('gl_journal_entries')
+            ->where('id', $reversalJournal->id)
+            ->update(['reversal_of_id' => $originalJournal->id, 'updated_at' => now()]);
+
+        foreach ([$voidedJournal->id, $reversalJournal->id] as $journalId) {
+            $entrySnapshotBefore = $this->journalEntrySnapshot($journalId);
+            $lineSnapshotBefore = $this->journalLineSnapshot($journalId);
+            $ledgerSnapshotBefore = $this->ledgerBalanceSnapshotForJournal($journalId);
+
+            try {
+                $service->post($journalId, $poster->id);
+                $this->fail('Expected invalid lifecycle state posting to fail.');
+            } catch (RuntimeException $e) {
+                $this->assertTrue(
+                    str_contains($e->getMessage(), 'Draft JournalEntries') ||
+                    str_contains($e->getMessage(), 'Reversal JournalEntries')
+                );
+            }
+
+            $this->assertSame($entrySnapshotBefore, $this->journalEntrySnapshot($journalId));
+            $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journalId));
+            $this->assertSame($ledgerSnapshotBefore, $this->ledgerBalanceSnapshotForJournal($journalId));
+        }
     }
 }
