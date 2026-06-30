@@ -263,6 +263,79 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         }
     }
 
+    public function test_authorized_actor_reviews_supplier_payment_candidate_without_accounting_mutation(): void
+    {
+        $context = $this->makeSupplierPaymentCandidateContext();
+        $before = $this->controlledSnapshot();
+        $sourceBefore = $this->sourceEvidenceSnapshot($context);
+
+        $approved = $this->candidateReviewService->approve($context['payment_candidate']->id, $this->actor->id);
+
+        $this->assertSame('APPROVED', $approved->status->value);
+        $this->assertSame($this->actor->id, $approved->approved_by);
+        $this->assertNotNull($approved->approved_at);
+        $this->assertNull($approved->rejected_by);
+        $this->assertControlledSnapshotUnchanged($before);
+        $this->assertSame($sourceBefore, $this->sourceEvidenceSnapshot($context));
+
+        $snapshot = $this->candidateSnapshot($approved->id);
+        $repeat = $this->candidateReviewService->approve($approved->id, $this->actor->id);
+
+        $this->assertSame($approved->id, $repeat->id);
+        $this->assertSame($snapshot, $this->candidateSnapshot($approved->id));
+
+        try {
+            $this->candidateReviewService->reject($approved->id, 'Conflicting decision.', $this->actor->id);
+            $this->fail('Approved supplier payment candidate must not be rejected.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('already approved', $exception->getMessage());
+            $this->assertSame($snapshot, $this->candidateSnapshot($approved->id));
+        }
+    }
+
+    public function test_supplier_payment_candidate_rejection_and_authorization_failures_are_controlled(): void
+    {
+        $context = $this->makeSupplierPaymentCandidateContext();
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $crossProperty = $this->makeAuthorizedActor($this->makeProperty());
+
+        foreach ([$unauthorized, $disabled, $crossProperty] as $invalidActor) {
+            $before = $this->candidateSnapshot($context['payment_candidate']->id);
+            $controlledBefore = $this->controlledSnapshot();
+
+            try {
+                $this->candidateReviewService->approve($context['payment_candidate']->id, $invalidActor->id);
+                $this->fail('Invalid supplier payment candidate reviewer must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertSame($before, $this->candidateSnapshot($context['payment_candidate']->id));
+                $this->assertControlledSnapshotUnchanged($controlledBefore);
+            }
+        }
+
+        $rejected = $this->candidateReviewService->reject(
+            $context['payment_candidate']->id,
+            'Cash disbursement requires treasury confirmation.',
+            $this->actor->id
+        );
+
+        $this->assertSame('REJECTED', $rejected->status->value);
+        $this->assertSame($this->actor->id, $rejected->rejected_by);
+        $this->assertNotNull($rejected->rejected_at);
+        $this->assertSame('Cash disbursement requires treasury confirmation.', $rejected->rejection_reason);
+
+        $snapshot = $this->candidateSnapshot($rejected->id);
+        $repeat = $this->candidateReviewService->reject(
+            $rejected->id,
+            'Cash disbursement requires treasury confirmation.',
+            $this->actor->id
+        );
+
+        $this->assertSame($rejected->id, $repeat->id);
+        $this->assertSame($snapshot, $this->candidateSnapshot($rejected->id));
+    }
+
     private function paymentLifecyclePermissions(): array
     {
         return [
@@ -298,6 +371,17 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         return $context + [
             'cashier' => $cashier,
             'execution' => $execution,
+        ];
+    }
+
+    private function makeSupplierPaymentCandidateContext(): array
+    {
+        $context = $this->makePaymentExecutionContext();
+        $this->actingAs($this->actor);
+        $candidate = $this->supplierPaymentCandidateService->createForPaymentExecution($context['execution']->id);
+
+        return $context + [
+            'payment_candidate' => $candidate,
         ];
     }
 
