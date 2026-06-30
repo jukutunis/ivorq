@@ -12,6 +12,7 @@ use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
+use Modules\Finance\Payables\Services\GrniClearingAllocationEligibilityService;
 use Modules\Finance\Payables\Services\SupplierInvoiceRegistrationService;
 use Modules\Finance\Payables\Services\ThreeWayMatchingEngine;
 use Modules\Foundation\Authorization\Models\Permission;
@@ -29,6 +30,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private SupplierInvoiceRegistrationService $service;
     private SupplierInvoiceExceptionReviewService $exceptionReviewService;
     private SupplierInvoiceApprovalService $approvalService;
+    private GrniClearingAllocationEligibilityService $grniEligibilityService;
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -52,6 +54,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->service = app(SupplierInvoiceRegistrationService::class);
         $this->exceptionReviewService = app(SupplierInvoiceExceptionReviewService::class);
         $this->approvalService = app(SupplierInvoiceApprovalService::class);
+        $this->grniEligibilityService = app(GrniClearingAllocationEligibilityService::class);
     }
 
     public function test_authorized_actor_registers_supplier_invoice_and_matched_result_without_accounting_mutation(): void
@@ -546,6 +549,208 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         }
     }
 
+    public function test_approved_matched_invoice_with_posted_grni_source_is_eligible_for_future_allocation(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $invoice = $this->approvalService->approve($result['invoice']->id, $this->actor);
+        $grni = $this->makePostedGrniEvidence($fixture);
+        $controlledBefore = $this->controlledSnapshot();
+        $sourceBefore = $this->sourceSnapshot($fixture);
+        $matchBefore = $this->matchEvidenceSnapshot($result['match']->id);
+
+        $eligibility = $this->grniEligibilityService->evaluate($invoice->id);
+        $repeatEligibility = $this->grniEligibilityService->evaluate($invoice->id);
+
+        $this->assertSame(GrniClearingAllocationEligibilityService::DECISION_ELIGIBLE, $eligibility['decision']);
+        $this->assertSame([], $eligibility['blockers']);
+        $this->assertSame($invoice->id, $eligibility['invoice_id']);
+        $this->assertSame('APPROVED', $eligibility['invoice_status']);
+        $this->assertSame(MatchStatusEnum::Matched->value, $eligibility['match_status']);
+        $this->assertSame('IDR', $eligibility['source_currency']);
+        $this->assertSame([
+            'supplier_invoice_id' => $invoice->id,
+            'purchase_order_id' => $fixture['purchase_order_id'],
+            'receiving_document_id' => $fixture['goods_receipt_id'],
+            'grni_candidate_id' => $grni['journal_candidate_id'],
+            'posted_journal_entry_id' => $grni['journal_entry_id'],
+        ], $eligibility['source_evidence']);
+
+        $this->assertCount(1, $eligibility['lines']);
+        $this->assertSame($result['invoice']->lines->first()->id, $eligibility['lines'][0]['supplier_invoice_line_id']);
+        $this->assertSame($fixture['purchase_order_line_id'], $eligibility['lines'][0]['purchase_order_line_id']);
+        $this->assertSame($fixture['goods_receipt_line_id'], $eligibility['lines'][0]['receiving_line_id']);
+        $this->assertSame($grni['inventory_receipt_line_id'], $eligibility['lines'][0]['inventory_receipt_line_id']);
+        $this->assertSame($fixture['inventory_item_id'], $eligibility['lines'][0]['inventory_item_id']);
+        $this->assertEligibilityResultContainsNoPostingPlan($eligibility);
+        $this->assertSame($eligibility, $repeatEligibility);
+        $this->assertSame($sourceBefore, $this->sourceSnapshot($fixture));
+        $this->assertSame($matchBefore, $this->matchEvidenceSnapshot($result['match']->id));
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+    }
+
+    public function test_grni_allocation_eligibility_blocks_non_approved_and_exception_invoices_without_mutation(): void
+    {
+        $registeredFixture = $this->makePurchasingFixture($this->property);
+        $registeredResult = $this->service->registerAndMatch($this->invoicePayload($registeredFixture), $this->actor);
+        $this->makePostedGrniEvidence($registeredFixture);
+
+        $rejectedFixture = $this->makePurchasingFixture($this->property);
+        $rejectedResult = $this->service->registerAndMatch($this->invoicePayload($rejectedFixture), $this->actor);
+        $rejected = $this->approvalService->reject($rejectedResult['invoice']->id, $this->actor, 'Not eligible for allocation.');
+        $this->makePostedGrniEvidence($rejectedFixture);
+
+        $exceptionFixture = $this->makePurchasingFixture($this->property);
+        $exceptionResult = $this->service->registerAndMatch($this->invoicePayload($exceptionFixture, [], [
+            'unit_price' => 13,
+        ]), $this->actor);
+        $this->exceptionReviewService->resolveException($exceptionResult['invoice']->id, $this->actor, 'Reviewed price exception.');
+        $approvedException = $this->approvalService->approve($exceptionResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($exceptionFixture);
+
+        $controlledBefore = $this->controlledSnapshot();
+
+        $registeredEligibility = $this->grniEligibilityService->evaluate($registeredResult['invoice']->id);
+        $rejectedEligibility = $this->grniEligibilityService->evaluate($rejected->id);
+        $exceptionEligibility = $this->grniEligibilityService->evaluate($approvedException->id);
+
+        $this->assertSame(GrniClearingAllocationEligibilityService::DECISION_BLOCKED, $registeredEligibility['decision']);
+        $this->assertContains('invoice_not_approved', $registeredEligibility['blockers']);
+        $this->assertSame(GrniClearingAllocationEligibilityService::DECISION_BLOCKED, $rejectedEligibility['decision']);
+        $this->assertContains('invoice_not_approved', $rejectedEligibility['blockers']);
+        $this->assertSame(GrniClearingAllocationEligibilityService::DECISION_BLOCKED, $exceptionEligibility['decision']);
+        $this->assertContains('match_not_matched', $exceptionEligibility['blockers']);
+        $this->assertEligibilityResultContainsNoPostingPlan($registeredEligibility);
+        $this->assertEligibilityResultContainsNoPostingPlan($rejectedEligibility);
+        $this->assertEligibilityResultContainsNoPostingPlan($exceptionEligibility);
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+    }
+
+    public function test_grni_allocation_eligibility_blocks_missing_or_unposted_grni_chain_without_mutation(): void
+    {
+        $missingFixture = $this->makePurchasingFixture($this->property);
+        $missingResult = $this->service->registerAndMatch($this->invoicePayload($missingFixture), $this->actor);
+        $missingInvoice = $this->approvalService->approve($missingResult['invoice']->id, $this->actor);
+
+        $missingCandidateFixture = $this->makePurchasingFixture($this->property);
+        $missingCandidateResult = $this->service->registerAndMatch($this->invoicePayload($missingCandidateFixture), $this->actor);
+        $missingCandidateInvoice = $this->approvalService->approve($missingCandidateResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($missingCandidateFixture, [
+            'include_candidate' => false,
+        ]);
+
+        $missingJournalFixture = $this->makePurchasingFixture($this->property);
+        $missingJournalResult = $this->service->registerAndMatch($this->invoicePayload($missingJournalFixture), $this->actor);
+        $missingJournalInvoice = $this->approvalService->approve($missingJournalResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($missingJournalFixture, [
+            'include_journal' => false,
+        ]);
+
+        $draftJournalFixture = $this->makePurchasingFixture($this->property);
+        $draftJournalResult = $this->service->registerAndMatch($this->invoicePayload($draftJournalFixture), $this->actor);
+        $draftJournalInvoice = $this->approvalService->approve($draftJournalResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($draftJournalFixture, [
+            'journal_status' => 'Draft',
+            'journal_posted_by' => null,
+            'journal_posted_at' => null,
+        ]);
+
+        $controlledBefore = $this->controlledSnapshot();
+
+        $missingEligibility = $this->grniEligibilityService->evaluate($missingInvoice->id);
+        $missingCandidateEligibility = $this->grniEligibilityService->evaluate($missingCandidateInvoice->id);
+        $missingJournalEligibility = $this->grniEligibilityService->evaluate($missingJournalInvoice->id);
+        $draftJournalEligibility = $this->grniEligibilityService->evaluate($draftJournalInvoice->id);
+
+        $this->assertContains('missing_posted_inventory_receipt', $missingEligibility['blockers']);
+        $this->assertContains('missing_grni_candidate', $missingCandidateEligibility['blockers']);
+        $this->assertContains('missing_posted_journal_entry', $missingJournalEligibility['blockers']);
+        $this->assertContains('journal_entry_not_posted', $draftJournalEligibility['blockers']);
+        $this->assertSame(GrniClearingAllocationEligibilityService::DECISION_BLOCKED, $missingEligibility['decision']);
+        $this->assertSame(GrniClearingAllocationEligibilityService::DECISION_BLOCKED, $missingCandidateEligibility['decision']);
+        $this->assertSame(GrniClearingAllocationEligibilityService::DECISION_BLOCKED, $missingJournalEligibility['decision']);
+        $this->assertSame(GrniClearingAllocationEligibilityService::DECISION_BLOCKED, $draftJournalEligibility['decision']);
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+    }
+
+    public function test_grni_allocation_eligibility_blocks_scope_ambiguous_and_unsupported_conditions_without_mutation(): void
+    {
+        $crossPropertyFixture = $this->makePurchasingFixture($this->property);
+        $crossPropertyResult = $this->service->registerAndMatch($this->invoicePayload($crossPropertyFixture), $this->actor);
+        $crossPropertyInvoice = $this->approvalService->approve($crossPropertyResult['invoice']->id, $this->actor);
+        $otherProperty = $this->makeProperty();
+        $this->makePostedGrniEvidence($crossPropertyFixture, [
+            'journal_property_id' => $otherProperty->id,
+        ]);
+
+        $crossVendorFixture = $this->makePurchasingFixture($this->property);
+        $crossVendorResult = $this->service->registerAndMatch($this->invoicePayload($crossVendorFixture), $this->actor);
+        $crossVendorInvoice = $this->approvalService->approve($crossVendorResult['invoice']->id, $this->actor);
+        DB::table('receiving_documents')
+            ->where('id', $crossVendorFixture['goods_receipt_id'])
+            ->update(['vendor_id' => $this->makeVendor($this->property, 'ALT-' . $this->sequence++)]);
+        $this->makePostedGrniEvidence($crossVendorFixture);
+
+        $ambiguousFixture = $this->makePurchasingFixture($this->property);
+        $ambiguousResult = $this->service->registerAndMatch($this->invoicePayload($ambiguousFixture), $this->actor);
+        $ambiguousInvoice = $this->approvalService->approve($ambiguousResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($ambiguousFixture);
+        $this->makePostedGrniEvidence($ambiguousFixture, [
+            'include_candidate' => false,
+        ]);
+
+        $taxFixture = $this->makePurchasingFixture($this->property);
+        $taxResult = $this->service->registerAndMatch($this->invoicePayload($taxFixture, [
+            'tax_amount' => 5,
+        ]), $this->actor);
+        $taxInvoice = $this->approvalService->approve($taxResult['invoice']->id, $this->actor);
+        $this->makePostedGrniEvidence($taxFixture);
+
+        $currencyFixture = $this->makePurchasingFixture($this->property);
+        $currencyResult = $this->service->registerAndMatch($this->invoicePayload($currencyFixture), $this->actor);
+        $currencyInvoice = $this->approvalService->approve($currencyResult['invoice']->id, $this->actor);
+        DB::table('vendor_invoices')
+            ->where('id', $currencyInvoice->id)
+            ->update(['currency_code' => 'USD']);
+        $this->makePostedGrniEvidence($currencyFixture);
+
+        $quantityFixture = $this->makePurchasingFixture($this->property);
+        $quantityResult = $this->service->registerAndMatch($this->invoicePayload($quantityFixture), $this->actor);
+        $quantityInvoice = $this->approvalService->approve($quantityResult['invoice']->id, $this->actor);
+        $quantityGrni = $this->makePostedGrniEvidence($quantityFixture);
+        DB::table('inventory_receipt_lines')
+            ->where('id', $quantityGrni['inventory_receipt_line_id'])
+            ->update(['quantity' => 9]);
+
+        $priceFixture = $this->makePurchasingFixture($this->property);
+        $priceResult = $this->service->registerAndMatch($this->invoicePayload($priceFixture), $this->actor);
+        $priceInvoice = $this->approvalService->approve($priceResult['invoice']->id, $this->actor);
+        $priceGrni = $this->makePostedGrniEvidence($priceFixture);
+        DB::table('inventory_receipt_lines')
+            ->where('id', $priceGrni['inventory_receipt_line_id'])
+            ->update(['unit_cost' => 13]);
+
+        $controlledBefore = $this->controlledSnapshot();
+
+        $cases = [
+            [$this->grniEligibilityService->evaluate($crossPropertyInvoice->id), 'journal_entry_source_mismatch'],
+            [$this->grniEligibilityService->evaluate($crossVendorInvoice->id), 'receiving_vendor_mismatch'],
+            [$this->grniEligibilityService->evaluate($ambiguousInvoice->id), 'ambiguous_grni_source'],
+            [$this->grniEligibilityService->evaluate($taxInvoice->id), 'unsupported_tax_condition'],
+            [$this->grniEligibilityService->evaluate($currencyInvoice->id), 'unsupported_currency_condition'],
+            [$this->grniEligibilityService->evaluate($quantityInvoice->id), 'unsupported_quantity_condition'],
+            [$this->grniEligibilityService->evaluate($priceInvoice->id), 'unsupported_price_condition'],
+        ];
+
+        foreach ($cases as [$eligibility, $expectedBlocker]) {
+            $this->assertSame(GrniClearingAllocationEligibilityService::DECISION_BLOCKED, $eligibility['decision']);
+            $this->assertContains($expectedBlocker, $eligibility['blockers']);
+            $this->assertEligibilityResultContainsNoPostingPlan($eligibility);
+        }
+
+        $this->assertControlledSnapshotUnchanged($controlledBefore);
+    }
+
     private function attachActorToProperty(User $actor, Property $property): void
     {
         $actor->properties()->syncWithoutDetaching([
@@ -795,6 +1000,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'goods_receipt_id' => $goodsReceiptId,
             'goods_receipt_line_id' => $goodsReceiptLineId,
             'inventory_item_id' => $itemId,
+            'location_id' => $locationId,
             'currency_code' => 'IDR',
         ];
     }
@@ -915,6 +1121,162 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private function assertControlledSnapshotUnchanged(array $before): void
     {
         $this->assertSame($before, $this->controlledSnapshot());
+    }
+
+    private function makePostedGrniEvidence(array $fixture, array $overrides = []): array
+    {
+        $timestamp = now();
+        $receiptId = (string) Str::ulid();
+        $receiptLineId = (string) Str::ulid();
+        $candidateId = (string) Str::ulid();
+        $journalEntryId = (string) Str::ulid();
+        $receiptPropertyId = $overrides['receipt_property_id'] ?? $fixture['property_id'];
+        $candidatePropertyId = $overrides['candidate_property_id'] ?? $fixture['property_id'];
+        $journalPropertyId = $overrides['journal_property_id'] ?? $fixture['property_id'];
+        $quantity = $overrides['receipt_quantity'] ?? 10;
+        $unitCost = $overrides['receipt_unit_cost'] ?? 12.50;
+        $lineTotal = $overrides['receipt_line_total'] ?? 125;
+
+        DB::table('inventory_receipts')->insert([
+            'id' => $receiptId,
+            'property_id' => $receiptPropertyId,
+            'receipt_number' => 'IR-' . $this->sequence++,
+            'supplier_name' => 'Vendor GRNI source',
+            'external_reference' => $fixture['goods_receipt_id'],
+            'receiving_document_id' => $fixture['goods_receipt_id'],
+            'status' => $overrides['receipt_status'] ?? 'posted',
+            'received_at' => '2026-06-30 00:00:00',
+            'remarks' => 'GRNI eligibility source fixture',
+            'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+            'posted_by' => $this->actor->id,
+            'posted_at' => $timestamp,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
+        DB::table('inventory_receipt_lines')->insert([
+            'id' => $receiptLineId,
+            'property_id' => $receiptPropertyId,
+            'receipt_id' => $receiptId,
+            'item_id' => $fixture['inventory_item_id'],
+            'location_id' => $fixture['location_id'],
+            'quantity' => $quantity,
+            'unit_cost' => $unitCost,
+            'line_total' => $lineTotal,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
+        if (($overrides['include_candidate'] ?? true) === false) {
+            return [
+                'inventory_receipt_id' => $receiptId,
+                'inventory_receipt_line_id' => $receiptLineId,
+                'journal_candidate_id' => null,
+                'journal_entry_id' => null,
+            ];
+        }
+
+        DB::table('journal_candidates')->insert([
+            'id' => $candidateId,
+            'property_id' => $candidatePropertyId,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => $receiptId,
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => $overrides['candidate_status'] ?? 'APPROVED',
+            'candidate_date' => '2026-06-30',
+            'description' => 'GRNI Accrual for Receipt ' . $receiptId,
+            'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+            'approved_by' => $this->actor->id,
+            'approved_at' => $timestamp,
+            'metadata' => json_encode([
+                'receipt_id' => $receiptId,
+                'receipt_number' => 'IR source',
+                'supplier_name' => 'Vendor GRNI source',
+                'total_cost' => 125,
+            ]),
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
+        if (($overrides['include_candidate_lines'] ?? true) !== false) {
+            foreach ([
+                ['identity' => 'INVENTORY', 'entry_type' => 'DEBIT'],
+                ['identity' => 'GRNI_RECEIPT', 'entry_type' => 'CREDIT'],
+            ] as $line) {
+                DB::table('journal_candidate_lines')->insert([
+                    'id' => (string) Str::ulid(),
+                    'journal_candidate_id' => $candidateId,
+                    'operational_identity' => $line['identity'],
+                    'entry_type' => $line['entry_type'],
+                    'amount' => 125,
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ]);
+            }
+        }
+
+        if (($overrides['include_journal'] ?? true) === false) {
+            return [
+                'inventory_receipt_id' => $receiptId,
+                'inventory_receipt_line_id' => $receiptLineId,
+                'journal_candidate_id' => $candidateId,
+                'journal_entry_id' => null,
+            ];
+        }
+
+        DB::table('gl_journal_entries')->insert([
+            'id' => $journalEntryId,
+            'property_id' => $journalPropertyId,
+            'transaction_date' => '2026-06-30',
+            'posting_date' => '2026-06-30',
+            'reference' => $receiptId,
+            'description' => 'Posted GRNI accrual source',
+            'status' => $overrides['journal_status'] ?? 'Posted',
+            'source_module' => 'Inventory',
+            'source_type' => 'InventoryReceipt',
+            'source_id' => $receiptId,
+            'journal_candidate_id' => $candidateId,
+            'posting_event' => 'InventoryReceiptAccrual',
+            'draft_finalization_authorized_by' => $this->actor->id,
+            'draft_finalization_authorized_at' => $timestamp,
+            'posted_by' => array_key_exists('journal_posted_by', $overrides)
+                ? $overrides['journal_posted_by']
+                : $this->actor->id,
+            'posted_at' => array_key_exists('journal_posted_at', $overrides)
+                ? $overrides['journal_posted_at']
+                : $timestamp,
+            'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
+        return [
+            'inventory_receipt_id' => $receiptId,
+            'inventory_receipt_line_id' => $receiptLineId,
+            'journal_candidate_id' => $candidateId,
+            'journal_entry_id' => $journalEntryId,
+        ];
+    }
+
+    private function assertEligibilityResultContainsNoPostingPlan(array $result): void
+    {
+        foreach ([
+            'posting_date',
+            'journal_entry_lines',
+            'debit_instruction',
+            'credit_instruction',
+            'account_mapping',
+            'ap_liability_amount',
+            'grni_clearing_amount',
+            'allocation_amount',
+            'allocation_reservation',
+            'outstanding_balance',
+        ] as $forbiddenKey) {
+            $this->assertArrayNotHasKey($forbiddenKey, $result);
+        }
     }
 
     private function invoiceLifecycleSnapshot(string $invoiceId): array
