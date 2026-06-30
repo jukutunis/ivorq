@@ -49,6 +49,18 @@ Route::middleware(['auth', 'active.property'])->group(function () {
         Route::get('/accounts-payable', [FinanceController::class, 'accountsPayable']);
         Route::get('/accounts-receivable', [FinanceController::class, 'accountsReceivable']);
         Route::get('/budget-watch', [FinanceController::class, 'budgetWatch']);
+        Route::get('/general-ledger/grni-control', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'index'])
+            ->name('finance.general-ledger.grni-control');
+        Route::post('/general-ledger/grni-control/candidates/{candidate}/approve', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'approve'])
+            ->name('finance.general-ledger.grni-control.candidates.approve');
+        Route::post('/general-ledger/grni-control/candidates/{candidate}/reject', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'reject'])
+            ->name('finance.general-ledger.grni-control.candidates.reject');
+        Route::post('/general-ledger/grni-control/candidates/{candidate}/materialize', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'materialize'])
+            ->name('finance.general-ledger.grni-control.candidates.materialize');
+        Route::post('/general-ledger/grni-control/journals/{journalEntry}/authorize-finalization', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'authorizeFinalization'])
+            ->name('finance.general-ledger.grni-control.journals.authorize-finalization');
+        Route::post('/general-ledger/grni-control/journals/{journalEntry}/post', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'post'])
+            ->name('finance.general-ledger.grni-control.journals.post');
     });
 
     Route::get('/hris', fn() => redirect('/hris/attendance'));

@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Inertia\Testing\AssertableInertia as Assert;
 use InvalidArgumentException;
 use RuntimeException;
 use Tests\PostgresTestCase;
@@ -38,6 +39,7 @@ use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
 use Modules\Foundation\User\Models\User;
+use Shared\Services\CurrentPropertyService;
 
 class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 {
@@ -302,6 +304,52 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         return $user;
     }
 
+    private function createGrniWorkspaceUser(array $permissions = []): User
+    {
+        $user = User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'GRNI Workspace User ' . substr(Str::ulid(), 0, 8),
+            'email' => 'grni-workspace-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+            'is_active' => true,
+        ]);
+
+        DB::table('property_user')->updateOrInsert(
+            [
+                'property_id' => $this->property->id,
+                'user_id' => $user->id,
+            ],
+            [
+                'is_default' => true,
+                'status' => 'active',
+                'joined_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]
+        );
+
+        if ($permissions !== []) {
+            setPermissionsTeamId($this->property->id);
+            app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
+
+            foreach ($permissions as $permission) {
+                $user->givePermissionTo($permission);
+            }
+        }
+
+        return $user;
+    }
+
+    private function activePropertySession(): array
+    {
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+
+        return [
+            'active_property_id' => $this->property->id,
+            'active_company_id' => $this->property->company_id,
+        ];
+    }
+
     /**
      * @return array{0: JournalCandidate, 1: JournalEntry, 2: User}
      */
@@ -460,6 +508,173 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         ]);
 
         return $candidate->fresh('lines');
+    }
+
+    public function test_grni_control_workspace_exposes_property_scoped_lifecycle_queues(): void
+    {
+        $this->withoutMiddleware(\Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware::class);
+        setPermissionsTeamId($this->property->id);
+
+        $this->seedGrniMappings();
+
+        $user = $this->createGrniWorkspaceUser([
+            'finance.journal-candidate.review',
+            JournalCandidateDraftMaterializationService::PERMISSION,
+            JournalEntryDraftFinalizationAuthorizationService::PERMISSION,
+            JournalEntryControlledPostingService::PERMISSION,
+        ]);
+
+        $pendingCandidate = $this->createGrniCandidate(JournalCandidateStatusEnum::PENDING_REVIEW);
+        $approvedCandidate = $this->createGrniCandidate();
+        [, $draftJournal] = $this->materializeApprovedGrniDraft();
+        [, $authorizedJournal] = $this->authorizeApprovedGrniDraft();
+        [, $postedJournal] = $this->authorizeApprovedGrniDraft();
+        app(JournalEntryControlledPostingService::class)
+            ->post($postedJournal->id, $this->createPostingExecutionUser()->id);
+
+        $otherProperty = Property::create([
+            'company_id' => $this->property->company_id,
+            'name' => 'Other GRNI Property',
+            'slug' => 'other-grni-' . strtolower((string) Str::ulid()),
+            'code' => 'OG' . substr((string) Str::ulid(), 0, 6),
+            'timezone' => 'UTC',
+            'currency' => 'USD',
+            'is_active' => true,
+        ]);
+
+        JournalCandidate::create([
+            'id' => (string) Str::ulid(),
+            'property_id' => $otherProperty->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => (string) Str::ulid(),
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+            'candidate_date' => $this->businessDate,
+            'description' => 'Cross-property candidate must stay hidden',
+        ]);
+
+        $response = $this
+            ->withSession($this->activePropertySession())
+            ->actingAs($user)
+            ->get(route('finance.general-ledger.grni-control'));
+
+        $response->assertStatus(200);
+        $response->assertInertia(fn (Assert $page) => $page
+            ->component('Ivorq/Finance/GrniControlWorkspace')
+            ->has('queues.pending_review', 1)
+            ->where('queues.pending_review.0.id', $pendingCandidate->id)
+            ->has('queues.approved_ready', 1)
+            ->where('queues.approved_ready.0.id', $approvedCandidate->id)
+            ->has('queues.draft_awaiting_authorization', 1)
+            ->where('queues.draft_awaiting_authorization.0.id', $draftJournal->id)
+            ->has('queues.authorized_ready_to_post', 1)
+            ->where('queues.authorized_ready_to_post.0.id', $authorizedJournal->id)
+            ->has('queues.posted_history', 1)
+            ->where('queues.posted_history.0.id', $postedJournal->id)
+            ->where('permissions.can_review', true)
+            ->where('permissions.can_materialize', true)
+            ->where('permissions.can_authorize', true)
+            ->where('permissions.can_post', true)
+        );
+    }
+
+    public function test_grni_control_workspace_actions_delegate_to_existing_lifecycle_services(): void
+    {
+        $this->withoutMiddleware(\Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware::class);
+        setPermissionsTeamId($this->property->id);
+
+        $this->seedGrniMappings();
+
+        $user = $this->createGrniWorkspaceUser([
+            'finance.journal-candidate.review',
+            JournalCandidateDraftMaterializationService::PERMISSION,
+            JournalEntryDraftFinalizationAuthorizationService::PERMISSION,
+            JournalEntryControlledPostingService::PERMISSION,
+        ]);
+
+        $otherProperty = Property::create([
+            'company_id' => $this->property->company_id,
+            'name' => 'Cross Property GRNI',
+            'slug' => 'cross-grni-' . strtolower((string) Str::ulid()),
+            'code' => 'CG' . substr((string) Str::ulid(), 0, 6),
+            'timezone' => 'UTC',
+            'currency' => 'USD',
+            'is_active' => true,
+        ]);
+
+        $crossPropertyCandidate = JournalCandidate::create([
+            'id' => (string) Str::ulid(),
+            'property_id' => $otherProperty->id,
+            'source_type' => 'InventoryReceipt',
+            'source_id' => (string) Str::ulid(),
+            'posting_event' => 'InventoryReceiptAccrual',
+            'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+            'candidate_date' => $this->businessDate,
+            'description' => 'Cross-property candidate',
+        ]);
+
+        $this->withSession($this->activePropertySession())
+            ->actingAs($user)
+            ->post(route('finance.general-ledger.grni-control.candidates.approve', ['candidate' => $crossPropertyCandidate->id]))
+            ->assertNotFound();
+
+        $this->assertEquals(JournalCandidateStatusEnum::PENDING_REVIEW, $crossPropertyCandidate->fresh()->status);
+        $this->assertNull($crossPropertyCandidate->fresh()->approved_by);
+
+        $candidate = $this->createGrniCandidate(JournalCandidateStatusEnum::PENDING_REVIEW);
+
+        $this->withSession($this->activePropertySession())
+            ->actingAs($user)
+            ->post(route('finance.general-ledger.grni-control.candidates.approve', ['candidate' => $candidate->id]))
+            ->assertRedirect(route('finance.general-ledger.grni-control'));
+
+        $candidate = $candidate->fresh();
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->status);
+        $this->assertSame($user->id, $candidate->approved_by);
+
+        $this->withSession($this->activePropertySession())
+            ->actingAs($user)
+            ->post(route('finance.general-ledger.grni-control.candidates.materialize', ['candidate' => $candidate->id]))
+            ->assertRedirect(route('finance.general-ledger.grni-control'));
+
+        $journal = JournalEntry::where('journal_candidate_id', $candidate->id)->firstOrFail();
+        $this->assertEquals(JournalStatusEnum::Draft, $journal->status);
+        $this->assertSame($user->id, $journal->created_by);
+        $this->assertNull($journal->posting_date);
+
+        $this->withSession($this->activePropertySession())
+            ->actingAs($user)
+            ->post(route('finance.general-ledger.grni-control.journals.authorize-finalization', ['journalEntry' => $journal->id]))
+            ->assertRedirect(route('finance.general-ledger.grni-control'));
+
+        $journal = $journal->fresh();
+        $this->assertSame($user->id, $journal->draft_finalization_authorized_by);
+        $this->assertNotNull($journal->draft_finalization_authorized_at);
+        $this->assertNull($journal->posting_date);
+
+        $this->withSession($this->activePropertySession())
+            ->actingAs($user)
+            ->post(route('finance.general-ledger.grni-control.journals.post', ['journalEntry' => $journal->id]))
+            ->assertRedirect(route('finance.general-ledger.grni-control'));
+
+        $journal = $journal->fresh();
+        $this->assertEquals(JournalStatusEnum::Posted, $journal->status);
+        $this->assertSame($user->id, $journal->posted_by);
+        $this->assertNotNull($journal->posted_at);
+        $this->assertNotNull($journal->posting_date);
+
+        $rejectedCandidate = $this->createGrniCandidate(JournalCandidateStatusEnum::PENDING_REVIEW);
+        $this->withSession($this->activePropertySession())
+            ->actingAs($user)
+            ->post(route('finance.general-ledger.grni-control.candidates.reject', ['candidate' => $rejectedCandidate->id]), [
+                'rejection_reason' => 'Receipt source evidence is incomplete.',
+            ])
+            ->assertRedirect(route('finance.general-ledger.grni-control'));
+
+        $rejectedCandidate = $rejectedCandidate->fresh();
+        $this->assertEquals(JournalCandidateStatusEnum::REJECTED, $rejectedCandidate->status);
+        $this->assertSame($user->id, $rejectedCandidate->rejected_by);
+        $this->assertSame('Receipt source evidence is incomplete.', $rejectedCandidate->rejection_reason);
     }
 
     /**
