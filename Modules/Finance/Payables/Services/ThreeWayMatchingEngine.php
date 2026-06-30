@@ -5,127 +5,317 @@ namespace Modules\Finance\Payables\Services;
 use Illuminate\Support\Facades\DB;
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
-use Modules\Finance\AccountsPayable\Enums\ApInvoiceStatusEnum;
+use Modules\Finance\Payables\Models\SupplierInvoice;
 use Modules\Finance\Payables\Models\ThreeWayMatch;
-use Modules\Finance\AccountsPayable\Models\ApInvoice;
 
 class ThreeWayMatchingEngine
 {
-    public function performMatch(ApInvoice $invoice): ThreeWayMatch
+    public function performMatch(SupplierInvoice $invoice): ThreeWayMatch
     {
         return DB::transaction(function () use ($invoice) {
+            $invoice = SupplierInvoice::with('lines')
+                ->whereKey($invoice->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $existing = ThreeWayMatch::with('lines')
+                ->where('vendor_invoice_id', $invoice->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing) {
+                return $existing;
+            }
+
             if ($invoice->lines->isEmpty()) {
-                return $this->createExceptionMatch($invoice, null, null, MatchExceptionEnum::DataIntegrityError);
+                return $this->recordMatch(
+                    $invoice,
+                    null,
+                    null,
+                    MatchStatusEnum::Exception,
+                    MatchExceptionEnum::DataIntegrityError,
+                    []
+                );
             }
 
-            $firstLine = $invoice->lines->first();
-            $receiptLine = $firstLine->receiptLine;
-            $poLine = $receiptLine?->purchaseOrderLine;
+            $purchaseOrder = $this->purchaseOrder($invoice->purchase_order_id, $invoice->property_id);
 
-            $poId = $poLine?->purchase_order_id;
-            $grnId = $receiptLine?->receiving_document_id;
-
-            if (!$poId) {
-                return $this->createExceptionMatch($invoice, $poId, $grnId, MatchExceptionEnum::MissingPurchaseOrder);
+            if (!$purchaseOrder) {
+                return $this->recordMatch(
+                    $invoice,
+                    null,
+                    $invoice->goods_receipt_id,
+                    MatchStatusEnum::Exception,
+                    MatchExceptionEnum::MissingPurchaseOrder,
+                    []
+                );
             }
 
-            if (!$grnId) {
-                return $this->createExceptionMatch($invoice, $poId, $grnId, MatchExceptionEnum::MissingGoodsReceipt);
+            if ($purchaseOrder->vendor_id !== $invoice->vendor_id) {
+                return $this->recordMatch(
+                    $invoice,
+                    $purchaseOrder->id,
+                    $invoice->goods_receipt_id,
+                    MatchStatusEnum::Exception,
+                    MatchExceptionEnum::VendorMismatch,
+                    []
+                );
             }
 
-            $match = ThreeWayMatch::create([
-                'property_id' => $invoice->property_id,
-                'vendor_invoice_id' => $invoice->id,
-                'purchase_order_id' => $poId,
-                'goods_receipt_id' => $grnId,
-                'status' => MatchStatusEnum::Matched,
-            ]);
+            if (strtoupper((string) $purchaseOrder->currency_code) !== strtoupper((string) $invoice->currency_code)) {
+                return $this->recordMatch(
+                    $invoice,
+                    $purchaseOrder->id,
+                    $invoice->goods_receipt_id,
+                    MatchStatusEnum::Exception,
+                    MatchExceptionEnum::CurrencyMismatch,
+                    []
+                );
+            }
 
-            $totalQtyVar = 0;
-            $totalPriceVar = 0;
-            $totalAmtVar = 0;
-            $hasVariance = false;
+            $goodsReceipt = $this->goodsReceipt($invoice->goods_receipt_id, $invoice->property_id);
+
+            if (!$goodsReceipt) {
+                return $this->recordMatch(
+                    $invoice,
+                    $purchaseOrder->id,
+                    null,
+                    MatchStatusEnum::Exception,
+                    MatchExceptionEnum::MissingGoodsReceipt,
+                    $this->missingReceiptEvidence($invoice, $purchaseOrder)
+                );
+            }
+
+            if ($goodsReceipt->purchase_order_id !== $purchaseOrder->id || $goodsReceipt->vendor_id !== $invoice->vendor_id) {
+                return $this->recordMatch(
+                    $invoice,
+                    $purchaseOrder->id,
+                    $goodsReceipt->id,
+                    MatchStatusEnum::Exception,
+                    MatchExceptionEnum::ReceivingMismatch,
+                    $this->missingReceiptEvidence($invoice, $purchaseOrder)
+                );
+            }
+
+            $lineEvidence = [];
+            $exception = null;
+            $totalQtyVar = 0.0;
+            $totalPriceVar = 0.0;
+            $totalAmtVar = 0.0;
 
             foreach ($invoice->lines as $invoiceLine) {
-                $grnLine = $invoiceLine->receiptLine;
-                $poLine = $grnLine?->purchaseOrderLine;
+                $purchaseOrderLine = $this->purchaseOrderLine($invoiceLine->purchase_order_line_id);
 
-                if (!$poLine || !$grnLine) {
-                    DB::rollBack();
-                    return $this->createExceptionMatch($invoice, $poId, $grnId, MatchExceptionEnum::DataIntegrityError);
+                if (!$purchaseOrderLine || $purchaseOrderLine->purchase_order_id !== $purchaseOrder->id) {
+                    return $this->recordMatch(
+                        $invoice,
+                        $purchaseOrder->id,
+                        $goodsReceipt->id,
+                        MatchStatusEnum::Exception,
+                        MatchExceptionEnum::InvalidLineReference,
+                        $lineEvidence
+                    );
                 }
 
-                if ($poLine->purchaseOrder->property_id !== $invoice->property_id ||
-                    $grnLine->receivingDocument->property_id !== $invoice->property_id) {
-                    DB::rollBack();
-                    return $this->createExceptionMatch($invoice, $poId, $grnId, MatchExceptionEnum::DataIntegrityError);
+                if ($invoiceLine->goods_receipt_line_id === null) {
+                    $lineEvidence[] = $this->lineEvidence($invoiceLine, $purchaseOrderLine, null);
+
+                    return $this->recordMatch(
+                        $invoice,
+                        $purchaseOrder->id,
+                        $goodsReceipt->id,
+                        MatchStatusEnum::Exception,
+                        MatchExceptionEnum::MissingGoodsReceipt,
+                        $lineEvidence
+                    );
                 }
 
-                $poQty = $poLine->ordered_quantity;
-                $poPrice = $poLine->unit_cost;
+                $goodsReceiptLine = $this->goodsReceiptLine($invoiceLine->goods_receipt_line_id);
 
-                $grnQty = $grnLine->received_quantity;
+                if (!$goodsReceiptLine) {
+                    $lineEvidence[] = $this->lineEvidence($invoiceLine, $purchaseOrderLine, null);
 
-                $invQty = $invoiceLine->quantity;
-                $invPrice = $invoiceLine->unit_price;
-
-                $qtyVar = $invQty - $grnQty;
-                $priceVar = $invPrice - $poPrice;
-
-                $billedAmt = $invQty * $invPrice;
-                $expectedAmt = $grnQty * $poPrice;
-                $amtVar = $billedAmt - $expectedAmt;
-
-                $totalQtyVar += $qtyVar;
-                $totalPriceVar += $priceVar;
-                $totalAmtVar += $amtVar;
-
-                if (abs($qtyVar) > 0 || abs($priceVar) > 0 || abs($amtVar) > 0) {
-                    $hasVariance = true;
+                    return $this->recordMatch(
+                        $invoice,
+                        $purchaseOrder->id,
+                        $goodsReceipt->id,
+                        MatchStatusEnum::Exception,
+                        MatchExceptionEnum::MissingGoodsReceipt,
+                        $lineEvidence
+                    );
                 }
 
-                $match->lines()->create([
-                    'vendor_invoice_line_id' => $invoiceLine->id,
-                    'purchase_order_line_id' => $poLine->id,
-                    'goods_receipt_line_id' => $grnLine->id,
-                    'inventory_item_id' => $grnLine->inventory_item_id,
-                    'po_quantity' => $poQty,
-                    'po_price' => $poPrice,
-                    'grn_quantity' => $grnQty,
-                    'invoice_quantity' => $invQty,
-                    'invoice_price' => $invPrice,
-                    'quantity_variance' => $qtyVar,
-                    'price_variance' => $priceVar,
-                    'amount_variance' => $amtVar,
-                ]);
+                if ($goodsReceiptLine->receiving_document_id !== $goodsReceipt->id ||
+                    $goodsReceiptLine->purchase_order_line_id !== $purchaseOrderLine->id) {
+                    $lineEvidence[] = $this->lineEvidence($invoiceLine, $purchaseOrderLine, $goodsReceiptLine);
+
+                    return $this->recordMatch(
+                        $invoice,
+                        $purchaseOrder->id,
+                        $goodsReceipt->id,
+                        MatchStatusEnum::Exception,
+                        MatchExceptionEnum::ReceivingMismatch,
+                        $lineEvidence
+                    );
+                }
+
+                $evidence = $this->lineEvidence($invoiceLine, $purchaseOrderLine, $goodsReceiptLine);
+                $lineEvidence[] = $evidence;
+
+                $totalQtyVar += $evidence['quantity_variance'];
+                $totalPriceVar += $evidence['price_variance'];
+                $totalAmtVar += $evidence['amount_variance'];
+
+                if ($exception === null && abs($evidence['quantity_variance']) > 0.0001) {
+                    $exception = MatchExceptionEnum::QuantityVariance;
+                }
+
+                if ($exception === null && abs($evidence['price_variance']) > 0.0001) {
+                    $exception = MatchExceptionEnum::PriceVariance;
+                }
+
+                if ($exception === null && abs($evidence['amount_variance']) > 0.0001) {
+                    $exception = MatchExceptionEnum::LineAmountVariance;
+                }
             }
 
-            $finalStatus = $hasVariance ? MatchStatusEnum::MatchedWithVariance : MatchStatusEnum::Matched;
-
-            $match->update([
-                'status' => $finalStatus,
-                'total_quantity_variance' => $totalQtyVar,
-                'total_price_variance' => $totalPriceVar,
-                'total_amount_variance' => $totalAmtVar,
-            ]);
-
-            $invoice->update(['status' => ApInvoiceStatusEnum::APPROVED]);
-
-            return $match;
+            return $this->recordMatch(
+                $invoice,
+                $purchaseOrder->id,
+                $goodsReceipt->id,
+                $exception === null ? MatchStatusEnum::Matched : MatchStatusEnum::Exception,
+                $exception,
+                $lineEvidence,
+                round($totalQtyVar, 4),
+                round($totalPriceVar, 2),
+                round($totalAmtVar, 2)
+            );
         });
     }
 
-    private function createExceptionMatch(ApInvoice $invoice, ?string $poId, ?string $grnId, MatchExceptionEnum $exception): ThreeWayMatch
+    private function recordMatch(
+        SupplierInvoice $invoice,
+        ?string $purchaseOrderId,
+        ?string $goodsReceiptId,
+        MatchStatusEnum $status,
+        ?MatchExceptionEnum $exception,
+        array $lineEvidence,
+        float $totalQuantityVariance = 0.0,
+        float $totalPriceVariance = 0.0,
+        float $totalAmountVariance = 0.0,
+    ): ThreeWayMatch
     {
-        return DB::transaction(function () use ($invoice, $poId, $grnId, $exception) {
-            return ThreeWayMatch::create([
-                'property_id' => $invoice->property_id,
-                'vendor_invoice_id' => $invoice->id,
-                'purchase_order_id' => $poId,
-                'goods_receipt_id' => $grnId,
-                'status' => MatchStatusEnum::Exception,
-                'exception_code' => $exception,
+        $match = ThreeWayMatch::create([
+            'property_id' => $invoice->property_id,
+            'vendor_invoice_id' => $invoice->id,
+            'purchase_order_id' => $purchaseOrderId,
+            'goods_receipt_id' => $goodsReceiptId,
+            'status' => $status,
+            'exception_code' => $exception,
+            'total_quantity_variance' => $totalQuantityVariance,
+            'total_price_variance' => $totalPriceVariance,
+            'total_amount_variance' => $totalAmountVariance,
+            'created_by' => $invoice->created_by,
+            'updated_by' => $invoice->created_by,
+        ]);
+
+        foreach ($lineEvidence as $line) {
+            $match->lines()->create($line + [
+                'created_by' => $invoice->created_by,
+                'updated_by' => $invoice->created_by,
             ]);
-        });
+        }
+
+        return $match->fresh(['lines']);
+    }
+
+    private function missingReceiptEvidence(SupplierInvoice $invoice, object $purchaseOrder): array
+    {
+        $evidence = [];
+
+        foreach ($invoice->lines as $invoiceLine) {
+            $purchaseOrderLine = $this->purchaseOrderLine($invoiceLine->purchase_order_line_id);
+
+            if ($purchaseOrderLine && $purchaseOrderLine->purchase_order_id === $purchaseOrder->id) {
+                $evidence[] = $this->lineEvidence($invoiceLine, $purchaseOrderLine, null);
+            }
+        }
+
+        return $evidence;
+    }
+
+    private function lineEvidence(object $invoiceLine, object $purchaseOrderLine, ?object $goodsReceiptLine): array
+    {
+        $poQuantity = (float) $purchaseOrderLine->ordered_quantity;
+        $poPrice = (float) $purchaseOrderLine->unit_cost;
+        $receiptQuantity = $goodsReceiptLine ? (float) $goodsReceiptLine->received_quantity : 0.0;
+        $invoiceQuantity = (float) $invoiceLine->quantity;
+        $invoicePrice = (float) $invoiceLine->unit_price;
+        $invoiceAmount = (float) $invoiceLine->line_total;
+        $expectedAmount = $receiptQuantity * $poPrice;
+
+        return [
+            'vendor_invoice_line_id' => $invoiceLine->id,
+            'purchase_order_line_id' => $purchaseOrderLine->id,
+            'goods_receipt_line_id' => $goodsReceiptLine?->id,
+            'inventory_item_id' => $goodsReceiptLine?->inventory_item_id ?? $invoiceLine->inventory_item_id,
+            'po_quantity' => $poQuantity,
+            'po_price' => $poPrice,
+            'grn_quantity' => $receiptQuantity,
+            'invoice_quantity' => $invoiceQuantity,
+            'invoice_price' => $invoicePrice,
+            'quantity_variance' => round($invoiceQuantity - $receiptQuantity, 4),
+            'price_variance' => round($invoicePrice - $poPrice, 2),
+            'amount_variance' => round($invoiceAmount - $expectedAmount, 2),
+        ];
+    }
+
+    private function purchaseOrder(?string $id, string $propertyId): ?object
+    {
+        if ($id === null) {
+            return null;
+        }
+
+        return DB::table('purchase_orders')
+            ->where('id', $id)
+            ->where('property_id', $propertyId)
+            ->whereNull('deleted_at')
+            ->first();
+    }
+
+    private function purchaseOrderLine(?string $id): ?object
+    {
+        if ($id === null) {
+            return null;
+        }
+
+        return DB::table('purchase_order_lines')
+            ->where('id', $id)
+            ->whereNull('deleted_at')
+            ->first();
+    }
+
+    private function goodsReceipt(?string $id, string $propertyId): ?object
+    {
+        if ($id === null) {
+            return null;
+        }
+
+        return DB::table('receiving_documents')
+            ->where('id', $id)
+            ->where('property_id', $propertyId)
+            ->whereNull('deleted_at')
+            ->first();
+    }
+
+    private function goodsReceiptLine(?string $id): ?object
+    {
+        if ($id === null) {
+            return null;
+        }
+
+        return DB::table('receiving_lines')
+            ->where('id', $id)
+            ->first();
     }
 }
