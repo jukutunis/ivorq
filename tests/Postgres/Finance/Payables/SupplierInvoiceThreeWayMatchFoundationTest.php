@@ -17,6 +17,7 @@ use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
 use Modules\Finance\Payables\Services\ApGrniSettlementAgingProjectionService;
 use Modules\Finance\Payables\Services\GrniClearingAllocationEligibilityService;
+use Modules\Finance\Payables\Services\PaymentProposalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
 use Modules\Finance\Payables\Services\SupplierInvoiceRegistrationService;
@@ -43,6 +44,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     private JournalEntryDraftFinalizationAuthorizationService $draftFinalizationAuthorizationService;
     private JournalEntryControlledPostingService $controlledPostingService;
     private ApGrniSettlementAgingProjectionService $settlementProjectionService;
+    private PaymentProposalService $paymentProposalService;
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -73,6 +75,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->draftFinalizationAuthorizationService = app(JournalEntryDraftFinalizationAuthorizationService::class);
         $this->controlledPostingService = app(JournalEntryControlledPostingService::class);
         $this->settlementProjectionService = app(ApGrniSettlementAgingProjectionService::class);
+        $this->paymentProposalService = app(PaymentProposalService::class);
     }
 
     public function test_authorized_actor_registers_supplier_invoice_and_matched_result_without_accounting_mutation(): void
@@ -1405,6 +1408,118 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         app(\Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController::class)->index($request);
     }
 
+    public function test_authorized_actor_creates_draft_payment_proposal_from_posted_ap_liability(): void
+    {
+        $context = $this->makePostedApLiabilityContext();
+        $before = $this->controlledSnapshot();
+
+        $proposal = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+
+        $this->assertSame('DRAFT', $proposal->status->value);
+        $this->assertSame($this->property->id, $proposal->property_id);
+        $this->assertSame($context['invoice']->vendor_id, $proposal->vendor_id);
+        $this->assertSame('IDR', $proposal->currency_code);
+        $this->assertSame('125.00', (string) $proposal->total_amount);
+        $this->assertSame($this->actor->id, $proposal->created_by);
+        $this->assertCount(1, $proposal->items);
+
+        $item = $proposal->items->first();
+        $this->assertSame($context['posted']->id, $item->source_journal_entry_id);
+        $this->assertSame($context['candidate']->id, $item->source_journal_candidate_id);
+        $this->assertSame($context['invoice']->id, $item->supplier_invoice_id);
+        $this->assertSame($context['invoice']->vendor_id, $item->vendor_id);
+        $this->assertSame('125.00', (string) $item->source_amount);
+        $this->assertTrue($item->is_active);
+
+        $this->assertControlledSnapshotUnchangedExcept($before, []);
+        $this->assertSame($this->invoiceLifecycleSnapshot($context['invoice']->id), $this->invoiceLifecycleSnapshot($context['invoice']->id));
+    }
+
+    public function test_payment_proposal_draft_is_idempotent_and_blocks_duplicate_active_selection(): void
+    {
+        $context = $this->makePostedApLiabilityContext();
+        $proposal = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+        $snapshot = $this->paymentProposalSnapshot($proposal->id);
+
+        $repeat = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+
+        $this->assertSame($proposal->id, $repeat->id);
+        $this->assertSame($snapshot, $this->paymentProposalSnapshot($proposal->id));
+
+        $otherActor = $this->makeAuthorizedActor($this->property);
+
+        try {
+            $this->paymentProposalService->createDraft([$context['posted']->id], $otherActor);
+            $this->fail('Conflicting active Draft Payment Proposal selection must fail controlled.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('Conflicting', $exception->getMessage());
+        }
+    }
+
+    public function test_payment_proposal_draft_cancellation_records_evidence_and_releases_selection_only(): void
+    {
+        $context = $this->makePostedApLiabilityContext();
+        $proposal = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+        $sourceBefore = $this->sourceSnapshot($context['fixture']);
+        $invoiceBefore = $this->invoiceLifecycleSnapshot($context['invoice']->id);
+        $journalBefore = (array) DB::table('gl_journal_entries')->where('id', $context['posted']->id)->first();
+
+        $cancelled = $this->paymentProposalService->cancelDraft($proposal->id, $this->actor, 'Vendor requested payment timing review.');
+
+        $this->assertSame('CANCELLED', $cancelled->status->value);
+        $this->assertSame($this->actor->id, $cancelled->cancelled_by);
+        $this->assertNotNull($cancelled->cancelled_at);
+        $this->assertSame('Vendor requested payment timing review.', $cancelled->cancellation_reason);
+        $this->assertFalse((bool) DB::table('payment_proposal_items')->where('payment_proposal_id', $proposal->id)->value('is_active'));
+        $this->assertSame($sourceBefore, $this->sourceSnapshot($context['fixture']));
+        $this->assertSame($invoiceBefore, $this->invoiceLifecycleSnapshot($context['invoice']->id));
+        $this->assertSame($journalBefore, (array) DB::table('gl_journal_entries')->where('id', $context['posted']->id)->first());
+
+        $replacement = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+        $this->assertNotSame($proposal->id, $replacement->id);
+
+        $repeat = $this->paymentProposalService->cancelDraft($proposal->id, $this->actor, 'Vendor requested payment timing review.');
+        $this->assertSame($proposal->id, $repeat->id);
+    }
+
+    public function test_payment_proposal_creation_and_cancellation_fail_closed_for_invalid_actor_and_sources(): void
+    {
+        $context = $this->makePostedApLiabilityContext();
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $crossProperty = $this->makeAuthorizedActor($this->makeProperty());
+
+        foreach ([$unauthorized, $disabled, $crossProperty] as $invalidActor) {
+            $before = $this->controlledSnapshot();
+
+            try {
+                $this->paymentProposalService->createDraft([$context['posted']->id], $invalidActor);
+                $this->fail('Invalid Payment Proposal actor must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertControlledSnapshotUnchanged($before);
+            }
+        }
+
+        $draftContext = $this->makeApprovedGrniApDraft($context['accounts']);
+
+        try {
+            $this->paymentProposalService->createDraft([$draftContext['draft']->id], $this->actor);
+            $this->fail('Nonposted AP liability source must fail controlled.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('not eligible', $exception->getMessage());
+        }
+
+        $proposal = $this->paymentProposalService->createDraft([$context['posted']->id], $this->actor);
+
+        try {
+            $this->paymentProposalService->cancelDraft($proposal->id, $this->actor, ' ');
+            $this->fail('Cancellation without reason must fail controlled.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('meaningful reason', $exception->getMessage());
+        }
+    }
+
     private function attachActorToProperty(User $actor, Property $property): void
     {
         $actor->properties()->syncWithoutDetaching([
@@ -1427,6 +1542,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'finance.journal-candidate.materialize-draft',
             'finance.journal-entry-draft.authorize-finalization',
             'finance.journal-entry.post',
+            PaymentProposalService::CREATE_PERMISSION,
+            PaymentProposalService::CANCEL_PERMISSION,
         ];
     }
 
@@ -1892,15 +2009,28 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         ];
     }
 
-    private function makeApprovedGrniApDraft(): array
+    private function makeApprovedGrniApDraft(?array $accounts = null): array
     {
-        $context = $this->makeApprovedGrniApCandidate();
+        $context = $this->makeApprovedGrniApCandidate($accounts);
         $candidate = $this->candidateReviewService->approve($context['candidate']->id, $this->actor->id);
         $draft = $this->draftMaterializationService->materialize($candidate->id, $this->actor->id);
 
         return $context + [
             'candidate' => $candidate,
             'draft' => $draft,
+        ];
+    }
+
+    private function makePostedApLiabilityContext(): array
+    {
+        $context = $this->makeApprovedGrniApDraft();
+        $draft = $context['draft'];
+        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
+        $this->draftFinalizationAuthorizationService->authorize($draft->id, $this->actor->id);
+        $posted = $this->controlledPostingService->post($draft->id, $this->actor->id);
+
+        return $context + [
+            'posted' => $posted,
         ];
     }
 
@@ -1977,6 +2107,50 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             ->get()
             ->keyBy('account_id')
             ->all();
+    }
+
+    private function paymentProposalSnapshot(string $proposalId): array
+    {
+        $proposal = (array) DB::table('payment_proposals')
+            ->where('id', $proposalId)
+            ->first([
+                'property_id',
+                'vendor_id',
+                'proposal_number',
+                'currency_code',
+                'status',
+                'source_fingerprint',
+                'total_amount',
+                'created_by',
+                'created_at',
+                'cancelled_by',
+                'cancelled_at',
+                'cancellation_reason',
+            ]);
+
+        $items = DB::table('payment_proposal_items')
+            ->where('payment_proposal_id', $proposalId)
+            ->orderBy('source_journal_entry_id')
+            ->get([
+                'property_id',
+                'source_journal_entry_id',
+                'source_journal_candidate_id',
+                'supplier_invoice_id',
+                'vendor_id',
+                'currency_code',
+                'source_amount',
+                'is_active',
+                'source_snapshot',
+                'created_by',
+                'created_at',
+            ])
+            ->map(fn (object $item): array => (array) $item)
+            ->all();
+
+        return [
+            'proposal' => $proposal,
+            'items' => $items,
+        ];
     }
 
     private function makeAccount(

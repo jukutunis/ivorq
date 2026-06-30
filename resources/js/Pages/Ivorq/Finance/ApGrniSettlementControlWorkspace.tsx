@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Link } from '@inertiajs/react';
+import { Link, useForm, usePage } from '@inertiajs/react';
 import '../../../../css/ivorq-prototype.css';
 
 import IvorqLayout from '../../../Layouts/IvorqLayout';
@@ -95,9 +95,28 @@ interface Projection {
 
 interface Props {
   projection: Projection;
+  payment_proposals: PaymentProposal[];
   permissions: {
     can_view: boolean;
+    can_create_payment_proposal: boolean;
+    can_cancel_payment_proposal: boolean;
   };
+}
+
+interface PaymentProposal {
+  id: string;
+  proposal_number: string;
+  vendor: string | null;
+  currency_code: string;
+  status: string;
+  total_amount: string;
+  created_at: string | null;
+  items: Array<{
+    id: string;
+    invoice_number: string | null;
+    source_journal_entry_id: string;
+    source_amount: string;
+  }>;
 }
 
 type QueueKey = keyof Projection['queues'];
@@ -154,10 +173,32 @@ function itemSubtitle(item: SettlementItem): string {
   return parts.length > 0 ? parts.join(' | ') : item.settlement_status;
 }
 
-export default function ApGrniSettlementControlWorkspace({ projection }: Props) {
+export default function ApGrniSettlementControlWorkspace({ projection, payment_proposals, permissions }: Props) {
+  const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const allItems = useMemo(() => queueDefinitions.flatMap((definition) => projection.queues[definition.key]), [projection]);
   const [selectedId, setSelectedId] = useState<string | null>(allItems[0]?.id ?? null);
+  const [cancelProposalId, setCancelProposalId] = useState<string | null>(null);
   const selectedItem = allItems.find((item) => item.id === selectedId) ?? allItems[0] ?? null;
+  const createForm = useForm<{ journal_entry_ids: string[] }>({ journal_entry_ids: [] });
+  const cancelForm = useForm({ cancellation_reason: '' });
+
+  const createDraft = (journalEntryId: string) => {
+    createForm.setData('journal_entry_ids', [journalEntryId]);
+    createForm.post(route('finance.payables.ap-grni-settlement-control.payment-proposals.create'), {
+      preserveScroll: true,
+    });
+  };
+
+  const submitCancel = (event: React.FormEvent, proposalId: string) => {
+    event.preventDefault();
+    cancelForm.post(route('finance.payables.ap-grni-settlement-control.payment-proposals.cancel', { paymentProposal: proposalId }), {
+      preserveScroll: true,
+      onSuccess: () => {
+        setCancelProposalId(null);
+        cancelForm.reset('cancellation_reason');
+      },
+    });
+  };
 
   return (
     <div className="workspace">
@@ -195,11 +236,29 @@ export default function ApGrniSettlementControlWorkspace({ projection }: Props) 
         </QuickFilterPanel>
 
         <MainContent>
+          {(flash?.success || flash?.error) && (
+            <div
+              style={{
+                border: `1px solid var(--${flash.success ? 'ready-green' : 'critical-red'})`,
+                borderRadius: '6px',
+                padding: '10px 12px',
+                marginBottom: '14px',
+                color: `var(--${flash.success ? 'ready-green' : 'critical-red'})`,
+                background: 'var(--surface-card)',
+                fontSize: '13px',
+                fontWeight: 600,
+              }}
+            >
+              {flash.success || flash.error}
+            </div>
+          )}
+
           <OperationalSnapshot>
             <SnapshotCard value={projection.summary.ready_count} label="Ready" statusColor="ready-green" />
             <SnapshotCard value={projection.summary.aging_count} label="Aging" statusColor="inspection-blue" />
             <SnapshotCard value={projection.summary.history_count} label="Lifecycle" statusColor="neutral-slate" />
             <SnapshotCard value={projection.summary.held_count} label="Held" statusColor="warning-amber" />
+            <SnapshotCard value={payment_proposals.length} label="Draft Proposals" statusColor="inspection-blue" />
           </OperationalSnapshot>
 
           {selectedItem && (
@@ -278,9 +337,21 @@ export default function ApGrniSettlementControlWorkspace({ projection }: Props) 
                         </span>
                       }
                       actions={
-                        <Button type="button" size="sm" variant="secondary" onClick={() => setSelectedId(item.id)}>
-                          <Icon name="search" /> Details
-                        </Button>
+                        <>
+                          <Button type="button" size="sm" variant="secondary" onClick={() => setSelectedId(item.id)}>
+                            <Icon name="search" /> Details
+                          </Button>
+                          {definition.key === 'ready' && permissions.can_create_payment_proposal && item.journal && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={createForm.processing}
+                              onClick={() => createDraft(item.id)}
+                            >
+                              <Icon name="finance" /> Draft
+                            </Button>
+                          )}
+                        </>
                       }
                     />
                   ))}
@@ -288,6 +359,98 @@ export default function ApGrniSettlementControlWorkspace({ projection }: Props) 
               </QueueList>
             ))}
           </div>
+
+          <BoardHeader title="Draft Payment Proposals" />
+
+          <QueueList title={<span>Payment Proposal Drafts</span>} count={payment_proposals.length} headerStyle={{ minHeight: '48px' }}>
+            <div style={{ display: 'grid', gap: '10px', padding: '10px' }}>
+              {payment_proposals.length === 0 && (
+                <div style={{ color: 'var(--text-secondary)', fontSize: '12px', padding: '12px 4px' }}>
+                  No draft proposals.
+                </div>
+              )}
+
+              {payment_proposals.map((proposal) => (
+                <div key={proposal.id}>
+                  <WorkCard
+                    borderColor="inspection-blue"
+                    meta={
+                      <>
+                        <span>{formatDate(proposal.created_at)}</span>
+                        <StatusBadge status="inspection">{formatLabel(proposal.status)}</StatusBadge>
+                      </>
+                    }
+                    title={proposal.proposal_number}
+                    detail={
+                      <span>
+                        {proposal.vendor || 'Vendor unavailable'}
+                        <br />
+                        {formatAmount(proposal.total_amount, proposal.currency_code)}
+                      </span>
+                    }
+                    actions={
+                      permissions.can_cancel_payment_proposal && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={cancelForm.processing}
+                          onClick={() => setCancelProposalId(cancelProposalId === proposal.id ? null : proposal.id)}
+                        >
+                          <Icon name="warning" /> Cancel
+                        </Button>
+                      )
+                    }
+                  />
+
+                  {cancelProposalId === proposal.id && (
+                    <form
+                      onSubmit={(event) => submitCancel(event, proposal.id)}
+                      style={{
+                        marginTop: '8px',
+                        border: '1px solid var(--border-default)',
+                        borderRadius: '6px',
+                        padding: '8px',
+                        background: 'var(--surface-card)',
+                      }}
+                    >
+                      <textarea
+                        value={cancelForm.data.cancellation_reason}
+                        onChange={(event) => cancelForm.setData('cancellation_reason', event.target.value)}
+                        rows={3}
+                        required
+                        placeholder="Cancellation reason"
+                        style={{
+                          width: '100%',
+                          resize: 'vertical',
+                          border: '1px solid var(--border-default)',
+                          borderRadius: '6px',
+                          padding: '8px',
+                          fontSize: '12px',
+                        }}
+                      />
+                      <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setCancelProposalId(null);
+                            cancelForm.reset('cancellation_reason');
+                          }}
+                        >
+                          Back
+                        </Button>
+                        <Button type="submit" size="sm" disabled={cancelForm.processing}>
+                          <Icon name="warning" /> Cancel Draft
+                        </Button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              ))}
+            </div>
+          </QueueList>
         </MainContent>
       </SplitLayout>
     </div>
