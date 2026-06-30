@@ -13,6 +13,7 @@ use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationS
 use Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService;
 use Modules\Finance\GeneralLedger\Services\JournalEntryControlledPostingService;
 use Modules\Finance\GeneralLedger\Services\JournalEntryDraftFinalizationAuthorizationService;
+use Modules\Finance\GeneralLedger\Services\SupplierPaymentJournalCandidateService;
 use Modules\Finance\Payables\Services\PaymentProposalApprovalService;
 use Modules\Finance\Payables\Services\PaymentProposalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
@@ -40,6 +41,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
     private JournalCandidateDraftMaterializationService $draftMaterializationService;
     private JournalEntryDraftFinalizationAuthorizationService $draftAuthorizationService;
     private JournalEntryControlledPostingService $postingService;
+    private SupplierPaymentJournalCandidateService $supplierPaymentCandidateService;
     private PaymentProposalService $proposalService;
     private PaymentProposalApprovalService $proposalApprovalService;
     private GeneralCashierOperationalFoundationService $cashierService;
@@ -72,6 +74,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         $this->draftMaterializationService = app(JournalCandidateDraftMaterializationService::class);
         $this->draftAuthorizationService = app(JournalEntryDraftFinalizationAuthorizationService::class);
         $this->postingService = app(JournalEntryControlledPostingService::class);
+        $this->supplierPaymentCandidateService = app(SupplierPaymentJournalCandidateService::class);
         $this->proposalService = app(PaymentProposalService::class);
         $this->proposalApprovalService = app(PaymentProposalApprovalService::class);
         $this->cashierService = app(GeneralCashierOperationalFoundationService::class);
@@ -180,6 +183,86 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         }
     }
 
+    public function test_authorized_actor_creates_pending_review_supplier_payment_journal_candidate(): void
+    {
+        $context = $this->makePaymentExecutionContext();
+        $before = $this->controlledSnapshot();
+        $sourceBefore = $this->sourceEvidenceSnapshot($context);
+        $this->actingAs($this->actor);
+
+        $candidate = $this->supplierPaymentCandidateService->createForPaymentExecution($context['execution']->id);
+
+        $this->assertSame('PENDING_REVIEW', $candidate->status->value);
+        $this->assertSame($this->property->id, $candidate->property_id);
+        $this->assertSame('PaymentExecution', $candidate->source_type);
+        $this->assertSame($context['execution']->id, $candidate->source_id);
+        $this->assertSame('SupplierPaymentCashDisbursement', $candidate->posting_event);
+        $this->assertSame($this->actor->id, $candidate->created_by);
+        $this->assertCount(2, $candidate->lines);
+
+        $lines = $candidate->lines->sortBy('created_at')->values();
+        $this->assertSame('AP_CONTROL', $lines[0]->operational_identity->value);
+        $this->assertSame('DEBIT', $lines[0]->entry_type->value);
+        $this->assertSame('125.0000', (string) $lines[0]->amount);
+        $this->assertSame('CASH_AND_BANK', $lines[1]->operational_identity->value);
+        $this->assertSame('CREDIT', $lines[1]->entry_type->value);
+        $this->assertSame('125.0000', (string) $lines[1]->amount);
+
+        $this->assertControlledSnapshotUnchangedExcept($before, [
+            'journal_candidates' => 1,
+            'journal_candidate_lines' => 2,
+        ]);
+        $this->assertSame($sourceBefore, $this->sourceEvidenceSnapshot($context));
+
+        $snapshot = $this->candidateSnapshot($candidate->id);
+        $repeat = $this->supplierPaymentCandidateService->createForPaymentExecution($context['execution']->id);
+
+        $this->assertSame($candidate->id, $repeat->id);
+        $this->assertSame($snapshot, $this->candidateSnapshot($candidate->id));
+    }
+
+    public function test_supplier_payment_candidate_creation_fails_closed_for_invalid_actor_and_source_evidence(): void
+    {
+        $context = $this->makePaymentExecutionContext();
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $crossProperty = $this->makeAuthorizedActor($this->makeProperty());
+
+        foreach ([null, $unauthorized, $disabled, $crossProperty] as $invalidActor) {
+            if ($invalidActor) {
+                $this->be($invalidActor);
+            } else {
+                auth()->logout();
+            }
+            $before = $this->controlledSnapshot();
+
+            try {
+                $this->supplierPaymentCandidateService->createForPaymentExecution($context['execution']->id);
+                $this->fail('Invalid supplier payment candidate actor must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertControlledSnapshotUnchanged($before);
+            }
+        }
+
+        $this->actingAs($this->actor);
+        DB::table('payment_executions')
+            ->where('id', $context['execution']->id)
+            ->update([
+                'source_amount' => 124,
+                'updated_at' => now(),
+            ]);
+        $before = $this->controlledSnapshot();
+
+        try {
+            $this->supplierPaymentCandidateService->createForPaymentExecution($context['execution']->id);
+            $this->fail('Conflicting payment execution source amount must fail controlled.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('amount conflicts', $exception->getMessage());
+            $this->assertControlledSnapshotUnchanged($before);
+        }
+    }
+
     private function paymentLifecyclePermissions(): array
     {
         return [
@@ -197,6 +280,24 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             PaymentProposalApprovalService::APPROVE_PERMISSION,
             GeneralCashierOperationalFoundationService::OPEN_PERMISSION,
             PaymentExecutionService::PERMISSION,
+            SupplierPaymentJournalCandidateService::PERMISSION,
+        ];
+    }
+
+    private function makePaymentExecutionContext(): array
+    {
+        $context = $this->makeApprovedPaymentProposalContext();
+        $cashier = $this->makeCashierContext($this->actor, $context['accounts']['cash_account_id']);
+        $execution = $this->paymentExecutionService->recordCashExecution(
+            $context['proposal_item_id'],
+            $cashier['session_id'],
+            $cashier['instrument_id'],
+            $this->actor
+        );
+
+        return $context + [
+            'cashier' => $cashier,
+            'execution' => $execution,
         ];
     }
 
@@ -909,6 +1010,9 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             'proposal_item' => (array) DB::table('payment_proposal_items')->where('id', $context['proposal_item_id'])->first(),
             'invoice' => (array) DB::table('vendor_invoices')->where('id', $context['invoice']->id)->first(),
             'source_journal' => (array) DB::table('gl_journal_entries')->where('id', $context['posted']->id)->first(),
+            'payment_execution' => isset($context['execution'])
+                ? (array) DB::table('payment_executions')->where('id', $context['execution']->id)->first()
+                : null,
             'purchase_order' => (array) DB::table('purchase_orders')->where('id', $context['fixture']['purchase_order_id'])->first(),
             'receiving' => (array) DB::table('receiving_documents')->where('id', $context['fixture']['goods_receipt_id'])->first(),
         ];
@@ -937,5 +1041,47 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
                 'created_by',
                 'created_at',
             ]);
+    }
+
+    private function candidateSnapshot(string $candidateId): array
+    {
+        $candidate = (array) DB::table('journal_candidates')
+            ->where('id', $candidateId)
+            ->first([
+                'property_id',
+                'source_type',
+                'source_id',
+                'posting_event',
+                'status',
+                'candidate_date',
+                'description',
+                'created_by',
+                'approved_by',
+                'approved_at',
+                'rejected_by',
+                'rejected_at',
+                'rejection_reason',
+                'metadata',
+                'created_at',
+            ]);
+
+        $lines = DB::table('journal_candidate_lines')
+            ->where('journal_candidate_id', $candidateId)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get([
+                'operational_identity',
+                'entry_type',
+                'amount',
+                'cost_center_id',
+                'notes',
+            ])
+            ->map(fn (object $line): array => (array) $line)
+            ->all();
+
+        return [
+            'candidate' => $candidate,
+            'lines' => $lines,
+        ];
     }
 }
