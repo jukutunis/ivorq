@@ -37,6 +37,7 @@ class PermissionSeeder extends Seeder
             // Finance & GL Review Lifecycle
             'finance.journal-candidate.review',
             'finance.journal-candidate.materialize-draft',
+            'finance.journal-entry-draft.authorize-finalization',
         ];
 
         foreach ($permissions as $name) {

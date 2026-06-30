@@ -9,7 +9,9 @@ use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Modules\Foundation\User\Models\User;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
 
@@ -32,17 +34,30 @@ class JournalEntry extends Model
         'reversal_of_id',
         'journal_candidate_id',
         'posting_event',
+        'draft_finalization_authorized_by',
+        'draft_finalization_authorized_at',
     ];
 
     protected $casts = [
         'transaction_date' => 'date',
         'posting_date' => 'date',
         'status' => JournalStatusEnum::class,
+        'draft_finalization_authorized_at' => 'datetime',
     ];
 
     public function lines(): HasMany
     {
         return $this->hasMany(JournalEntryLine::class, 'journal_entry_id');
+    }
+
+    public function candidate(): BelongsTo
+    {
+        return $this->belongsTo(JournalCandidate::class, 'journal_candidate_id');
+    }
+
+    public function draftFinalizationAuthorizer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'draft_finalization_authorized_by');
     }
 
     public function getActivitylogOptions(): LogOptions

@@ -23,6 +23,7 @@ use Modules\Operations\Inventory\Models\InventoryLocation;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
+use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\GeneralLedger\Models\OperationalIdentityMapping;
 use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
@@ -31,6 +32,7 @@ use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
 use Modules\Finance\GeneralLedger\Services\GrniPostingEngine;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationService;
+use Modules\Finance\GeneralLedger\Services\JournalEntryDraftFinalizationAuthorizationService;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
@@ -263,6 +265,59 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         }
 
         return $user;
+    }
+
+    private function createDraftFinalizationAuthorizationUser(bool $authorized = true, bool $active = true): User
+    {
+        $user = User::create([
+            'id' => (string) Str::ulid(),
+            'name' => 'Journal Draft Authorization User ' . substr(Str::ulid(), 0, 8),
+            'email' => 'draft-authorizer-' . uniqid() . '@example.com',
+            'password' => bcrypt('password'),
+            'is_active' => $active,
+        ]);
+
+        if ($authorized) {
+            $user->givePermissionTo(JournalEntryDraftFinalizationAuthorizationService::PERMISSION);
+        }
+
+        return $user;
+    }
+
+    /**
+     * @return array{0: JournalCandidate, 1: JournalEntry, 2: User}
+     */
+    private function materializeApprovedGrniDraft(): array
+    {
+        $candidate = $this->createGrniCandidate();
+        $materializer = $this->createMaterializationUser();
+        $journal = app(JournalCandidateDraftMaterializationService::class)
+            ->materialize($candidate->id, $materializer->id);
+
+        return [$candidate->fresh('lines'), $journal->fresh('lines'), $materializer];
+    }
+
+    private function journalLineSnapshot(string $journalEntryId): array
+    {
+        return DB::table('gl_journal_entry_lines')
+            ->where('journal_entry_id', $journalEntryId)
+            ->orderBy('id')
+            ->get([
+                'id',
+                'property_id',
+                'journal_entry_id',
+                'account_id',
+                'department_id',
+                'debit_amount',
+                'credit_amount',
+                'memo',
+                'created_by',
+                'updated_by',
+                'created_at',
+                'updated_at',
+            ])
+            ->map(fn ($line) => (array) $line)
+            ->all();
     }
 
     private function createGrniCandidate(JournalCandidateStatusEnum $status = JournalCandidateStatusEnum::APPROVED): JournalCandidate
@@ -1112,5 +1167,264 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         $this->assertDatabaseCount('gl_journal_entries', 0);
         $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->fresh()->status);
+    }
+
+    public function test_authorized_actor_finalization_authorizes_journal_entry_draft_without_posting(): void
+    {
+        $this->seedGrniMappings();
+        [$candidate, $journal] = $this->materializeApprovedGrniDraft();
+        $actor = $this->createDraftFinalizationAuthorizationUser();
+        $service = app(JournalEntryDraftFinalizationAuthorizationService::class);
+
+        $this->assertDatabaseHas('permissions', [
+            'name' => JournalEntryDraftFinalizationAuthorizationService::PERMISSION,
+            'guard_name' => 'web',
+        ]);
+
+        $entryCount = DB::table('gl_journal_entries')->count();
+        $lineSnapshotBefore = $this->journalLineSnapshot($journal->id);
+        $ledgerBalanceCount = DB::table('gl_ledger_balances')->count();
+        $periodBefore = DB::table('gl_financial_periods')
+            ->where('property_id', $this->property->id)
+            ->where('period_year', 2026)
+            ->where('period_month', 6)
+            ->value('status');
+        $businessDateBefore = DB::table('property_business_dates')
+            ->where('property_id', $this->property->id)
+            ->where('business_date', $this->businessDate)
+            ->value('status');
+        $candidateBefore = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $candidateLineAmountsBefore = DB::table('journal_candidate_lines')
+            ->where('journal_candidate_id', $candidate->id)
+            ->orderBy('id')
+            ->pluck('amount', 'id')
+            ->all();
+
+        $authorized = $service->authorize($journal->id, $actor->id);
+
+        $this->assertSame($journal->id, $authorized->id);
+        $this->assertEquals(JournalStatusEnum::Draft, $authorized->status);
+        $this->assertSame($candidate->id, $authorized->journal_candidate_id);
+        $this->assertSame($journal->created_by, $authorized->created_by);
+        $this->assertSame($actor->id, $authorized->draft_finalization_authorized_by);
+        $this->assertNotNull($authorized->draft_finalization_authorized_at);
+        $this->assertNull($authorized->posting_date);
+        $this->assertSame($entryCount, DB::table('gl_journal_entries')->count());
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+
+        $this->assertEquals(
+            DB::table('gl_journal_entry_lines')->where('journal_entry_id', $journal->id)->sum('debit_amount'),
+            DB::table('gl_journal_entry_lines')->where('journal_entry_id', $journal->id)->sum('credit_amount')
+        );
+
+        $this->assertSame($ledgerBalanceCount, DB::table('gl_ledger_balances')->count());
+        $this->assertSame($periodBefore, DB::table('gl_financial_periods')
+            ->where('property_id', $this->property->id)
+            ->where('period_year', 2026)
+            ->where('period_month', 6)
+            ->value('status'));
+        $this->assertSame($businessDateBefore, DB::table('property_business_dates')
+            ->where('property_id', $this->property->id)
+            ->where('business_date', $this->businessDate)
+            ->value('status'));
+
+        $candidateAfter = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $this->assertSame($candidateBefore->status, $candidateAfter->status);
+        $this->assertSame($candidateBefore->approved_by, $candidateAfter->approved_by);
+        $this->assertSame($candidateBefore->approved_at, $candidateAfter->approved_at);
+        $this->assertSame($candidateBefore->rejected_by, $candidateAfter->rejected_by);
+        $this->assertSame($candidateBefore->rejected_at, $candidateAfter->rejected_at);
+        $this->assertSame($candidateBefore->rejection_reason, $candidateAfter->rejection_reason);
+        $this->assertSame(
+            $candidateLineAmountsBefore,
+            DB::table('journal_candidate_lines')
+                ->where('journal_candidate_id', $candidate->id)
+                ->orderBy('id')
+                ->pluck('amount', 'id')
+                ->all()
+        );
+
+        $entryRowAfterFirstAuthorization = DB::table('gl_journal_entries')->where('id', $journal->id)->first();
+        $authorizedAt = $authorized->draft_finalization_authorized_at->toIso8601String();
+
+        $repeated = $service->authorize($journal->id, $actor->id);
+
+        $this->assertSame($journal->id, $repeated->id);
+        $this->assertSame($authorizedAt, $repeated->draft_finalization_authorized_at->toIso8601String());
+        $this->assertSame($entryRowAfterFirstAuthorization->updated_at, DB::table('gl_journal_entries')->where('id', $journal->id)->value('updated_at'));
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+        $this->assertSame(JournalStatusEnum::Draft->value, DB::table('gl_journal_entries')->where('id', $journal->id)->value('status'));
+        $this->assertNull(DB::table('gl_journal_entries')->where('id', $journal->id)->value('posting_date'));
+        $this->assertSame($ledgerBalanceCount, DB::table('gl_ledger_balances')->count());
+    }
+
+    public function test_non_approved_candidate_derived_draft_cannot_be_finalization_authorized(): void
+    {
+        $this->seedGrniMappings();
+        [$candidate, $journal] = $this->materializeApprovedGrniDraft();
+        $actor = $this->createDraftFinalizationAuthorizationUser();
+
+        DB::table('journal_candidates')
+            ->where('id', $candidate->id)
+            ->update([
+                'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+                'approved_by' => null,
+                'approved_at' => null,
+                'updated_at' => now(),
+            ]);
+
+        $lineSnapshotBefore = $this->journalLineSnapshot($journal->id);
+        $candidateBefore = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+
+        try {
+            app(JournalEntryDraftFinalizationAuthorizationService::class)->authorize($journal->id, $actor->id);
+            $this->fail('Expected non-approved candidate-derived draft authorization to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('approved JournalCandidate-derived drafts', $e->getMessage());
+        }
+
+        $journalAfter = DB::table('gl_journal_entries')->where('id', $journal->id)->first();
+        $this->assertNull($journalAfter->draft_finalization_authorized_by);
+        $this->assertNull($journalAfter->draft_finalization_authorized_at);
+        $this->assertNull($journalAfter->posting_date);
+        $this->assertSame(JournalStatusEnum::Draft->value, $journalAfter->status);
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+
+        $candidateAfter = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $this->assertSame($candidateBefore->status, $candidateAfter->status);
+        $this->assertSame($candidateBefore->approved_by, $candidateAfter->approved_by);
+        $this->assertSame($candidateBefore->approved_at, $candidateAfter->approved_at);
+    }
+
+    public function test_posted_voided_or_reversal_journal_entry_cannot_be_finalization_authorized(): void
+    {
+        $this->seedGrniMappings();
+        $actor = $this->createDraftFinalizationAuthorizationUser();
+        $service = app(JournalEntryDraftFinalizationAuthorizationService::class);
+
+        [, $postedJournal] = $this->materializeApprovedGrniDraft();
+        DB::table('gl_journal_entries')
+            ->where('id', $postedJournal->id)
+            ->update([
+                'status' => JournalStatusEnum::Posted->value,
+                'posting_date' => $this->businessDate,
+                'updated_at' => now(),
+            ]);
+
+        [, $voidedJournal] = $this->materializeApprovedGrniDraft();
+        DB::table('gl_journal_entries')
+            ->where('id', $voidedJournal->id)
+            ->update([
+                'status' => JournalStatusEnum::Voided->value,
+                'updated_at' => now(),
+            ]);
+
+        [, $originalJournal] = $this->materializeApprovedGrniDraft();
+        DB::table('gl_journal_entries')
+            ->where('id', $originalJournal->id)
+            ->update([
+                'status' => JournalStatusEnum::Posted->value,
+                'posting_date' => $this->businessDate,
+                'updated_at' => now(),
+            ]);
+        [, $reversalJournal] = $this->materializeApprovedGrniDraft();
+        DB::table('gl_journal_entries')
+            ->where('id', $reversalJournal->id)
+            ->update([
+                'reversal_of_id' => $originalJournal->id,
+                'updated_at' => now(),
+            ]);
+
+        foreach ([$postedJournal->id, $voidedJournal->id, $reversalJournal->id] as $journalId) {
+            $lineSnapshotBefore = $this->journalLineSnapshot($journalId);
+            $entryBefore = DB::table('gl_journal_entries')->where('id', $journalId)->first();
+
+            try {
+                $service->authorize($journalId, $actor->id);
+                $this->fail('Expected non-authorizable JournalEntry lifecycle state to fail.');
+            } catch (RuntimeException $e) {
+                $this->assertTrue(
+                    str_contains($e->getMessage(), 'Draft JournalEntries') ||
+                    str_contains($e->getMessage(), 'Posted JournalEntries') ||
+                    str_contains($e->getMessage(), 'Reversal JournalEntries')
+                );
+            }
+
+            $entryAfter = DB::table('gl_journal_entries')->where('id', $journalId)->first();
+            $this->assertSame($entryBefore->draft_finalization_authorized_by, $entryAfter->draft_finalization_authorized_by);
+            $this->assertSame($entryBefore->draft_finalization_authorized_at, $entryAfter->draft_finalization_authorized_at);
+            $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journalId));
+        }
+    }
+
+    public function test_draft_finalization_authorization_actor_failures_are_closed(): void
+    {
+        $this->seedGrniMappings();
+        [$candidate, $journal] = $this->materializeApprovedGrniDraft();
+        $unauthorized = $this->createDraftFinalizationAuthorizationUser(authorized: false);
+        $disabled = $this->createDraftFinalizationAuthorizationUser(authorized: true, active: false);
+        $service = app(JournalEntryDraftFinalizationAuthorizationService::class);
+        $lineSnapshotBefore = $this->journalLineSnapshot($journal->id);
+        $candidateBefore = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $ledgerBalanceCount = DB::table('gl_ledger_balances')->count();
+
+        foreach ([$unauthorized->id, $disabled->id, (string) Str::ulid()] as $actorId) {
+            try {
+                $service->authorize($journal->id, $actorId);
+                $this->fail('Expected unauthorized draft finalization authorization actor to fail.');
+            } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+                $this->assertStringContainsString('Unauthorized', $e->getMessage());
+            }
+        }
+
+        $journalAfter = DB::table('gl_journal_entries')->where('id', $journal->id)->first();
+        $this->assertNull($journalAfter->draft_finalization_authorized_by);
+        $this->assertNull($journalAfter->draft_finalization_authorized_at);
+        $this->assertNull($journalAfter->posting_date);
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+        $this->assertSame($ledgerBalanceCount, DB::table('gl_ledger_balances')->count());
+
+        $candidateAfter = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $this->assertSame($candidateBefore->status, $candidateAfter->status);
+        $this->assertSame($candidateBefore->approved_by, $candidateAfter->approved_by);
+        $this->assertSame($candidateBefore->approved_at, $candidateAfter->approved_at);
+        $this->assertSame($candidateBefore->rejected_by, $candidateAfter->rejected_by);
+        $this->assertSame($candidateBefore->rejected_at, $candidateAfter->rejected_at);
+        $this->assertSame($candidateBefore->rejection_reason, $candidateAfter->rejection_reason);
+    }
+
+    public function test_conflicting_repeated_draft_finalization_authorization_fails_without_mutation(): void
+    {
+        $this->seedGrniMappings();
+        [$candidate, $journal] = $this->materializeApprovedGrniDraft();
+        $firstActor = $this->createDraftFinalizationAuthorizationUser();
+        $secondActor = $this->createDraftFinalizationAuthorizationUser();
+        $service = app(JournalEntryDraftFinalizationAuthorizationService::class);
+
+        $service->authorize($journal->id, $firstActor->id);
+
+        $entryBeforeConflict = DB::table('gl_journal_entries')->where('id', $journal->id)->first();
+        $lineSnapshotBefore = $this->journalLineSnapshot($journal->id);
+        $candidateBefore = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+
+        try {
+            $service->authorize($journal->id, $secondActor->id);
+            $this->fail('Expected conflicting draft finalization authorization actor to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Conflicting', $e->getMessage());
+        }
+
+        $entryAfterConflict = DB::table('gl_journal_entries')->where('id', $journal->id)->first();
+        $this->assertSame($entryBeforeConflict->draft_finalization_authorized_by, $entryAfterConflict->draft_finalization_authorized_by);
+        $this->assertSame($entryBeforeConflict->draft_finalization_authorized_at, $entryAfterConflict->draft_finalization_authorized_at);
+        $this->assertSame($entryBeforeConflict->updated_at, $entryAfterConflict->updated_at);
+        $this->assertSame(JournalStatusEnum::Draft->value, $entryAfterConflict->status);
+        $this->assertNull($entryAfterConflict->posting_date);
+        $this->assertSame($lineSnapshotBefore, $this->journalLineSnapshot($journal->id));
+
+        $candidateAfter = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+        $this->assertSame($candidateBefore->status, $candidateAfter->status);
+        $this->assertSame($candidateBefore->approved_by, $candidateAfter->approved_by);
+        $this->assertSame($candidateBefore->approved_at, $candidateAfter->approved_at);
     }
 }
