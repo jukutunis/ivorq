@@ -35,7 +35,7 @@ class JournalCandidateDraftMaterializationService
             $this->assertActorCanAccessProperty($actor, $candidate->property_id);
 
             if ($candidate->status !== JournalCandidateStatusEnum::APPROVED) {
-                throw new RuntimeException('Only APPROVED GRNI journal candidates can be materialized as draft JournalEntries.');
+                throw new RuntimeException('Only APPROVED supported journal candidates can be materialized as draft JournalEntries.');
             }
 
             $this->assertSupportedCandidateType($candidate);
@@ -135,17 +135,22 @@ class JournalCandidateDraftMaterializationService
     {
         if (
             ($candidate->source_type === 'InventoryReceipt' && $candidate->posting_event === 'InventoryReceiptAccrual') ||
-            ($candidate->source_type === 'SupplierInvoice' && $candidate->posting_event === 'SupplierInvoiceGrniClearingApLiability')
+            ($candidate->source_type === 'SupplierInvoice' && $candidate->posting_event === 'SupplierInvoiceGrniClearingApLiability') ||
+            ($candidate->source_type === 'PaymentExecution' && $candidate->posting_event === 'SupplierPaymentCashDisbursement')
         ) {
             return;
         }
 
-        throw new RuntimeException('Only approved GRNI journal candidates can be materialized as draft JournalEntries.');
+        throw new RuntimeException('Only approved supported journal candidates can be materialized as draft JournalEntries.');
     }
 
     private function sourceModuleForCandidate(JournalCandidate $candidate): string
     {
-        return $candidate->source_type === 'SupplierInvoice' ? 'Payables' : 'Inventory';
+        return match ($candidate->source_type) {
+            'SupplierInvoice' => 'Payables',
+            'PaymentExecution' => 'GeneralCashier',
+            default => 'Inventory',
+        };
     }
 
     /**
@@ -277,7 +282,7 @@ class JournalCandidateDraftMaterializationService
             ->first();
 
         if ($collision) {
-            throw new RuntimeException('Conflicting JournalEntry provenance already exists for this GRNI candidate source.');
+            throw new RuntimeException('Conflicting JournalEntry provenance already exists for this journal candidate source.');
         }
     }
 

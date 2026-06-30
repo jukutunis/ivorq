@@ -336,6 +336,75 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         $this->assertSame($snapshot, $this->candidateSnapshot($rejected->id));
     }
 
+    public function test_authorized_actor_materializes_approved_supplier_payment_candidate_to_single_draft(): void
+    {
+        $context = $this->makeApprovedSupplierPaymentCandidateContext();
+        $before = $this->controlledSnapshot();
+        $sourceBefore = $this->sourceEvidenceSnapshot($context);
+
+        $draft = $this->draftMaterializationService->materialize($context['payment_candidate']->id, $this->actor->id);
+
+        $this->assertSame('Draft', $draft->status->value);
+        $this->assertSame($this->property->id, $draft->property_id);
+        $this->assertSame('GeneralCashier', $draft->source_module);
+        $this->assertSame('PaymentExecution', $draft->source_type);
+        $this->assertSame($context['execution']->id, $draft->source_id);
+        $this->assertSame($context['payment_candidate']->id, $draft->journal_candidate_id);
+        $this->assertSame('SupplierPaymentCashDisbursement', $draft->posting_event);
+        $this->assertNull($draft->posting_date);
+        $this->assertCount(2, $draft->lines);
+
+        $lines = $draft->lines->sortBy('created_at')->values();
+        $this->assertSame($context['accounts']['ap_account_id'], $lines[0]->account_id);
+        $this->assertSame('125.00', (string) $lines[0]->debit_amount);
+        $this->assertSame('0.00', (string) $lines[0]->credit_amount);
+        $this->assertSame($context['accounts']['cash_account_id'], $lines[1]->account_id);
+        $this->assertSame('0.00', (string) $lines[1]->debit_amount);
+        $this->assertSame('125.00', (string) $lines[1]->credit_amount);
+
+        $this->assertControlledSnapshotUnchangedExcept($before, [
+            'gl_journal_entries' => 1,
+            'gl_journal_entry_lines' => 2,
+        ]);
+        $this->assertSame($sourceBefore, $this->sourceEvidenceSnapshot($context));
+
+        $snapshot = $this->journalEntrySnapshot($draft->id);
+        $repeat = $this->draftMaterializationService->materialize($context['payment_candidate']->id, $this->actor->id);
+
+        $this->assertSame($draft->id, $repeat->id);
+        $this->assertSame($snapshot, $this->journalEntrySnapshot($draft->id));
+    }
+
+    public function test_supplier_payment_candidate_materialization_requires_approved_candidate_and_valid_actor_scope(): void
+    {
+        $context = $this->makeSupplierPaymentCandidateContext();
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+        $disabled = $this->makeAuthorizedActor($this->property, false);
+        $crossProperty = $this->makeAuthorizedActor($this->makeProperty());
+
+        foreach ([$unauthorized, $disabled, $crossProperty] as $invalidActor) {
+            $before = $this->controlledSnapshot();
+
+            try {
+                $this->draftMaterializationService->materialize($context['payment_candidate']->id, $invalidActor->id);
+                $this->fail('Invalid supplier payment materialization actor must fail closed.');
+            } catch (AuthorizationException) {
+                $this->assertControlledSnapshotUnchanged($before);
+            }
+        }
+
+        $before = $this->controlledSnapshot();
+
+        try {
+            $this->draftMaterializationService->materialize($context['payment_candidate']->id, $this->actor->id);
+            $this->fail('Pending review supplier payment candidate must not materialize.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('Only APPROVED', $exception->getMessage());
+            $this->assertControlledSnapshotUnchanged($before);
+        }
+    }
+
     private function paymentLifecyclePermissions(): array
     {
         return [
@@ -379,6 +448,16 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         $context = $this->makePaymentExecutionContext();
         $this->actingAs($this->actor);
         $candidate = $this->supplierPaymentCandidateService->createForPaymentExecution($context['execution']->id);
+
+        return $context + [
+            'payment_candidate' => $candidate,
+        ];
+    }
+
+    private function makeApprovedSupplierPaymentCandidateContext(): array
+    {
+        $context = $this->makeSupplierPaymentCandidateContext();
+        $candidate = $this->candidateReviewService->approve($context['payment_candidate']->id, $this->actor->id);
 
         return $context + [
             'payment_candidate' => $candidate,
@@ -1165,6 +1244,53 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
 
         return [
             'candidate' => $candidate,
+            'lines' => $lines,
+        ];
+    }
+
+    private function journalEntrySnapshot(string $journalEntryId): array
+    {
+        $journal = (array) DB::table('gl_journal_entries')
+            ->where('id', $journalEntryId)
+            ->first([
+                'property_id',
+                'transaction_date',
+                'posting_date',
+                'reference',
+                'description',
+                'status',
+                'source_module',
+                'source_type',
+                'source_id',
+                'journal_candidate_id',
+                'posting_event',
+                'draft_finalization_authorized_by',
+                'draft_finalization_authorized_at',
+                'posted_by',
+                'posted_at',
+                'created_by',
+                'created_at',
+            ]);
+
+        $lines = DB::table('gl_journal_entry_lines')
+            ->where('journal_entry_id', $journalEntryId)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get([
+                'property_id',
+                'account_id',
+                'department_id',
+                'debit_amount',
+                'credit_amount',
+                'memo',
+                'created_by',
+                'created_at',
+            ])
+            ->map(fn (object $line): array => (array) $line)
+            ->all();
+
+        return [
+            'journal' => $journal,
             'lines' => $lines,
         ];
     }
