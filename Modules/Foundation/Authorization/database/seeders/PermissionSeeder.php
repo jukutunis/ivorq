@@ -47,6 +47,7 @@ class PermissionSeeder extends Seeder
             'finance.payables.payment-proposal.cancel',
             'finance.payables.payment-proposal.submit',
             'finance.payables.payment-proposal.approve',
+            'finance.general-cashier.session.open',
         ];
 
         foreach ($permissions as $name) {
