@@ -9,6 +9,7 @@ use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\GeneralCashier\Services\CashbookTransactionProjectionService;
 use RuntimeException;
 use Throwable;
 
@@ -17,7 +18,8 @@ class JournalEntryControlledPostingService
     public const PERMISSION = 'finance.journal-entry.post';
 
     public function __construct(
-        private readonly GeneralLedgerService $generalLedgerService
+        private readonly GeneralLedgerService $generalLedgerService,
+        private readonly CashbookTransactionProjectionService $cashbookProjectionService
     ) {}
 
     public function post(string $journalEntryId, string $actorId): JournalEntry
@@ -45,6 +47,7 @@ class JournalEntryControlledPostingService
             $this->assertBalancedLines($journal);
 
             $posted = $this->generalLedgerService->postJournalEntry($journal->id, $actor->id);
+            $this->cashbookProjectionService->projectPostedCashSupplierPayment($posted, $actor->id);
 
             return $this->loadOrderedLines($posted);
         });
