@@ -5,6 +5,8 @@ namespace Modules\Operations\GeneralCashier\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
+use Modules\Finance\Banking\Models\ControlledBankAccount;
+use Modules\Finance\Banking\Models\ControlledBankStatementLine;
 use Modules\Finance\Payables\Models\PaymentProposal;
 use Modules\Finance\Payables\Models\PaymentProposalItem;
 use Modules\Foundation\User\Models\User;
@@ -31,6 +33,8 @@ class PaymentExecution extends Model
         'cashier_session_id',
         'cashier_payment_instrument_id',
         'operational_gl_account_id',
+        'controlled_bank_account_id',
+        'controlled_bank_statement_line_id',
         'currency_code',
         'source_amount',
         'executed_by',
@@ -67,6 +71,16 @@ class PaymentExecution extends Model
     public function cashierPaymentInstrument(): BelongsTo
     {
         return $this->belongsTo(CashierPaymentInstrument::class, 'cashier_payment_instrument_id');
+    }
+
+    public function controlledBankAccount(): BelongsTo
+    {
+        return $this->belongsTo(ControlledBankAccount::class, 'controlled_bank_account_id');
+    }
+
+    public function controlledBankStatementLine(): BelongsTo
+    {
+        return $this->belongsTo(ControlledBankStatementLine::class, 'controlled_bank_statement_line_id');
     }
 
     public function executor(): BelongsTo

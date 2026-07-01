@@ -9,8 +9,10 @@ use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Foundation\User\Models\User;
-use Modules\Operations\GeneralCashier\Services\CashbookTransactionProjectionService;
+use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
 use Modules\Operations\GeneralCashier\Models\PaymentExecutionVoidEvidence;
+use Modules\Operations\GeneralCashier\Models\PaymentExecution;
+use Modules\Operations\GeneralCashier\Services\CashbookTransactionProjectionService;
 use RuntimeException;
 use Throwable;
 
@@ -48,7 +50,9 @@ class JournalEntryControlledPostingService
             $this->assertBalancedLines($journal);
 
             $posted = $this->generalLedgerService->postJournalEntry($journal->id, $actor->id);
-            $this->cashbookProjectionService->projectPostedCashSupplierPayment($posted, $actor->id);
+            if ($this->shouldProjectCashbookTransaction($posted)) {
+                $this->cashbookProjectionService->projectPostedCashSupplierPayment($posted, $actor->id);
+            }
 
             return $this->loadOrderedLines($posted);
         });
@@ -226,6 +230,20 @@ class JournalEntryControlledPostingService
         if ($debitTotal !== $creditTotal) {
             throw new RuntimeException('JournalEntry is out of balance and cannot be posted.');
         }
+    }
+
+    private function shouldProjectCashbookTransaction(JournalEntry $journal): bool
+    {
+        if ($journal->source_type !== 'PaymentExecution' || $journal->posting_event !== 'SupplierPaymentCashDisbursement') {
+            return false;
+        }
+
+        $execution = PaymentExecution::with('cashierPaymentInstrument')
+            ->whereKey($journal->source_id)
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        return $execution->cashierPaymentInstrument?->type === CashierPaymentInstrumentTypeEnum::CASH;
     }
 
     private function loadOrderedLines(JournalEntry $journal): JournalEntry
