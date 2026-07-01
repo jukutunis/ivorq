@@ -67,8 +67,7 @@ class PaymentExecutionService
 
             $this->assertCashOperationalContext($item, $operationalContext);
 
-            $existing = PaymentExecution::where('payment_proposal_item_id', $item->id)
-                ->orWhere('source_journal_entry_id', $item->source_journal_entry_id)
+            $existing = $this->existingExecutionQuery($item)
                 ->lockForUpdate()
                 ->first();
 
@@ -88,6 +87,7 @@ class PaymentExecutionService
                 'vendor_id' => $item->vendor_id,
                 'payment_proposal_id' => $item->payment_proposal_id,
                 'payment_proposal_item_id' => $item->id,
+                'payment_intent_key' => $this->paymentIntentKey($item),
                 'source_journal_entry_id' => $item->source_journal_entry_id,
                 'source_journal_candidate_id' => $item->source_journal_candidate_id,
                 'supplier_invoice_id' => $item->supplier_invoice_id,
@@ -95,7 +95,7 @@ class PaymentExecutionService
                 'cashier_payment_instrument_id' => $operationalContext['cashier_payment_instrument_id'],
                 'operational_gl_account_id' => $operationalContext['operational_gl_account_id'],
                 'currency_code' => $item->currency_code,
-                'source_amount' => $this->amountString($item->source_amount),
+                'source_amount' => $this->paymentAmount($item),
                 'executed_by' => $actor->id,
                 'executed_at' => now(),
                 'source_snapshot' => [
@@ -106,7 +106,9 @@ class PaymentExecutionService
                     'supplier_invoice_id' => $item->supplier_invoice_id,
                     'vendor_id' => $item->vendor_id,
                     'currency_code' => $item->currency_code,
-                    'source_amount' => $this->amountString($item->source_amount),
+                    'source_amount' => $this->paymentAmount($item),
+                    'original_source_amount' => $this->sourceObligationAmount($item),
+                    'requested_payment_amount' => $item->requested_payment_amount !== null ? $this->amountString($item->requested_payment_amount) : null,
                     'cashier_session_id' => $operationalContext['cashier_session_id'],
                     'cashier_payment_instrument_id' => $operationalContext['cashier_payment_instrument_id'],
                     'operational_gl_account_id' => $operationalContext['operational_gl_account_id'],
@@ -180,8 +182,7 @@ class PaymentExecutionService
 
             $this->assertConfirmedBankEvidence($item, $operationalContext, $bankAccount, $statementLine);
 
-            $existing = PaymentExecution::where('payment_proposal_item_id', $item->id)
-                ->orWhere('source_journal_entry_id', $item->source_journal_entry_id)
+            $existing = $this->existingExecutionQuery($item)
                 ->orWhere('controlled_bank_statement_line_id', $statementLine->id)
                 ->lockForUpdate()
                 ->first();
@@ -204,6 +205,7 @@ class PaymentExecutionService
                 'vendor_id' => $item->vendor_id,
                 'payment_proposal_id' => $item->payment_proposal_id,
                 'payment_proposal_item_id' => $item->id,
+                'payment_intent_key' => $this->paymentIntentKey($item),
                 'source_journal_entry_id' => $item->source_journal_entry_id,
                 'source_journal_candidate_id' => $item->source_journal_candidate_id,
                 'supplier_invoice_id' => $item->supplier_invoice_id,
@@ -213,7 +215,7 @@ class PaymentExecutionService
                 'controlled_bank_account_id' => $bankAccount->id,
                 'controlled_bank_statement_line_id' => $statementLine->id,
                 'currency_code' => $item->currency_code,
-                'source_amount' => $this->amountString($item->source_amount),
+                'source_amount' => $this->paymentAmount($item),
                 'executed_by' => $actor->id,
                 'executed_at' => now(),
                 'source_snapshot' => [
@@ -224,7 +226,9 @@ class PaymentExecutionService
                     'supplier_invoice_id' => $item->supplier_invoice_id,
                     'vendor_id' => $item->vendor_id,
                     'currency_code' => $item->currency_code,
-                    'source_amount' => $this->amountString($item->source_amount),
+                    'source_amount' => $this->paymentAmount($item),
+                    'original_source_amount' => $this->sourceObligationAmount($item),
+                    'requested_payment_amount' => $item->requested_payment_amount !== null ? $this->amountString($item->requested_payment_amount) : null,
                     'cashier_session_id' => $operationalContext['cashier_session_id'],
                     'cashier_payment_instrument_id' => $operationalContext['cashier_payment_instrument_id'],
                     'operational_gl_account_id' => $operationalContext['operational_gl_account_id'],
@@ -313,7 +317,7 @@ class PaymentExecutionService
             throw new DomainException('Payment Proposal Item source is not posted AP liability evidence.');
         }
 
-        if ($this->amountString($this->journalAmount($sourceJournal)) !== $this->amountString($item->source_amount)) {
+        if ($this->amountString($this->journalAmount($sourceJournal)) !== $this->sourceObligationAmount($item)) {
             throw new DomainException('Payment Proposal Item amount conflicts with posted AP liability source.');
         }
     }
@@ -359,7 +363,7 @@ class PaymentExecutionService
             $statementLine->property_id !== $item->property_id ||
             $statementLine->currency_code !== $item->currency_code ||
             $statementLine->direction !== ControlledBankStatementLineDirectionEnum::OUTFLOW ||
-            $this->amountString($statementLine->amount) !== $this->amountString($item->source_amount)
+            $this->amountString($statementLine->amount) !== $this->paymentAmount($item)
         ) {
             throw new DomainException('Controlled bank statement-line evidence conflicts with approved Payment Proposal Item.');
         }
@@ -387,7 +391,8 @@ class PaymentExecutionService
             $existing->cashier_payment_instrument_id === $operationalContext['cashier_payment_instrument_id'] &&
             $existing->operational_gl_account_id === $operationalContext['operational_gl_account_id'] &&
             $existing->currency_code === $item->currency_code &&
-            $this->amountString($existing->source_amount) === $this->amountString($item->source_amount) &&
+            $existing->payment_intent_key === $this->paymentIntentKey($item) &&
+            $this->amountString($existing->source_amount) === $this->paymentAmount($item) &&
             $existing->executed_by === $actorId &&
             $existing->executed_at !== null
         ) {
@@ -419,7 +424,8 @@ class PaymentExecutionService
             $existing->controlled_bank_account_id === $bankAccount->id &&
             $existing->controlled_bank_statement_line_id === $statementLine->id &&
             $existing->currency_code === $item->currency_code &&
-            $this->amountString($existing->source_amount) === $this->amountString($item->source_amount) &&
+            $existing->payment_intent_key === $this->paymentIntentKey($item) &&
+            $this->amountString($existing->source_amount) === $this->paymentAmount($item) &&
             $existing->executed_by === $actorId &&
             $existing->executed_at !== null
         ) {
@@ -448,6 +454,38 @@ class PaymentExecutionService
         }
 
         return number_format($debitTotal / 100, 2, '.', '');
+    }
+
+    private function existingExecutionQuery(PaymentProposalItem $item)
+    {
+        $query = PaymentExecution::where('payment_proposal_item_id', $item->id);
+
+        if ($item->requested_payment_amount === null) {
+            $query->orWhere('source_journal_entry_id', $item->source_journal_entry_id);
+        } else {
+            $query->orWhere('payment_intent_key', $this->paymentIntentKey($item));
+        }
+
+        return $query;
+    }
+
+    private function paymentIntentKey(PaymentProposalItem $item): ?string
+    {
+        if ($item->requested_payment_amount === null) {
+            return null;
+        }
+
+        return 'payment-proposal-item:' . $item->id;
+    }
+
+    private function sourceObligationAmount(PaymentProposalItem $item): string
+    {
+        return $this->amountString($item->original_source_amount ?? $item->source_amount);
+    }
+
+    private function paymentAmount(PaymentProposalItem $item): string
+    {
+        return $this->amountString($item->requested_payment_amount ?? $item->source_amount);
     }
 
     private function amountToCents(mixed $amount): int

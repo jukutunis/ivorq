@@ -356,8 +356,20 @@ class SupplierPaymentJournalCandidateService
         $postedApAmount = $this->amountToCents($accountEvidence['posted_ap_line']->credit_amount);
         $journalAmount = $this->journalAmountInCents($sourceJournal);
 
-        if ($executionAmount <= 0 || $executionAmount !== $postedApAmount || $executionAmount !== $journalAmount) {
+        if ($postedApAmount !== $journalAmount) {
             throw new DomainException('Payment Execution amount conflicts with posted AP liability evidence.');
+        }
+
+        if ($execution->payment_intent_key === null) {
+            if ($executionAmount <= 0 || $executionAmount !== $postedApAmount) {
+                throw new DomainException('Payment Execution amount conflicts with posted AP liability evidence.');
+            }
+
+            return number_format($executionAmount / 100, 2, '.', '');
+        }
+
+        if ($executionAmount <= 0 || $executionAmount > $postedApAmount) {
+            throw new DomainException('Partial Payment Execution amount conflicts with posted AP liability evidence.');
         }
 
         return number_format($executionAmount / 100, 2, '.', '');

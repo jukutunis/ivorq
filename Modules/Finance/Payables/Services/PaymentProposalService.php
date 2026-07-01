@@ -24,6 +24,10 @@ class PaymentProposalService
     private const SOURCE_TYPE = 'SupplierInvoice';
     private const POSTING_EVENT = 'SupplierInvoiceGrniClearingApLiability';
 
+    public function __construct(
+        private readonly ApOutstandingProjectionService $outstandingProjectionService
+    ) {}
+
     public function createDraft(array $journalEntryIds, User $actor): PaymentProposal
     {
         return DB::transaction(function () use ($journalEntryIds, $actor) {
@@ -78,6 +82,76 @@ class PaymentProposalService
                     'updated_by' => $actor->id,
                 ]);
             }
+
+            return $proposal->fresh(['items']);
+        });
+    }
+
+    public function createSequentialPartialDraft(
+        string $journalEntryId,
+        mixed $requestedAmount,
+        User $actor
+    ): PaymentProposal {
+        return DB::transaction(function () use ($journalEntryId, $requestedAmount, $actor): PaymentProposal {
+            $actor = $this->resolveAuthorizedActor($actor, self::CREATE_PERMISSION);
+            $requestedAmount = $this->amountString($requestedAmount);
+
+            if ($this->amountToCents($requestedAmount) <= 0) {
+                throw new DomainException('Partial Payment Proposal requested amount must be positive.');
+            }
+
+            $journals = $this->eligibleJournals([$journalEntryId]);
+            $journal = $journals->first();
+            $evidence = $this->proposalEvidence($journals);
+
+            $this->assertActorCanAccessProperty($actor, $evidence['property_id']);
+
+            $outstanding = $this->outstandingProjectionService->outstandingForPostedApJournal($journal);
+            if ($this->amountToCents($requestedAmount) > $this->amountToCents($outstanding)) {
+                throw new DomainException('Partial Payment Proposal requested amount exceeds outstanding AP liability.');
+            }
+
+            $existingItem = PaymentProposalItem::with('proposal')
+                ->where('property_id', $evidence['property_id'])
+                ->where('source_journal_entry_id', $journal->id)
+                ->where('is_active', true)
+                ->lockForUpdate()
+                ->first();
+
+            $partialIdentity = $this->partialSourceFingerprint($journal->id, $requestedAmount);
+
+            if ($existingItem) {
+                $this->assertExistingPartialIntentMatches($existingItem, $actor, $partialIdentity, $requestedAmount);
+
+                return $existingItem->proposal->fresh(['items']);
+            }
+
+            $proposal = new PaymentProposal([
+                'property_id' => $evidence['property_id'],
+                'vendor_id' => $evidence['vendor_id'],
+                'proposal_number' => $this->nextProposalNumber($evidence['property_id'], $evidence['proposal_year']),
+                'currency_code' => $evidence['currency_code'],
+                'status' => PaymentProposalStatusEnum::DRAFT->value,
+                'source_fingerprint' => $partialIdentity,
+                'total_amount' => $requestedAmount,
+            ]);
+            $proposal->created_by = $actor->id;
+            $proposal->updated_by = $actor->id;
+            $proposal->save();
+
+            $item = $evidence['items'][0];
+            $proposal->items()->create($item + [
+                'source_amount' => $item['source_amount'],
+                'original_source_amount' => $item['source_amount'],
+                'requested_payment_amount' => $requestedAmount,
+                'source_snapshot' => $item['source_snapshot'] + [
+                    'contract' => 'sequential_partial_payment_intent_v1',
+                    'requested_payment_amount' => $requestedAmount,
+                    'derived_outstanding_amount' => $outstanding,
+                ],
+                'created_by' => $actor->id,
+                'updated_by' => $actor->id,
+            ]);
 
             return $proposal->fresh(['items']);
         });
@@ -295,6 +369,32 @@ class PaymentProposalService
         }
     }
 
+    private function assertExistingPartialIntentMatches(
+        PaymentProposalItem $item,
+        User $actor,
+        string $partialIdentity,
+        string $requestedAmount
+    ): void {
+        $proposal = $item->proposal;
+
+        if (!$proposal ||
+            $proposal->source_fingerprint !== $partialIdentity ||
+            $proposal->created_by !== $actor->id ||
+            $this->amountString($item->requested_payment_amount) !== $requestedAmount
+        ) {
+            throw new DomainException('Conflicting active partial Payment Proposal intent already exists for this AP liability.');
+        }
+    }
+
+    private function partialSourceFingerprint(string $journalEntryId, string $requestedAmount): string
+    {
+        return hash('sha256', implode('|', [
+            'sequential_partial_payment_intent_v1',
+            $journalEntryId,
+            $requestedAmount,
+        ]));
+    }
+
     private function nextProposalNumber(string $propertyId, string $year): string
     {
         $latest = PaymentProposal::where('property_id', $propertyId)
@@ -320,8 +420,13 @@ class PaymentProposalService
         return number_format(max($debits, $credits), 2, '.', '');
     }
 
-    private function amountToCents(string $amount): int
+    private function amountToCents(mixed $amount): int
     {
         return (int) round(((float) $amount) * 100);
+    }
+
+    private function amountString(mixed $amount): string
+    {
+        return number_format(((float) $amount), 2, '.', '');
     }
 }

@@ -27,6 +27,7 @@ class PaymentExecution extends Model
         'vendor_id',
         'payment_proposal_id',
         'payment_proposal_item_id',
+        'payment_intent_key',
         'source_journal_entry_id',
         'source_journal_candidate_id',
         'supplier_invoice_id',

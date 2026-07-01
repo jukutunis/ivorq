@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\Payables\Models\ApSettlementAllocation;
+use Modules\Finance\Payables\Models\PaymentProposalItem;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Models\CashSupplierPaymentReversalExecution;
 use Modules\Operations\GeneralCashier\Models\PaymentExecution;
@@ -53,6 +54,10 @@ class ApSettlementAllocationService
                 throw new DomainException('AP settlement allocation amount must be positive.');
             }
 
+            if ($this->amountString($paymentExecution->source_amount) !== $amount) {
+                throw new DomainException('AP settlement allocation amount must match the posted supplier payment amount.');
+            }
+
             $identityHash = $this->sourceIdentityHash($apJournal, $paymentJournal, $paymentExecution, $amount, $actor->id);
             $snapshot = $this->sourceSnapshot($apJournal, $paymentJournal, $paymentExecution, $amount, $actor->id);
 
@@ -88,6 +93,8 @@ class ApSettlementAllocationService
             $allocation->created_by = $actor->id;
             $allocation->updated_by = $actor->id;
             $allocation->save();
+
+            $this->closePartialPaymentIntent($paymentExecution, $actor->id);
 
             return $allocation->fresh();
         });
@@ -215,6 +222,21 @@ class ApSettlementAllocationService
             $amount,
             $actorId,
         ]));
+    }
+
+    private function closePartialPaymentIntent(PaymentExecution $paymentExecution, string $actorId): void
+    {
+        $item = PaymentProposalItem::whereKey($paymentExecution->payment_proposal_item_id)
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        if ($item->requested_payment_amount === null) {
+            return;
+        }
+
+        $item->is_active = false;
+        $item->updated_by = $actorId;
+        $item->save();
     }
 
     private function sourceSnapshot(

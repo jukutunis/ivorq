@@ -24,12 +24,16 @@ class PaymentProposalItem extends Model
         'vendor_id',
         'currency_code',
         'source_amount',
+        'original_source_amount',
+        'requested_payment_amount',
         'is_active',
         'source_snapshot',
     ];
 
     protected $casts = [
         'source_amount' => 'decimal:2',
+        'original_source_amount' => 'decimal:2',
+        'requested_payment_amount' => 'decimal:2',
         'is_active' => 'boolean',
         'source_snapshot' => 'array',
     ];
