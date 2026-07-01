@@ -60,6 +60,8 @@ class PermissionSeeder extends Seeder
             'finance.general-cashier.cash-return.record',
             'finance.general-cashier.cash-payment-reversal.create',
             'finance.payables.ap-settlement.allocate',
+            'finance.fx-rate.record',
+            'finance.fx-rate.approve',
         ];
 
         foreach ($permissions as $name) {
