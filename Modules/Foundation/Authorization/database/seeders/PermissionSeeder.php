@@ -56,6 +56,7 @@ class PermissionSeeder extends Seeder
             'finance.banking.source-account.register',
             'finance.banking.statement-line.register',
             'finance.general-cashier.payment.void',
+            'finance.general-cashier.cash-return.record',
         ];
 
         foreach ($permissions as $name) {
