@@ -12,6 +12,7 @@ use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\GeneralLedger\Models\JournalEntryLine;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\GeneralCashier\Models\PaymentExecutionVoidEvidence;
 use RuntimeException;
 use Throwable;
 
@@ -39,6 +40,7 @@ class JournalCandidateDraftMaterializationService
             }
 
             $this->assertSupportedCandidateType($candidate);
+            $this->assertPaymentExecutionNotVoided($candidate);
 
             if (strlen((string) $candidate->source_id) > 26) {
                 throw new RuntimeException('Candidate source_id is too long for JournalEntry provenance.');
@@ -142,6 +144,21 @@ class JournalCandidateDraftMaterializationService
         }
 
         throw new RuntimeException('Only approved supported journal candidates can be materialized as draft JournalEntries.');
+    }
+
+    private function assertPaymentExecutionNotVoided(JournalCandidate $candidate): void
+    {
+        if ($candidate->source_type !== 'PaymentExecution' || $candidate->posting_event !== 'SupplierPaymentCashDisbursement') {
+            return;
+        }
+
+        $voidEvidence = PaymentExecutionVoidEvidence::where('payment_execution_id', $candidate->source_id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($voidEvidence) {
+            throw new RuntimeException('Voided PaymentExecution cannot be materialized as a supplier payment JournalEntry draft.');
+        }
     }
 
     private function sourceModuleForCandidate(JournalCandidate $candidate): string

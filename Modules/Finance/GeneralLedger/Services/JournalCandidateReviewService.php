@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\GeneralCashier\Models\PaymentExecutionVoidEvidence;
 use Throwable;
 
 class JournalCandidateReviewService
@@ -26,6 +27,7 @@ class JournalCandidateReviewService
                 ->firstOrFail();
 
             $this->assertActorCanAccessProperty($user, $candidate->property_id);
+            $this->assertPaymentExecutionNotVoided($candidate);
 
             // 2. Safe idempotent retry / conflict check
             if ($candidate->status === JournalCandidateStatusEnum::APPROVED) {
@@ -76,6 +78,7 @@ class JournalCandidateReviewService
                 ->firstOrFail();
 
             $this->assertActorCanAccessProperty($user, $candidate->property_id);
+            $this->assertPaymentExecutionNotVoided($candidate);
 
             // 2. Safe idempotent retry / conflict check
             if ($candidate->status === JournalCandidateStatusEnum::REJECTED) {
@@ -142,6 +145,21 @@ class JournalCandidateReviewService
 
         if (!$hasPropertyAccess) {
             throw new AuthorizationException('Unauthorized to review journal candidates.');
+        }
+    }
+
+    private function assertPaymentExecutionNotVoided(JournalCandidate $candidate): void
+    {
+        if ($candidate->source_type !== 'PaymentExecution' || $candidate->posting_event !== 'SupplierPaymentCashDisbursement') {
+            return;
+        }
+
+        $voidEvidence = PaymentExecutionVoidEvidence::where('payment_execution_id', $candidate->source_id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($voidEvidence) {
+            throw new \RuntimeException('Voided PaymentExecution cannot continue supplier payment journal review.');
         }
     }
 }

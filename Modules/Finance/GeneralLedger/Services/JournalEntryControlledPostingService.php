@@ -10,6 +10,7 @@ use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Services\CashbookTransactionProjectionService;
+use Modules\Operations\GeneralCashier\Models\PaymentExecutionVoidEvidence;
 use RuntimeException;
 use Throwable;
 
@@ -146,6 +147,8 @@ class JournalEntryControlledPostingService
             throw new RuntimeException('Only supported JournalCandidates can be posted through this action.');
         }
 
+        $this->assertPaymentExecutionNotVoided($candidate);
+
         if (
             $journal->property_id !== $candidate->property_id ||
             $journal->source_type !== $candidate->source_type ||
@@ -168,6 +171,21 @@ class JournalEntryControlledPostingService
             && $candidate->source_grni_journal_entry_id !== null)
             || ($candidate->source_type === 'PaymentExecution'
             && $candidate->posting_event === 'SupplierPaymentCashDisbursement');
+    }
+
+    private function assertPaymentExecutionNotVoided(JournalCandidate $candidate): void
+    {
+        if ($candidate->source_type !== 'PaymentExecution' || $candidate->posting_event !== 'SupplierPaymentCashDisbursement') {
+            return;
+        }
+
+        $voidEvidence = PaymentExecutionVoidEvidence::where('payment_execution_id', $candidate->source_id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($voidEvidence) {
+            throw new RuntimeException('Voided PaymentExecution cannot be posted as a supplier payment JournalEntry.');
+        }
     }
 
     private function assertBalancedLines(JournalEntry $journal): void

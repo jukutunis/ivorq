@@ -10,6 +10,7 @@ use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\GeneralCashier\Models\PaymentExecutionVoidEvidence;
 use RuntimeException;
 use Throwable;
 
@@ -129,6 +130,8 @@ class JournalEntryDraftFinalizationAuthorizationService
             throw new RuntimeException('Only approved supported JournalCandidate-derived drafts can be finalization-authorized.');
         }
 
+        $this->assertPaymentExecutionNotVoided($candidate);
+
         if (
             $journal->property_id !== $candidate->property_id ||
             $journal->source_type !== $candidate->source_type ||
@@ -151,6 +154,21 @@ class JournalEntryDraftFinalizationAuthorizationService
             && $candidate->source_grni_journal_entry_id !== null)
             || ($candidate->source_type === 'PaymentExecution'
             && $candidate->posting_event === 'SupplierPaymentCashDisbursement');
+    }
+
+    private function assertPaymentExecutionNotVoided(JournalCandidate $candidate): void
+    {
+        if ($candidate->source_type !== 'PaymentExecution' || $candidate->posting_event !== 'SupplierPaymentCashDisbursement') {
+            return;
+        }
+
+        $voidEvidence = PaymentExecutionVoidEvidence::where('payment_execution_id', $candidate->source_id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($voidEvidence) {
+            throw new RuntimeException('Voided PaymentExecution cannot be finalization-authorized for supplier payment posting.');
+        }
     }
 
     private function assertBalancedLines(JournalEntry $journal): void
