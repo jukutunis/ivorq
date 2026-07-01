@@ -59,6 +59,7 @@ class PermissionSeeder extends Seeder
             'finance.general-cashier.payment.void',
             'finance.general-cashier.cash-return.record',
             'finance.general-cashier.cash-payment-reversal.create',
+            'finance.payables.ap-settlement.allocate',
         ];
 
         foreach ($permissions as $name) {
