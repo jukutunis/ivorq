@@ -55,6 +55,7 @@ class PermissionSeeder extends Seeder
             'finance.general-cashier.cash-reconciliation.perform',
             'finance.banking.source-account.register',
             'finance.banking.statement-line.register',
+            'finance.banking.reconciliation.manual',
             'finance.general-cashier.payment.void',
             'finance.general-cashier.cash-return.record',
             'finance.general-cashier.cash-payment-reversal.create',
