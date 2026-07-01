@@ -53,6 +53,8 @@ class PermissionSeeder extends Seeder
             'finance.general-cashier.cash-count.record',
             'finance.general-cashier.cash-baseline.create',
             'finance.general-cashier.cash-reconciliation.perform',
+            'finance.banking.source-account.register',
+            'finance.banking.statement-line.register',
         ];
 
         foreach ($permissions as $name) {
