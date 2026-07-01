@@ -138,7 +138,8 @@ class JournalCandidateDraftMaterializationService
         if (
             ($candidate->source_type === 'InventoryReceipt' && $candidate->posting_event === 'InventoryReceiptAccrual') ||
             ($candidate->source_type === 'SupplierInvoice' && $candidate->posting_event === 'SupplierInvoiceGrniClearingApLiability') ||
-            ($candidate->source_type === 'PaymentExecution' && $candidate->posting_event === 'SupplierPaymentCashDisbursement')
+            ($candidate->source_type === 'PaymentExecution' && $candidate->posting_event === 'SupplierPaymentCashDisbursement') ||
+            ($candidate->source_type === 'CashSupplierPaymentReversalExecution' && $candidate->posting_event === 'SupplierPaymentCashReturnReversal')
         ) {
             return;
         }
@@ -166,6 +167,7 @@ class JournalCandidateDraftMaterializationService
         return match ($candidate->source_type) {
             'SupplierInvoice' => 'Payables',
             'PaymentExecution' => 'GeneralCashier',
+            'CashSupplierPaymentReversalExecution' => 'GeneralCashier',
             default => 'Inventory',
         };
     }

@@ -153,7 +153,9 @@ class JournalEntryDraftFinalizationAuthorizationService
             && $candidate->source_grni_candidate_id !== null
             && $candidate->source_grni_journal_entry_id !== null)
             || ($candidate->source_type === 'PaymentExecution'
-            && $candidate->posting_event === 'SupplierPaymentCashDisbursement');
+            && $candidate->posting_event === 'SupplierPaymentCashDisbursement')
+            || ($candidate->source_type === 'CashSupplierPaymentReversalExecution'
+            && $candidate->posting_event === 'SupplierPaymentCashReturnReversal');
     }
 
     private function assertPaymentExecutionNotVoided(JournalCandidate $candidate): void
