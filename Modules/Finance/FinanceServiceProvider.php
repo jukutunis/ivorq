@@ -6,6 +6,7 @@ use Illuminate\Support\ServiceProvider;
 use Modules\Finance\Payables\PayablesServiceProvider;
 use Modules\Finance\Banking\BankingServiceProvider;
 use Modules\Finance\FxReference\Providers\FxReferenceServiceProvider;
+use Modules\Finance\PaymentAdjustmentReference\Providers\PaymentAdjustmentReferenceServiceProvider;
 
 class FinanceServiceProvider extends ServiceProvider
 {
@@ -13,6 +14,7 @@ class FinanceServiceProvider extends ServiceProvider
         PayablesServiceProvider::class,
         BankingServiceProvider::class,
         FxReferenceServiceProvider::class,
+        PaymentAdjustmentReferenceServiceProvider::class,
         \Modules\Finance\GeneralLedger\GeneralLedgerServiceProvider::class,
         \Modules\Finance\CostControl\CostControlServiceProvider::class,
     ];

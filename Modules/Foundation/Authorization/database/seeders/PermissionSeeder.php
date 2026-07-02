@@ -62,6 +62,8 @@ class PermissionSeeder extends Seeder
             'finance.payables.ap-settlement.allocate',
             'finance.fx-rate.record',
             'finance.fx-rate.approve',
+            'finance.payment-adjustment-config.record',
+            'finance.payment-adjustment-config.approve',
         ];
 
         foreach ($permissions as $name) {
