@@ -41,11 +41,13 @@ class OperationalIdentityValidationService
             OperationalIdentityEnum::AP_INVOICE_VARIANCE->value => [AccountTypeEnum::Expense],
             OperationalIdentityEnum::INVENTORY_ADJUSTMENT_LOSS->value => [AccountTypeEnum::Expense],
             OperationalIdentityEnum::INVENTORY_WRITEOFF_LOSS->value => [AccountTypeEnum::Expense],
+            OperationalIdentityEnum::FX_LOSS->value => [AccountTypeEnum::Expense],
 
             // OTHER_INCOME (Revenue)
             OperationalIdentityEnum::INVENTORY_ADJUSTMENT_GAIN->value => [AccountTypeEnum::Revenue],
             OperationalIdentityEnum::AP_CREDIT_NOTE_GAIN->value => [AccountTypeEnum::Revenue],
             OperationalIdentityEnum::AP_WRITEOFF_GAIN->value => [AccountTypeEnum::Revenue],
+            OperationalIdentityEnum::FX_GAIN->value => [AccountTypeEnum::Revenue],
 
             // TREASURY
             OperationalIdentityEnum::AP_PAYMENT->value => [AccountTypeEnum::Liability],
@@ -65,8 +67,20 @@ class OperationalIdentityValidationService
      * @return void
      * @throws OperationalIdentityValidationException
      */
-    public function validate(OperationalIdentityEnum $identity, Account $account): void
+    public function validate(OperationalIdentityEnum $identity, Account $account, ?string $propertyId = null): void
     {
+        if (!$account->is_active) {
+            throw new OperationalIdentityValidationException(
+                "Resolved account '{$account->code}' is inactive."
+            );
+        }
+
+        if ($propertyId !== null && $account->property_id !== $propertyId) {
+            throw new OperationalIdentityValidationException(
+                "Resolved account '{$account->code}' belongs to a different property."
+            );
+        }
+
         $matrix = $this->getValidationMatrix();
 
         if (!isset($matrix[$identity->value])) {

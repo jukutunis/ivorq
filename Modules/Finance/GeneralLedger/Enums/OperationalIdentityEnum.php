@@ -35,4 +35,6 @@ enum OperationalIdentityEnum: string
     case BANK_FEE = 'BANK_FEE';
     case UNMATCHED_BANK_LINE = 'UNMATCHED_BANK_LINE';
     case MANUAL_ADJUSTMENT = 'MANUAL_ADJUSTMENT';
+    case FX_GAIN = 'FX_GAIN';
+    case FX_LOSS = 'FX_LOSS';
 }
