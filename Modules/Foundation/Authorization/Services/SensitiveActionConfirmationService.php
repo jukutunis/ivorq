@@ -177,4 +177,15 @@ class SensitiveActionConfirmationService
             'expires_at' => $metadata['expires_at'],
         ];
     }
+
+    public function confirmationExpiryAt(User $actor, string $intent, ?string $companyId, string $propertyId): ?Carbon
+    {
+        $metadata = $this->confirmationMetadataFor($actor, $intent, $companyId, $propertyId);
+
+        if ($metadata === null || !isset($metadata['expires_at'])) {
+            return null;
+        }
+
+        return Carbon::parse($metadata['expires_at']);
+    }
 }

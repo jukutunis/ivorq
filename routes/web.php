@@ -63,6 +63,12 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.fx-operational-role-assignments.index');
         Route::post('/fx-access-management', [\Modules\Foundation\Authorization\Http\Controllers\FxOperationalRoleAssignmentController::class, 'store'])
             ->name('finance.fx-operational-role-assignments.store');
+        Route::get('/fx-break-glass', [\Modules\Finance\FxReference\Http\Controllers\FxBreakGlassController::class, 'index'])
+            ->name('finance.fx-break-glass.index');
+        Route::post('/fx-break-glass', [\Modules\Finance\FxReference\Http\Controllers\FxBreakGlassController::class, 'store'])
+            ->name('finance.fx-break-glass.store');
+        Route::delete('/fx-break-glass', [\Modules\Finance\FxReference\Http\Controllers\FxBreakGlassController::class, 'destroy'])
+            ->name('finance.fx-break-glass.destroy');
         Route::post('/fx-adjustments/candidates', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'create'])
             ->name('finance.fx-adjustments.candidates.create');
         Route::post('/fx-adjustments/candidates/{candidate}/review', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'review'])

@@ -3,11 +3,13 @@
 namespace Modules\Finance\FxReference\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use DomainException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 use Modules\Finance\FxReference\Services\FxAdjustmentControlWorkspaceProjectionService;
+use Modules\Finance\FxReference\Services\FxBreakGlassAccessService;
 use Modules\Finance\FxReference\Services\RealizedFxAdjustmentCandidateService;
 use Modules\Finance\FxReference\Services\RealizedFxAdjustmentCandidateReviewService;
 use Modules\Finance\FxReference\Services\RealizedFxAdjustmentDraftMaterializationService;
@@ -31,14 +33,18 @@ class FxAdjustmentControlWorkspaceController extends Controller
         private readonly RealizedFxAdjustmentCandidateReviewService $reviewService,
         private readonly RealizedFxAdjustmentDraftMaterializationService $materializationService,
         private readonly RealizedFxAdjustmentFinalizationAuthorizationService $authorizationService,
-        private readonly RealizedFxAdjustmentPostingService $postingService
+        private readonly RealizedFxAdjustmentPostingService $postingService,
+        private readonly FxBreakGlassAccessService $breakGlassService,
     ) {}
 
     public function index(Request $request): InertiaResponse
     {
         $user = $request->user();
         $propertyId = $this->resolvePropertyId($request);
+        $companyId = $request->session()->get('active_company_id');
         $this->authorizeAction($user, self::VIEW_PERMISSION, $propertyId);
+
+        $this->guardBreakGlass($user, $propertyId, $companyId);
 
         $queues = $this->projectionService->project($propertyId, $user->id);
 
@@ -57,7 +63,9 @@ class FxAdjustmentControlWorkspaceController extends Controller
     public function create(Request $request): RedirectResponse
     {
         $propertyId = $this->resolvePropertyId($request);
+        $companyId = $request->session()->get('active_company_id');
         $this->authorizeAction($request->user(), RealizedFxAdjustmentCandidateService::PERMISSION, $propertyId);
+        $this->guardBreakGlass($request->user(), $propertyId, $companyId);
 
         $validated = $request->validate([
             'allocation_id' => ['required', 'string', 'ulid'],
@@ -75,7 +83,9 @@ class FxAdjustmentControlWorkspaceController extends Controller
     public function review(Request $request, string $candidate): RedirectResponse
     {
         $propertyId = $this->resolvePropertyId($request);
+        $companyId = $request->session()->get('active_company_id');
         $this->authorizeAction($request->user(), RealizedFxAdjustmentCandidateReviewService::PERMISSION, $propertyId);
+        $this->guardBreakGlass($request->user(), $propertyId, $companyId);
         $this->findScopedCandidate($candidate, $propertyId);
 
         $validated = $request->validate([
@@ -98,7 +108,9 @@ class FxAdjustmentControlWorkspaceController extends Controller
     public function materialize(Request $request, string $candidate): RedirectResponse
     {
         $propertyId = $this->resolvePropertyId($request);
+        $companyId = $request->session()->get('active_company_id');
         $this->authorizeAction($request->user(), RealizedFxAdjustmentDraftMaterializationService::PERMISSION, $propertyId);
+        $this->guardBreakGlass($request->user(), $propertyId, $companyId);
         $this->findScopedCandidate($candidate, $propertyId);
 
         return $this->redirectingAction(
@@ -110,7 +122,9 @@ class FxAdjustmentControlWorkspaceController extends Controller
     public function authorizeFinalization(Request $request, string $journalEntry): RedirectResponse
     {
         $propertyId = $this->resolvePropertyId($request);
+        $companyId = $request->session()->get('active_company_id');
         $this->authorizeAction($request->user(), RealizedFxAdjustmentFinalizationAuthorizationService::PERMISSION, $propertyId);
+        $this->guardBreakGlass($request->user(), $propertyId, $companyId);
         $this->findScopedJournal($journalEntry, $propertyId);
 
         return $this->redirectingAction(
@@ -122,7 +136,9 @@ class FxAdjustmentControlWorkspaceController extends Controller
     public function post(Request $request, string $journalEntry): RedirectResponse
     {
         $propertyId = $this->resolvePropertyId($request);
+        $companyId = $request->session()->get('active_company_id');
         $this->authorizeAction($request->user(), RealizedFxAdjustmentPostingService::PERMISSION, $propertyId);
+        $this->guardBreakGlass($request->user(), $propertyId, $companyId);
         $this->findScopedJournal($journalEntry, $propertyId);
 
         return $this->redirectingAction(
@@ -162,6 +178,10 @@ class FxAdjustmentControlWorkspaceController extends Controller
             return redirect()
                 ->route(self::WORKSPACE_ROUTE)
                 ->with('success', $successMessage);
+        } catch (DomainException $exception) {
+            return redirect()
+                ->route(self::WORKSPACE_ROUTE)
+                ->with('error', $exception->getMessage());
         } catch (Throwable) {
             return redirect()
                 ->route(self::WORKSPACE_ROUTE)
@@ -196,6 +216,17 @@ class FxAdjustmentControlWorkspaceController extends Controller
 
         if (!$user->can($permission)) {
             abort(403, 'Unauthorized.');
+        }
+    }
+
+    private function guardBreakGlass(User $user, string $propertyId, ?string $companyId): void
+    {
+        try {
+            $this->breakGlassService->requireOperationalFxAccess($user, $propertyId, $companyId);
+        } catch (DomainException $exception) {
+            abort(redirect()
+                ->route('finance.fx-break-glass.index')
+                ->with('error', $exception->getMessage()));
         }
     }
 }
