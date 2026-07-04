@@ -55,6 +55,14 @@ class SensitiveActionConfirmationController extends Controller
         try {
             $this->confirmationService->confirm($actor, $validated['intent'], $validated['password'], $companyId, $propertyId);
 
+            $postRoute = $this->postConfirmationRoute($validated['intent']);
+
+            if ($postRoute !== null) {
+                return redirect()
+                    ->route($postRoute)
+                    ->with('success', 'Sensitive action confirmed.');
+            }
+
             return redirect()
                 ->route('system.sensitive-action-confirmation.index', ['intent' => $validated['intent']])
                 ->with('success', 'Sensitive action confirmed.');
@@ -126,5 +134,14 @@ class SensitiveActionConfirmationController extends Controller
         ];
 
         return $labels[$intent] ?? $intent;
+    }
+
+    private function postConfirmationRoute(string $intent): ?string
+    {
+        $routes = [
+            'finance-role-assignment' => 'finance.fx-operational-role-assignments.index',
+        ];
+
+        return $routes[$intent] ?? null;
     }
 }

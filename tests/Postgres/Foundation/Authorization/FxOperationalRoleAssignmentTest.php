@@ -3,6 +3,7 @@
 namespace Tests\Postgres\Foundation\Authorization;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Modules\Foundation\Audit\Models\AuditLog;
@@ -11,6 +12,7 @@ use Modules\Foundation\Authorization\Database\Seeders\RoleSeeder;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Models\Role;
 use Modules\Foundation\Authorization\Services\FxOperationalRoleAssignmentService;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
@@ -144,6 +146,276 @@ class FxOperationalRoleAssignmentTest extends PostgresTestCase
         }
     }
 
+    public function test_manager_lacking_confirmation_cannot_assign(): void
+    {
+        $this->seedAuthorization();
+        $this->createFixtureUsers();
+
+        $assignAuditBefore = AuditLog::query()
+            ->where('event', 'fx_operational_role_assign')
+            ->count();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->manager, 'web')
+            ->post(route('finance.fx-operational-role-assignments.store'), [
+                'target_user_id' => $this->target->id,
+                'role' => 'accounts-payable-officer',
+                'action' => 'assign',
+                'reason' => 'Temporary AP coverage.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Sensitive action confirmation is required before assigning or revoking FX operational roles.');
+
+        setPermissionsTeamId($this->property->id);
+
+        $this->assertFalse(
+            $this->target->fresh()->hasRole('accounts-payable-officer'),
+            'Target should not have received the FX role.'
+        );
+
+        $this->assertSame(
+            $assignAuditBefore,
+            AuditLog::query()->where('event', 'fx_operational_role_assign')->count(),
+            'No assignment audit event should have been created.'
+        );
+    }
+
+    public function test_manager_lacking_confirmation_cannot_revoke(): void
+    {
+        $this->seedAuthorization();
+        $this->createFixtureUsers();
+
+        $this->withSession($this->confirmedSession())
+            ->actingAs($this->manager, 'web')
+            ->post(route('finance.fx-operational-role-assignments.store'), [
+                'target_user_id' => $this->target->id,
+                'role' => 'accounts-payable-officer',
+                'action' => 'assign',
+                'reason' => 'AP coverage.',
+            ]);
+
+        setPermissionsTeamId($this->property->id);
+        $this->assertTrue($this->target->fresh()->hasRole('accounts-payable-officer'));
+
+        $this->flushSession();
+
+        $revokeAuditBefore = AuditLog::query()
+            ->where('event', 'fx_operational_role_revoke')
+            ->count();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->manager, 'web')
+            ->post(route('finance.fx-operational-role-assignments.store'), [
+                'target_user_id' => $this->target->id,
+                'role' => 'accounts-payable-officer',
+                'action' => 'revoke',
+                'reason' => 'End AP coverage.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Sensitive action confirmation is required before assigning or revoking FX operational roles.');
+
+        setPermissionsTeamId($this->property->id);
+
+        $this->assertTrue(
+            $this->target->fresh()->hasRole('accounts-payable-officer'),
+            'Target should still have the FX role after confirmation-denied revoke.'
+        );
+
+        $this->assertSame(
+            $revokeAuditBefore,
+            AuditLog::query()->where('event', 'fx_operational_role_revoke')->count(),
+            'No revocation audit event should have been created.'
+        );
+    }
+
+    public function test_expired_confirmation_fails_closed(): void
+    {
+        $this->seedAuthorization();
+        $this->createFixtureUsers();
+
+        $expiredNow = Carbon::now()->subMinutes(SensitiveActionConfirmationService::CONFIRMATION_TTL_MINUTES + 5);
+        $expiredSession = array_merge($this->propertySession(), [
+            'sensitive_action_confirmation' => [
+                'finance-role-assignment' => [
+                    'actor_id' => $this->manager->id,
+                    'intent' => 'finance-role-assignment',
+                    'company_id' => $this->company->id,
+                    'property_id' => $this->property->id,
+                    'confirmed_at' => $expiredNow->toISOString(),
+                    'expires_at' => $expiredNow->copy()->addMinutes(SensitiveActionConfirmationService::CONFIRMATION_TTL_MINUTES)->toISOString(),
+                ],
+            ],
+        ]);
+
+        $this->withSession($expiredSession)
+            ->actingAs($this->manager, 'web')
+            ->post(route('finance.fx-operational-role-assignments.store'), [
+                'target_user_id' => $this->target->id,
+                'role' => 'accounts-payable-officer',
+                'action' => 'assign',
+                'reason' => 'Temporary AP coverage.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Sensitive action confirmation is required before assigning or revoking FX operational roles.');
+
+        setPermissionsTeamId($this->property->id);
+        $this->assertFalse($this->target->fresh()->hasRole('accounts-payable-officer'));
+    }
+
+    public function test_mismatched_actor_confirmation_fails_closed(): void
+    {
+        $this->seedAuthorization();
+        $this->createFixtureUsers();
+
+        $mismatchedSession = array_merge($this->propertySession(), [
+            'sensitive_action_confirmation' => [
+                'finance-role-assignment' => [
+                    'actor_id' => $this->target->id,
+                    'intent' => 'finance-role-assignment',
+                    'company_id' => $this->company->id,
+                    'property_id' => $this->property->id,
+                    'confirmed_at' => Carbon::now()->toISOString(),
+                    'expires_at' => Carbon::now()->addMinutes(15)->toISOString(),
+                ],
+            ],
+        ]);
+
+        $this->withSession($mismatchedSession)
+            ->actingAs($this->manager, 'web')
+            ->post(route('finance.fx-operational-role-assignments.store'), [
+                'target_user_id' => $this->target->id,
+                'role' => 'accounts-payable-officer',
+                'action' => 'assign',
+                'reason' => 'Temporary AP coverage.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Sensitive action confirmation is required before assigning or revoking FX operational roles.');
+
+        setPermissionsTeamId($this->property->id);
+        $this->assertFalse($this->target->fresh()->hasRole('accounts-payable-officer'));
+    }
+
+    public function test_mismatched_property_confirmation_fails_closed(): void
+    {
+        $this->seedAuthorization();
+        $this->createFixtureUsers();
+
+        $mismatchedSession = array_merge($this->propertySession(), [
+            'sensitive_action_confirmation' => [
+                'finance-role-assignment' => [
+                    'actor_id' => $this->manager->id,
+                    'intent' => 'finance-role-assignment',
+                    'company_id' => $this->company->id,
+                    'property_id' => $this->otherProperty->id,
+                    'confirmed_at' => Carbon::now()->toISOString(),
+                    'expires_at' => Carbon::now()->addMinutes(15)->toISOString(),
+                ],
+            ],
+        ]);
+
+        $this->withSession($mismatchedSession)
+            ->actingAs($this->manager, 'web')
+            ->post(route('finance.fx-operational-role-assignments.store'), [
+                'target_user_id' => $this->target->id,
+                'role' => 'accounts-payable-officer',
+                'action' => 'assign',
+                'reason' => 'Temporary AP coverage.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Sensitive action confirmation is required before assigning or revoking FX operational roles.');
+
+        setPermissionsTeamId($this->property->id);
+        $this->assertFalse($this->target->fresh()->hasRole('accounts-payable-officer'));
+    }
+
+    public function test_wrong_intent_confirmation_fails_closed(): void
+    {
+        $this->seedAuthorization();
+        $this->createFixtureUsers();
+
+        $wrongIntentSession = array_merge($this->propertySession(), [
+            'sensitive_action_confirmation' => [
+                'finance-approval' => [
+                    'actor_id' => $this->manager->id,
+                    'intent' => 'finance-approval',
+                    'company_id' => $this->company->id,
+                    'property_id' => $this->property->id,
+                    'confirmed_at' => Carbon::now()->toISOString(),
+                    'expires_at' => Carbon::now()->addMinutes(15)->toISOString(),
+                ],
+            ],
+        ]);
+
+        $this->withSession($wrongIntentSession)
+            ->actingAs($this->manager, 'web')
+            ->post(route('finance.fx-operational-role-assignments.store'), [
+                'target_user_id' => $this->target->id,
+                'role' => 'accounts-payable-officer',
+                'action' => 'assign',
+                'reason' => 'Temporary AP coverage.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Sensitive action confirmation is required before assigning or revoking FX operational roles.');
+
+        setPermissionsTeamId($this->property->id);
+        $this->assertFalse($this->target->fresh()->hasRole('accounts-payable-officer'));
+    }
+
+    public function test_confirmation_alone_grants_no_direct_user_permission(): void
+    {
+        $this->seedAuthorization();
+        $this->createFixtureUsers();
+
+        $permissionCountBefore = DB::table('model_has_permissions')
+            ->where('model_id', $this->manager->id)
+            ->count();
+
+        $this->withSession($this->confirmedSession())
+            ->actingAs($this->manager, 'web')
+            ->post(route('finance.fx-operational-role-assignments.store'), [
+                'target_user_id' => $this->target->id,
+                'role' => 'accounts-payable-officer',
+                'action' => 'assign',
+                'reason' => 'Temporary AP coverage.',
+            ])
+            ->assertSessionHas('success');
+
+        $this->assertSame(
+            $permissionCountBefore,
+            DB::table('model_has_permissions')->where('model_id', $this->manager->id)->count(),
+            'No direct user permissions should be granted.'
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('model_has_permissions')->where('model_id', $this->target->id)->count(),
+            'No direct user permissions should be granted to target.'
+        );
+    }
+
+    public function test_no_finance_domain_mutation_during_denied_assignment(): void
+    {
+        $this->seedAuthorization();
+        $this->createFixtureUsers();
+
+        $before = $this->domainTableCounts();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->manager, 'web')
+            ->post(route('finance.fx-operational-role-assignments.store'), [
+                'target_user_id' => $this->target->id,
+                'role' => 'accounts-payable-officer',
+                'action' => 'assign',
+                'reason' => 'Temporary AP coverage.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        foreach ($before as $table => $count) {
+            $this->assertSame($count, DB::table($table)->count(), "Table {$table} mutated during denied assignment.");
+        }
+    }
+
     private function seedAuthorization(): void
     {
         $this->seed(PermissionSeeder::class);
@@ -228,7 +500,7 @@ class FxOperationalRoleAssignmentTest extends PostgresTestCase
 
     private function assign(User $target, string $roleName)
     {
-        return $this->withSession($this->propertySession())
+        return $this->withSession($this->confirmedSession())
             ->actingAs($this->manager, 'web')
             ->withHeader('X-Request-Id', 'fx-role-assignment-test')
             ->post(route('finance.fx-operational-role-assignments.store'), [
@@ -242,7 +514,7 @@ class FxOperationalRoleAssignmentTest extends PostgresTestCase
 
     private function revoke(User $target, string $roleName)
     {
-        return $this->withSession($this->propertySession())
+        return $this->withSession($this->confirmedSession())
             ->actingAs($this->manager, 'web')
             ->withHeader('X-Request-Id', 'fx-role-revocation-test')
             ->post(route('finance.fx-operational-role-assignments.store'), [
@@ -251,6 +523,27 @@ class FxOperationalRoleAssignmentTest extends PostgresTestCase
                 'action' => 'revoke',
                 'reason' => 'Approved Finance coverage removal.',
             ]);
+    }
+
+    private function confirmedSession(): array
+    {
+        $now = Carbon::now();
+
+        return [
+            'active_property_id' => $this->property->id,
+            'active_company_id' => $this->company->id,
+            'current_property_id' => $this->property->id,
+            'sensitive_action_confirmation' => [
+                'finance-role-assignment' => [
+                    'actor_id' => $this->manager->id,
+                    'intent' => 'finance-role-assignment',
+                    'company_id' => $this->company->id,
+                    'property_id' => $this->property->id,
+                    'confirmed_at' => $now->toISOString(),
+                    'expires_at' => $now->copy()->addMinutes(SensitiveActionConfirmationService::CONFIRMATION_TTL_MINUTES)->toISOString(),
+                ],
+            ],
+        ];
     }
 
     private function propertySession(): array

@@ -9,12 +9,16 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 use Modules\Foundation\Authorization\Services\FxOperationalRoleAssignmentService;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
 
 class FxOperationalRoleAssignmentController extends Controller
 {
-    public function __construct(private readonly FxOperationalRoleAssignmentService $assignmentService) {}
+    public function __construct(
+        private readonly FxOperationalRoleAssignmentService $assignmentService,
+        private readonly SensitiveActionConfirmationService $confirmationService,
+    ) {}
 
     public function index(Request $request): InertiaResponse
     {
@@ -31,6 +35,15 @@ class FxOperationalRoleAssignmentController extends Controller
     {
         $propertyId = $this->resolvePropertyId($request);
         $this->authorizeManager($request, $propertyId);
+
+        $actor = $request->user();
+        $companyId = $request->session()->get('active_company_id');
+
+        if (!$this->confirmationService->hasValidConfirmation($actor, 'finance-role-assignment', $companyId, $propertyId)) {
+            return redirect()
+                ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-role-assignment'])
+                ->with('error', 'Sensitive action confirmation is required before assigning or revoking FX operational roles.');
+        }
 
         $validated = $request->validate([
             'target_user_id' => ['required', 'string', 'ulid'],
