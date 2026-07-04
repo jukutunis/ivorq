@@ -5,6 +5,7 @@ namespace Tests\Postgres\Finance\FxReference;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Finance\FxReference\Enums\ExchangeRateEvidenceStatusEnum;
@@ -20,6 +21,7 @@ use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
@@ -342,12 +344,10 @@ class FxAdjustmentOperationalExposureTest extends PostgresTestCase
         $candidate = app(RealizedFxAdjustmentCandidateService::class)
             ->create($context['allocation_id'], $this->creator);
 
+        $session = $this->reviewConfirmedSession($this->reviewer, $this->property);
+
         $response = $this->actingAs($this->reviewer)
-            ->withSession([
-                'active_property_id' => $this->property->id,
-                'active_company_id' => $this->property->company_id,
-                'current_property_id' => $this->property->id,
-            ])
+            ->withSession($session)
             ->post(route('finance.fx-adjustments.candidates.review', ['candidate' => $candidate->id]), [
                 'decision' => 'APPROVED',
                 'amount' => '999999.00',
@@ -387,12 +387,9 @@ class FxAdjustmentOperationalExposureTest extends PostgresTestCase
         $this->assertTrue($this->creator->can(RealizedFxAdjustmentCandidateReviewService::PERMISSION));
 
         // Try self-reviewing (which is prohibited)
+        $session = $this->reviewConfirmedSession($this->creator, $this->property);
         $response = $this->actingAs($this->creator)
-            ->withSession([
-                'active_property_id' => $this->property->id,
-                'active_company_id' => $this->property->company_id,
-                'current_property_id' => $this->property->id,
-            ])
+            ->withSession($session)
             ->post(route('finance.fx-adjustments.candidates.review', ['candidate' => $candidate->id]), [
                 'decision' => 'APPROVED',
             ]);
@@ -921,5 +918,26 @@ class FxAdjustmentOperationalExposureTest extends PostgresTestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function reviewConfirmedSession(User $actor, Property $property): array
+    {
+        $now = Carbon::now();
+
+        return [
+            'active_property_id' => $property->id,
+            'active_company_id' => $property->company_id,
+            'current_property_id' => $property->id,
+            'sensitive_action_confirmation' => [
+                'finance-approval' => [
+                    'actor_id' => $actor->id,
+                    'intent' => 'finance-approval',
+                    'company_id' => $property->company_id,
+                    'property_id' => $property->id,
+                    'confirmed_at' => $now->toISOString(),
+                    'expires_at' => $now->copy()->addMinutes(SensitiveActionConfirmationService::CONFIRMATION_TTL_MINUTES)->toISOString(),
+                ],
+            ],
+        ];
     }
 }

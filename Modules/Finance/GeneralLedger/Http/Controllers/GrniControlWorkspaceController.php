@@ -18,6 +18,7 @@ use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationS
 use Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService;
 use Modules\Finance\GeneralLedger\Services\JournalEntryControlledPostingService;
 use Modules\Finance\GeneralLedger\Services\JournalEntryDraftFinalizationAuthorizationService;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Models\InventoryReceipt;
 use Shared\Services\CurrentPropertyService;
@@ -42,6 +43,7 @@ class GrniControlWorkspaceController extends Controller
         private readonly JournalCandidateDraftMaterializationService $materializationService,
         private readonly JournalEntryDraftFinalizationAuthorizationService $authorizationService,
         private readonly JournalEntryControlledPostingService $postingService,
+        private readonly SensitiveActionConfirmationService $confirmationService,
     ) {}
 
     public function index(Request $request): InertiaResponse
@@ -138,6 +140,13 @@ class GrniControlWorkspaceController extends Controller
         $propertyId = $this->resolvePropertyId($request);
         $this->findScopedCandidate($candidate, $propertyId);
 
+        $companyId = $request->session()->get('active_company_id');
+        if (!$this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
+            return redirect()
+                ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval'])
+                ->with('error', 'Sensitive action confirmation is required before approving Finance documents.');
+        }
+
         return $this->redirectingAction(
             fn () => $this->reviewService->approve($candidate, $request->user()->id),
             'GRNI candidate approved.'
@@ -149,6 +158,13 @@ class GrniControlWorkspaceController extends Controller
         $this->authorizeAction($request->user(), 'finance.journal-candidate.review');
         $propertyId = $this->resolvePropertyId($request);
         $this->findScopedCandidate($candidate, $propertyId);
+
+        $companyId = $request->session()->get('active_company_id');
+        if (!$this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
+            return redirect()
+                ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval'])
+                ->with('error', 'Sensitive action confirmation is required before rejecting Finance documents.');
+        }
 
         $validated = $request->validate([
             'rejection_reason' => ['required', 'string', 'min:3', 'max:500'],

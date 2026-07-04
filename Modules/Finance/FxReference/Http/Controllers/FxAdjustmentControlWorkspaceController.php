@@ -18,6 +18,7 @@ use Modules\Finance\FxReference\Services\RealizedFxAdjustmentPostingService;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\Payables\Models\ApSettlementAllocation;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
 use Throwable;
@@ -35,6 +36,7 @@ class FxAdjustmentControlWorkspaceController extends Controller
         private readonly RealizedFxAdjustmentFinalizationAuthorizationService $authorizationService,
         private readonly RealizedFxAdjustmentPostingService $postingService,
         private readonly FxBreakGlassAccessService $breakGlassService,
+        private readonly SensitiveActionConfirmationService $confirmationService,
     ) {}
 
     public function index(Request $request): InertiaResponse
@@ -87,6 +89,12 @@ class FxAdjustmentControlWorkspaceController extends Controller
         $this->authorizeAction($request->user(), RealizedFxAdjustmentCandidateReviewService::PERMISSION, $propertyId);
         $this->guardBreakGlass($request->user(), $propertyId, $companyId);
         $this->findScopedCandidate($candidate, $propertyId);
+
+        if (!$this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
+            return redirect()
+                ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval'])
+                ->with('error', 'Sensitive action confirmation is required before approving or rejecting Finance documents.');
+        }
 
         $validated = $request->validate([
             'decision' => ['required', 'string', 'in:APPROVED,REJECTED'],
