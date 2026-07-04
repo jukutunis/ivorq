@@ -23,12 +23,22 @@ import Icon from '../../../Components/Ivorq/primitives/Icon';
 
 import ProgressBarCard from '../../../Components/Ivorq/finance/ProgressBarCard';
 
-const FinanceWorkspace = ({ activeTab = 'revenue_cash' }: { activeTab?: string }) => {
+interface FinanceWorkspaceProps {
+  activeTab?: string;
+  capabilities?: {
+    can_view_fx_adjustments?: boolean;
+  };
+}
+
+const FinanceWorkspace = ({ activeTab = 'revenue_cash', capabilities = {} }: FinanceWorkspaceProps) => {
   const tabs = [
     { href: '/finance/revenue-cash', label: 'Revenue & Cash', badge: 3 },
     { href: '/finance/accounts-payable', label: 'Accounts Payable', badge: 12 },
     { href: '/finance/accounts-receivable', label: 'Accounts Receivable', badge: 8 },
     { href: '/finance/budget-watch', label: 'Budget Watch' },
+    ...(capabilities.can_view_fx_adjustments
+      ? [{ href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' }]
+      : []),
   ];
 
   return (
