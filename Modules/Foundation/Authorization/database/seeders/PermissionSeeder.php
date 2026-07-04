@@ -62,6 +62,7 @@ class PermissionSeeder extends Seeder
             'finance.payables.ap-settlement.allocate',
             'finance.fx-rate.record',
             'finance.fx-rate.approve',
+            'finance.fx-adjustment-candidate.create',
             'finance.payment-adjustment-config.record',
             'finance.payment-adjustment-config.approve',
         ];
