@@ -140,6 +140,7 @@ class SensitiveActionConfirmationController extends Controller
     {
         $routes = [
             'finance-role-assignment' => 'finance.fx-operational-role-assignments.index',
+            'finance-approval' => 'dashboard',
         ];
 
         return $routes[$intent] ?? null;
