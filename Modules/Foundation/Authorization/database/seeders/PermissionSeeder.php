@@ -21,6 +21,7 @@ class PermissionSeeder extends Seeder
 
             // Role
             'role.view', 'role.create', 'role.edit', 'role.delete',
+            'system.finance-role-assignment.manage',
 
             // Audit
             'audit.view',

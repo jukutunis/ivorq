@@ -33,6 +33,7 @@ class FinanceController extends Controller
             'activeTab' => $activeTab,
             'capabilities' => [
                 'can_view_fx_adjustments' => (bool) request()->user()?->can('finance.fx-adjustment.view'),
+                'can_manage_fx_operational_roles' => (bool) request()->user()?->can('system.finance-role-assignment.manage'),
             ],
         ]);
     }

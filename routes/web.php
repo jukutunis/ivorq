@@ -59,6 +59,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.general-ledger.grni-control');
         Route::get('/fx-adjustments', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'index'])
             ->name('finance.fx-adjustments.index');
+        Route::get('/fx-access-management', [\Modules\Foundation\Authorization\Http\Controllers\FxOperationalRoleAssignmentController::class, 'index'])
+            ->name('finance.fx-operational-role-assignments.index');
+        Route::post('/fx-access-management', [\Modules\Foundation\Authorization\Http\Controllers\FxOperationalRoleAssignmentController::class, 'store'])
+            ->name('finance.fx-operational-role-assignments.store');
         Route::post('/fx-adjustments/candidates', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'create'])
             ->name('finance.fx-adjustments.candidates.create');
         Route::post('/fx-adjustments/candidates/{candidate}/review', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'review'])

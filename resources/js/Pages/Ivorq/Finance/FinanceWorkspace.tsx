@@ -27,6 +27,7 @@ interface FinanceWorkspaceProps {
   activeTab?: string;
   capabilities?: {
     can_view_fx_adjustments?: boolean;
+    can_manage_fx_operational_roles?: boolean;
   };
 }
 
@@ -38,6 +39,9 @@ const FinanceWorkspace = ({ activeTab = 'revenue_cash', capabilities = {} }: Fin
     { href: '/finance/budget-watch', label: 'Budget Watch' },
     ...(capabilities.can_view_fx_adjustments
       ? [{ href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' }]
+      : []),
+    ...(capabilities.can_manage_fx_operational_roles
+      ? [{ href: '/finance/fx-access-management', label: 'FX Access Management' }]
       : []),
   ];
 
