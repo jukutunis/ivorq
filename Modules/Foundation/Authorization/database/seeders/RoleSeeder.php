@@ -121,5 +121,48 @@ class RoleSeeder extends Seeder
         ]);
         // Give staff permissions plus some extras for demo
         $supervisor->syncPermissions($staff->permissions);
+
+        // FX operational Finance roles
+        $accountsPayableOfficer = Role::firstOrCreate([
+            'name'       => 'accounts-payable-officer',
+            'guard_name' => 'web',
+            'property_id'    => null,
+        ]);
+        $accountsPayableOfficer->syncPermissions([
+            'finance.fx-adjustment.view',
+            'finance.payables.ap-settlement.allocate',
+            'finance.fx-adjustment-candidate.create',
+        ]);
+
+        $financeController = Role::firstOrCreate([
+            'name'       => 'finance-controller',
+            'guard_name' => 'web',
+            'property_id'    => null,
+        ]);
+        $financeController->syncPermissions([
+            'finance.fx-adjustment.view',
+            'finance.journal-candidate.review',
+            'finance.journal-candidate.materialize-draft',
+        ]);
+
+        $financeManager = Role::firstOrCreate([
+            'name'       => 'finance-manager',
+            'guard_name' => 'web',
+            'property_id'    => null,
+        ]);
+        $financeManager->syncPermissions([
+            'finance.fx-adjustment.view',
+            'finance.journal-entry-draft.authorize-finalization',
+        ]);
+
+        $generalLedgerAccountant = Role::firstOrCreate([
+            'name'       => 'general-ledger-accountant',
+            'guard_name' => 'web',
+            'property_id'    => null,
+        ]);
+        $generalLedgerAccountant->syncPermissions([
+            'finance.fx-adjustment.view',
+            'finance.journal-entry.post',
+        ]);
     }
 }
