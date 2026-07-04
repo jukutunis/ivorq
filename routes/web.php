@@ -57,6 +57,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.payables.payment-proposals.index');
         Route::get('/payables/cashbook-evidence', [\Modules\Finance\GeneralCashier\Http\Controllers\CashbookEvidenceWorkspaceController::class, 'index'])
             ->name('finance.payables.cashbook-evidence.index');
+        Route::get('/payables/supplier-invoices', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'index'])
+            ->name('finance.payables.supplier-invoices.index');
         Route::get('/accounts-receivable', [FinanceController::class, 'accountsReceivable']);
         Route::get('/budget-watch', [FinanceController::class, 'budgetWatch']);
         Route::get('/general-ledger/grni-control', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'index'])
