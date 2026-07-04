@@ -75,9 +75,55 @@ The General Ledger module owns candidate generation.
 
 ### 9. Idempotency and Non-Mutation
 
-- A candidate creation attempt is idempotent and must fail controlled if a candidate already exists for the allocation.
-- No automatic retry logic is permitted on candidate failures.
-- No direct posting is allowed; all candidates must undergo human review before transitioning to drafts.
+Realized FX candidate creation must be strictly idempotent and govern identical and conflicting replays as follows:
+
+- **Canonical Source Tuple**: The candidate is bound to a canonical source tuple defined as:
+  `property_id` + `ap_settlement_allocation_id`
+  This tuple is entirely source-owned and server-resolved; no caller may supply, replace, or reinterpret it.
+
+- **Identical Replay**: If candidate generation is requested for a canonical source tuple that already has a candidate, and all candidate-relevant evidence is identical to the existing initial candidate evidence, the system must return the existing candidate reference. This applies only when all of the following are identical:
+  - Canonical source tuple.
+  - Source invoice identity.
+  - Source payment execution identity.
+  - AP journal identity.
+  - Payment journal identity.
+  - Approved exchange-rate evidence identity.
+  - FX gain/loss mapping identities.
+  - Canonical source snapshots.
+  - Derived direction.
+  - Derived decimal amount.
+  For an identical replay, the service must:
+  - Return the existing candidate reference.
+  - Create no second candidate.
+  - Mutate no existing candidate.
+  - Create no new `JournalCandidateLine` records.
+  - Create no new financial evidence.
+  - Perform no automatic retry.
+
+- **Conflicting Replay**: If the same canonical source tuple is requested but any candidate-relevant source evidence differs (e.g., rate change, amount change, or different mappings), the transaction must:
+  - Fail controlled.
+  - Preserve the existing candidate unchanged.
+  - Create no replacement candidate.
+  - Create no duplicate candidate.
+  - Create no new journal lines.
+  - Require manual investigation or an explicitly approved future correction workflow.
+
+- **Advanced Candidate State (Fail Closed)**: A candidate is not replayable once it has entered any lifecycle state or outcome beyond its original initial candidate-creation state. This includes:
+  - Any review decision.
+  - Any rejection decision.
+  - Any draft materialization.
+  - Any finalization activity.
+  - Any posting-related activity or reversal/correction relationship.
+  - Any other downstream lifecycle evidence.
+  For an advanced candidate, the service must:
+  - Fail closed.
+  - Do not return the existing candidate as an idempotent replay.
+  - Do not overwrite the existing candidate.
+  - Do not recreate the existing candidate.
+  - Do not bypass the applicable future correction or reversal workflow.
+
+- **Implementation Constraint**: Exact status names and transition checks must be source-proven by the future implementation. No future candidate service may invent status semantics, or use a generic "existing candidate" shortcut. Candidate idempotency does not authorize modification, replacement, retry, review, draft, finalization, or posting.
+- **No Direct Posting**: No direct posting is allowed; all candidates must undergo human review before transitioning to drafts.
 
 ## Consequences
 
