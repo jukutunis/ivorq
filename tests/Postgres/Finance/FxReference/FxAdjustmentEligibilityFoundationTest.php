@@ -60,6 +60,43 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
         $this->service = app(FxAdjustmentEligibilityService::class);
     }
 
+    private function assertNoExternalMutations(callable $callback): mixed
+    {
+        $tables = [
+            'payment_proposals',
+            'payment_proposal_items',
+            'payment_executions',
+            'ap_settlement_allocations',
+            'journal_candidates',
+            'gl_journal_entries',
+            'gl_journal_entry_lines',
+            'gl_ledger_balances',
+            'cashbook_transactions',
+            'controlled_bank_statement_lines',
+            'property_business_dates',
+            'gl_financial_periods',
+            'exchange_rate_evidences',
+            'payment_adjustment_configuration_evidences'
+        ];
+
+        $countsBefore = [];
+        foreach ($tables as $table) {
+            $countsBefore[$table] = DB::table($table)->count();
+        }
+
+        $result = $callback();
+
+        foreach ($tables as $table) {
+            $this->assertSame(
+                $countsBefore[$table],
+                DB::table($table)->count(),
+                "Table {$table} count was mutated."
+            );
+        }
+
+        return $result;
+    }
+
     public function test_happy_path_eligible_allocation(): void
     {
         $context = $this->makeSettlementContext(
@@ -70,7 +107,9 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
             rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED
         );
 
-        $result = $this->service->evaluate($context['allocation_id'], $this->actor);
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
 
         $this->assertTrue($result['eligible']);
         $this->assertSame('ELIGIBLE', $result['reason_code']);
@@ -91,7 +130,7 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
         $this->assertNotEmpty($result['immutable_evidence_snapshots']);
     }
 
-    public function test_same_currency_is_ineligible(): void
+    public function test_same_currency_fails_closed(): void
     {
         $context = $this->makeSettlementContext(
             invoiceCurrency: 'USD',
@@ -101,13 +140,15 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
             rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED
         );
 
-        $result = $this->service->evaluate($context['allocation_id'], $this->actor);
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
 
         $this->assertFalse($result['eligible']);
         $this->assertSame('SAME_CURRENCY', $result['reason_code']);
     }
 
-    public function test_no_approved_rate_evidence_is_ineligible(): void
+    public function test_no_approved_rate_evidence_fails_closed(): void
     {
         $context = $this->makeSettlementContext(
             invoiceCurrency: 'EUR',
@@ -117,13 +158,15 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
             rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::RECORDED
         );
 
-        $result = $this->service->evaluate($context['allocation_id'], $this->actor);
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
 
         $this->assertFalse($result['eligible']);
         $this->assertSame('NO_APPROVED_RATE_EVIDENCE', $result['reason_code']);
     }
 
-    public function test_inactive_actor_is_ineligible(): void
+    public function test_inactive_actor_fails_closed(): void
     {
         $context = $this->makeSettlementContext(
             invoiceCurrency: 'EUR',
@@ -137,13 +180,15 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
         $this->attachActorToProperty($inactiveActor, $this->property);
         DB::table('users')->where('id', $inactiveActor->id)->update(['is_active' => false]);
 
-        $result = $this->service->evaluate($context['allocation_id'], $inactiveActor);
+        $result = $this->assertNoExternalMutations(function () use ($context, $inactiveActor) {
+            return $this->service->evaluate($context['allocation_id'], $inactiveActor);
+        });
 
         $this->assertFalse($result['eligible']);
         $this->assertSame('INACTIVE_ACTOR', $result['reason_code']);
     }
 
-    public function test_unauthorized_actor_is_ineligible(): void
+    public function test_unauthorized_actor_fails_closed(): void
     {
         $context = $this->makeSettlementContext(
             invoiceCurrency: 'EUR',
@@ -156,13 +201,44 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
         $unauthorizedActor = $this->makeUser();
         $this->attachActorToProperty($unauthorizedActor, $this->property);
 
-        $result = $this->service->evaluate($context['allocation_id'], $unauthorizedActor);
+        $result = $this->assertNoExternalMutations(function () use ($context, $unauthorizedActor) {
+            return $this->service->evaluate($context['allocation_id'], $unauthorizedActor);
+        });
 
         $this->assertFalse($result['eligible']);
         $this->assertSame('UNAUTHORIZED_ACTOR', $result['reason_code']);
     }
 
-    public function test_cross_property_actor_is_ineligible(): void
+    public function test_inactive_membership_fails_closed(): void
+    {
+        $context = $this->makeSettlementContext(
+            invoiceCurrency: 'EUR',
+            paymentCurrency: 'USD',
+            invoiceAmount: '100.00',
+            paymentAmount: '100.00',
+            rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED
+        );
+
+        $otherActor = $this->makeUser();
+        $otherActor->givePermissionTo(FxAdjustmentEligibilityService::PERMISSION);
+
+        $otherActor->properties()->syncWithoutDetaching([
+            $this->property->id => [
+                'is_default' => true,
+                'status' => 'inactive',
+                'joined_at' => now(),
+            ],
+        ]);
+
+        $result = $this->assertNoExternalMutations(function () use ($context, $otherActor) {
+            return $this->service->evaluate($context['allocation_id'], $otherActor);
+        });
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('PROPERTY_ACCESS_DENIED', $result['reason_code']);
+    }
+
+    public function test_cross_property_membership_fails_closed(): void
     {
         $context = $this->makeSettlementContext(
             invoiceCurrency: 'EUR',
@@ -177,13 +253,15 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
         $this->attachActorToProperty($otherActor, $otherProperty);
         $otherActor->givePermissionTo(FxAdjustmentEligibilityService::PERMISSION);
 
-        $result = $this->service->evaluate($context['allocation_id'], $otherActor);
+        $result = $this->assertNoExternalMutations(function () use ($context, $otherActor) {
+            return $this->service->evaluate($context['allocation_id'], $otherActor);
+        });
 
         $this->assertFalse($result['eligible']);
         $this->assertSame('PROPERTY_ACCESS_DENIED', $result['reason_code']);
     }
 
-    public function test_conflicting_provenance_is_ineligible(): void
+    public function test_conflicting_provenance_fails_closed(): void
     {
         $context = $this->makeSettlementContext(
             invoiceCurrency: 'EUR',
@@ -193,19 +271,20 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
             rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED
         );
 
-        // Mutate invoice property to conflict
         $otherProperty = $this->makeProperty();
         DB::table('vendor_invoices')->where('id', $context['supplier_invoice_id'])->update([
             'property_id' => $otherProperty->id,
         ]);
 
-        $result = $this->service->evaluate($context['allocation_id'], $this->actor);
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
 
         $this->assertFalse($result['eligible']);
         $this->assertSame('CONFLICTING_PROVENANCE', $result['reason_code']);
     }
 
-    public function test_ambiguous_mapping_is_ineligible(): void
+    public function test_missing_provenance_fails_closed(): void
     {
         $context = $this->makeSettlementContext(
             invoiceCurrency: 'EUR',
@@ -215,14 +294,154 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
             rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED
         );
 
-        // Add a second active mapping to cause ambiguity
+        DB::table('payment_executions')->where('id', $context['payment_execution_id'])->delete();
+
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('MISSING_PROVENANCE', $result['reason_code']);
+    }
+
+    public function test_missing_ap_basis_fails_closed(): void
+    {
+        $context = $this->makeSettlementContext(
+            invoiceCurrency: 'EUR',
+            paymentCurrency: 'USD',
+            invoiceAmount: '100.00',
+            paymentAmount: '100.00',
+            rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED,
+            excludeApControlLine: true
+        );
+
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('MISSING_BASIS', $result['reason_code']);
+    }
+
+    public function test_missing_cash_basis_fails_closed(): void
+    {
+        $context = $this->makeSettlementContext(
+            invoiceCurrency: 'EUR',
+            paymentCurrency: 'USD',
+            invoiceAmount: '100.00',
+            paymentAmount: '100.00',
+            rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED,
+            excludeApControlLine: false,
+            excludeCashLine: true
+        );
+
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('MISSING_BASIS', $result['reason_code']);
+    }
+
+    public function test_inactive_mapping_fails_closed(): void
+    {
+        $context = $this->makeSettlementContext(
+            invoiceCurrency: 'EUR',
+            paymentCurrency: 'USD',
+            invoiceAmount: '100.00',
+            paymentAmount: '100.00',
+            rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED
+        );
+
+        DB::table('gl_operational_identity_mappings')
+            ->where('property_id', $this->property->id)
+            ->where('operational_identity', OperationalIdentityEnum::FX_GAIN->value)
+            ->update(['is_active' => false]);
+
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('INVALID_MAPPING', $result['reason_code']);
+    }
+
+    public function test_expired_mapping_fails_closed(): void
+    {
+        $context = $this->makeSettlementContext(
+            invoiceCurrency: 'EUR',
+            paymentCurrency: 'USD',
+            invoiceAmount: '100.00',
+            paymentAmount: '100.00',
+            rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED
+        );
+
+        DB::table('gl_operational_identity_mappings')
+            ->where('property_id', $this->property->id)
+            ->where('operational_identity', OperationalIdentityEnum::FX_LOSS->value)
+            ->update(['effective_to' => '2026-06-30']);
+
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('INVALID_MAPPING', $result['reason_code']);
+    }
+
+    public function test_cross_property_mapping_fails_closed(): void
+    {
+        $context = $this->makeSettlementContext(
+            invoiceCurrency: 'EUR',
+            paymentCurrency: 'USD',
+            invoiceAmount: '100.00',
+            paymentAmount: '100.00',
+            rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED
+        );
+
+        $otherProperty = $this->makeProperty();
+        DB::table('gl_operational_identity_mappings')
+            ->where('property_id', $this->property->id)
+            ->where('operational_identity', OperationalIdentityEnum::FX_GAIN->value)
+            ->update(['property_id' => $otherProperty->id]);
+
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('INVALID_MAPPING', $result['reason_code']);
+    }
+
+    public function test_ambiguous_mapping_fails_closed(): void
+    {
+        $context = $this->makeSettlementContext(
+            invoiceCurrency: 'EUR',
+            paymentCurrency: 'USD',
+            invoiceAmount: '100.00',
+            paymentAmount: '100.00',
+            rateEvidenceStatus: ExchangeRateEvidenceStatusEnum::APPROVED
+        );
+
         $secondFxGainAccount = $this->makeAccount('FX-GAIN-2', 'Revenue', 'Revenue', 'Credit');
         $this->makeMapping($this->property, OperationalIdentityEnum::FX_GAIN, $secondFxGainAccount);
 
-        $result = $this->service->evaluate($context['allocation_id'], $this->actor);
+        $result = $this->assertNoExternalMutations(function () use ($context) {
+            return $this->service->evaluate($context['allocation_id'], $this->actor);
+        });
 
         $this->assertFalse($result['eligible']);
         $this->assertSame('AMBIGUOUS_MAPPING', $result['reason_code']);
+    }
+
+    public function test_caller_cannot_inject_values(): void
+    {
+        $reflection = new \ReflectionMethod($this->service, 'evaluate');
+        $parameters = $reflection->getParameters();
+
+        $this->assertCount(2, $parameters);
+        $this->assertSame('allocationId', $parameters[0]->getName());
+        $this->assertSame('actor', $parameters[1]->getName());
     }
 
     // --- Helpers ---
@@ -232,7 +451,9 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
         string $paymentCurrency,
         string $invoiceAmount,
         string $paymentAmount,
-        ExchangeRateEvidenceStatusEnum $rateEvidenceStatus
+        ExchangeRateEvidenceStatusEnum $rateEvidenceStatus,
+        bool $excludeApControlLine = false,
+        bool $excludeCashLine = false
     ): array {
         $timestamp = now();
         $vendorId = (string) Str::ulid();
@@ -322,7 +543,7 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
             'updated_at' => $timestamp,
         ]);
 
-        DB::table('gl_journal_entry_lines')->insert([
+        $apLines = [
             [
                 'id' => (string) Str::ulid(),
                 'property_id' => $this->property->id,
@@ -333,8 +554,11 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
                 'memo' => 'Debit expense',
                 'created_at' => $timestamp,
                 'updated_at' => $timestamp,
-            ],
-            [
+            ]
+        ];
+
+        if (!$excludeApControlLine) {
+            $apLines[] = [
                 'id' => (string) Str::ulid(),
                 'property_id' => $this->property->id,
                 'journal_entry_id' => $apJournalEntryId,
@@ -344,8 +568,10 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
                 'memo' => 'Credit AP Control',
                 'created_at' => $timestamp,
                 'updated_at' => $timestamp,
-            ],
-        ]);
+            ];
+        }
+
+        DB::table('gl_journal_entry_lines')->insert($apLines);
 
         DB::table('gl_journal_entries')
             ->where('id', $apJournalEntryId)
@@ -439,7 +665,7 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
             'updated_at' => $timestamp,
         ]);
 
-        DB::table('gl_journal_entry_lines')->insert([
+        $paymentLines = [
             [
                 'id' => (string) Str::ulid(),
                 'property_id' => $this->property->id,
@@ -450,8 +676,11 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
                 'memo' => 'Debit AP Control',
                 'created_at' => $timestamp,
                 'updated_at' => $timestamp,
-            ],
-            [
+            ]
+        ];
+
+        if (!$excludeCashLine) {
+            $paymentLines[] = [
                 'id' => (string) Str::ulid(),
                 'property_id' => $this->property->id,
                 'journal_entry_id' => $paymentJournalEntryId,
@@ -461,8 +690,10 @@ class FxAdjustmentEligibilityFoundationTest extends PostgresTestCase
                 'memo' => 'Credit Cash',
                 'created_at' => $timestamp,
                 'updated_at' => $timestamp,
-            ],
-        ]);
+            ];
+        }
+
+        DB::table('gl_journal_entry_lines')->insert($paymentLines);
 
         DB::table('gl_journal_entries')
             ->where('id', $paymentJournalEntryId)
