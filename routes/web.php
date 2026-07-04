@@ -112,4 +112,11 @@ Route::middleware(['auth', 'active.property'])->group(function () {
     Route::post('/api/v1/sales-events/beo-acknowledgements/{acknowledgement}/acknowledge', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'acknowledge']);
     Route::post('/api/v1/sales-events/beo-acknowledgements/{acknowledgement}/reject', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'reject']);
     Route::get('/api/v1/sales-events/beo-distributions/{distribution}', [\Modules\SalesAndEventManagement\Http\Controllers\BEODistributionController::class, 'show']);
+
+    Route::get('/system/sensitive-action-confirmation', [\Modules\Foundation\Authorization\Http\Controllers\SensitiveActionConfirmationController::class, 'index'])
+        ->name('system.sensitive-action-confirmation.index');
+    Route::post('/system/sensitive-action-confirmation', [\Modules\Foundation\Authorization\Http\Controllers\SensitiveActionConfirmationController::class, 'store'])
+        ->name('system.sensitive-action-confirmation.store');
+    Route::delete('/system/sensitive-action-confirmation', [\Modules\Foundation\Authorization\Http\Controllers\SensitiveActionConfirmationController::class, 'destroy'])
+        ->name('system.sensitive-action-confirmation.destroy');
 });
