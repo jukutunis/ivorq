@@ -194,6 +194,13 @@ class GrniControlWorkspaceController extends Controller
         $propertyId = $this->resolvePropertyId($request);
         $this->findScopedJournal($journalEntry, $propertyId);
 
+        $companyId = $request->session()->get('active_company_id');
+        if (!$this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
+            return redirect()
+                ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval'])
+                ->with('error', 'Sensitive action confirmation is required before authorizing journal draft finalization.');
+        }
+
         return $this->redirectingAction(
             fn () => $this->authorizationService->authorize($journalEntry, $request->user()->id),
             'GRNI journal draft authorized.'

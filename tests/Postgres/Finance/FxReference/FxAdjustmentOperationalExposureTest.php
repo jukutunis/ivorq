@@ -438,7 +438,7 @@ class FxAdjustmentOperationalExposureTest extends PostgresTestCase
             ->assertStatus(403);
 
         $this->actingAs($this->authorizer)
-            ->withSession($session)
+            ->withSession($this->reviewConfirmedSession($this->authorizer, $this->property))
             ->post(route('finance.fx-adjustments.journals.authorize-finalization', ['journalEntry' => $journal->id]))
             ->assertRedirect(route('finance.fx-adjustments.index'));
 

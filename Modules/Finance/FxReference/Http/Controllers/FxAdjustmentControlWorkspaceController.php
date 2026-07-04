@@ -135,6 +135,12 @@ class FxAdjustmentControlWorkspaceController extends Controller
         $this->guardBreakGlass($request->user(), $propertyId, $companyId);
         $this->findScopedJournal($journalEntry, $propertyId);
 
+        if (!$this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
+            return redirect()
+                ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval'])
+                ->with('error', 'Sensitive action confirmation is required before authorizing journal draft finalization.');
+        }
+
         return $this->redirectingAction(
             fn () => $this->authorizationService->authorize($journalEntry, $request->user()->id),
             'Realized FX journal draft authorized.'
