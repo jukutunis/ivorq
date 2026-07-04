@@ -57,6 +57,18 @@ Route::middleware(['auth', 'active.property'])->group(function () {
         Route::get('/budget-watch', [FinanceController::class, 'budgetWatch']);
         Route::get('/general-ledger/grni-control', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'index'])
             ->name('finance.general-ledger.grni-control');
+        Route::get('/fx-adjustments', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'index'])
+            ->name('finance.fx-adjustments.index');
+        Route::post('/fx-adjustments/candidates', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'create'])
+            ->name('finance.fx-adjustments.candidates.create');
+        Route::post('/fx-adjustments/candidates/{candidate}/review', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'review'])
+            ->name('finance.fx-adjustments.candidates.review');
+        Route::post('/fx-adjustments/candidates/{candidate}/materialize', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'materialize'])
+            ->name('finance.fx-adjustments.candidates.materialize');
+        Route::post('/fx-adjustments/journals/{journalEntry}/authorize-finalization', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'authorizeFinalization'])
+            ->name('finance.fx-adjustments.journals.authorize-finalization');
+        Route::post('/fx-adjustments/journals/{journalEntry}/post', [\Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController::class, 'post'])
+            ->name('finance.fx-adjustments.journals.post');
         Route::post('/general-ledger/grni-control/candidates/{candidate}/approve', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'approve'])
             ->name('finance.general-ledger.grni-control.candidates.approve');
         Route::post('/general-ledger/grni-control/candidates/{candidate}/reject', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'reject'])
