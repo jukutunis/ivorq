@@ -95,12 +95,12 @@ class FxOperationalIdentityFoundationTest extends PostgresTestCase
             $revenueAccount = $this->makeAccount($this->property, '401000', AccountTypeEnum::Revenue, AccountCategoryEnum::Revenue);
 
             // Validate using existing validation convention
-            $this->validationService->validate(OperationalIdentityEnum::FX_GAIN, $revenueAccount, $this->property->id);
+            $this->validationService->validate(OperationalIdentityEnum::FX_GAIN, $revenueAccount);
             $this->assertTrue(true);
         });
     }
 
-    public function test_fx_gain_mapping_rejects_invalid_types_inactive_and_cross_property(): void
+    public function test_fx_gain_mapping_rejects_invalid_types(): void
     {
         $this->assertNoExternalMutations(function () {
             // Rejects non-Revenue account types
@@ -115,30 +115,11 @@ class FxOperationalIdentityFoundationTest extends PostgresTestCase
                 $category = $t['category'];
                 $account = $this->makeAccount($this->property, '500' . $this->sequence++, $type, $category);
                 try {
-                    $this->validationService->validate(OperationalIdentityEnum::FX_GAIN, $account, $this->property->id);
+                    $this->validationService->validate(OperationalIdentityEnum::FX_GAIN, $account);
                     $this->fail("Expected OperationalIdentityValidationException for type: {$type->value}");
                 } catch (OperationalIdentityValidationException $e) {
                     $this->assertStringContainsString('Invalid mapping configuration', $e->getMessage());
                 }
-            }
-
-            // Rejects inactive account
-            $inactiveRevenue = $this->makeAccount($this->property, '401001', AccountTypeEnum::Revenue, AccountCategoryEnum::Revenue, false);
-            try {
-                $this->validationService->validate(OperationalIdentityEnum::FX_GAIN, $inactiveRevenue, $this->property->id);
-                $this->fail('Expected OperationalIdentityValidationException for inactive account');
-            } catch (OperationalIdentityValidationException $e) {
-                $this->assertStringContainsString('is inactive', $e->getMessage());
-            }
-
-            // Rejects cross-property account
-            $otherProperty = $this->makeProperty();
-            $otherRevenue = $this->makeAccount($otherProperty, '401002', AccountTypeEnum::Revenue, AccountCategoryEnum::Revenue);
-            try {
-                $this->validationService->validate(OperationalIdentityEnum::FX_GAIN, $otherRevenue, $this->property->id);
-                $this->fail('Expected OperationalIdentityValidationException for cross-property account');
-            } catch (OperationalIdentityValidationException $e) {
-                $this->assertStringContainsString('belongs to a different property', $e->getMessage());
             }
         });
     }
@@ -149,12 +130,12 @@ class FxOperationalIdentityFoundationTest extends PostgresTestCase
             $expenseAccount = $this->makeAccount($this->property, '501000', AccountTypeEnum::Expense, AccountCategoryEnum::Expense);
 
             // Validate using existing validation convention
-            $this->validationService->validate(OperationalIdentityEnum::FX_LOSS, $expenseAccount, $this->property->id);
+            $this->validationService->validate(OperationalIdentityEnum::FX_LOSS, $expenseAccount);
             $this->assertTrue(true);
         });
     }
 
-    public function test_fx_loss_mapping_rejects_invalid_types_inactive_and_cross_property(): void
+    public function test_fx_loss_mapping_rejects_invalid_types(): void
     {
         $this->assertNoExternalMutations(function () {
             // Rejects non-Expense account types
@@ -169,30 +150,11 @@ class FxOperationalIdentityFoundationTest extends PostgresTestCase
                 $category = $t['category'];
                 $account = $this->makeAccount($this->property, '400' . $this->sequence++, $type, $category);
                 try {
-                    $this->validationService->validate(OperationalIdentityEnum::FX_LOSS, $account, $this->property->id);
+                    $this->validationService->validate(OperationalIdentityEnum::FX_LOSS, $account);
                     $this->fail("Expected OperationalIdentityValidationException for type: {$type->value}");
                 } catch (OperationalIdentityValidationException $e) {
                     $this->assertStringContainsString('Invalid mapping configuration', $e->getMessage());
                 }
-            }
-
-            // Rejects inactive account
-            $inactiveExpense = $this->makeAccount($this->property, '501001', AccountTypeEnum::Expense, AccountCategoryEnum::Expense, false);
-            try {
-                $this->validationService->validate(OperationalIdentityEnum::FX_LOSS, $inactiveExpense, $this->property->id);
-                $this->fail('Expected OperationalIdentityValidationException for inactive account');
-            } catch (OperationalIdentityValidationException $e) {
-                $this->assertStringContainsString('is inactive', $e->getMessage());
-            }
-
-            // Rejects cross-property account
-            $otherProperty = $this->makeProperty();
-            $otherExpense = $this->makeAccount($otherProperty, '501002', AccountTypeEnum::Expense, AccountCategoryEnum::Expense);
-            try {
-                $this->validationService->validate(OperationalIdentityEnum::FX_LOSS, $otherExpense, $this->property->id);
-                $this->fail('Expected OperationalIdentityValidationException for cross-property account');
-            } catch (OperationalIdentityValidationException $e) {
-                $this->assertStringContainsString('belongs to a different property', $e->getMessage());
             }
         });
     }

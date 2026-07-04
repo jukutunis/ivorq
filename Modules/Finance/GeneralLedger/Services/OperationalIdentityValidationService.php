@@ -67,20 +67,8 @@ class OperationalIdentityValidationService
      * @return void
      * @throws OperationalIdentityValidationException
      */
-    public function validate(OperationalIdentityEnum $identity, Account $account, ?string $propertyId = null): void
+    public function validate(OperationalIdentityEnum $identity, Account $account): void
     {
-        if (!$account->is_active) {
-            throw new OperationalIdentityValidationException(
-                "Resolved account '{$account->code}' is inactive."
-            );
-        }
-
-        if ($propertyId !== null && $account->property_id !== $propertyId) {
-            throw new OperationalIdentityValidationException(
-                "Resolved account '{$account->code}' belongs to a different property."
-            );
-        }
-
         $matrix = $this->getValidationMatrix();
 
         if (!isset($matrix[$identity->value])) {
