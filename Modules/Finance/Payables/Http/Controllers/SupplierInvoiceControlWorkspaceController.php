@@ -48,10 +48,12 @@ class SupplierInvoiceControlWorkspaceController extends Controller
     private function statusLabel(?string $status): string
     {
         return match($status) {
-            'PENDING' => 'Pending',
-            'APPROVED' => 'Approved',
-            'REJECTED' => 'Rejected',
-            'VOIDED' => 'Voided',
+            'draft' => 'Draft',
+            'pending_review' => 'Pending Review',
+            'approved' => 'Approved',
+            'rejected' => 'Rejected',
+            'posted' => 'Posted',
+            'voided' => 'Voided',
             default => $status ?? 'Unknown',
         };
     }
