@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Link, usePage } from '@inertiajs/react';
+import { Link, useForm, usePage } from '@inertiajs/react';
 import '../../../../css/ivorq-prototype.css';
 
 import IvorqLayout from '../../../Layouts/IvorqLayout';
@@ -63,11 +63,57 @@ interface ReconciliationEvidence {
   reconciled_at: string | null;
 }
 
+interface EligibleItem {
+  id: string;
+  proposal_number: string | null;
+  invoice_number: string | null;
+  amount: string;
+  currency_code: string;
+  vendor_id: string | null;
+}
+
+interface BankSession {
+  id: string;
+  status: string;
+  opened_at: string | null;
+}
+
+interface BankInstrument {
+  id: string;
+  name: string;
+  type: string;
+}
+
+interface ExecBankAccount {
+  id: string;
+  account_name: string;
+  bank_name: string;
+  currency_code: string | null;
+}
+
+interface ExecStatementLine {
+  id: string;
+  controlled_bank_account_id: string;
+  amount: string;
+  currency_code: string | null;
+  statement_date: string | null;
+  external_reference: string | null;
+}
+
+interface BankExecutionContext {
+  eligible_items: EligibleItem[];
+  bank_sessions: BankSession[];
+  bank_instruments: BankInstrument[];
+  bank_accounts: ExecBankAccount[];
+  statement_lines: ExecStatementLine[];
+}
+
 interface Props {
   bank_accounts: BankAccount[];
   statement_lines: BankStatementLine[];
   bank_execution_evidence: BankExecutionEvidence[];
   reconciliation_evidence: ReconciliationEvidence[];
+  bank_execution_context: BankExecutionContext;
   permissions: {
     can_execute_bank: boolean;
     can_reconcile_bank: boolean;
@@ -88,11 +134,12 @@ const financeTabs = [
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 
-export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, permissions }: Props) {
+export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, bank_execution_context, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selection, setSelection] = useState<Selection | null>(
     bank_accounts[0] ? { type: 'account', id: bank_accounts[0].id } : null
   );
+  const [showExecuteForm, setShowExecuteForm] = useState<boolean>(false);
 
   const statementCount = useMemo(() => statement_lines.length, [statement_lines]);
   const executionCount = useMemo(() => bank_execution_evidence.length, [bank_execution_evidence]);
@@ -112,12 +159,52 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
   const reconciledStatementLineIds = new Set(reconciliation_evidence.map((r) => r.controlled_bank_statement_line_id));
   const executedStatementLineIds = new Set(bank_execution_evidence.map((e) => e.controlled_bank_statement_line_id));
 
+  const context = bank_execution_context || {};
+  const canExecuteBank = permissions?.can_execute_bank ?? false;
+  const hasExecutionContext = (context.eligible_items?.length ?? 0) > 0
+    && (context.bank_sessions?.length ?? 0) > 0
+    && (context.bank_instruments?.length ?? 0) > 0
+    && (context.bank_accounts?.length ?? 0) > 0
+    && (context.statement_lines?.length ?? 0) > 0;
+
+  const executeForm = useForm<{
+    payment_proposal_item_id: string;
+    cashier_session_id: string;
+    bank_payment_instrument_id: string;
+    controlled_bank_account_id: string;
+    controlled_bank_statement_line_id: string;
+  }>({
+    payment_proposal_item_id: '',
+    cashier_session_id: '',
+    bank_payment_instrument_id: '',
+    controlled_bank_account_id: '',
+    controlled_bank_statement_line_id: '',
+  });
+
+  const submitExecute = (event: React.FormEvent) => {
+    event.preventDefault();
+    executeForm.post(route('finance.banking.bank-payment-execute.execute'), {
+      preserveScroll: true,
+      onSuccess: () => {
+        setShowExecuteForm(false);
+        executeForm.reset();
+      },
+    });
+  };
+
   return (
     <div className="workspace">
       <WorkspaceHeader title="Banking Operations">
-        <Link href={route('finance.payables.cashbook-evidence.index')} preserveScroll className="btn btn-secondary">
-          <Icon name="file-text" /> Cashbook Evidence
-        </Link>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <Link href={route('finance.payables.cashbook-evidence.index')} preserveScroll className="btn btn-secondary">
+            <Icon name="file-text" /> Cashbook Evidence
+          </Link>
+          {canExecuteBank && hasExecutionContext && (
+            <Button type="button" variant="primary" onClick={() => setShowExecuteForm(!showExecuteForm)}>
+              <Icon name="credit-card" /> {showExecuteForm ? 'Cancel' : 'Execute Bank Payment'}
+            </Button>
+          )}
+        </div>
       </WorkspaceHeader>
 
       <ModuleTabs tabs={financeTabs} />
@@ -166,12 +253,122 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
                 </div>
               )}
             </div>
+            <div className="filter-group" style={{ borderTop: '1px solid var(--border-default)', paddingTop: '12px' }}>
+              <label className="filter-label">Execution Context</label>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                <div>Eligible Items: {context.eligible_items?.length ?? 0}</div>
+                <div>Open Sessions: {context.bank_sessions?.length ?? 0}</div>
+                <div>BANK Instruments: {context.bank_instruments?.length ?? 0}</div>
+                <div>Bank Accounts: {context.bank_accounts?.length ?? 0}</div>
+                <div>Statement Lines: {context.statement_lines?.length ?? 0}</div>
+              </div>
+              {(context.eligible_items?.length ?? 0) === 0 && (
+                <div className="finance-context-note" style={{ marginTop: '4px' }}>
+                  No payment proposal items are currently eligible for bank execution in this property.
+                </div>
+              )}
+              {(context.bank_sessions?.length ?? 0) === 0 && (
+                <div className="finance-context-note" style={{ marginTop: '2px' }}>
+                  No open cashier session for the current actor.
+                </div>
+              )}
+            </div>
           </div>
         </QuickFilterPanel>
 
         <MainContent>
           {(flash?.success || flash?.error) && (
             <div className={`finance-flash ${flash.success ? 'success' : 'error'}`}>{flash.success || flash.error}</div>
+          )}
+
+          {showExecuteForm && canExecuteBank && (
+            <AttentionArea title="Bank Payment Execution" badgeText="Sensitive" badgeType="critical" areaType="critical">
+              <form onSubmit={submitExecute} style={{ display: 'grid', gap: '12px' }}>
+                <div className="filter-group">
+                  <label className="filter-label">Payment Proposal Item</label>
+                  <select
+                    value={executeForm.data.payment_proposal_item_id}
+                    onChange={(e) => executeForm.setData('payment_proposal_item_id', e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">Select item...</option>
+                    {(context.eligible_items ?? []).map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.proposal_number || item.id} — {item.amount} {item.currency_code}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <label className="filter-label">Cashier Session</label>
+                  <select
+                    value={executeForm.data.cashier_session_id}
+                    onChange={(e) => executeForm.setData('cashier_session_id', e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">Select session...</option>
+                    {(context.bank_sessions ?? []).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.id} — {s.status}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <label className="filter-label">Bank Payment Instrument</label>
+                  <select
+                    value={executeForm.data.bank_payment_instrument_id}
+                    onChange={(e) => executeForm.setData('bank_payment_instrument_id', e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">Select instrument...</option>
+                    {(context.bank_instruments ?? []).map((inst) => (
+                      <option key={inst.id} value={inst.id}>
+                        {inst.name} ({inst.type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <label className="filter-label">Controlled Bank Account</label>
+                  <select
+                    value={executeForm.data.controlled_bank_account_id}
+                    onChange={(e) => executeForm.setData('controlled_bank_account_id', e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">Select account...</option>
+                    {(context.bank_accounts ?? []).map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.account_name} ({acc.bank_name}) — {acc.currency_code}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <label className="filter-label">Controlled Bank Statement Line (OUTFLOW)</label>
+                  <select
+                    value={executeForm.data.controlled_bank_statement_line_id}
+                    onChange={(e) => executeForm.setData('controlled_bank_statement_line_id', e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">Select statement line...</option>
+                    {(context.statement_lines ?? []).map((line) => (
+                      <option key={line.id} value={line.id}>
+                        {line.external_reference || line.id} — {line.amount} {line.currency_code} ({line.statement_date})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <Button type="submit" variant="primary" disabled={executeForm.processing}>
+                    <Icon name="check" /> Execute Bank Payment
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => setShowExecuteForm(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </AttentionArea>
           )}
 
           <OperationalSnapshot>

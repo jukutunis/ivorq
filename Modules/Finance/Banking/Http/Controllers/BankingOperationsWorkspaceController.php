@@ -3,6 +3,7 @@
 namespace Modules\Finance\Banking\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
@@ -11,10 +12,17 @@ use Modules\Finance\Banking\Models\ControlledBankAccount;
 use Modules\Finance\Banking\Models\ControlledBankStatementLine;
 use Modules\Finance\Banking\Models\BankPaymentReconciliation;
 use Modules\Finance\Banking\Services\ManualBankReconciliationService;
+use Modules\Finance\Payables\Models\PaymentProposalItem;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
+use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
+use Modules\Operations\GeneralCashier\Models\CashierPaymentInstrument;
+use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\GeneralCashier\Models\PaymentExecution;
 use Modules\Operations\GeneralCashier\Services\PaymentExecutionService;
-use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
+use Throwable;
 
 class BankingOperationsWorkspaceController extends Controller
 {
@@ -104,6 +112,8 @@ class BankingOperationsWorkspaceController extends Controller
             ->values()
             ->all();
 
+        $bankExecutionContext = $this->projectBankExecutionContext($propertyId, $actor);
+
         $canExecuteBank = $actor instanceof User && $actor->can(PaymentExecutionService::PERMISSION);
         $canReconcile = $actor instanceof User && $actor->can(ManualBankReconciliationService::PERMISSION);
 
@@ -112,11 +122,185 @@ class BankingOperationsWorkspaceController extends Controller
             'statement_lines' => array_values($statementLines),
             'bank_execution_evidence' => array_values($bankExecutionEvidence),
             'reconciliation_evidence' => array_values($reconciliationEvidence),
+            'bank_execution_context' => $bankExecutionContext,
             'permissions' => [
                 'can_execute_bank' => $canExecuteBank,
                 'can_reconcile_bank' => $canReconcile,
             ],
         ]);
+    }
+
+    public function execute(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can(PaymentExecutionService::PERMISSION)) {
+            abort(403, 'Unauthorized.');
+        }
+        $propertyId = $this->resolvePropertyId($request);
+
+        $validated = $request->validate([
+            'payment_proposal_item_id' => ['required', 'string', 'size:26'],
+            'cashier_session_id' => ['required', 'string', 'size:26'],
+            'bank_payment_instrument_id' => ['required', 'string', 'size:26'],
+            'controlled_bank_account_id' => ['required', 'string', 'size:26'],
+            'controlled_bank_statement_line_id' => ['required', 'string', 'size:26'],
+        ]);
+
+        $item = PaymentProposalItem::whereKey($validated['payment_proposal_item_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $session = CashierSession::whereKey($validated['cashier_session_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $instrument = CashierPaymentInstrument::whereKey($validated['bank_payment_instrument_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $bankAccount = ControlledBankAccount::whereKey($validated['controlled_bank_account_id'])
+            ->where('property_id', $propertyId)
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        $statementLine = ControlledBankStatementLine::whereKey($validated['controlled_bank_statement_line_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $companyId = $request->session()->get('active_company_id');
+        $confirmationService = app(SensitiveActionConfirmationService::class);
+        if (!$confirmationService->hasValidConfirmation($user, 'bank-payment-execution', $companyId, $propertyId)) {
+            return redirect()
+                ->route('system.sensitive-action-confirmation.index', ['intent' => 'bank-payment-execution'])
+                ->with('error', 'Sensitive action confirmation is required before executing bank payments.');
+        }
+
+        $service = app(PaymentExecutionService::class);
+
+        try {
+            $service->recordConfirmedBankExecution(
+                $validated['payment_proposal_item_id'],
+                $validated['cashier_session_id'],
+                $validated['bank_payment_instrument_id'],
+                $validated['controlled_bank_account_id'],
+                $validated['controlled_bank_statement_line_id'],
+                $user
+            );
+
+            return redirect()
+                ->route('finance.banking.operations.index')
+                ->with('success', 'Bank payment execution recorded.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.banking.operations.index')
+                ->with('error', $exception->getMessage());
+        }
+    }
+
+    private function projectBankExecutionContext(string $propertyId, $actor): array
+    {
+        $executedItemIds = PaymentExecution::where('property_id', $propertyId)
+            ->whereNotNull('controlled_bank_account_id')
+            ->whereNotNull('controlled_bank_statement_line_id')
+            ->pluck('payment_proposal_item_id')
+            ->unique()
+            ->values()
+            ->all();
+
+        $eligibleItems = PaymentProposalItem::with(['proposal', 'supplierInvoice'])
+            ->where('property_id', $propertyId)
+            ->where('is_active', true)
+            ->whereNotIn('id', $executedItemIds)
+            ->whereHas('proposal', function ($query) {
+                $query->where('status', 'APPROVED');
+            })
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get()
+            ->map(fn (PaymentProposalItem $item) => [
+                'id' => $item->id,
+                'proposal_number' => $item->proposal->proposal_number ?? null,
+                'invoice_number' => $item->supplierInvoice->invoice_number ?? null,
+                'amount' => (string) ($item->requested_payment_amount ?? $item->source_amount ?? '0'),
+                'currency_code' => $item->currency_code,
+                'vendor_id' => $item->vendor_id,
+            ])
+            ->values()
+            ->all();
+
+        $sessions = [];
+        if ($actor) {
+            $sessions = CashierSession::where('property_id', $propertyId)
+                ->where('cashier_user_id', $actor->id)
+                ->where('status', CashierSessionStatusEnum::OPEN->value)
+                ->orderByDesc('opened_at')
+                ->limit(5)
+                ->get()
+                ->map(fn (CashierSession $session) => [
+                    'id' => $session->id,
+                    'status' => $session->status->value,
+                    'opened_at' => $session->opened_at?->toIso8601String(),
+                ])
+                ->values()
+                ->all();
+        }
+
+        $instruments = CashierPaymentInstrument::where('property_id', $propertyId)
+            ->where('type', CashierPaymentInstrumentTypeEnum::BANK->value)
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->limit(20)
+            ->get()
+            ->map(fn (CashierPaymentInstrument $instrument) => [
+                'id' => $instrument->id,
+                'name' => $instrument->name,
+                'type' => $instrument->type->value,
+            ])
+            ->values()
+            ->all();
+
+        $bankAccounts = ControlledBankAccount::where('property_id', $propertyId)
+            ->where('is_active', true)
+            ->orderBy('account_name')
+            ->limit(20)
+            ->get()
+            ->map(fn (ControlledBankAccount $account) => [
+                'id' => $account->id,
+                'account_name' => $account->account_name,
+                'bank_name' => $account->bank_name,
+                'currency_code' => $account->currency_code,
+            ])
+            ->values()
+            ->all();
+
+        $accountIdsForStatement = array_column($bankAccounts, 'id');
+        $statementLines = [];
+        if (!empty($accountIdsForStatement)) {
+            $statementLines = ControlledBankStatementLine::whereIn('controlled_bank_account_id', $accountIdsForStatement)
+                ->where('property_id', $propertyId)
+                ->where('direction', ControlledBankStatementLineDirectionEnum::OUTFLOW->value)
+                ->orderByDesc('statement_date')
+                ->limit(50)
+                ->get()
+                ->map(fn (ControlledBankStatementLine $line) => [
+                    'id' => $line->id,
+                    'controlled_bank_account_id' => $line->controlled_bank_account_id,
+                    'amount' => (string) ($line->amount ?? '0'),
+                    'currency_code' => $line->currency_code,
+                    'statement_date' => $line->statement_date,
+                    'external_reference' => $line->external_reference,
+                ])
+                ->values()
+                ->all();
+        }
+
+        return [
+            'eligible_items' => array_values($eligibleItems),
+            'bank_sessions' => array_values($sessions),
+            'bank_instruments' => array_values($instruments),
+            'bank_accounts' => array_values($bankAccounts),
+            'statement_lines' => array_values($statementLines),
+        ];
     }
 
     private function resolvePropertyId(Request $request): string
