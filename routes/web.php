@@ -63,6 +63,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.payables.cashbook-evidence.index');
         Route::get('/payables/supplier-invoices', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'index'])
             ->name('finance.payables.supplier-invoices.index');
+        Route::post('/payables/supplier-invoices/{invoice}/approve', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'approve'])
+            ->name('finance.payables.supplier-invoices.approve');
+        Route::post('/payables/supplier-invoices/{invoice}/reject', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'reject'])
+            ->name('finance.payables.supplier-invoices.reject');
         Route::get('/accounts-receivable', [FinanceController::class, 'accountsReceivable']);
         Route::get('/budget-watch', [FinanceController::class, 'budgetWatch']);
         Route::get('/general-ledger/grni-control', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'index'])

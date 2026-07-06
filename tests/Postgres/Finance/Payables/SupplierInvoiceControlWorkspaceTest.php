@@ -159,9 +159,9 @@ class SupplierInvoiceControlWorkspaceTest extends PostgresTestCase
         $response->assertOk();
 
         $props = $response->original->getData()['page']['props'];
-        $this->assertArrayNotHasKey('permissions', $props, 'Workspace should not expose action permissions');
-        $this->assertArrayNotHasKey('can_approve', $props);
-        $this->assertArrayNotHasKey('can_reject', $props);
+        $this->assertArrayHasKey('permissions', $props, 'Workspace should project server-computed capabilities');
+        $this->assertIsBool($props['permissions']['can_approve']);
+        $this->assertIsBool($props['permissions']['can_reject']);
     }
 
     public function test_controlled_empty_state_is_safe(): void

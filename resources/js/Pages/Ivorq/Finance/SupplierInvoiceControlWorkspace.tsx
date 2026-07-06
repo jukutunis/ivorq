@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { usePage } from '@inertiajs/react';
+import { usePage, useForm } from '@inertiajs/react';
 import '../../../../css/ivorq-prototype.css';
 
 import IvorqLayout from '../../../Layouts/IvorqLayout';
@@ -38,6 +38,10 @@ interface Invoice {
 
 interface Props {
   invoices: Invoice[];
+  permissions: {
+    can_approve: boolean;
+    can_reject: boolean;
+  };
 }
 
 const financeTabs = [
@@ -52,14 +56,17 @@ const financeTabs = [
 function statusBadge(status: string): BadgeStatus {
   switch (status) {
     case 'PENDING': return 'pending';
+    case 'pending_review': return 'pending';
     case 'APPROVED': return 'ready';
+    case 'approved': return 'ready';
     case 'REJECTED': return 'overdue';
+    case 'rejected': return 'overdue';
     case 'VOIDED': return 'vacant';
     default: return 'vacant';
   }
 }
 
-export default function SupplierInvoiceControlWorkspace({ invoices }: Props) {
+export default function SupplierInvoiceControlWorkspace({ invoices, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selectedId, setSelectedId] = useState<string | null>(invoices[0]?.id ?? null);
 
@@ -173,12 +180,14 @@ export default function SupplierInvoiceControlWorkspace({ invoices }: Props) {
 }
 
 function InvoiceEvidence({ invoice }: { invoice: Invoice }) {
+  const isPending = invoice.status === 'PENDING' || invoice.status === 'pending_review';
+
   return (
     <AttentionArea
       title="Selected Invoice Evidence"
       badgeText={invoice.status_label}
       badgeType={statusBadge(invoice.status)}
-      areaType={invoice.status === 'REJECTED' ? 'warning' : 'inspection'}
+      areaType={invoice.status === 'REJECTED' || invoice.status === 'rejected' ? 'warning' : 'inspection'}
     >
       <div className="finance-evidence-grid">
         <EvidenceCell label="Supplier Invoice" value={invoice.vendor_invoice_number} />
@@ -207,7 +216,100 @@ function InvoiceEvidence({ invoice }: { invoice: Invoice }) {
           {invoice.rejection_reason && <EvidenceRow label="Exception Reason" value={invoice.rejection_reason} />}
         </div>
       </div>
+
+      {isPending && (
+        <InvoiceApprovalActions invoice={invoice} />
+      )}
     </AttentionArea>
+  );
+}
+
+function InvoiceApprovalActions({ invoice }: { invoice: Invoice }) {
+  const { props } = usePage<{ permissions: { can_approve: boolean; can_reject: boolean } }>();
+  const canApprove = props.permissions?.can_approve ?? false;
+  const canReject = props.permissions?.can_reject ?? false;
+
+  const approveForm = useForm({});
+  const rejectForm = useForm({ rejection_reason: '' });
+  const [showRejectInput, setShowRejectInput] = useState(false);
+
+  if (!canApprove || !canReject) {
+    return (
+      <div className="finance-evidence-section">
+        <div className="finance-section-title">Approval Actions</div>
+        <div className="finance-context-note">
+          Approval authority is not active for the current actor. Sensitive action confirmation is required for all Finance approve/reject decisions.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="finance-evidence-section">
+      <div className="finance-section-title">Approval Actions</div>
+      <div className="finance-context-note" style={{ marginBottom: '12px' }}>
+        Sensitive action confirmation (finance-approval) is required. If you have not confirmed recently you will be redirected.
+      </div>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => {
+            if (!confirm('Confirm approval. You will be redirected for sensitive action confirmation if needed.')) return;
+            approveForm.post(route('finance.payables.supplier-invoices.approve', { invoice: invoice.id }));
+          }}
+          disabled={approveForm.processing}
+          style={{ fontSize: '12px' }}
+        >
+          <Icon name="check" /> {approveForm.processing ? 'Processing...' : 'Approve Invoice'}
+        </button>
+        {!showRejectInput ? (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setShowRejectInput(true)}
+            style={{ fontSize: '12px' }}
+          >
+            <Icon name="x" /> Reject Invoice
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Rejection reason (min 3 chars)"
+              value={rejectForm.data.rejection_reason}
+              onChange={(e) => rejectForm.setData('rejection_reason', e.target.value)}
+              style={{ fontSize: '12px', minWidth: '220px' }}
+              maxLength={500}
+              autoFocus
+            />
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                const reason = rejectForm.data.rejection_reason.trim();
+                if (reason.length < 3) { alert('A meaningful rejection reason of at least 3 characters is required.'); return; }
+                if (!confirm('Confirm rejection. You will be redirected for sensitive action confirmation if needed.')) return;
+                rejectForm.post(route('finance.payables.supplier-invoices.reject', { invoice: invoice.id }));
+              }}
+              disabled={rejectForm.processing || rejectForm.data.rejection_reason.trim().length < 3}
+              style={{ fontSize: '12px' }}
+            >
+              <Icon name="x" /> {rejectForm.processing ? 'Processing...' : 'Confirm Reject'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => { setShowRejectInput(false); rejectForm.setData('rejection_reason', ''); }}
+              style={{ fontSize: '12px' }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
