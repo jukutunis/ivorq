@@ -132,6 +132,7 @@ class SensitiveActionConfirmationController extends Controller
             'fx-break-glass' => 'FX Break‑Glass Activation',
             'administrative-sensitive-action' => 'Administrative Sensitive Action',
             'cash-payment-execution' => 'Cash Payment Execution',
+            'bank-payment-execution' => 'Bank Payment Execution',
         ];
 
         return $labels[$intent] ?? $intent;
