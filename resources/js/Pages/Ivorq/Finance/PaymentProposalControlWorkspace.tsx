@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Link, usePage } from '@inertiajs/react';
+import { Link, usePage, useForm } from '@inertiajs/react';
 import '../../../../css/ivorq-prototype.css';
 
 import IvorqLayout from '../../../Layouts/IvorqLayout';
@@ -50,6 +50,8 @@ interface Props {
   permissions: {
     can_create: boolean;
     can_cancel: boolean;
+    can_approve: boolean;
+    can_reject: boolean;
   };
 }
 
@@ -240,6 +242,8 @@ export default function PaymentProposalControlWorkspace({ proposals, permissions
 }
 
 function ProposalEvidence({ proposal }: { proposal: Proposal }) {
+  const isPendingApproval = proposal.status === 'PENDING_APPROVAL';
+
   return (
     <AttentionArea
       title="Selected Proposal Evidence"
@@ -284,7 +288,107 @@ function ProposalEvidence({ proposal }: { proposal: Proposal }) {
           {proposal.cancellation_reason && <EvidenceRow label="Reason" value={proposal.cancellation_reason} />}
         </div>
       </div>
+
+      {isPendingApproval && (
+        <ProposalApprovalActions proposal={proposal} />
+      )}
     </AttentionArea>
+  );
+}
+
+function ProposalApprovalActions({ proposal }: { proposal: Proposal }) {
+  const { props } = usePage<{ permissions: { can_approve: boolean; can_reject: boolean } }>();
+  const canApprove = props.permissions?.can_approve ?? false;
+  const canReject = props.permissions?.can_reject ?? false;
+
+  const approveForm = useForm({});
+  const rejectForm = useForm({ rejection_reason: '' });
+  const [showRejectInput, setShowRejectInput] = useState(false);
+
+  const handleApprove = () => {
+    if (!confirm('Confirm approval of this payment proposal. You will be redirected for sensitive action confirmation if needed.')) return;
+    approveForm.post(route('finance.payables.payment-proposals.approve', { proposal: proposal.id }));
+  };
+
+  const handleReject = () => {
+    const reason = rejectForm.data.rejection_reason.trim();
+    if (reason.length < 3) {
+      alert('A meaningful rejection reason of at least 3 characters is required.');
+      return;
+    }
+    if (!confirm('Confirm rejection of this payment proposal. You will be redirected for sensitive action confirmation if needed.')) return;
+    rejectForm.post(route('finance.payables.payment-proposals.reject', { proposal: proposal.id }));
+  };
+
+  if (!canApprove || !canReject) {
+    return (
+      <div className="finance-evidence-section">
+        <div className="finance-section-title">Approval Actions</div>
+        <div className="finance-context-note">
+          Approval authority is not active for the current actor. Sensitive action confirmation is required for all Finance approve/reject decisions.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="finance-evidence-section">
+      <div className="finance-section-title">Approval Actions</div>
+      <div className="finance-context-note" style={{ marginBottom: '12px' }}>
+        Sensitive action confirmation (finance-approval) is required. If you have not confirmed recently you will be redirected.
+      </div>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={handleApprove}
+          disabled={approveForm.processing}
+          style={{ fontSize: '12px' }}
+        >
+          <Icon name="check" /> {approveForm.processing ? 'Processing…' : 'Approve Proposal'}
+        </button>
+        {!showRejectInput ? (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setShowRejectInput(true)}
+            style={{ fontSize: '12px' }}
+          >
+            <Icon name="x" /> Reject Proposal
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Rejection reason (min 3 chars)"
+              value={rejectForm.data.rejection_reason}
+              onChange={(e) => rejectForm.setData('rejection_reason', e.target.value)}
+              style={{ fontSize: '12px', minWidth: '220px' }}
+              maxLength={500}
+              autoFocus
+            />
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleReject}
+              disabled={rejectForm.processing || rejectForm.data.rejection_reason.trim().length < 3}
+              style={{ fontSize: '12px' }}
+            >
+              <Icon name="x" /> {rejectForm.processing ? 'Processing…' : 'Confirm Reject'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => { setShowRejectInput(false); rejectForm.setData('rejection_reason', ''); }}
+              style={{ fontSize: '12px' }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

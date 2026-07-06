@@ -55,6 +55,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.payables.ap-grni-settlement-control.payment-proposals.cancel');
         Route::get('/payables/payment-proposals', [\Modules\Finance\Payables\Http\Controllers\PaymentProposalControlWorkspaceController::class, 'index'])
             ->name('finance.payables.payment-proposals.index');
+        Route::post('/payables/payment-proposals/{proposal}/approve', [\Modules\Finance\Payables\Http\Controllers\PaymentProposalControlWorkspaceController::class, 'approve'])
+            ->name('finance.payables.payment-proposals.approve');
+        Route::post('/payables/payment-proposals/{proposal}/reject', [\Modules\Finance\Payables\Http\Controllers\PaymentProposalControlWorkspaceController::class, 'reject'])
+            ->name('finance.payables.payment-proposals.reject');
         Route::get('/payables/cashbook-evidence', [\Modules\Finance\GeneralCashier\Http\Controllers\CashbookEvidenceWorkspaceController::class, 'index'])
             ->name('finance.payables.cashbook-evidence.index');
         Route::get('/payables/supplier-invoices', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'index'])
