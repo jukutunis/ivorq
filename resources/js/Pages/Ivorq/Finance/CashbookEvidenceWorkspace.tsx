@@ -38,9 +38,37 @@ interface Proposal {
   approved_at: string | null;
 }
 
+interface CashEligibleItem {
+  id: string;
+  proposal_number: string | null;
+  invoice_number: string | null;
+  amount: string;
+  currency_code: string;
+  vendor_id: string | null;
+}
+
+interface CashSession {
+  id: string;
+  status: string;
+  opened_at: string | null;
+}
+
+interface CashInstrument {
+  id: string;
+  name: string;
+  type: string;
+}
+
+interface CashExecutionContext {
+  eligible_items: CashEligibleItem[];
+  cash_sessions: CashSession[];
+  cash_instruments: CashInstrument[];
+}
+
 interface Props {
   transactions: Transaction[];
   approved_proposals: Proposal[];
+  cash_execution_context: CashExecutionContext;
 }
 
 type Selection =
@@ -59,7 +87,7 @@ function transactionLabel(transaction: Transaction): string {
   return transaction.direction === 'OUTFLOW' ? 'Payment Outflow' : (transaction.direction || 'Cash Transaction');
 }
 
-export default function CashbookEvidenceWorkspace({ transactions, approved_proposals }: Props) {
+export default function CashbookEvidenceWorkspace({ transactions, approved_proposals, cash_execution_context }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selection, setSelection] = useState<Selection | null>(
     approved_proposals[0]
@@ -112,6 +140,24 @@ export default function CashbookEvidenceWorkspace({ transactions, approved_propo
               <div className="finance-context-note">
                 {selectedProposal ? 'Approved proposal' : selectedTransaction ? transactionLabel(selectedTransaction) : 'Select evidence to review.'}
               </div>
+            </div>
+            <div className="filter-group" style={{ borderTop: '1px solid var(--border-default)', paddingTop: '12px' }}>
+              <label className="filter-label">Cash Execution Context</label>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                <div>Eligible Items: {cash_execution_context.eligible_items.length}</div>
+                <div>Open Sessions: {cash_execution_context.cash_sessions.length}</div>
+                <div>CASH Instruments: {cash_execution_context.cash_instruments.length}</div>
+              </div>
+              {cash_execution_context.eligible_items.length === 0 && (
+                <div className="finance-context-note" style={{ marginTop: '4px' }}>
+                  No payment proposal items are currently eligible for cash execution in this property.
+                </div>
+              )}
+              {cash_execution_context.cash_sessions.length === 0 && (
+                <div className="finance-context-note" style={{ marginTop: '2px' }}>
+                  No open cashier session for the current actor.
+                </div>
+              )}
             </div>
           </div>
         </QuickFilterPanel>
@@ -201,6 +247,33 @@ export default function CashbookEvidenceWorkspace({ transactions, approved_propo
                             <Icon name="search" /> Evidence
                           </Button>
                         }
+                      />
+                    ))}
+                  </div>
+                </QueueList>
+
+                <QueueList title="Cash Execution Context" count={cash_execution_context.eligible_items.length}>
+                  <div className="finance-queue-body">
+                    {cash_execution_context.eligible_items.length === 0 && (
+                      <div className="finance-empty-state">No eligible payment proposal items for cash execution in the current property.</div>
+                    )}
+                    {cash_execution_context.eligible_items.map((item) => (
+                      <WorkCard
+                        key={item.id}
+                        borderColor="inspection-blue"
+                        meta={
+                          <>
+                            <span>{item.invoice_number || 'No invoice'}</span>
+                            <StatusBadge status="inspection">Eligible</StatusBadge>
+                          </>
+                        }
+                        title={item.proposal_number || 'Unreferenced proposal'}
+                        detail={
+                          <span>
+                            {item.amount} {item.currency_code}
+                          </span>
+                        }
+                        actions={null}
                       />
                     ))}
                   </div>

@@ -326,7 +326,7 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 | # | Capability | Status | Service | Permission | Controller Extension | Test |
 |---|---|---|---|---|---|---|
 | A1 | AP Settlement Allocation | DELIVERED Sprint 25 | `ApSettlementAllocationService::allocate()` | `finance.payables.ap-settlement.allocate` | `ApGrniSettlementControlWorkspaceController` | `ApSettlementAllocationWebActionTest` |
-| A2 | Cash Execution Context Projection | CONTEXT-READY | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `CashExecutionContextProjectionTest` (new) |
+| A2 | Cash Execution Context Projection | DELIVERED Sprint 25 | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `CashExecutionContextProjectionTest` |
 | A3 | Cash Payment Execution | DEFERRED | `PaymentExecutionService::recordCashExecution()` | `finance.general-cashier.payment.execute` | — | — |
 | A4 | Bank Execution Context Projection | CONTEXT-READY | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `BankExecutionContextProjectionTest` (new) |
 | A5 | Bank Payment Execution | DEFERRED | `PaymentExecutionService::recordConfirmedBankExecution()` | `finance.general-cashier.payment.execute` | — | — |
