@@ -138,6 +138,8 @@ class BankingOperationsWorkspaceController extends Controller
 
         $bankExecutionContext = $this->projectBankExecutionContext($propertyId, $actor);
 
+        $controlledReadiness = $this->projectControlledReadiness($propertyId);
+
         $canExecuteBank = $actor instanceof User && $actor->can(PaymentExecutionService::PERMISSION);
         $canReconcile = $actor instanceof User && $actor->can(ManualBankReconciliationService::PERMISSION);
         $canViewReconciliationSessions = $actor instanceof User && $actor->can('banking.reconciliation.view');
@@ -149,6 +151,7 @@ class BankingOperationsWorkspaceController extends Controller
             'reconciliation_evidence' => array_values($reconciliationEvidence),
             'reconciliation_sessions' => array_values($reconciliationSessions),
             'bank_execution_context' => $bankExecutionContext,
+            'controlled_readiness' => array_values($controlledReadiness),
             'domain_sections' => [
                 'controlled' => [
                     'label' => 'Controlled Banking — operational source evidence',
@@ -378,6 +381,43 @@ class BankingOperationsWorkspaceController extends Controller
             'bank_accounts' => array_values($bankAccounts),
             'statement_lines' => array_values($statementLines),
         ];
+    }
+
+    private function projectControlledReadiness(string $propertyId): array
+    {
+        $accounts = ControlledBankAccount::where('property_id', $propertyId)
+            ->where('is_active', true)
+            ->get();
+
+        $readiness = [];
+
+        foreach ($accounts as $account) {
+            $statementLineCount = ControlledBankStatementLine::where('controlled_bank_account_id', $account->id)
+                ->where('property_id', $propertyId)
+                ->where('direction', ControlledBankStatementLineDirectionEnum::OUTFLOW->value)
+                ->count();
+
+            $executionCount = PaymentExecution::where('property_id', $propertyId)
+                ->where('controlled_bank_account_id', $account->id)
+                ->whereNotNull('controlled_bank_statement_line_id')
+                ->count();
+
+            $reconciledCount = BankPaymentReconciliation::where('property_id', $propertyId)
+                ->where('controlled_bank_account_id', $account->id)
+                ->count();
+
+            $readiness[] = [
+                'account_id' => $account->id,
+                'account_name' => $account->account_name,
+                'bank_name' => $account->bank_name,
+                'currency_code' => $account->currency_code,
+                'statement_line_count' => $statementLineCount,
+                'execution_count' => $executionCount,
+                'reconciled_count' => $reconciledCount,
+            ];
+        }
+
+        return $readiness;
     }
 
     private function resolvePropertyId(Request $request): string

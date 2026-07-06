@@ -260,6 +260,57 @@ class BankingReconciliationDomainConvergenceWorkspaceTest extends PostgresTestCa
         $this->assertSame($beforeExec, DB::table('payment_executions')->count());
     }
 
+    public function test_controlled_readiness_is_server_projected(): void
+    {
+        $this->createFixtures();
+
+        $response = $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('finance.banking.operations.index'))
+            ->assertOk();
+
+        $props = $response->inertiaProps();
+        $readiness = $props['controlled_readiness'] ?? [];
+        $this->assertGreaterThan(0, count($readiness));
+
+        $entry = $readiness[0];
+        $this->assertArrayHasKey('account_id', $entry);
+        $this->assertArrayHasKey('account_name', $entry);
+        $this->assertArrayHasKey('statement_line_count', $entry);
+        $this->assertArrayHasKey('execution_count', $entry);
+        $this->assertArrayHasKey('reconciled_count', $entry);
+        $this->assertIsInt($entry['statement_line_count']);
+        $this->assertIsInt($entry['execution_count']);
+        $this->assertIsInt($entry['reconciled_count']);
+    }
+
+    public function test_controlled_readiness_only_reads_controlled_models(): void
+    {
+        $this->createFixtures();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('finance.banking.operations.index'))
+            ->assertOk();
+
+        $this->assertSame(1, DB::table('bank_accounts')->count());
+        $this->assertSame(1, DB::table('controlled_bank_accounts')->count());
+    }
+
+    public function test_controlled_readiness_does_not_mutate(): void
+    {
+        $this->createFixtures();
+
+        $before = $this->controlledSnapshot();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('finance.banking.operations.index'))
+            ->assertOk();
+
+        $this->assertControlledSnapshotUnchanged($before);
+    }
+
     private function createFixtures(): void
     {
         $companySuffix = substr(hash('sha256', (string) microtime(true)), 0, 6);

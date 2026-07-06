@@ -123,6 +123,16 @@ interface ReconciliationSessionRecord {
   created_at: string | null;
 }
 
+interface ControlledReadinessEntry {
+  account_id: string;
+  account_name: string;
+  bank_name: string;
+  currency_code: string | null;
+  statement_line_count: number;
+  execution_count: number;
+  reconciled_count: number;
+}
+
 interface Props {
   bank_accounts: BankAccount[];
   statement_lines: BankStatementLine[];
@@ -130,6 +140,7 @@ interface Props {
   reconciliation_evidence: ReconciliationEvidence[];
   reconciliation_sessions: ReconciliationSessionRecord[];
   bank_execution_context: BankExecutionContext;
+  controlled_readiness: ControlledReadinessEntry[];
   domain_sections: {
     controlled: { label: string; description: string };
     legacy: { label: string; description: string };
@@ -155,7 +166,7 @@ const financeTabs = [
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 
-export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, reconciliation_sessions, bank_execution_context, domain_sections, permissions }: Props) {
+export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, reconciliation_sessions, bank_execution_context, controlled_readiness, domain_sections, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selection, setSelection] = useState<Selection | null>(
     bank_accounts[0] ? { type: 'account', id: bank_accounts[0].id } : null
@@ -493,6 +504,24 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
                     {domain_sections?.controlled?.description ?? ''}
                   </div>
                 </div>
+
+                {controlled_readiness && controlled_readiness.length > 0 && (
+                  <div style={{ padding: '12px 16px', backgroundColor: 'var(--surface-default)', border: '1px solid var(--border-default)', borderRadius: '4px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px', color: 'var(--text-primary)' }}>
+                      Readiness Evidence
+                    </div>
+                    <div style={{ display: 'grid', gap: '4px' }}>
+                      {controlled_readiness.map((entry) => (
+                        <div key={entry.account_id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--border-default)', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{entry.account_name}</span>
+                          <span>Statements: {entry.statement_line_count}</span>
+                          <span>Executed: {entry.execution_count}</span>
+                          <span>Reconciled: {entry.reconciled_count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <QueueList title="Controlled Bank Accounts" count={bank_accounts.length}>
                   <div className="finance-queue-body">
                     {bank_accounts.length === 0 && (
