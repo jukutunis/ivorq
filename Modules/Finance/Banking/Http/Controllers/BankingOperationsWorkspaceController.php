@@ -11,6 +11,7 @@ use Modules\Finance\Banking\Enums\ControlledBankStatementLineDirectionEnum;
 use Modules\Finance\Banking\Models\ControlledBankAccount;
 use Modules\Finance\Banking\Models\ControlledBankStatementLine;
 use Modules\Finance\Banking\Models\BankPaymentReconciliation;
+use Modules\Finance\Banking\Models\ReconciliationSession;
 use Modules\Finance\Banking\Services\ManualBankReconciliationService;
 use Modules\Finance\Payables\Models\PaymentProposalItem;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
@@ -112,20 +113,49 @@ class BankingOperationsWorkspaceController extends Controller
             ->values()
             ->all();
 
+        $reconciliationSessions = ReconciliationSession::with('bankAccount')
+            ->where('property_id', $propertyId)
+            ->withCount('matches')
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get()
+            ->map(fn (ReconciliationSession $session) => [
+                'id' => $session->id,
+                'status' => $session->status?->value,
+                'bank_account_id' => $session->bank_account_id,
+                'bank_account_name' => $session->bankAccount->account_name ?? null,
+                'bank_name' => $session->bankAccount->bank_name ?? null,
+                'currency_code' => $session->bankAccount->currency_code ?? null,
+                'statement_date_start' => $session->statement_date_start?->toDateString(),
+                'statement_date_end' => $session->statement_date_end?->toDateString(),
+                'opening_balance' => (string) ($session->opening_balance ?? '0'),
+                'reconciled_balance' => (string) ($session->reconciled_balance ?? '0'),
+                'unreconciled_balance' => (string) ($session->unreconciled_balance ?? '0'),
+                'matches_count' => $session->matches_count ?? 0,
+                'completed_at' => $session->completed_at?->toIso8601String(),
+                'finalized_at' => $session->finalized_at?->toIso8601String(),
+                'created_at' => $session->created_at?->toIso8601String(),
+            ])
+            ->values()
+            ->all();
+
         $bankExecutionContext = $this->projectBankExecutionContext($propertyId, $actor);
 
         $canExecuteBank = $actor instanceof User && $actor->can(PaymentExecutionService::PERMISSION);
         $canReconcile = $actor instanceof User && $actor->can(ManualBankReconciliationService::PERMISSION);
+        $canViewReconciliationSessions = $actor instanceof User && $actor->can('banking.reconciliation.view');
 
         return Inertia::render('Ivorq/Finance/BankingOperationsWorkspace', [
             'bank_accounts' => array_values($bankAccounts),
             'statement_lines' => array_values($statementLines),
             'bank_execution_evidence' => array_values($bankExecutionEvidence),
             'reconciliation_evidence' => array_values($reconciliationEvidence),
+            'reconciliation_sessions' => array_values($reconciliationSessions),
             'bank_execution_context' => $bankExecutionContext,
             'permissions' => [
                 'can_execute_bank' => $canExecuteBank,
                 'can_reconcile_bank' => $canReconcile,
+                'can_view_reconciliation_sessions' => $canViewReconciliationSessions,
             ],
         ]);
     }

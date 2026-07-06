@@ -108,15 +108,35 @@ interface BankExecutionContext {
   statement_lines: ExecStatementLine[];
 }
 
+interface ReconciliationSessionRecord {
+  id: string;
+  status: string;
+  bank_account_id: string;
+  bank_account_name: string | null;
+  bank_name: string | null;
+  currency_code: string | null;
+  statement_date_start: string | null;
+  statement_date_end: string | null;
+  opening_balance: string;
+  reconciled_balance: string;
+  unreconciled_balance: string;
+  matches_count: number;
+  completed_at: string | null;
+  finalized_at: string | null;
+  created_at: string | null;
+}
+
 interface Props {
   bank_accounts: BankAccount[];
   statement_lines: BankStatementLine[];
   bank_execution_evidence: BankExecutionEvidence[];
   reconciliation_evidence: ReconciliationEvidence[];
+  reconciliation_sessions: ReconciliationSessionRecord[];
   bank_execution_context: BankExecutionContext;
   permissions: {
     can_execute_bank: boolean;
     can_reconcile_bank: boolean;
+    can_view_reconciliation_sessions: boolean;
   };
 }
 
@@ -134,7 +154,7 @@ const financeTabs = [
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 
-export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, bank_execution_context, permissions }: Props) {
+export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, reconciliation_sessions, bank_execution_context, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selection, setSelection] = useState<Selection | null>(
     bank_accounts[0] ? { type: 'account', id: bank_accounts[0].id } : null
@@ -145,6 +165,7 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
   const statementCount = useMemo(() => statement_lines.length, [statement_lines]);
   const executionCount = useMemo(() => bank_execution_evidence.length, [bank_execution_evidence]);
   const reconciliationCount = useMemo(() => reconciliation_evidence.length, [reconciliation_evidence]);
+  const sessionCount = useMemo(() => reconciliation_sessions.length, [reconciliation_sessions]);
 
   const selectedAccount = selection?.type === 'account'
     ? bank_accounts.find((a) => a.id === selection.id) ?? null
@@ -252,6 +273,7 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
                 <div>Statement Lines (OUTFLOW): {statementCount}</div>
                 <div>Bank Executions: {executionCount}</div>
                 <div>Reconciliations: {reconciliationCount}</div>
+                <div>Recon Sessions: {sessionCount}</div>
               </div>
             </div>
             <div className="filter-group">
@@ -268,6 +290,7 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
               <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
                 <div>Execute: {permissions.can_execute_bank ? 'Authorized' : 'Unauthorized'}</div>
                 <div>Reconcile: {permissions.can_reconcile_bank ? 'Authorized' : 'Unauthorized'}</div>
+                <div>View Sessions: {permissions.can_view_reconciliation_sessions ? 'Authorized' : 'Unauthorized'}</div>
               </div>
               {!permissions.can_execute_bank && (
                 <div className="finance-context-note" style={{ marginTop: '4px' }}>
@@ -447,6 +470,7 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
             <SnapshotCard value={statementCount} label="Statement Lines" statusColor="inspection-blue" />
             <SnapshotCard value={executionCount} label="Bank Executions" statusColor="critical-red" />
             <SnapshotCard value={reconciliationCount} label="Reconciliations" statusColor="ready-green" />
+            <SnapshotCard value={sessionCount} label="Recon Sessions" statusColor="inspection-blue" />
           </OperationalSnapshot>
 
           {bank_accounts.length === 0 && bank_execution_evidence.length === 0 && reconciliation_evidence.length === 0 && (
@@ -596,6 +620,41 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
                             <Icon name="search" /> Evidence
                           </Button>
                         }
+                      />
+                    ))}
+                  </div>
+                </QueueList>
+
+                <QueueList title="Reconciliation Sessions" count={sessionCount}>
+                  <div className="finance-queue-body">
+                    {reconciliation_sessions.length === 0 && (
+                      <div className="finance-empty-state">No reconciliation sessions for the current property.</div>
+                    )}
+                    {reconciliation_sessions.map((session) => (
+                      <WorkCard
+                        key={session.id}
+                        borderColor={session.status === 'Finalized' ? 'ready-green' : session.status === 'Completed' ? 'inspection-blue' : session.status === 'Cancelled' ? 'neutral' : 'critical-red'}
+                        meta={
+                          <>
+                            <span>{session.statement_date_start || ''} — {session.statement_date_end || ''}</span>
+                            <StatusBadge status={session.status === 'Finalized' || session.status === 'Completed' ? 'ready' : session.status === 'Cancelled' ? 'neutral' : 'inspection'}>
+                              {session.status}
+                            </StatusBadge>
+                          </>
+                        }
+                        title={session.bank_account_name || session.bank_name || session.id}
+                        detail={
+                          <span>
+                            {session.bank_name && session.bank_account_name ? `${session.bank_name} — ${session.bank_account_name}` : `Account: ${session.bank_account_id}`}
+                            <br />
+                            Currency: {session.currency_code || 'N/A'}
+                            <br />
+                            Matches: {session.matches_count}
+                            <br />
+                            Opening: {session.opening_balance} | Reconciled: {session.reconciled_balance} | Unreconciled: {session.unreconciled_balance}
+                          </span>
+                        }
+                        actions={<></>}
                       />
                     ))}
                   </div>
