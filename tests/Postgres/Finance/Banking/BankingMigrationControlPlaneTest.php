@@ -556,6 +556,335 @@ class BankingMigrationControlPlaneTest extends PostgresTestCase
         $this->assertNull($plan);
     }
 
+    public function test_finance_controller_can_view_migration_plan(): void
+    {
+        $this->createFixtures();
+
+        $this->createPlanForTest('fc-view');
+
+        $planCount = BankingMigrationPlan::where('property_id', $this->property->id)->count();
+        $this->assertGreaterThan(0, $planCount, 'Plan should exist in DB before controller request.');
+
+        $fcUser = $this->createFinanceControllerUser();
+
+        setPermissionsTeamId($this->property->id);
+        $this->assertTrue($fcUser->can(BankingMigrationPlanService::PERMISSION_VIEW), 'FC user should have view permission.');
+
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+
+        $service = app(BankingMigrationPlanService::class);
+        $plans = $service->listForProperty($this->property->id);
+        $this->assertNotEmpty($plans, 'Service should list plans for the property.');
+
+        $response = $this->withSession($this->propertySession())
+            ->actingAs($fcUser, 'web')
+            ->get(route('finance.banking.migration.index'))
+            ->assertOk();
+
+        $props = $response->inertiaProps();
+        $this->assertTrue($props['permissions']['can_view'], 'Controller should return can_view=true.');
+        $this->assertNotEmpty($props['plans'], 'Controller should return non-empty plans array.');
+    }
+
+    public function test_finance_controller_cannot_create_migration_plan(): void
+    {
+        $this->createFixtures();
+
+        $fcUser = $this->createFinanceControllerUser();
+
+        setPermissionsTeamId($this->property->id);
+
+        $beforeCount = BankingMigrationPlan::where('property_id', $this->property->id)->count();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($fcUser, 'web')
+            ->post(route('finance.banking.migration.plan.create'), [
+                'request_identity' => 'fc-create-' . Str::random(6),
+            ])
+            ->assertForbidden();
+
+        $this->assertSame($beforeCount, BankingMigrationPlan::where('property_id', $this->property->id)->count());
+    }
+
+    public function test_finance_controller_cannot_request_dry_run(): void
+    {
+        $this->createFixtures();
+
+        $plan = $this->createPlanForTest('fc-dr');
+
+        $fcUser = $this->createFinanceControllerUser();
+
+        setPermissionsTeamId($this->property->id);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($fcUser, 'web')
+            ->post(route('finance.banking.migration.plan.request-dry-run', ['plan' => $plan->id]))
+            ->assertForbidden();
+    }
+
+    public function test_finance_manager_can_view_and_create_plan(): void
+    {
+        $this->createFixtures();
+
+        $fmUser = $this->createFinanceManagerUser();
+
+        setPermissionsTeamId($this->property->id);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($fmUser, 'web')
+            ->post(route('finance.banking.migration.plan.create'), [
+                'request_identity' => 'fm-create-' . Str::random(6),
+            ])
+            ->assertRedirect();
+
+        $plan = BankingMigrationPlan::where('property_id', $this->property->id)->first();
+        $this->assertNotNull($plan);
+
+        $response = $this->withSession($this->propertySession())
+            ->actingAs($fmUser, 'web')
+            ->get(route('finance.banking.migration.index'))
+            ->assertOk();
+
+        $props = $response->inertiaProps();
+        $this->assertTrue($props['permissions']['can_view']);
+        $this->assertTrue($props['permissions']['can_manage']);
+    }
+
+    public function test_finance_manager_can_request_dry_run(): void
+    {
+        $this->createFixtures();
+
+        $plan = $this->createPlanForTest('fm-dr');
+
+        $fmUser = $this->createFinanceManagerUser();
+
+        setPermissionsTeamId($this->property->id);
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+
+        $this->assertSame(BankingMigrationPlanStatusEnum::DRAFT, $plan->status);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($fmUser, 'web')
+            ->post(route('finance.banking.migration.plan.request-dry-run', ['plan' => $plan->id]))
+            ->assertRedirect();
+
+        $plan->refresh();
+        $this->assertSame(BankingMigrationPlanStatusEnum::DRY_RUN_REQUESTED, $plan->status);
+    }
+
+    public function test_finance_manager_remains_property_scoped(): void
+    {
+        $this->createFixtures();
+
+        $plan = $this->createPlanForTest('fm-prop');
+
+        $fmUser = $this->createFinanceManagerUser();
+
+        setPermissionsTeamId($this->otherProperty->id);
+
+        $response = $this->withSession($this->otherPropertySession())
+            ->actingAs($fmUser, 'web')
+            ->get(route('finance.banking.migration.index'))
+            ->assertOk();
+
+        $props = $response->inertiaProps();
+        $this->assertEmpty($props['plans']);
+    }
+
+    public function test_finance_controller_remains_property_scoped(): void
+    {
+        $this->createFixtures();
+
+        $this->createPlanForTest('fc-prop');
+
+        $fcUser = $this->createFinanceControllerUser();
+
+        setPermissionsTeamId($this->otherProperty->id);
+
+        $response = $this->withSession($this->otherPropertySession())
+            ->actingAs($fcUser, 'web')
+            ->get(route('finance.banking.migration.index'))
+            ->assertOk();
+
+        $props = $response->inertiaProps();
+        $this->assertEmpty($props['plans']);
+    }
+
+    public function test_general_ledger_accountant_cannot_manage_migration(): void
+    {
+        $this->createFixtures();
+
+        $glUser = $this->createGeneralLedgerAccountantUser();
+
+        setPermissionsTeamId($this->property->id);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($glUser, 'web')
+            ->post(route('finance.banking.migration.plan.create'), [
+                'request_identity' => 'gl-create-' . Str::random(6),
+            ])
+            ->assertForbidden();
+
+        $response = $this->withSession($this->propertySession())
+            ->actingAs($glUser, 'web')
+            ->get(route('finance.banking.migration.index'))
+            ->assertOk();
+
+        $props = $response->inertiaProps();
+        $this->assertFalse($props['permissions']['can_view']);
+        $this->assertFalse($props['permissions']['can_manage']);
+    }
+
+    public function test_general_cashier_has_no_migration_authority(): void
+    {
+        $this->createFixtures();
+
+        $cashier = User::create([
+            'name' => 'MigCP Cashier ' . Str::random(6),
+            'email' => 'mig-cp-cashier-' . Str::random(6) . '@example.test',
+            'password' => Hash::make('password'),
+            'is_active' => true,
+        ]);
+        $cashier->properties()->attach($this->property->id, [
+            'is_default' => true, 'status' => 'active', 'joined_at' => now(),
+        ]);
+
+        setPermissionsTeamId($this->property->id);
+
+        $response = $this->withSession($this->propertySession())
+            ->actingAs($cashier, 'web')
+            ->get(route('finance.banking.migration.index'))
+            ->assertOk();
+
+        $props = $response->inertiaProps();
+        $this->assertFalse($props['permissions']['can_view']);
+        $this->assertFalse($props['permissions']['can_manage']);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($cashier, 'web')
+            ->post(route('finance.banking.migration.plan.create'), [
+                'request_identity' => 'cashier-create-' . Str::random(6),
+            ])
+            ->assertForbidden();
+    }
+
+    public function test_super_admin_retains_existing_behavior(): void
+    {
+        $this->createFixtures();
+
+        $saUser = User::create([
+            'name' => 'MigCP SuperAdmin ' . Str::random(6),
+            'email' => 'mig-cp-sa-' . Str::random(6) . '@example.test',
+            'password' => Hash::make('password'),
+            'is_active' => true,
+        ]);
+        $saUser->properties()->attach($this->property->id, [
+            'is_default' => true, 'status' => 'active', 'joined_at' => now(),
+        ]);
+        $saUser->givePermissionTo([
+            BankingMigrationPlanService::PERMISSION_VIEW,
+            BankingMigrationPlanService::PERMISSION_MANAGE,
+        ]);
+
+        setPermissionsTeamId($this->property->id);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($saUser, 'web')
+            ->post(route('finance.banking.migration.plan.create'), [
+                'request_identity' => 'sa-create-' . Str::random(6),
+            ])
+            ->assertRedirect();
+
+        $plan = BankingMigrationPlan::where('property_id', $this->property->id)->first();
+        $this->assertNotNull($plan);
+    }
+
+    public function test_no_unrelated_role_assignments_changed(): void
+    {
+        $this->createFixtures();
+
+        $beforeRoleAssignmentCount = DB::table('model_has_permissions')->count();
+
+        setPermissionsTeamId($this->property->id);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('finance.banking.migration.plan.create'), [
+                'request_identity' => 'unrelated-role-' . Str::random(6),
+            ])
+            ->assertRedirect();
+
+        $this->assertSame($beforeRoleAssignmentCount, DB::table('model_has_permissions')->count());
+    }
+
+    private function createFinanceControllerUser(): User
+    {
+        $user = User::create([
+            'name' => 'MigCP FC ' . Str::random(6),
+            'email' => 'mig-cp-fc-' . Str::random(6) . '@example.test',
+            'password' => Hash::make('password'),
+            'is_active' => true,
+        ]);
+        $user->properties()->attach($this->property->id, [
+            'is_default' => true, 'status' => 'active', 'joined_at' => now(),
+        ]);
+        $user->properties()->attach($this->otherProperty->id, [
+            'is_default' => false, 'status' => 'active', 'joined_at' => now(),
+        ]);
+        $user->givePermissionTo(BankingMigrationPlanService::PERMISSION_VIEW);
+
+        return $user;
+    }
+
+    private function createFinanceManagerUser(): User
+    {
+        $user = User::create([
+            'name' => 'MigCP FM ' . Str::random(6),
+            'email' => 'mig-cp-fm-' . Str::random(6) . '@example.test',
+            'password' => Hash::make('password'),
+            'is_active' => true,
+        ]);
+        $user->properties()->attach($this->property->id, [
+            'is_default' => true, 'status' => 'active', 'joined_at' => now(),
+        ]);
+        $user->properties()->attach($this->otherProperty->id, [
+            'is_default' => false, 'status' => 'active', 'joined_at' => now(),
+        ]);
+        $user->givePermissionTo([
+            BankingMigrationPlanService::PERMISSION_VIEW,
+            BankingMigrationPlanService::PERMISSION_MANAGE,
+        ]);
+
+        return $user;
+    }
+
+    private function createGeneralLedgerAccountantUser(): User
+    {
+        $user = User::create([
+            'name' => 'MigCP GL ' . Str::random(6),
+            'email' => 'mig-cp-gl-' . Str::random(6) . '@example.test',
+            'password' => Hash::make('password'),
+            'is_active' => true,
+        ]);
+        $user->properties()->attach($this->property->id, [
+            'is_default' => true, 'status' => 'active', 'joined_at' => now(),
+        ]);
+        $user->properties()->attach($this->otherProperty->id, [
+            'is_default' => false, 'status' => 'active', 'joined_at' => now(),
+        ]);
+        return $user;
+    }
+
+    private function createPlanForTest(string $prefix): BankingMigrationPlan
+    {
+        setPermissionsTeamId($this->property->id);
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+
+        $service = app(BankingMigrationPlanService::class);
+
+        return $service->createPlan($prefix . '-' . Str::random(6), $this->actor);
+    }
+
     private function createFixtures(): void
     {
         $companySuffix = substr(hash('sha256', (string) microtime(true)), 0, 6);

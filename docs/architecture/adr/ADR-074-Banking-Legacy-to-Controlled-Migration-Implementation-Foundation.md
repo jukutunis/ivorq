@@ -175,7 +175,20 @@ Two permissions are introduced:
 - `finance.banking.migration.view` — read plan, manifest summary, quarantine summary, and `CUTOVER_NOT_AUTHORIZED`
 - `finance.banking.migration.manage` — create plan and request/run a non-destructive dry run only
 
-These are registered in `PermissionSeeder` and assigned through existing `RoleSeeder` conventions. No new role is created. No new sensitive confirmation intent is added.
+These are registered in `PermissionSeeder` and assigned through the existing `RoleSeeder` conventions. No new role is created. No new sensitive confirmation intent is added.
+
+Exact role assignments:
+
+| Role | `finance.banking.migration.view` | `finance.banking.migration.manage` |
+|---|---|---|
+| `finance-controller` | Yes | No |
+| `finance-manager` | Yes | Yes |
+| `general-ledger-accountant` | No | No |
+| `accounts-payable-officer` | No | No |
+| `super-admin` | Yes (via `Permission::all()`) | Yes (via `Permission::all()`) |
+| `property-admin` | Yes (via `Permission::all()`) | Yes (via `Permission::all()`) |
+
+No General Cashier role receives any migration permission.
 
 ### 17. Confirmation Policy
 

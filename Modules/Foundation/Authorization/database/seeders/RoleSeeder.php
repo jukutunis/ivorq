@@ -143,6 +143,7 @@ class RoleSeeder extends Seeder
             'finance.fx-adjustment.view',
             'finance.journal-candidate.review',
             'finance.journal-candidate.materialize-draft',
+            'finance.banking.migration.view',
         ]);
 
         $financeManager = Role::firstOrCreate([
@@ -153,6 +154,8 @@ class RoleSeeder extends Seeder
         $financeManager->syncPermissions([
             'finance.fx-adjustment.view',
             'finance.journal-entry-draft.authorize-finalization',
+            'finance.banking.migration.view',
+            'finance.banking.migration.manage',
         ]);
 
         $generalLedgerAccountant = Role::firstOrCreate([

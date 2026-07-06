@@ -43,7 +43,7 @@ class BankingMigrationPlanController extends Controller
                     'created_at' => $plan->created_at?->toIso8601String(),
                     'updated_at' => $plan->updated_at?->toIso8601String(),
                 ];
-            }, $plans);
+            }, $planModels);
         }
 
         return Inertia::render('Ivorq/Finance/BankingMigrationControlWorkspace', [
