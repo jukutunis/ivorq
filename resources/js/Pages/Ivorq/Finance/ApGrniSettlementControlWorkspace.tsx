@@ -95,10 +95,12 @@ interface Projection {
 interface Props {
   projection: Projection;
   payment_proposals: PaymentProposal[];
+  allocatable_payments: AllocatablePayment[];
   permissions: {
     can_view: boolean;
     can_create_payment_proposal: boolean;
     can_cancel_payment_proposal: boolean;
+    can_allocate: boolean;
   };
 }
 
@@ -116,6 +118,15 @@ interface PaymentProposal {
     source_journal_entry_id: string;
     source_amount: string;
   }>;
+}
+
+interface AllocatablePayment {
+  id: string;
+  reference: string | null;
+  posting_date: string | null;
+  amount: string;
+  currency_code: string | null;
+  vendor_id: string | null;
 }
 
 type QueueKey = keyof Projection['queues'];
@@ -180,7 +191,7 @@ function itemSubtitle(item: SettlementItem): string {
   return parts.length > 0 ? parts.join(' | ') : item.settlement_status;
 }
 
-export default function ApGrniSettlementControlWorkspace({ projection, payment_proposals, permissions }: Props) {
+export default function ApGrniSettlementControlWorkspace({ projection, payment_proposals, allocatable_payments, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const queuedItems = useMemo<QueuedSettlementItem[]>(
     () => queueDefinitions.flatMap((definition) => projection.queues[definition.key].map((item) => ({
@@ -194,9 +205,14 @@ export default function ApGrniSettlementControlWorkspace({ projection, payment_p
   );
   const [selectedId, setSelectedId] = useState<string | null>(queuedItems[0]?.item.id ?? null);
   const [cancelProposalId, setCancelProposalId] = useState<string | null>(null);
+  const [allocatePaymentId, setAllocatePaymentId] = useState<string | null>(null);
   const selectedQueuedItem = queuedItems.find((queuedItem) => queuedItem.item.id === selectedId) ?? queuedItems[0] ?? null;
   const createForm = useForm<{ journal_entry_ids: string[] }>({ journal_entry_ids: [] });
   const cancelForm = useForm({ cancellation_reason: '' });
+  const allocateForm = useForm<{ ap_journal_entry_id: string; payment_journal_entry_id: string }>({
+    ap_journal_entry_id: '',
+    payment_journal_entry_id: '',
+  });
 
   const createDraft = (journalEntryId: string) => {
     createForm.setData('journal_entry_ids', [journalEntryId]);
@@ -212,6 +228,21 @@ export default function ApGrniSettlementControlWorkspace({ projection, payment_p
       onSuccess: () => {
         setCancelProposalId(null);
         cancelForm.reset('cancellation_reason');
+      },
+    });
+  };
+
+  const submitAllocate = (event: React.FormEvent, apJournalEntryId: string, paymentJournalEntryId: string) => {
+    event.preventDefault();
+    allocateForm.setData({
+      ap_journal_entry_id: apJournalEntryId,
+      payment_journal_entry_id: paymentJournalEntryId,
+    });
+    allocateForm.post(route('finance.payables.settlement-allocations.allocate'), {
+      preserveScroll: true,
+      onSuccess: () => {
+        setAllocatePaymentId(null);
+        allocateForm.reset();
       },
     });
   };
@@ -425,7 +456,14 @@ export default function ApGrniSettlementControlWorkspace({ projection, payment_p
               </div>
 
               {selectedQueuedItem ? (
-                <SettlementEvidence queuedItem={selectedQueuedItem} />
+                <SettlementEvidence
+                  queuedItem={selectedQueuedItem}
+                  allocatablePayments={allocatable_payments}
+                  canAllocate={permissions.can_allocate}
+                  allocatePaymentId={allocatePaymentId}
+                  setAllocatePaymentId={setAllocatePaymentId}
+                  submitAllocate={submitAllocate}
+                />
               ) : (
                 <AttentionArea title="Selected Settlement Evidence" badgeText="None" badgeType="neutral" areaType="neutral">
                   <div className="finance-empty-state">Select a settlement source to review supplier, invoice, GRNI/AP, and lifecycle evidence.</div>
@@ -439,7 +477,21 @@ export default function ApGrniSettlementControlWorkspace({ projection, payment_p
   );
 }
 
-function SettlementEvidence({ queuedItem }: { queuedItem: QueuedSettlementItem }) {
+function SettlementEvidence({
+  queuedItem,
+  allocatablePayments,
+  canAllocate,
+  allocatePaymentId,
+  setAllocatePaymentId,
+  submitAllocate,
+}: {
+  queuedItem: QueuedSettlementItem;
+  allocatablePayments: AllocatablePayment[];
+  canAllocate: boolean;
+  allocatePaymentId: string | null;
+  setAllocatePaymentId: (id: string | null) => void;
+  submitAllocate: (event: React.FormEvent, apJournalEntryId: string, paymentJournalEntryId: string) => void;
+}) {
   const { item, queueTitle, status } = queuedItem;
 
   return (
@@ -507,6 +559,52 @@ function SettlementEvidence({ queuedItem }: { queuedItem: QueuedSettlementItem }
           <div className="finance-evidence-list">
             {item.reason && <EvidenceRow label="Held Reason" value={item.reason} />}
             {item.candidate?.rejection_reason && <EvidenceRow label="Rejection Reason" value={item.candidate.rejection_reason} />}
+          </div>
+        </div>
+      )}
+
+      {canAllocate && (
+        <div className="finance-evidence-section">
+          <div className="finance-section-title">AP Settlement Allocation</div>
+          <div className="finance-evidence-list">
+            <EvidenceRow label="AP Journal Reference" value={item.journal?.reference || 'N/A'} />
+            {allocatablePayments.length === 0 && (
+              <div className="finance-empty-state">No unallocated posted payment journal entries are available for this property.</div>
+            )}
+            {allocatablePayments.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' }}>
+                {allocatablePayments.map((payment) => (
+                  <div key={payment.id} style={{
+                    border: '1px solid var(--border-default)',
+                    borderRadius: '6px',
+                    padding: '8px',
+                    background: allocatePaymentId === payment.id ? 'var(--surface-highlight)' : 'var(--surface-card)',
+                  }}>
+                    <div style={{ fontSize: '12px', fontWeight: 700 }}>{payment.reference || payment.id}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      {formatAmount(payment.amount, payment.currency_code)}
+                      {payment.posting_date ? ` | ${formatDate(payment.posting_date)}` : ''}
+                    </div>
+                    <div style={{ marginTop: '6px' }}>
+                      {allocatePaymentId === payment.id ? (
+                        <form onSubmit={(event) => submitAllocate(event, item.id, payment.id)} style={{ display: 'flex', gap: '6px' }}>
+                          <Button type="button" size="sm" variant="secondary" onClick={() => setAllocatePaymentId(null)}>
+                            Cancel
+                          </Button>
+                          <Button type="submit" size="sm">
+                            <Icon name="finance" /> Confirm Allocation
+                          </Button>
+                        </form>
+                      ) : (
+                        <Button type="button" size="sm" onClick={() => setAllocatePaymentId(payment.id)}>
+                          <Icon name="finance" /> Allocate
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

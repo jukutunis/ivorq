@@ -53,6 +53,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.payables.ap-grni-settlement-control.payment-proposals.create');
         Route::post('/payables/ap-grni-settlement-control/payment-proposals/{paymentProposal}/cancel', [\Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController::class, 'cancelDraft'])
             ->name('finance.payables.ap-grni-settlement-control.payment-proposals.cancel');
+        Route::post('/payables/settlement-allocations', [\Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController::class, 'allocate'])
+            ->name('finance.payables.settlement-allocations.allocate');
         Route::get('/payables/payment-proposals', [\Modules\Finance\Payables\Http\Controllers\PaymentProposalControlWorkspaceController::class, 'index'])
             ->name('finance.payables.payment-proposals.index');
         Route::post('/payables/payment-proposals/{proposal}/approve', [\Modules\Finance\Payables\Http\Controllers\PaymentProposalControlWorkspaceController::class, 'approve'])

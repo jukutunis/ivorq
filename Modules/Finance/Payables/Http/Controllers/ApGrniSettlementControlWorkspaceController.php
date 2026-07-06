@@ -9,10 +9,14 @@ use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 use Modules\Finance\Payables\Enums\PaymentProposalStatusEnum;
 use Modules\Finance\Payables\Models\PaymentProposal;
+use Modules\Finance\Payables\Models\ApSettlementAllocation;
 use Modules\Finance\Payables\Services\ApGrniSettlementAgingProjectionService;
+use Modules\Finance\Payables\Services\ApSettlementAllocationService;
 use Modules\Finance\Payables\Services\PaymentProposalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
+use Modules\Finance\GeneralLedger\Models\JournalEntry;
+use Modules\Operations\GeneralCashier\Models\PaymentExecution;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
 use Throwable;
@@ -30,6 +34,7 @@ class ApGrniSettlementControlWorkspaceController extends Controller
     public function __construct(
         private readonly ApGrniSettlementAgingProjectionService $projectionService,
         private readonly PaymentProposalService $paymentProposalService,
+        private readonly ApSettlementAllocationService $allocationService,
     ) {}
 
     public function index(Request $request): InertiaResponse
@@ -45,7 +50,9 @@ class ApGrniSettlementControlWorkspaceController extends Controller
                 'can_view' => true,
                 'can_create_payment_proposal' => $user->can(PaymentProposalService::CREATE_PERMISSION),
                 'can_cancel_payment_proposal' => $user->can(PaymentProposalService::CANCEL_PERMISSION),
+                'can_allocate' => $user->can(ApSettlementAllocationService::PERMISSION),
             ],
+            'allocatable_payments' => $this->allocatablePaymentPayloads($propertyId),
         ]);
     }
 
@@ -79,6 +86,38 @@ class ApGrniSettlementControlWorkspaceController extends Controller
         return $this->redirectingAction(
             fn () => $this->paymentProposalService->cancelDraft($paymentProposal, $request->user(), $validated['cancellation_reason']),
             'Payment Proposal Draft cancelled.',
+            $propertyId
+        );
+    }
+
+    public function allocate(Request $request): RedirectResponse
+    {
+        $this->authorizeAction($request->user(), ApSettlementAllocationService::PERMISSION);
+        $propertyId = $this->resolvePropertyId($request);
+
+        $validated = $request->validate([
+            'ap_journal_entry_id' => ['required', 'string', 'size:26'],
+            'payment_journal_entry_id' => ['required', 'string', 'size:26'],
+        ]);
+
+        $paymentJournal = JournalEntry::whereKey($validated['payment_journal_entry_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $paymentExecution = PaymentExecution::whereKey($paymentJournal->source_id)
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $amount = $paymentExecution->source_amount;
+
+        return $this->redirectingAction(
+            fn () => $this->allocationService->allocate(
+                $validated['ap_journal_entry_id'],
+                $validated['payment_journal_entry_id'],
+                $amount,
+                $request->user()
+            ),
+            'AP settlement allocation recorded.',
             $propertyId
         );
     }
@@ -152,6 +191,44 @@ class ApGrniSettlementControlWorkspaceController extends Controller
             ])
             ->values()
             ->all();
+    }
+
+    private function allocatablePaymentPayloads(string $propertyId): array
+    {
+        $allocatedPaymentJournalIds = ApSettlementAllocation::where('property_id', $propertyId)
+            ->pluck('payment_journal_entry_id')
+            ->unique()
+            ->values()
+            ->all();
+
+        $postedPaymentJournals = JournalEntry::where('property_id', $propertyId)
+            ->where('status', 'Posted')
+            ->where('source_module', 'GeneralCashier')
+            ->where('source_type', 'PaymentExecution')
+            ->where('posting_event', 'SupplierPaymentCashDisbursement')
+            ->whereNotIn('id', $allocatedPaymentJournalIds)
+            ->orderByDesc('posting_date')
+            ->limit(50)
+            ->get();
+
+        $executionIds = $postedPaymentJournals->pluck('source_id')->unique()->filter()->values()->all();
+
+        $executions = !empty($executionIds)
+            ? PaymentExecution::whereIn('id', $executionIds)->get()->keyBy('id')
+            : collect();
+
+        return $postedPaymentJournals->map(function (JournalEntry $journal) use ($executions): array {
+            $execution = $executions->get($journal->source_id);
+
+            return [
+                'id' => $journal->id,
+                'reference' => $journal->reference,
+                'posting_date' => $journal->posting_date,
+                'amount' => (string) ($execution->source_amount ?? '0'),
+                'currency_code' => $execution->currency_code ?? null,
+                'vendor_id' => $execution->vendor_id ?? null,
+            ];
+        })->values()->all();
     }
 
     private function redirectingAction(callable $action, string $successMessage, string $propertyId): RedirectResponse
