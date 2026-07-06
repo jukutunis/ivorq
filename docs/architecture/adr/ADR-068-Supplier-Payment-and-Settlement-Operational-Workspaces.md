@@ -53,8 +53,8 @@ The accepted lifecycle is:
 | D1 | Payables | Approve Supplier Invoice | `SupplierInvoiceApprovalService::approve()` | No | No controller |
 | D2 | Payables | Reject Supplier Invoice | `SupplierInvoiceApprovalService::reject()` | No | No controller |
 | D3 | Payables | Resolve Match Exception | `SupplierInvoiceExceptionReviewService::resolveException()` | No | No controller |
-| D4 | Payables | Approve Payment Proposal | `PaymentProposalApprovalService` | No | No controller |
-| D5 | Payables | Reject Payment Proposal | `PaymentProposalApprovalService` | No | No controller |
+| D4 | Payables | Approve Payment Proposal | `PaymentProposalApprovalService::approve()` | Yes (Sprint 24) | Activated |
+| D5 | Payables | Reject Payment Proposal | `PaymentProposalApprovalService::reject()` | Yes (Sprint 24) | Activated |
 | D6 | GeneralCashier | Record Cash Execution | `PaymentExecutionService::recordCashExecution()` | No | No controller |
 | D7 | GeneralCashier | Record Confirmed Bank Execution | `PaymentExecutionService::recordConfirmedBankExecution()` | No | No controller |
 | D8 | GeneralCashier | Record Cash Count | `CashCountAndBaselineService::recordCashCount()` | No | No controller |
@@ -89,9 +89,10 @@ All Finance routes are under `Route::middleware(['auth', 'active.property'])`. P
 - Draft payment proposals with vendor, invoice, amount, currency, status evidence
 - Ready-to-settle GRNI items projected from `ApGrniSettlementAgingProjectionService`
 - Create draft and cancel draft actions (existing P2, P3)
-- Server-projected capability gating
+- Approve and reject actions for PENDING_APPROVAL proposals (D4, D5 — activated in Sprint 24)
+- Server-projected capability gating including `can_approve` and `can_reject`
 
-**Not delivered**: Payment proposal approval/rejection (D4, D5 — deferred).
+**Activated in Sprint 24**: Payment proposal approval and rejection web routes are now exposed through `PaymentProposalControlWorkspaceController` using `PaymentProposalApprovalService::approve()/reject()` with permission `finance.payables.payment-proposal.approve` and `finance-approval` sensitive confirmation enforcement following the existing GRNI candidate review pattern.
 
 ## Supplier Invoice / Three-Way Match / Exception workspace boundary
 
@@ -134,7 +135,20 @@ All Finance routes are under `Route::middleware(['auth', 'active.property'])`. P
 
 ## Approval confirmation requirements
 
-Only actions D1-D5 (invoice approval/rejection, proposal approval/rejection) would require `finance-approval` confirmation IF web routes existed. Since they are deferred, no new confirmation enforcement is added in this package. Existing confirmation enforcement for GRNI approve/reject/finalize and FX review/finalize remains unchanged.
+Actions D4-D5 (proposal approve/reject) are now activated in Sprint 24 and require `finance-approval` confirmation enforcement. The controller follows the exact same pattern as `GrniControlWorkspaceController`: authorize action permission first, then require valid `SensitiveActionConfirmationService::hasValidConfirmation()` for `finance-approval` intent before invoking the lifecycle service. Missing confirmation redirects to `system.sensitive-action-confirmation.index` with the `finance-approval` intent and a server-owned error message. Actions D1-D3 (invoice approval/rejection, exception resolution) remain deferred. Existing confirmation enforcement for GRNI approve/reject/finalize and FX review/finalize remains unchanged.
+
+### Sprint 24 activated route contracts
+
+| Action | Route | Controller Method | Service Method | Permission | Confirmation |
+|---|---|---|---|---|---|
+| Approve Payment Proposal | `POST /finance/payables/payment-proposals/{proposal}/approve` | `PaymentProposalControlWorkspaceController@approve` | `PaymentProposalApprovalService::approve()` | `finance.payables.payment-proposal.approve` | `finance-approval` |
+| Reject Payment Proposal | `POST /finance/payables/payment-proposals/{proposal}/reject` | `PaymentProposalControlWorkspaceController@reject` | `PaymentProposalApprovalService::reject()` | `finance.payables.payment-proposal.approve` | `finance-approval` |
+
+Input contracts:
+- Approve: no body input; actor, property, company resolved server-side
+- Reject: `rejection_reason` (required, string, min 3, max 500); actor, property, company resolved server-side
+
+The browser must not supply amount, currency, account, bank, allocation, invoice, journal, property, company, actor, or status.
 
 ## Evidence-first UX pattern
 
@@ -162,11 +176,10 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 ## Current known deferred items
 
 | Item | Service Exists | Web Route? | Blocker |
-|---|---|---|---|
+|---|---|---|---|---|
 | Invoice approval | Yes | No | No controller |
 | Invoice rejection | Yes | No | No controller |
 | Exception resolution | Yes | No | No controller |
-| Proposal approval | Yes | No | No controller |
 | Cash execution | Yes | No | No controller |
 | Bank execution | Yes | No | No controller |
 | Cash count | Yes | No | No controller |
@@ -188,8 +201,8 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 ## Consequences
 
 1. **Operational visibility**: Finance users gain workspace views of payment proposals, invoices, match results, settlement allocations, and reconciliation evidence — all scoped to current property.
-2. **No new lifecycle**: All mutation actions call existing services only. No new state machine is introduced.
-3. **Deferred web actions**: 12 source-proven services remain without web exposure. Future packages may add controllers for these.
+2. **No new lifecycle**: All mutation actions call existing services only. No new state machine is introduced. Payment proposal approval/rejection routes activated in Sprint 24 using existing `PaymentProposalApprovalService`.
+3. **Deferred web actions**: 10 source-proven services remain without web exposure (D4/D5 activated in Sprint 24). Future packages may add controllers for these.
 4. **No confirmation expansion**: Since no new approve/reject/finalize web actions are added, no new `finance-approval` confirmation enforcement is required.
 
 ## Deferred decisions
@@ -197,7 +210,6 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 | Decision | Status |
 |---|---|
 | Invoice approval/rejection web routes | Deferred — service exists, no controller |
-| Payment proposal approval/rejection web routes | Deferred — service exists, no controller |
 | Cash execution web route | Deferred — service exists, no controller |
 | Bank execution web route | Deferred — service exists, no controller |
 | Cash/bank reconciliation web routes | Deferred — services exist, no controllers |
