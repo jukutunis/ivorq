@@ -255,15 +255,25 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 | Existing test convention | `tests/Postgres/Finance/Payables/CashbookEvidenceWorkspaceTest.php` |
 | No schema/migration/permission/role change | Confirmed |
 
-### A3. Cash Payment Execution — DEFERRED
+### A3. Cash Payment Execution — ACTIVATION-READY (Sprint 26)
 
-| Missing source boundary | Evidence |
+Defined in ADR-069. All missing Sprint 25 boundaries are now source-proven: CashbookEvidenceWorkspaceController is the execution web controller extension point; the `cash-payment-execution` dedicated confirmation intent provides the execution confirmation convention; server-side identifier re-resolution through `PaymentExecutionService::recordCashExecution()` and `GeneralCashierOperationalFoundationService::resolveOperationalContext()` validates every browser-supplied identifier.
+
+| Fact | Evidence |
 |---|---|
-| No execution workspace/controller | `CashbookEvidenceWorkspaceController` is read-only evidence projection, not a mutation execution controller. No source-proven controller exists for recording cash payment execution |
-| Browser-supplied operational resource selection | `PaymentExecutionService::recordCashExecution()` requires `cashierSessionId` and `cashierPaymentInstrumentId` from the browser. While server-validated, these are operational financial resource selections with no existing web action convention |
-| No source-proven confirmation convention | The `finance-approval` intent is scoped to approval/finalization decisions per ADR-068 analysis. No confirmation intent exists for operational cash payment execution |
-| ADR-068 Sprint 23 analysis | "Deferred — browser-supplied cash instrument and proposal item selection required; no execution workspace controller; no confirmation convention" — unchanged since Sprint 23 |
-| Cannot be browser supplied | The cash session must be the actor's own OPEN session (`GeneralCashierOperationalFoundationService::resolveOperationalContext()` enforces session ownership). The cash instrument must be active, same-property, type=CASH. These server-ownership constraints require a dedicated execution workspace with server-projected eligible context before browser selection |
+| Service | `PaymentExecutionService::recordCashExecution()` (`Modules/Operations/GeneralCashier/Services/PaymentExecutionService.php:28-123`) — unchanged |
+| Permission | `finance.general-cashier.payment.execute` (`PaymentExecutionService.php:22`) |
+| Browser input | `payment_proposal_item_id`, `cashier_session_id`, `cashier_payment_instrument_id` (three ULID identifiers only) |
+| Server revalidation | Full chain: actor + permission, proposal item (approved, active, property-scoped), source journal (posted AP liability), session (OPEN, actor-owned, same property), instrument (active, CASH, same property), operational account (active, same property) |
+| Idempotency | `existingExecutionQuery()` + `assertExistingExecutionMatches()` with full field comparison |
+| Audit | `created_by`, `updated_by`, `executed_by`, `executed_at`, full `source_snapshot` |
+| Segregation | Session ownership: `cashier_user_id` must equal actor (`resolveOperationalContext()` line 103-104) |
+| Downstream | `CashbookTransactionProjectionService` — existing, unchanged |
+| Confirmation | `cash-payment-execution` — dedicated intent defined in ADR-069; uses existing `SensitiveActionConfirmationService` mechanism |
+| Controller | `CashbookEvidenceWorkspaceController` (`Modules/Finance/GeneralCashier/Http/Controllers/CashbookEvidenceWorkspaceController.php`) |
+| Workspace page | `resources/js/Pages/Ivorq/Finance/CashbookEvidenceWorkspace.tsx` |
+| Lifecycle service unchanged | No modification to `PaymentExecutionService` |
+| No schema/migration/permission/role change | Confirmed |
 
 ### A4. Bank Execution Context Projection — CONTEXT-READY
 
@@ -327,7 +337,7 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 |---|---|---|---|---|---|---|
 | A1 | AP Settlement Allocation | DELIVERED Sprint 25 | `ApSettlementAllocationService::allocate()` | `finance.payables.ap-settlement.allocate` | `ApGrniSettlementControlWorkspaceController` | `ApSettlementAllocationWebActionTest` |
 | A2 | Cash Execution Context Projection | DELIVERED Sprint 25 | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `CashExecutionContextProjectionTest` |
-| A3 | Cash Payment Execution | DEFERRED | `PaymentExecutionService::recordCashExecution()` | `finance.general-cashier.payment.execute` | — | — |
+| A3 | Cash Payment Execution | ACTIVATION-READY Sprint 26 | `PaymentExecutionService::recordCashExecution()` | `finance.general-cashier.payment.execute` | `CashbookEvidenceWorkspaceController` | `CashPaymentExecutionWebActionTest` |
 | A4 | Bank Execution Context Projection | DELIVERED Sprint 25 | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `BankExecutionContextProjectionTest` |
 | A5 | Bank Payment Execution | DEFERRED | `PaymentExecutionService::recordConfirmedBankExecution()` | `finance.general-cashier.payment.execute` | — | — |
 | A6 | Cash Reconciliation | DELIVERED Sprint 25 | `ManualCashReconciliationService::reconcile()` | `finance.general-cashier.cash-reconciliation.perform` | `CashbookEvidenceWorkspaceController` | `CashReconciliationWebActionTest` |
@@ -365,6 +375,18 @@ Allowed repository paths:
 - `tests/Postgres/Finance/GeneralCashier/CashReconciliationWebActionTest.php`
 - `C:\Users\edigd\.ivorq-local\Invoke-IvorqPgCashReconciliationWebActionTest.ps1`
 
+### Phase C (Sprint 26) — Cash Payment Execution (A3 ACTIVATION-READY)
+
+See ADR-069 for full activation contract and confirmation policy.
+
+Allowed repository paths:
+- `docs/architecture/adr/ADR-068-Supplier-Payment-and-Settlement-Operational-Workspaces.md`
+- `routes/web.php`
+- `Modules/Finance/GeneralCashier/Http/Controllers/CashbookEvidenceWorkspaceController.php`
+- `resources/js/Pages/Ivorq/Finance/CashbookEvidenceWorkspace.tsx`
+- `tests/Postgres/Finance/GeneralCashier/CashPaymentExecutionWebActionTest.php`
+- `tests/Postgres/Finance/GeneralCashier/CashExecutionContextProjectionTest.php`
+
 ## Deferred decisions
 
 | Decision | Status |
@@ -374,7 +396,7 @@ Allowed repository paths:
 | Payment proposal approval/rejection web routes | Activated Sprint 24 |
 | AP Settlement Allocation web route | ACTIVATION-READY Sprint 25 (this package) |
 | Cash Execution Context Projection | CONTEXT-READY Sprint 25 (this package) |
-| Cash Payment Execution web route | DEFERRED — no execution workspace/controller; no confirmation convention for operational execution; browser-supplied session/instrument selection |
+| Cash Payment Execution web route | ACTIVATION-READY Sprint 26 — dedicated `cash-payment-execution` confirmation defined in ADR-069 |
 | Bank Execution Context Projection | CONTEXT-READY Sprint 25 (this package) |
 | Bank Payment Execution web route | DEFERRED — no execution workspace/controller; no confirmation convention; browser-supplied bank account/statement line selection; cross-domain complexity |
 | Cash Reconciliation web route | ACTIVATION-READY Sprint 25 (this package) |
