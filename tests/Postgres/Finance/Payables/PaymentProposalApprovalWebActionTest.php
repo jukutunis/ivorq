@@ -427,7 +427,7 @@ class PaymentProposalApprovalWebActionTest extends PostgresTestCase
         $this->assertSame($snapshot, $this->proposalSnapshot($proposal->id));
     }
 
-    public function test_no_role_or_permission_mutation_on_denied_or_successful_approval(): void
+    public function test_no_role_or_permission_mutation_on_denied_approval(): void
     {
         $this->createFixtures();
 
@@ -447,12 +447,22 @@ class PaymentProposalApprovalWebActionTest extends PostgresTestCase
             ->where('model_id', $this->approver->id)->count());
         $this->assertSame($permCountBefore, DB::table('model_has_permissions')
             ->where('model_id', $this->approver->id)->count());
+    }
 
-        $proposal2 = $this->makePendingProposal();
+    public function test_no_role_or_permission_mutation_on_successful_approval(): void
+    {
+        $this->createFixtures();
+
+        $roleCountBefore = DB::table('model_has_roles')
+            ->where('model_id', $this->approver->id)->count();
+        $permCountBefore = DB::table('model_has_permissions')
+            ->where('model_id', $this->approver->id)->count();
+
+        $proposal = $this->makePendingProposal();
 
         $this->withSession($this->confirmedSession())
             ->actingAs($this->approver, 'web')
-            ->post(route('finance.payables.payment-proposals.approve', ['proposal' => $proposal2->id]))
+            ->post(route('finance.payables.payment-proposals.approve', ['proposal' => $proposal->id]))
             ->assertRedirect()
             ->assertSessionHas('success');
 
@@ -526,6 +536,7 @@ class PaymentProposalApprovalWebActionTest extends PostgresTestCase
         ]);
 
         app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+        setPermissionsTeamId($this->property->id);
 
         $this->approver = $this->user('PPAW Approver', 'ppaw-approver@example.test');
         $this->approver->properties()->attach($this->property->id, [
@@ -606,7 +617,7 @@ class PaymentProposalApprovalWebActionTest extends PostgresTestCase
 
     private function proposalSnapshot(string $id): array
     {
-        return DB::table('payment_proposals')->where('id', $id)->first([
+        return (array) DB::table('payment_proposals')->where('id', $id)->first([
             'status', 'approved_by', 'approved_at', 'rejected_by', 'rejected_at', 'rejection_reason',
             'updated_by', 'updated_at',
         ]);
