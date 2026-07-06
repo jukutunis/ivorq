@@ -197,6 +197,46 @@ class BankingOperationsWorkspaceController extends Controller
         }
     }
 
+    public function reconcile(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can(ManualBankReconciliationService::PERMISSION)) {
+            abort(403, 'Unauthorized.');
+        }
+        $propertyId = $this->resolvePropertyId($request);
+
+        $validated = $request->validate([
+            'posted_journal_entry_id' => ['required', 'string', 'size:26'],
+            'controlled_bank_statement_line_id' => ['required', 'string', 'size:26'],
+        ]);
+
+        $journal = \Modules\Finance\GeneralLedger\Models\JournalEntry::whereKey($validated['posted_journal_entry_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $statementLine = ControlledBankStatementLine::whereKey($validated['controlled_bank_statement_line_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $reconciliationService = app(ManualBankReconciliationService::class);
+
+        try {
+            $reconciliationService->reconcilePostedBankPayment(
+                $validated['posted_journal_entry_id'],
+                $validated['controlled_bank_statement_line_id'],
+                $user
+            );
+
+            return redirect()
+                ->route('finance.banking.operations.index')
+                ->with('success', 'Bank payment reconciliation recorded.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.banking.operations.index')
+                ->with('error', $exception->getMessage());
+        }
+    }
+
     private function projectBankExecutionContext(string $propertyId, $actor): array
     {
         $executedItemIds = PaymentExecution::where('property_id', $propertyId)

@@ -140,6 +140,7 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
     bank_accounts[0] ? { type: 'account', id: bank_accounts[0].id } : null
   );
   const [showExecuteForm, setShowExecuteForm] = useState<boolean>(false);
+  const [showReconcileForm, setShowReconcileForm] = useState<boolean>(false);
 
   const statementCount = useMemo(() => statement_lines.length, [statement_lines]);
   const executionCount = useMemo(() => bank_execution_evidence.length, [bank_execution_evidence]);
@@ -158,9 +159,11 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
   const allStatementLines = statement_lines;
   const reconciledStatementLineIds = new Set(reconciliation_evidence.map((r) => r.controlled_bank_statement_line_id));
   const executedStatementLineIds = new Set(bank_execution_evidence.map((e) => e.controlled_bank_statement_line_id));
+  const unreconciledStatementLines = allStatementLines.filter((line) => !reconciledStatementLineIds.has(line.id));
 
   const context = bank_execution_context || {};
   const canExecuteBank = permissions?.can_execute_bank ?? false;
+  const canReconcileBank = permissions?.can_reconcile_bank ?? false;
   const hasExecutionContext = (context.eligible_items?.length ?? 0) > 0
     && (context.bank_sessions?.length ?? 0) > 0
     && (context.bank_instruments?.length ?? 0) > 0
@@ -181,6 +184,14 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
     controlled_bank_statement_line_id: '',
   });
 
+  const reconcileForm = useForm<{
+    posted_journal_entry_id: string;
+    controlled_bank_statement_line_id: string;
+  }>({
+    posted_journal_entry_id: '',
+    controlled_bank_statement_line_id: '',
+  });
+
   const submitExecute = (event: React.FormEvent) => {
     event.preventDefault();
     executeForm.post(route('finance.banking.bank-payment-execute.execute'), {
@@ -188,6 +199,17 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
       onSuccess: () => {
         setShowExecuteForm(false);
         executeForm.reset();
+      },
+    });
+  };
+
+  const submitReconcile = (event: React.FormEvent) => {
+    event.preventDefault();
+    reconcileForm.post(route('finance.banking.bank-reconciliation.reconcile'), {
+      preserveScroll: true,
+      onSuccess: () => {
+        setShowReconcileForm(false);
+        reconcileForm.reset();
       },
     });
   };
@@ -202,6 +224,11 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
           {canExecuteBank && hasExecutionContext && (
             <Button type="button" variant="primary" onClick={() => setShowExecuteForm(!showExecuteForm)}>
               <Icon name="credit-card" /> {showExecuteForm ? 'Cancel' : 'Execute Bank Payment'}
+            </Button>
+          )}
+          {canReconcileBank && (
+            <Button type="button" variant="secondary" onClick={() => setShowReconcileForm(!showReconcileForm)}>
+              <Icon name="check" /> {showReconcileForm ? 'Cancel' : 'Reconcile Bank Payment'}
             </Button>
           )}
         </div>
@@ -364,6 +391,50 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
                     <Icon name="check" /> Execute Bank Payment
                   </Button>
                   <Button type="button" variant="secondary" onClick={() => setShowExecuteForm(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </AttentionArea>
+          )}
+
+          {showReconcileForm && canReconcileBank && (
+            <AttentionArea title="Bank Payment Reconciliation" badgeText="Evidence" badgeType="inspection" areaType="inspection">
+              <form onSubmit={submitReconcile} style={{ display: 'grid', gap: '12px' }}>
+                <div className="filter-group">
+                  <label className="filter-label">Posted Journal Entry ID</label>
+                  <input
+                    type="text"
+                    value={reconcileForm.data.posted_journal_entry_id}
+                    onChange={(e) => reconcileForm.setData('posted_journal_entry_id', e.target.value)}
+                    placeholder="ULID of posted supplier payment disbursement journal"
+                    maxLength={26}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  />
+                  <div className="finance-context-note">
+                    Must be a posted SupplierPaymentCashDisbursement journal entry.
+                  </div>
+                </div>
+                <div className="filter-group">
+                  <label className="filter-label">Controlled Bank Statement Line</label>
+                  <select
+                    value={reconcileForm.data.controlled_bank_statement_line_id}
+                    onChange={(e) => reconcileForm.setData('controlled_bank_statement_line_id', e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">Select statement line...</option>
+                    {unreconciledStatementLines.map((line) => (
+                      <option key={line.id} value={line.id}>
+                        {line.external_reference || line.id} — {line.amount} {line.currency_code} ({line.statement_date})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <Button type="submit" variant="primary" disabled={reconcileForm.processing}>
+                    <Icon name="check" /> Record Reconciliation
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => setShowReconcileForm(false)}>
                     Cancel
                   </Button>
                 </div>

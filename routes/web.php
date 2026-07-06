@@ -71,6 +71,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.banking.operations.index');
         Route::post('/banking/bank-payment-execute', [\Modules\Finance\Banking\Http\Controllers\BankingOperationsWorkspaceController::class, 'execute'])
             ->name('finance.banking.bank-payment-execute.execute');
+        Route::post('/banking/bank-reconciliation', [\Modules\Finance\Banking\Http\Controllers\BankingOperationsWorkspaceController::class, 'reconcile'])
+            ->name('finance.banking.bank-reconciliation.reconcile');
         Route::get('/payables/supplier-invoices', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'index'])
             ->name('finance.payables.supplier-invoices.index');
         Route::post('/payables/supplier-invoices/{invoice}/approve', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'approve'])
