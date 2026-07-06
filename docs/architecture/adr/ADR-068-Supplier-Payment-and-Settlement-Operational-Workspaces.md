@@ -328,7 +328,7 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 | A1 | AP Settlement Allocation | DELIVERED Sprint 25 | `ApSettlementAllocationService::allocate()` | `finance.payables.ap-settlement.allocate` | `ApGrniSettlementControlWorkspaceController` | `ApSettlementAllocationWebActionTest` |
 | A2 | Cash Execution Context Projection | DELIVERED Sprint 25 | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `CashExecutionContextProjectionTest` |
 | A3 | Cash Payment Execution | DEFERRED | `PaymentExecutionService::recordCashExecution()` | `finance.general-cashier.payment.execute` | — | — |
-| A4 | Bank Execution Context Projection | CONTEXT-READY | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `BankExecutionContextProjectionTest` (new) |
+| A4 | Bank Execution Context Projection | DELIVERED Sprint 25 | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `BankExecutionContextProjectionTest` |
 | A5 | Bank Payment Execution | DEFERRED | `PaymentExecutionService::recordConfirmedBankExecution()` | `finance.general-cashier.payment.execute` | — | — |
 | A6 | Cash Reconciliation | ACTIVATION-READY | `ManualCashReconciliationService::reconcile()` | `finance.general-cashier.cash-reconciliation.perform` | `CashbookEvidenceWorkspaceController` | `ManualCashReconciliationTest` |
 | A7 | Bank Reconciliation | DEFERRED | `ManualBankReconciliationService::reconcilePostedBankPayment()` | `finance.banking.reconciliation.manual` | — | `ManualBankReconciliationTest` |

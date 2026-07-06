@@ -65,10 +65,33 @@ interface CashExecutionContext {
   cash_instruments: CashInstrument[];
 }
 
+interface BankAccount {
+  id: string;
+  account_name: string;
+  account_number: string | null;
+  currency_code: string | null;
+}
+
+interface BankStatementLine {
+  id: string;
+  controlled_bank_account_id: string;
+  amount: string;
+  currency_code: string | null;
+  statement_date: string | null;
+  external_reference: string | null;
+  vendor_reference: string | null;
+}
+
+interface BankExecutionContext {
+  bank_accounts: BankAccount[];
+  statement_lines: BankStatementLine[];
+}
+
 interface Props {
   transactions: Transaction[];
   approved_proposals: Proposal[];
   cash_execution_context: CashExecutionContext;
+  bank_execution_context: BankExecutionContext;
 }
 
 type Selection =
@@ -87,7 +110,7 @@ function transactionLabel(transaction: Transaction): string {
   return transaction.direction === 'OUTFLOW' ? 'Payment Outflow' : (transaction.direction || 'Cash Transaction');
 }
 
-export default function CashbookEvidenceWorkspace({ transactions, approved_proposals, cash_execution_context }: Props) {
+export default function CashbookEvidenceWorkspace({ transactions, approved_proposals, cash_execution_context, bank_execution_context }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selection, setSelection] = useState<Selection | null>(
     approved_proposals[0]
@@ -156,6 +179,18 @@ export default function CashbookEvidenceWorkspace({ transactions, approved_propo
               {cash_execution_context.cash_sessions.length === 0 && (
                 <div className="finance-context-note" style={{ marginTop: '2px' }}>
                   No open cashier session for the current actor.
+                </div>
+              )}
+            </div>
+            <div className="filter-group" style={{ borderTop: '1px solid var(--border-default)', paddingTop: '12px' }}>
+              <label className="filter-label">Bank Execution Context</label>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                <div>Accounts: {bank_execution_context.bank_accounts.length}</div>
+                <div>Statement Lines: {bank_execution_context.statement_lines.length}</div>
+              </div>
+              {bank_execution_context.bank_accounts.length === 0 && (
+                <div className="finance-context-note" style={{ marginTop: '4px' }}>
+                  No active controlled bank accounts in this property.
                 </div>
               )}
             </div>
@@ -271,6 +306,33 @@ export default function CashbookEvidenceWorkspace({ transactions, approved_propo
                         detail={
                           <span>
                             {item.amount} {item.currency_code}
+                          </span>
+                        }
+                        actions={null}
+                      />
+                    ))}
+                  </div>
+                </QueueList>
+
+                <QueueList title="Bank Execution Context" count={bank_execution_context.statement_lines.length}>
+                  <div className="finance-queue-body">
+                    {bank_execution_context.statement_lines.length === 0 && (
+                      <div className="finance-empty-state">No OUTFLOW bank statement lines for the current property.</div>
+                    )}
+                    {bank_execution_context.statement_lines.map((line) => (
+                      <WorkCard
+                        key={line.id}
+                        borderColor="neutral-slate"
+                        meta={
+                          <>
+                            <span>{line.statement_date || 'Date unavailable'}</span>
+                            <StatusBadge status="neutral">Outflow</StatusBadge>
+                          </>
+                        }
+                        title={line.external_reference || 'Statement Line'}
+                        detail={
+                          <span>
+                            {line.amount} {line.currency_code}
                           </span>
                         }
                         actions={null}

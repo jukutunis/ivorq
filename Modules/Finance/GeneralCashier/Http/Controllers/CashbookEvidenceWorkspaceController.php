@@ -14,6 +14,9 @@ use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
 use Modules\Finance\Payables\Models\PaymentProposal;
 use Modules\Finance\Payables\Models\PaymentProposalItem;
+use Modules\Finance\Banking\Models\ControlledBankAccount;
+use Modules\Finance\Banking\Models\ControlledBankStatementLine;
+use Modules\Finance\Banking\Enums\ControlledBankStatementLineDirectionEnum;
 use Shared\Services\CurrentPropertyService;
 
 class CashbookEvidenceWorkspaceController extends Controller
@@ -56,11 +59,13 @@ class CashbookEvidenceWorkspaceController extends Controller
             ->values();
 
         $cashExecutionContext = $this->projectCashExecutionContext($propertyId, $actor);
+        $bankExecutionContext = $this->projectBankExecutionContext($propertyId);
 
         return Inertia::render('Ivorq/Finance/CashbookEvidenceWorkspace', [
             'transactions' => $transactions,
             'approved_proposals' => $proposals,
             'cash_execution_context' => $cashExecutionContext,
+            'bank_execution_context' => $bankExecutionContext,
         ]);
     }
 
@@ -128,6 +133,51 @@ class CashbookEvidenceWorkspaceController extends Controller
             'eligible_items' => array_values($eligibleItems),
             'cash_sessions' => array_values($sessions),
             'cash_instruments' => array_values($instruments),
+        ];
+    }
+
+    private function projectBankExecutionContext(string $propertyId): array
+    {
+        $bankAccounts = ControlledBankAccount::where('property_id', $propertyId)
+            ->where('is_active', true)
+            ->orderBy('account_name')
+            ->limit(20)
+            ->get()
+            ->map(fn (ControlledBankAccount $account) => [
+                'id' => $account->id,
+                'account_name' => $account->account_name,
+                'external_reference' => $account->external_account_reference,
+                'currency_code' => $account->currency_code,
+            ])
+            ->values()
+            ->all();
+
+        $accountIds = array_column($bankAccounts, 'id');
+
+        $statementLines = [];
+        if (!empty($accountIds)) {
+            $statementLines = ControlledBankStatementLine::whereIn('controlled_bank_account_id', $accountIds)
+                ->where('property_id', $propertyId)
+                ->where('direction', ControlledBankStatementLineDirectionEnum::OUTFLOW->value)
+                ->orderByDesc('statement_date')
+                ->limit(50)
+                ->get()
+                ->map(fn (ControlledBankStatementLine $line) => [
+                    'id' => $line->id,
+                    'controlled_bank_account_id' => $line->controlled_bank_account_id,
+                    'amount' => (string) ($line->amount ?? '0'),
+                    'currency_code' => $line->currency_code,
+                    'statement_date' => $line->statement_date,
+                    'external_reference' => $line->external_reference,
+                    'vendor_reference' => $line->vendor_reference,
+                ])
+                ->values()
+                ->all();
+        }
+
+        return [
+            'bank_accounts' => array_values($bankAccounts),
+            'statement_lines' => array_values($statementLines),
         ];
     }
 
