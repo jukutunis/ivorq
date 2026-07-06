@@ -133,6 +133,29 @@ interface ControlledReadinessEntry {
   reconciled_count: number;
 }
 
+interface MigrationPrerequisites {
+  source_authority_adr: string;
+  eligibility_policy: string;
+  provenance_definition: string;
+  duplicate_handling: string;
+  target_write_service: string;
+  audit_correlation: string;
+  cutover_policy: string;
+  rollback_policy: string;
+}
+
+interface MigrationAuthorityReadiness {
+  controlled_domain_status: string;
+  controlled_account_count: number;
+  legacy_domain_status: string;
+  legacy_account_count: number;
+  legacy_session_count: number;
+  cross_domain_bridge: string;
+  migration_intake_boundary: string;
+  is_migration_authorized: boolean;
+  migration_prerequisites: MigrationPrerequisites;
+}
+
 interface Props {
   bank_accounts: BankAccount[];
   statement_lines: BankStatementLine[];
@@ -141,6 +164,7 @@ interface Props {
   reconciliation_sessions: ReconciliationSessionRecord[];
   bank_execution_context: BankExecutionContext;
   controlled_readiness: ControlledReadinessEntry[];
+  migration_authority_readiness: MigrationAuthorityReadiness;
   domain_sections: {
     controlled: { label: string; description: string };
     legacy: { label: string; description: string };
@@ -166,7 +190,7 @@ const financeTabs = [
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 
-export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, reconciliation_sessions, bank_execution_context, controlled_readiness, domain_sections, permissions }: Props) {
+export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, reconciliation_sessions, bank_execution_context, controlled_readiness, migration_authority_readiness, domain_sections, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selection, setSelection] = useState<Selection | null>(
     bank_accounts[0] ? { type: 'account', id: bank_accounts[0].id } : null
@@ -519,6 +543,64 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
                           <span>Reconciled: {entry.reconciled_count}</span>
                         </div>
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {migration_authority_readiness && (
+                  <div style={{ padding: '12px 16px', backgroundColor: 'var(--surface-secondary)', border: '1px solid var(--border-default)', borderRadius: '4px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px', color: 'var(--text-primary)' }}>
+                      Migration Authority Readiness Evidence
+                    </div>
+                    <div style={{ display: 'grid', gap: '4px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', padding: '4px 0' }}>
+                        <span>Controlled Domain:</span>
+                        <span style={{ color: migration_authority_readiness.controlled_domain_status === 'operative' ? 'var(--status-ready-green, #2e7d32)' : 'var(--text-secondary)' }}>
+                          {migration_authority_readiness.controlled_domain_status} ({migration_authority_readiness.controlled_account_count} accounts)
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', padding: '4px 0' }}>
+                        <span>Legacy Domain:</span>
+                        <span>{migration_authority_readiness.legacy_domain_status} ({migration_authority_readiness.legacy_account_count} accounts, {migration_authority_readiness.legacy_session_count} sessions)</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', padding: '4px 0' }}>
+                        <span>Cross-Domain Bridge:</span>
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{migration_authority_readiness.cross_domain_bridge}</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', padding: '4px 0' }}>
+                        <span>Migration Intake Boundary:</span>
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{migration_authority_readiness.migration_intake_boundary}</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', padding: '4px 0', borderTop: '1px solid var(--border-default)', marginTop: '4px', paddingTop: '8px' }}>
+                        <span>Migration Authorized:</span>
+                        <span style={{ color: migration_authority_readiness.is_migration_authorized ? 'var(--status-ready-green, #2e7d32)' : 'var(--status-critical-red, #d32f2f)', fontWeight: 700 }}>
+                          {migration_authority_readiness.is_migration_authorized ? 'Yes' : 'No'}
+                        </span>
+                      </div>
+                      <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--border-default)' }}>
+                        <div style={{ fontSize: '11px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-primary)' }}>Migration Prerequisites</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '2px 8px', fontSize: '11px' }}>
+                          <span>Source Authority ADR:</span>
+                          <span style={{ color: 'var(--status-critical-red, #d32f2f)' }}>{migration_authority_readiness.migration_prerequisites.source_authority_adr}</span>
+                          <span>Eligibility Policy:</span>
+                          <span style={{ color: 'var(--status-critical-red, #d32f2f)' }}>{migration_authority_readiness.migration_prerequisites.eligibility_policy}</span>
+                          <span>Provenance Definition:</span>
+                          <span style={{ color: 'var(--status-critical-red, #d32f2f)' }}>{migration_authority_readiness.migration_prerequisites.provenance_definition}</span>
+                          <span>Duplicate Handling:</span>
+                          <span style={{ color: 'var(--status-critical-red, #d32f2f)' }}>{migration_authority_readiness.migration_prerequisites.duplicate_handling}</span>
+                          <span>Target Write Service:</span>
+                          <span style={{ color: 'var(--status-critical-red, #d32f2f)' }}>{migration_authority_readiness.migration_prerequisites.target_write_service}</span>
+                          <span>Audit Correlation:</span>
+                          <span style={{ color: 'var(--status-critical-red, #d32f2f)' }}>{migration_authority_readiness.migration_prerequisites.audit_correlation}</span>
+                          <span>Cutover Policy:</span>
+                          <span style={{ color: 'var(--status-critical-red, #d32f2f)' }}>{migration_authority_readiness.migration_prerequisites.cutover_policy}</span>
+                          <span>Rollback Policy:</span>
+                          <span style={{ color: 'var(--status-critical-red, #d32f2f)' }}>{migration_authority_readiness.migration_prerequisites.rollback_policy}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '8px', fontStyle: 'italic' }}>
+                      No mapping, comparison, score, candidate, or balance calculation is performed. All values are source-derived architectural facts.
                     </div>
                   </div>
                 )}

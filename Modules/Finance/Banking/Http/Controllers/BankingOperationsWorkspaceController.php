@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 use Modules\Finance\Banking\Enums\ControlledBankStatementLineDirectionEnum;
+use Modules\Finance\Banking\Models\BankAccount;
 use Modules\Finance\Banking\Models\ControlledBankAccount;
 use Modules\Finance\Banking\Models\ControlledBankStatementLine;
 use Modules\Finance\Banking\Models\BankPaymentReconciliation;
@@ -140,6 +141,8 @@ class BankingOperationsWorkspaceController extends Controller
 
         $controlledReadiness = $this->projectControlledReadiness($propertyId);
 
+        $migrationAuthorityReadiness = $this->projectMigrationAuthorityReadiness($propertyId);
+
         $canExecuteBank = $actor instanceof User && $actor->can(PaymentExecutionService::PERMISSION);
         $canReconcile = $actor instanceof User && $actor->can(ManualBankReconciliationService::PERMISSION);
         $canViewReconciliationSessions = $actor instanceof User && $actor->can('banking.reconciliation.view');
@@ -152,6 +155,7 @@ class BankingOperationsWorkspaceController extends Controller
             'reconciliation_sessions' => array_values($reconciliationSessions),
             'bank_execution_context' => $bankExecutionContext,
             'controlled_readiness' => array_values($controlledReadiness),
+            'migration_authority_readiness' => $migrationAuthorityReadiness,
             'domain_sections' => [
                 'controlled' => [
                     'label' => 'Controlled Banking — operational source evidence',
@@ -418,6 +422,40 @@ class BankingOperationsWorkspaceController extends Controller
         }
 
         return $readiness;
+    }
+
+    private function projectMigrationAuthorityReadiness(string $propertyId): array
+    {
+        $controlledAccountCount = ControlledBankAccount::where('property_id', $propertyId)
+            ->where('is_active', true)
+            ->count();
+
+        $legacyAccountCount = BankAccount::where('property_id', $propertyId)
+            ->count();
+
+        $legacySessionCount = ReconciliationSession::where('property_id', $propertyId)
+            ->count();
+
+        return [
+            'controlled_domain_status' => $controlledAccountCount > 0 ? 'operative' : 'inactive',
+            'controlled_account_count' => $controlledAccountCount,
+            'legacy_domain_status' => ($legacyAccountCount > 0 || $legacySessionCount > 0) ? 'historical' : 'empty',
+            'legacy_account_count' => $legacyAccountCount,
+            'legacy_session_count' => $legacySessionCount,
+            'cross_domain_bridge' => 'absent',
+            'migration_intake_boundary' => 'absent',
+            'is_migration_authorized' => false,
+            'migration_prerequisites' => [
+                'source_authority_adr' => 'pending',
+                'eligibility_policy' => 'pending',
+                'provenance_definition' => 'pending',
+                'duplicate_handling' => 'pending',
+                'target_write_service' => 'pending',
+                'audit_correlation' => 'pending',
+                'cutover_policy' => 'pending',
+                'rollback_policy' => 'pending',
+            ],
+        ];
     }
 
     private function resolvePropertyId(Request $request): string
