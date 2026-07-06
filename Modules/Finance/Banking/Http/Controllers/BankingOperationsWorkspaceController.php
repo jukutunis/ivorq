@@ -149,6 +149,16 @@ class BankingOperationsWorkspaceController extends Controller
             'reconciliation_evidence' => array_values($reconciliationEvidence),
             'reconciliation_sessions' => array_values($reconciliationSessions),
             'bank_execution_context' => $bankExecutionContext,
+            'domain_sections' => [
+                'controlled' => [
+                    'label' => 'Controlled Banking — operational source evidence',
+                    'description' => 'Accounts, statement lines, payment executions, and manual reconciliation records managed through the controlled Banking source path.',
+                ],
+                'legacy' => [
+                    'label' => 'Legacy Banking — isolated historical/compatibility evidence',
+                    'description' => 'Reconciliation sessions and match records from the legacy Banking module. Not linked to controlled Banking records.',
+                ],
+            ],
             'permissions' => [
                 'can_execute_bank' => $canExecuteBank,
                 'can_reconcile_bank' => $canReconcile,

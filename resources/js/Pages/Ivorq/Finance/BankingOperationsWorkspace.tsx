@@ -130,6 +130,10 @@ interface Props {
   reconciliation_evidence: ReconciliationEvidence[];
   reconciliation_sessions: ReconciliationSessionRecord[];
   bank_execution_context: BankExecutionContext;
+  domain_sections: {
+    controlled: { label: string; description: string };
+    legacy: { label: string; description: string };
+  };
   permissions: {
     can_execute_bank: boolean;
     can_reconcile_bank: boolean;
@@ -151,7 +155,7 @@ const financeTabs = [
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 
-export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, reconciliation_sessions, bank_execution_context, permissions }: Props) {
+export default function BankingOperationsWorkspace({ bank_accounts, statement_lines, bank_execution_evidence, reconciliation_evidence, reconciliation_sessions, bank_execution_context, domain_sections, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selection, setSelection] = useState<Selection | null>(
     bank_accounts[0] ? { type: 'account', id: bank_accounts[0].id } : null
@@ -481,6 +485,14 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
           {(bank_accounts.length > 0 || bank_execution_evidence.length > 0 || reconciliation_evidence.length > 0) && (
             <div className="finance-master-detail">
               <div style={{ display: 'grid', gap: '16px' }}>
+                <div style={{ padding: '12px 16px', borderLeft: '3px solid var(--status-ready-green, #2e7d32)', backgroundColor: 'var(--surface-secondary)', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    {domain_sections?.controlled?.label ?? 'Controlled Banking'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                    {domain_sections?.controlled?.description ?? ''}
+                  </div>
+                </div>
                 <QueueList title="Controlled Bank Accounts" count={bank_accounts.length}>
                   <div className="finance-queue-body">
                     {bank_accounts.length === 0 && (
@@ -621,6 +633,15 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
                     ))}
                   </div>
                 </QueueList>
+
+                <div style={{ margin: '16px 0', padding: '12px 16px', borderLeft: '3px solid var(--border-default)', backgroundColor: 'var(--surface-secondary)', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    {domain_sections?.legacy?.label ?? 'Legacy Banking'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                    {domain_sections?.legacy?.description ?? ''}
+                  </div>
+                </div>
 
                 <QueueList title="Reconciliation Sessions" count={sessionCount}>
                   <div className="finance-queue-body">
