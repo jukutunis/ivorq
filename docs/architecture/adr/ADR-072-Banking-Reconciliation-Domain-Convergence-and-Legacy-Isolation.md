@@ -1,6 +1,6 @@
 # ADR-072: Banking Reconciliation Domain Convergence and Legacy Isolation
 
-**Status:** Accepted for Wave 1 read-only evidence boundary only
+**Status:** Accepted for controlled Wave 1 and Wave 2 read-only evidence implementation
 **Date:** 2026-07-07
 
 ## Context
@@ -110,11 +110,7 @@ Sprint 29 does not authorize, implement, or prepare any migration.
 
 ## Confirmation Policy
 
-No new confirmation intents. Existing intents unchanged:
-- `finance-approval` — approval/finalization decisions only
-- `cash-payment-execution` — Cash Payment Execution only
-- `bank-payment-execution` — Bank Payment Execution only
-- `fx-break-glass` — FX break-glass only
+No confirmation behavior was changed by Sprint 29. The confirmation registry remains unchanged. `finance-approval`, `cash-payment-execution`, `bank-payment-execution`, and `fx-break-glass` are the intents relevant to this Banking reconciliation boundary. Other registered intents remain unchanged and are outside Sprint 29 scope.
 
 ## GL, Financial Period, and Business Date
 
@@ -131,20 +127,31 @@ Sprint 29 workspace is read-only. No GL journal, Financial Period, or Business D
 - No controlled record mutation.
 - No cross-domain financial inference.
 
-## Wave 1 Implementation
+## Sprint 29 Implementation Manifest
 
-| Path | Change |
-|---|---|
-| `docs/architecture/adr/ADR-072-Banking-Reconciliation-Domain-Convergence-and-Legacy-Isolation.md` | New ADR |
-| `Modules/Finance/Banking/Http/Controllers/BankingOperationsWorkspaceController.php` | Domain-separated sections in index() |
-| `resources/js/Pages/Ivorq/Finance/BankingOperationsWorkspace.tsx` | Two visibly separate evidence areas |
-| `tests/Postgres/Finance/Banking/BankingReconciliationDomainConvergenceWorkspaceTest.php` | Domain-separation tests |
+| Commit | Subject | Paths |
+|---|---|---|
+| `b183d0c` | Sprint 29: Define banking reconciliation convergence boundary | ADR-072 |
+| `fa89000` | Sprint 29: Add reconciliation domain convergence workspace | Controller, Page, Test |
+| `252c630` | Sprint 29: Add source-proven controlled reconciliation readiness evidence | Controller, Page, Test |
 
 The workspace presents controlled and legacy evidence as separate sections with clear labeling. No records from the two domains are merged, combined, or cross-referenced.
 
-## Wave 2
+## Wave 2 — DELIVERED
 
-Controlled Reconciliation Readiness Evidence — evaluated at the Wave 1→2 hard gate. If source-proven, it projects only existing controlled-domain status/evidence fields without reading legacy models, calculating balances, or inferring migration readiness.
+Controlled Reconciliation Readiness Evidence was activation-ready and is delivered.
+
+Commit: `252c630` — Sprint 29: Add source-proven controlled reconciliation readiness evidence.
+
+The delivered projection:
+
+- Reads controlled-domain evidence only: `ControlledBankAccount`, `ControlledBankStatementLine`, `PaymentExecution`, `BankPaymentReconciliation`.
+- Does not read legacy Banking models.
+- Does not use legacy balances.
+- Does not calculate financial amounts, balances, variance, readiness score, migration score, mapping score, confidence score, or cross-domain relationship.
+- Does not mutate any model or lifecycle.
+- Does not create a bridge, mapping, migration, dual-write, backfill, or cutover.
+- Does not activate Reconciliation Session lifecycle behavior.
 
 ## Deferred
 
@@ -153,4 +160,3 @@ Controlled Reconciliation Readiness Evidence — evaluated at the Wave 1→2 har
 | Legacy Banking migration | Requires dedicated ADR with source authority, eligibility, provenance, duplicate handling, balance treatment, reconciliation treatment, rollback policy, audit evidence, and cutover boundaries |
 | Legacy-to-controlled bridge | Prohibited by ADR-056; no source-proven relationship exists |
 | Legacy reconciliation activation | API-only controllers; Inertia web activation requires dedicated source proof |
-| Wave 2 controlled readiness (if deferred) | Documented at hard gate |
