@@ -3,6 +3,7 @@
 namespace Modules\Finance\GeneralCashier\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
@@ -10,6 +11,8 @@ use Modules\Operations\GeneralCashier\Models\CashbookTransaction;
 use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\GeneralCashier\Models\CashierPaymentInstrument;
 use Modules\Operations\GeneralCashier\Models\PaymentExecution;
+use Modules\Operations\GeneralCashier\Models\CashReconciliationBaseline;
+use Modules\Operations\GeneralCashier\Services\ManualCashReconciliationService;
 use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
 use Modules\Finance\Payables\Models\PaymentProposal;
@@ -17,7 +20,9 @@ use Modules\Finance\Payables\Models\PaymentProposalItem;
 use Modules\Finance\Banking\Models\ControlledBankAccount;
 use Modules\Finance\Banking\Models\ControlledBankStatementLine;
 use Modules\Finance\Banking\Enums\ControlledBankStatementLineDirectionEnum;
+use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
+use Throwable;
 
 class CashbookEvidenceWorkspaceController extends Controller
 {
@@ -179,6 +184,42 @@ class CashbookEvidenceWorkspaceController extends Controller
             'bank_accounts' => array_values($bankAccounts),
             'statement_lines' => array_values($statementLines),
         ];
+    }
+
+    public function reconcile(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can(ManualCashReconciliationService::PERMISSION)) {
+            abort(403, 'Unauthorized.');
+        }
+        $propertyId = $this->resolvePropertyId($request);
+
+        $validated = $request->validate([
+            'cash_reconciliation_baseline_id' => ['required', 'string', 'size:26'],
+            'ending_cash_count_evidence_id' => ['required', 'string', 'size:26'],
+        ]);
+
+        $baseline = CashReconciliationBaseline::whereKey($validated['cash_reconciliation_baseline_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $service = app(ManualCashReconciliationService::class);
+
+        try {
+            $service->reconcile(
+                $validated['cash_reconciliation_baseline_id'],
+                $validated['ending_cash_count_evidence_id'],
+                $user
+            );
+
+            return redirect()
+                ->route('finance.payables.cashbook-evidence.index')
+                ->with('success', 'Cash reconciliation recorded.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.payables.cashbook-evidence.index')
+                ->with('error', $exception->getMessage());
+        }
     }
 
     private function resolvePropertyId(Request $request): string

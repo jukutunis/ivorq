@@ -330,7 +330,7 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 | A3 | Cash Payment Execution | DEFERRED | `PaymentExecutionService::recordCashExecution()` | `finance.general-cashier.payment.execute` | — | — |
 | A4 | Bank Execution Context Projection | DELIVERED Sprint 25 | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `BankExecutionContextProjectionTest` |
 | A5 | Bank Payment Execution | DEFERRED | `PaymentExecutionService::recordConfirmedBankExecution()` | `finance.general-cashier.payment.execute` | — | — |
-| A6 | Cash Reconciliation | ACTIVATION-READY | `ManualCashReconciliationService::reconcile()` | `finance.general-cashier.cash-reconciliation.perform` | `CashbookEvidenceWorkspaceController` | `ManualCashReconciliationTest` |
+| A6 | Cash Reconciliation | DELIVERED Sprint 25 | `ManualCashReconciliationService::reconcile()` | `finance.general-cashier.cash-reconciliation.perform` | `CashbookEvidenceWorkspaceController` | `CashReconciliationWebActionTest` |
 | A7 | Bank Reconciliation | DEFERRED | `ManualBankReconciliationService::reconcilePostedBankPayment()` | `finance.banking.reconciliation.manual` | — | `ManualBankReconciliationTest` |
 
 ## Phase Implementation Path Manifests
