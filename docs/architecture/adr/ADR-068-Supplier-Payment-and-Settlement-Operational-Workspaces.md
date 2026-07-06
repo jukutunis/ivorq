@@ -215,15 +215,170 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 3. **Deferred web actions**: 8 source-proven services remain without web exposure. Cash and Bank execution deferred due to browser-supplied operational resource selection requirements and unproven confirmation conventions.
 4. **No confirmation expansion**: Since no new approve/reject/finalize web actions are added, no new `finance-approval` confirmation enforcement is required.
 
+## Sprint 25 Master Activation Ledger
+
+### A1. AP Settlement Allocation — ACTIVATION-READY
+
+| Fact | Evidence |
+|---|---|
+| Domain owner | Payables (`Modules/Finance/Payables`) |
+| Aggregate/model | `ApSettlementAllocation` (`Modules/Finance/Payables/Models/ApSettlementAllocation.php:16`) |
+| Lifecycle | Immutable settlement allocation; validates posted AP liability + posted supplier payment JournalEntry evidence; allocation amount must match payment amount exactly; checks outstanding AP liability ceiling; closes partial payment intent on PaymentProposalItem |
+| Service | `ApSettlementAllocationService::allocate(apJournalEntryId, paymentJournalEntryId, amount, actor)` (`Modules/Finance/Payables/Services/ApSettlementAllocationService.php:26`) |
+| Permission | `finance.payables.ap-settlement.allocate` (`ApSettlementAllocationService.php:19`) |
+| Property scope | `assertActorCanAccessProperty()` checks active property membership on AP journal property (`ApSettlementAllocationService.php:130-140`) |
+| Target lookup | `apJournalEntryId` → `JournalEntry::lockForUpdate()->firstOrFail()`; `paymentJournalEntryId` → `JournalEntry::lockForUpdate()->firstOrFail()`; `PaymentExecution` resolved from payment journal `source_id` |
+| Request input | `ap_journal_entry_id` (ULID string, 26 chars), `payment_journal_entry_id` (ULID string, 26 chars) — identifiers only |
+| Prohibited browser input | Amount (derived from `paymentExecution->source_amount`), currency (from payment execution), property (from journal), actor (server-resolved session), vendor, allocation status, journal, account, mapping |
+| Segregation | Self-service: same actor allocates; no maker-checker in current slice |
+| Idempotency | `sourceIdentityHash` (SHA-256 over contract + all source IDs + amount + actor); `assertExistingAllocationMatches()` on replay returns existing record; conflicting identity throws `DomainException` |
+| Audit | `created_by`, `updated_by` on model |
+| Confirmation | NOT required — this service does not call `SensitiveActionConfirmationService`; settlement allocation is operational settlement evidence, not an approval/finalization decision |
+| Existing controller | `ApGrniSettlementControlWorkspaceController` (`Modules/Finance/Payables/Http/Controllers/ApGrniSettlementControlWorkspaceController.php`) — extends with `allocate` action |
+| Existing workspace page | `resources/js/Pages/Ivorq/Finance/ApGrniSettlementControlWorkspace.tsx` |
+| Existing test | `tests/Postgres/Finance/Payables/ApSettlementAllocationFoundationTest.php` (foundation test proving permission, property scope, idempotency) |
+| Lifecycle service unchanged | No modification to `ApSettlementAllocationService` |
+| No schema/migration/permission/role change | Confirmed |
+
+### A2. Cash Execution Context Projection — CONTEXT-READY
+
+| Fact | Evidence |
+|---|---|
+| Domain owner | General Cashier (`Modules/Operations/GeneralCashier` / `Modules/Finance/GeneralCashier`) |
+| Models available | `PaymentProposalItem` (with `proposal`, `sourceJournalEntry`, `supplierInvoice`), `CashierSession`, `CashierPaymentInstrument` |
+| Existing read-only boundary | `CashbookEvidenceWorkspaceController::index()` (`Modules/Finance/GeneralCashier/Http/Controllers/CashbookEvidenceWorkspaceController.php:15`) — projects `transactions` (CashbookTransaction) and `approved_proposals` (APPROVED PaymentProposals) |
+| Existing workspace page | `resources/js/Pages/Ivorq/Finance/CashbookEvidenceWorkspace.tsx` |
+| Eligibility derivation | Server queries `PaymentProposalItem` with `proposal.status = APPROVED`, `is_active = true`, scoped to current property; `CashierSession` with `status = OPEN` and `cashier_user_id = actor.id`; `CashierPaymentInstrument` with `type = CASH`, `is_active = true`, same property |
+| Source evidence | Amount from `PaymentProposalItem::source_amount` / `requested_payment_amount`; currency from item; payment reference from proposal number + invoice number; capability from server `$user->can()` |
+| Prohibited | No browser financial calculation, eligibility calculation, totals, balances, execution readiness, or fake execution button |
+| Confirmation | N/A — read-only projection |
+| Existing test convention | `tests/Postgres/Finance/Payables/CashbookEvidenceWorkspaceTest.php` |
+| No schema/migration/permission/role change | Confirmed |
+
+### A3. Cash Payment Execution — DEFERRED
+
+| Missing source boundary | Evidence |
+|---|---|
+| No execution workspace/controller | `CashbookEvidenceWorkspaceController` is read-only evidence projection, not a mutation execution controller. No source-proven controller exists for recording cash payment execution |
+| Browser-supplied operational resource selection | `PaymentExecutionService::recordCashExecution()` requires `cashierSessionId` and `cashierPaymentInstrumentId` from the browser. While server-validated, these are operational financial resource selections with no existing web action convention |
+| No source-proven confirmation convention | The `finance-approval` intent is scoped to approval/finalization decisions per ADR-068 analysis. No confirmation intent exists for operational cash payment execution |
+| ADR-068 Sprint 23 analysis | "Deferred — browser-supplied cash instrument and proposal item selection required; no execution workspace controller; no confirmation convention" — unchanged since Sprint 23 |
+| Cannot be browser supplied | The cash session must be the actor's own OPEN session (`GeneralCashierOperationalFoundationService::resolveOperationalContext()` enforces session ownership). The cash instrument must be active, same-property, type=CASH. These server-ownership constraints require a dedicated execution workspace with server-projected eligible context before browser selection |
+
+### A4. Bank Execution Context Projection — CONTEXT-READY
+
+| Fact | Evidence |
+|---|---|
+| Domain owner | Banking (`Modules/Finance/Banking`) for bank evidence; General Cashier for execution context |
+| Models available | `PaymentProposalItem`, `ControlledBankAccount`, `ControlledBankStatementLine` |
+| Existing read-only boundary | `CashbookEvidenceWorkspaceController::index()` — extends to include bank execution context |
+| Eligibility derivation | Server queries approved proposal items with BANK instrument type; `ControlledBankAccount` with `is_active = true`, same property, currency match; `ControlledBankStatementLine` with matching account, `direction = OUTFLOW`, property scope |
+| Source evidence | Amount and currency from proposal item; bank account reference from `ControlledBankAccount`; statement line evidence; capability from server `$user->can()` |
+| Prohibited | No browser financial calculation, eligibility, execution readiness, or execution button |
+| Confirmation | N/A — read-only projection |
+| No schema/migration/permission/role change | Confirmed |
+
+### A5. Bank Payment Execution — DEFERRED
+
+| Missing source boundary | Evidence |
+|---|---|
+| No execution workspace/controller | Same as A3 — no source-proven controller for recording confirmed bank payment execution |
+| Browser-supplied operational resource selection | `PaymentExecutionService::recordConfirmedBankExecution()` requires `controlledBankAccountId` and `controlledBankStatementLineId` in addition to session/instrument identifiers. Bank account and statement line are multi-property financial resources requiring server-side eligibility projection |
+| No source-proven confirmation convention | Same as A3 — no confirmation intent for operational bank payment execution |
+| ADR-068 Sprint 23 analysis | "Deferred — browser-supplied bank account and statement line selection required; no execution workspace controller; no confirmation convention" |
+| Cross-domain complexity | Bank execution crosses Banking domain (bank account, statement line), General Cashier domain (cashier session), and Payables domain (payment proposal). No cross-domain workspace exists |
+
+### A6. Cash Reconciliation — ACTIVATION-READY
+
+| Fact | Evidence |
+|---|---|
+| Domain owner | General Cashier (`Modules/Operations/GeneralCashier`) |
+| Aggregate/model | `CashReconciliation` (`Modules/Operations/GeneralCashier/Models/CashReconciliation.php:16`) |
+| Lifecycle | Derives expected vs. observed amounts from baseline + CashbookTransaction scope; status = RECONCILED if difference = 0, EXCEPTION otherwise |
+| Service | `ManualCashReconciliationService::reconcile(cashReconciliationBaselineId, endingCashCountEvidenceId, actor)` (`Modules/Operations/GeneralCashier/Services/ManualCashReconciliationService.php:22`) |
+| Permission | `finance.general-cashier.cash-reconciliation.perform` (`ManualCashReconciliationService.php:19`) |
+| Property scope | `assertActorCanAccessProperty()` on baseline property (`ManualCashReconciliationService.php:120-130`) |
+| Target lookup | `CashReconciliationBaseline::lockForUpdate()->firstOrFail()`; `CashCountEvidence::lockForUpdate()->firstOrFail()` |
+| Request input | `cash_reconciliation_baseline_id` (ULID string), `ending_cash_count_evidence_id` (ULID string) — identifiers only |
+| Prohibited browser input | Amounts (baseline, inflow, outflow, expected, observed, difference all server-derived from baseline + transaction scope), currency (from baseline), property (from baseline), status (server-derived), account, journal, reconciliation authority |
+| Segregation | Self-service in current slice |
+| Idempotency | `sourceIdentityHash` (SHA-256 over contract + baseline + count + property + account + currency + amounts + transaction IDs); `assertExistingReconciliationMatches()` returns existing; conflicting throws `DomainException` |
+| Audit | `created_by`, `updated_by` on model; `source_snapshot` records full derivation evidence |
+| Confirmation | NOT required — service does not call `SensitiveActionConfirmationService`; reconciliation is operational evidence recording |
+| Existing controller | `CashbookEvidenceWorkspaceController` (`Modules/Finance/GeneralCashier/Http/Controllers/CashbookEvidenceWorkspaceController.php`) — extends with `reconcile` action |
+| Existing workspace page | `resources/js/Pages/Ivorq/Finance/CashbookEvidenceWorkspace.tsx` |
+| Existing test | `tests/Postgres/Operations/GeneralCashier/ManualCashReconciliationTest.php` (proves exact match reconciliation, idempotent replay, property scope, invalid actor denial) |
+| Lifecycle service unchanged | No modification to `ManualCashReconciliationService` |
+| No schema/migration/permission/role change | Confirmed |
+
+### A7. Bank Reconciliation — DEFERRED
+
+| Missing source boundary | Evidence |
+|---|---|
+| No banking web workspace controller | Banking module has API-only controllers (`BankAccountController`, reconciliation sessions API). No Inertia web controller exists for bank reconciliation workspace |
+| ADR-068 Sprint 23 analysis | D12: "Reconcile Bank Payment — service only; no web route" — remains deferred |
+| No source-proven web action convention | `ManualBankReconciliationService::reconcilePostedBankPayment()` takes `postedJournalEntryId` and `controlledBankStatementLineId` as identifiers, but the existing CashbookEvidenceWorkspaceController belongs to General Cashier domain, not Banking. Bank reconciliation requires a Banking-specific workspace controller that does not exist |
+| Cross-domain complexity | Bank reconciliation spans Banking (bank account, statement line, bank payment reconciliation), General Cashier (payment execution), and Payables (payment proposal). No unified web workspace exists |
+| Cannot safely extend CashbookEvidenceWorkspaceController | The CashbookEvidenceWorkspaceController is scoped to cash/cashbook evidence. Bank reconciliation is a Banking domain action with different model ownership, different operational evidence, and different reconciliation matching logic |
+
+## Sprint 25 Activation Matrix Summary
+
+| # | Capability | Status | Service | Permission | Controller Extension | Test |
+|---|---|---|---|---|---|---|
+| A1 | AP Settlement Allocation | ACTIVATION-READY | `ApSettlementAllocationService::allocate()` | `finance.payables.ap-settlement.allocate` | `ApGrniSettlementControlWorkspaceController` | `ApSettlementAllocationFoundationTest` |
+| A2 | Cash Execution Context Projection | CONTEXT-READY | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `CashExecutionContextProjectionTest` (new) |
+| A3 | Cash Payment Execution | DEFERRED | `PaymentExecutionService::recordCashExecution()` | `finance.general-cashier.payment.execute` | — | — |
+| A4 | Bank Execution Context Projection | CONTEXT-READY | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `BankExecutionContextProjectionTest` (new) |
+| A5 | Bank Payment Execution | DEFERRED | `PaymentExecutionService::recordConfirmedBankExecution()` | `finance.general-cashier.payment.execute` | — | — |
+| A6 | Cash Reconciliation | ACTIVATION-READY | `ManualCashReconciliationService::reconcile()` | `finance.general-cashier.cash-reconciliation.perform` | `CashbookEvidenceWorkspaceController` | `ManualCashReconciliationTest` |
+| A7 | Bank Reconciliation | DEFERRED | `ManualBankReconciliationService::reconcilePostedBankPayment()` | `finance.banking.reconciliation.manual` | — | `ManualBankReconciliationTest` |
+
+## Phase Implementation Path Manifests
+
+### Phase B — AP Settlement Allocation (A1 ACTIVATION-READY)
+
+Allowed repository paths:
+- `docs/architecture/adr/ADR-068-Supplier-Payment-and-Settlement-Operational-Workspaces.md`
+- `routes/web.php`
+- `Modules/Finance/Payables/Http/Controllers/ApGrniSettlementControlWorkspaceController.php`
+- `resources/js/Pages/Ivorq/Finance/ApGrniSettlementControlWorkspace.tsx`
+- `tests/Postgres/Finance/Payables/ApSettlementAllocationWebActionTest.php`
+- `C:\Users\edigd\.ivorq-local\Invoke-IvorqPgApSettlementAllocationWebActionTest.ps1`
+
+### Phase C — Cash Execution Context Projection (A2 CONTEXT-READY)
+
+Allowed repository paths:
+- `docs/architecture/adr/ADR-068-Supplier-Payment-and-Settlement-Operational-Workspaces.md`
+- `routes/web.php` (GET only, no mutation route)
+- `Modules/Finance/GeneralCashier/Http/Controllers/CashbookEvidenceWorkspaceController.php`
+- `resources/js/Pages/Ivorq/Finance/CashbookEvidenceWorkspace.tsx`
+- `tests/Postgres/Finance/GeneralCashier/CashExecutionContextProjectionTest.php`
+- `C:\Users\edigd\.ivorq-local\Invoke-IvorqPgCashExecutionContextProjectionTest.ps1`
+
+### Phase G — Cash Reconciliation (A6 ACTIVATION-READY)
+
+Allowed repository paths:
+- `docs/architecture/adr/ADR-068-Supplier-Payment-and-Settlement-Operational-Workspaces.md`
+- `routes/web.php`
+- `Modules/Finance/GeneralCashier/Http/Controllers/CashbookEvidenceWorkspaceController.php`
+- `resources/js/Pages/Ivorq/Finance/CashbookEvidenceWorkspace.tsx`
+- `tests/Postgres/Finance/GeneralCashier/CashReconciliationWebActionTest.php`
+- `C:\Users\edigd\.ivorq-local\Invoke-IvorqPgCashReconciliationWebActionTest.ps1`
+
 ## Deferred decisions
 
 | Decision | Status |
 |---|---|
 | Exception resolution | Activated Sprint 25 |
 | Invoice approval/rejection web routes | Activated Sprint 24 |
-| Cash execution web route | Deferred — browser-supplied cash instrument and proposal item selection required; no execution workspace controller; no confirmation convention |
-| Bank execution web route | Deferred — browser-supplied bank account and statement line selection required; no execution workspace controller; no confirmation convention |
-| Cash/bank reconciliation web routes | Deferred — services exist, no controllers |
+| Payment proposal approval/rejection web routes | Activated Sprint 24 |
+| AP Settlement Allocation web route | ACTIVATION-READY Sprint 25 (this package) |
+| Cash Execution Context Projection | CONTEXT-READY Sprint 25 (this package) |
+| Cash Payment Execution web route | DEFERRED — no execution workspace/controller; no confirmation convention for operational execution; browser-supplied session/instrument selection |
+| Bank Execution Context Projection | CONTEXT-READY Sprint 25 (this package) |
+| Bank Payment Execution web route | DEFERRED — no execution workspace/controller; no confirmation convention; browser-supplied bank account/statement line selection; cross-domain complexity |
+| Cash Reconciliation web route | ACTIVATION-READY Sprint 25 (this package) |
+| Bank Reconciliation web route | DEFERRED — no banking web workspace controller; API-only banking module; cross-domain complexity |
 | Payment scheduling | Deferred |
 | Bulk payment execution | Deferred |
 | External bank integration | Deferred |
