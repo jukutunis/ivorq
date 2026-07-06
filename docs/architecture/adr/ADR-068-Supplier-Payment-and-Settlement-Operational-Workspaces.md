@@ -337,7 +337,7 @@ Defined in ADR-069. All missing Sprint 25 boundaries are now source-proven: Cash
 |---|---|---|---|---|---|---|
 | A1 | AP Settlement Allocation | DELIVERED Sprint 25 | `ApSettlementAllocationService::allocate()` | `finance.payables.ap-settlement.allocate` | `ApGrniSettlementControlWorkspaceController` | `ApSettlementAllocationWebActionTest` |
 | A2 | Cash Execution Context Projection | DELIVERED Sprint 25 | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `CashExecutionContextProjectionTest` |
-| A3 | Cash Payment Execution | ACTIVATION-READY Sprint 26 | `PaymentExecutionService::recordCashExecution()` | `finance.general-cashier.payment.execute` | `CashbookEvidenceWorkspaceController` | `CashPaymentExecutionWebActionTest` |
+| A3 | Cash Payment Execution | DELIVERED Sprint 26 | `PaymentExecutionService::recordCashExecution()` | `finance.general-cashier.payment.execute` | `CashbookEvidenceWorkspaceController` | `CashPaymentExecutionWebActionTest` |
 | A4 | Bank Execution Context Projection | DELIVERED Sprint 25 | Read-only model queries | N/A (read-only) | `CashbookEvidenceWorkspaceController` | `BankExecutionContextProjectionTest` |
 | A5 | Bank Payment Execution | DEFERRED | `PaymentExecutionService::recordConfirmedBankExecution()` | `finance.general-cashier.payment.execute` | — | — |
 | A6 | Cash Reconciliation | DELIVERED Sprint 25 | `ManualCashReconciliationService::reconcile()` | `finance.general-cashier.cash-reconciliation.perform` | `CashbookEvidenceWorkspaceController` | `CashReconciliationWebActionTest` |

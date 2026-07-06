@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Link, usePage } from '@inertiajs/react';
+import { Link, useForm, usePage } from '@inertiajs/react';
 import '../../../../css/ivorq-prototype.css';
 
 import IvorqLayout from '../../../Layouts/IvorqLayout';
@@ -92,6 +92,9 @@ interface Props {
   approved_proposals: Proposal[];
   cash_execution_context: CashExecutionContext;
   bank_execution_context: BankExecutionContext;
+  permissions: {
+    can_execute_cash: boolean;
+  };
 }
 
 type Selection =
@@ -110,7 +113,7 @@ function transactionLabel(transaction: Transaction): string {
   return transaction.direction === 'OUTFLOW' ? 'Payment Outflow' : (transaction.direction || 'Cash Transaction');
 }
 
-export default function CashbookEvidenceWorkspace({ transactions, approved_proposals, cash_execution_context, bank_execution_context }: Props) {
+export default function CashbookEvidenceWorkspace({ transactions, approved_proposals, cash_execution_context, bank_execution_context, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selection, setSelection] = useState<Selection | null>(
     approved_proposals[0]
@@ -119,6 +122,9 @@ export default function CashbookEvidenceWorkspace({ transactions, approved_propo
         ? { type: 'transaction', id: transactions[0].id }
         : null
   );
+  const [executeItemId, setExecuteItemId] = useState<string | null>(null);
+  const [executeSessionId, setExecuteSessionId] = useState<string>('');
+  const [executeInstrumentId, setExecuteInstrumentId] = useState<string>('');
 
   const outflowCount = useMemo(() => transactions.filter((transaction) => transaction.direction === 'OUTFLOW').length, [transactions]);
   const selectedProposal = selection?.type === 'proposal'
@@ -127,6 +133,32 @@ export default function CashbookEvidenceWorkspace({ transactions, approved_propo
   const selectedTransaction = selection?.type === 'transaction'
     ? transactions.find((transaction) => transaction.id === selection.id) ?? null
     : null;
+
+  const canExecuteCash = permissions?.can_execute_cash ?? false;
+  const hasExecutionContext = cash_execution_context.eligible_items.length > 0
+    && cash_execution_context.cash_sessions.length > 0
+    && cash_execution_context.cash_instruments.length > 0;
+
+  const executeForm = useForm<{
+    payment_proposal_item_id: string;
+    cashier_session_id: string;
+    cashier_payment_instrument_id: string;
+  }>({
+    payment_proposal_item_id: '',
+    cashier_session_id: '',
+    cashier_payment_instrument_id: '',
+  });
+
+  const submitExecute = (event: React.FormEvent) => {
+    event.preventDefault();
+    executeForm.post(route('finance.payables.cash-payment-execute.execute'), {
+      preserveScroll: true,
+      onSuccess: () => {
+        setExecuteItemId(null);
+        executeForm.reset();
+      },
+    });
+  };
 
   return (
     <div className="workspace">
@@ -308,7 +340,58 @@ export default function CashbookEvidenceWorkspace({ transactions, approved_propo
                             {item.amount} {item.currency_code}
                           </span>
                         }
-                        actions={null}
+                        actions={
+                          canExecuteCash && hasExecutionContext ? (
+                            executeItemId === item.id ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <select
+                                  value={executeSessionId}
+                                  onChange={(e) => setExecuteSessionId(e.target.value)}
+                                  style={{ fontSize: '11px', padding: '2px' }}
+                                >
+                                  <option value="">Select session</option>
+                                  {cash_execution_context.cash_sessions.map((s) => (
+                                    <option key={s.id} value={s.id}>{s.id.substring(0, 8)}... (open)</option>
+                                  ))}
+                                </select>
+                                <select
+                                  value={executeInstrumentId}
+                                  onChange={(e) => setExecuteInstrumentId(e.target.value)}
+                                  style={{ fontSize: '11px', padding: '2px' }}
+                                >
+                                  <option value="">Select instrument</option>
+                                  {cash_execution_context.cash_instruments.map((i) => (
+                                    <option key={i.id} value={i.id}>{i.name}</option>
+                                  ))}
+                                </select>
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  <Button type="button" size="sm" variant="secondary" onClick={() => { setExecuteItemId(null); setExecuteSessionId(''); setExecuteInstrumentId(''); }}>
+                                    Cancel
+                                  </Button>
+                                  <form onSubmit={submitExecute} style={{ display: 'inline' }}>
+                                    <input type="hidden" name="payment_proposal_item_id" value={item.id} onChange={(e) => executeForm.setData('payment_proposal_item_id', e.target.value)} />
+                                    <input type="hidden" name="cashier_session_id" value={executeSessionId} onChange={(e) => executeForm.setData('cashier_session_id', e.target.value)} />
+                                    <input type="hidden" name="cashier_payment_instrument_id" value={executeInstrumentId} onChange={(e) => executeForm.setData('cashier_payment_instrument_id', e.target.value)} />
+                                    <Button type="submit" size="sm" disabled={!executeSessionId || !executeInstrumentId || executeForm.processing}>
+                                      Execute Cash Payment
+                                    </Button>
+                                  </form>
+                                </div>
+                              </div>
+                            ) : (
+                              <Button type="button" size="sm" onClick={() => {
+                                setExecuteItemId(item.id);
+                                setExecuteSessionId(cash_execution_context.cash_sessions[0]?.id ?? '');
+                                setExecuteInstrumentId(cash_execution_context.cash_instruments[0]?.id ?? '');
+                                executeForm.setData('payment_proposal_item_id', item.id);
+                                executeForm.setData('cashier_session_id', cash_execution_context.cash_sessions[0]?.id ?? '');
+                                executeForm.setData('cashier_payment_instrument_id', cash_execution_context.cash_instruments[0]?.id ?? '');
+                              }}>
+                                Execute
+                              </Button>
+                            )
+                          ) : null
+                        }
                       />
                     ))}
                   </div>

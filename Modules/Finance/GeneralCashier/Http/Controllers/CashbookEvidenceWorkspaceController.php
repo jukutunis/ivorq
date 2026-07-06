@@ -13,6 +13,7 @@ use Modules\Operations\GeneralCashier\Models\CashierPaymentInstrument;
 use Modules\Operations\GeneralCashier\Models\PaymentExecution;
 use Modules\Operations\GeneralCashier\Models\CashReconciliationBaseline;
 use Modules\Operations\GeneralCashier\Services\ManualCashReconciliationService;
+use Modules\Operations\GeneralCashier\Services\PaymentExecutionService;
 use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
 use Modules\Finance\Payables\Models\PaymentProposal;
@@ -21,6 +22,7 @@ use Modules\Finance\Banking\Models\ControlledBankAccount;
 use Modules\Finance\Banking\Models\ControlledBankStatementLine;
 use Modules\Finance\Banking\Enums\ControlledBankStatementLineDirectionEnum;
 use Modules\Foundation\User\Models\User;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Shared\Services\CurrentPropertyService;
 use Throwable;
 
@@ -71,6 +73,9 @@ class CashbookEvidenceWorkspaceController extends Controller
             'approved_proposals' => $proposals,
             'cash_execution_context' => $cashExecutionContext,
             'bank_execution_context' => $bankExecutionContext,
+            'permissions' => [
+                'can_execute_cash' => $actor && $actor->can(PaymentExecutionService::PERMISSION),
+            ],
         ]);
     }
 
@@ -184,6 +189,60 @@ class CashbookEvidenceWorkspaceController extends Controller
             'bank_accounts' => array_values($bankAccounts),
             'statement_lines' => array_values($statementLines),
         ];
+    }
+
+    public function execute(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can(PaymentExecutionService::PERMISSION)) {
+            abort(403, 'Unauthorized.');
+        }
+        $propertyId = $this->resolvePropertyId($request);
+
+        $validated = $request->validate([
+            'payment_proposal_item_id' => ['required', 'string', 'size:26'],
+            'cashier_session_id' => ['required', 'string', 'size:26'],
+            'cashier_payment_instrument_id' => ['required', 'string', 'size:26'],
+        ]);
+
+        $item = PaymentProposalItem::whereKey($validated['payment_proposal_item_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $session = CashierSession::whereKey($validated['cashier_session_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $instrument = CashierPaymentInstrument::whereKey($validated['cashier_payment_instrument_id'])
+            ->where('property_id', $propertyId)
+            ->firstOrFail();
+
+        $companyId = $request->session()->get('active_company_id');
+        $confirmationService = app(SensitiveActionConfirmationService::class);
+        if (!$confirmationService->hasValidConfirmation($user, 'cash-payment-execution', $companyId, $propertyId)) {
+            return redirect()
+                ->route('system.sensitive-action-confirmation.index', ['intent' => 'cash-payment-execution'])
+                ->with('error', 'Sensitive action confirmation is required before executing cash payments.');
+        }
+
+        $service = app(PaymentExecutionService::class);
+
+        try {
+            $service->recordCashExecution(
+                $validated['payment_proposal_item_id'],
+                $validated['cashier_session_id'],
+                $validated['cashier_payment_instrument_id'],
+                $user
+            );
+
+            return redirect()
+                ->route('finance.payables.cashbook-evidence.index')
+                ->with('success', 'Cash payment execution recorded.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.payables.cashbook-evidence.index')
+                ->with('error', $exception->getMessage());
+        }
     }
 
     public function reconcile(Request $request): RedirectResponse
