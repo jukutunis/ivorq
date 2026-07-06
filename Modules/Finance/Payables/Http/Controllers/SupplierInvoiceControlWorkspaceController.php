@@ -11,6 +11,7 @@ use Inertia\Response as InertiaResponse;
 use Modules\Finance\AccountsPayable\Models\ApInvoice;
 use Modules\Finance\Payables\Models\SupplierInvoice;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
+use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
@@ -22,6 +23,7 @@ class SupplierInvoiceControlWorkspaceController extends Controller
 
     public function __construct(
         private readonly SupplierInvoiceApprovalService $approvalService,
+        private readonly SupplierInvoiceExceptionReviewService $exceptionReviewService,
         private readonly SensitiveActionConfirmationService $confirmationService,
     ) {}
 
@@ -51,6 +53,8 @@ class SupplierInvoiceControlWorkspaceController extends Controller
                 'approved_at' => $inv->approved_at?->toIso8601String(),
                 'rejected_at' => $inv->rejected_at?->toIso8601String(),
                 'rejection_reason' => $inv->rejection_reason,
+                'exception_resolved_at' => $inv->exception_resolved_at,
+                'exception_resolution_reason' => $inv->exception_resolution_reason,
                 'line_count' => $inv->lines?->count() ?? 0,
             ])
             ->values();
@@ -60,6 +64,7 @@ class SupplierInvoiceControlWorkspaceController extends Controller
             'permissions' => [
                 'can_approve' => $user?->can(SupplierInvoiceApprovalService::PERMISSION) ?? false,
                 'can_reject' => $user?->can(SupplierInvoiceApprovalService::PERMISSION) ?? false,
+                'can_resolve_exception' => $user?->can(SupplierInvoiceExceptionReviewService::PERMISSION) ?? false,
             ],
         ]);
     }
@@ -103,6 +108,29 @@ class SupplierInvoiceControlWorkspaceController extends Controller
         return $this->redirectingAction(
             fn () => $this->approvalService->reject($invoice, $request->user(), $validated['rejection_reason']),
             'Supplier invoice rejected.'
+        );
+    }
+
+    public function resolveException(Request $request, string $invoice): RedirectResponse
+    {
+        $this->authorizeAction($request->user(), SupplierInvoiceExceptionReviewService::PERMISSION);
+        $propertyId = $this->resolvePropertyId($request);
+        $this->findScopedInvoice($invoice, $propertyId);
+
+        $companyId = $request->session()->get('active_company_id');
+        if (!$this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
+            return redirect()
+                ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval'])
+                ->with('error', 'Sensitive action confirmation is required before resolving supplier invoice exceptions.');
+        }
+
+        $validated = $request->validate([
+            'resolution_reason' => ['required', 'string', 'min:3', 'max:500'],
+        ]);
+
+        return $this->redirectingAction(
+            fn () => $this->exceptionReviewService->resolveException($invoice, $request->user(), $validated['resolution_reason']),
+            'Supplier invoice exception resolved.'
         );
     }
 

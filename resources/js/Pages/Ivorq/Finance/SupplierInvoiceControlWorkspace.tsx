@@ -33,6 +33,8 @@ interface Invoice {
   approved_at: string | null;
   rejected_at: string | null;
   rejection_reason: string | null;
+  exception_resolved_at: string | null;
+  exception_resolution_reason: string | null;
   line_count: number;
 }
 
@@ -41,6 +43,7 @@ interface Props {
   permissions: {
     can_approve: boolean;
     can_reject: boolean;
+    can_resolve_exception: boolean;
   };
 }
 
@@ -225,15 +228,20 @@ function InvoiceEvidence({ invoice }: { invoice: Invoice }) {
 }
 
 function InvoiceApprovalActions({ invoice }: { invoice: Invoice }) {
-  const { props } = usePage<{ permissions: { can_approve: boolean; can_reject: boolean } }>();
+  const { props } = usePage<{ permissions: { can_approve: boolean; can_reject: boolean; can_resolve_exception: boolean } }>();
   const canApprove = props.permissions?.can_approve ?? false;
   const canReject = props.permissions?.can_reject ?? false;
+  const canResolveException = props.permissions?.can_resolve_exception ?? false;
 
   const approveForm = useForm({});
   const rejectForm = useForm({ rejection_reason: '' });
+  const resolveForm = useForm({ resolution_reason: '' });
   const [showRejectInput, setShowRejectInput] = useState(false);
+  const [showResolveInput, setShowResolveInput] = useState(false);
 
-  if (!canApprove || !canReject) {
+  const hasExceptionUnresolved = invoice.exception_resolved_at == null;
+
+  if (!canApprove && !canReject && !canResolveException) {
     return (
       <div className="finance-evidence-section">
         <div className="finance-section-title">Approval Actions</div>
@@ -251,62 +259,113 @@ function InvoiceApprovalActions({ invoice }: { invoice: Invoice }) {
         Sensitive action confirmation (finance-approval) is required. If you have not confirmed recently you will be redirected.
       </div>
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => {
-            if (!confirm('Confirm approval. You will be redirected for sensitive action confirmation if needed.')) return;
-            approveForm.post(route('finance.payables.supplier-invoices.approve', { invoice: invoice.id }));
-          }}
-          disabled={approveForm.processing}
-          style={{ fontSize: '12px' }}
-        >
-          <Icon name="check" /> {approveForm.processing ? 'Processing...' : 'Approve Invoice'}
-        </button>
-        {!showRejectInput ? (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => setShowRejectInput(true)}
-            style={{ fontSize: '12px' }}
-          >
-            <Icon name="x" /> Reject Invoice
-          </button>
-        ) : (
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              className="form-input"
-              placeholder="Rejection reason (min 3 chars)"
-              value={rejectForm.data.rejection_reason}
-              onChange={(e) => rejectForm.setData('rejection_reason', e.target.value)}
-              style={{ fontSize: '12px', minWidth: '220px' }}
-              maxLength={500}
-              autoFocus
-            />
+        {hasExceptionUnresolved && canResolveException && (
+          !showResolveInput ? (
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => {
-                const reason = rejectForm.data.rejection_reason.trim();
-                if (reason.length < 3) { alert('A meaningful rejection reason of at least 3 characters is required.'); return; }
-                if (!confirm('Confirm rejection. You will be redirected for sensitive action confirmation if needed.')) return;
-                rejectForm.post(route('finance.payables.supplier-invoices.reject', { invoice: invoice.id }));
-              }}
-              disabled={rejectForm.processing || rejectForm.data.rejection_reason.trim().length < 3}
+              onClick={() => setShowResolveInput(true)}
               style={{ fontSize: '12px' }}
             >
-              <Icon name="x" /> {rejectForm.processing ? 'Processing...' : 'Confirm Reject'}
+              <Icon name="alert-triangle" /> Resolve Exception
             </button>
+          ) : (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', width: '100%' }}>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Resolution reason (min 3 chars)"
+                value={resolveForm.data.resolution_reason}
+                onChange={(e) => resolveForm.setData('resolution_reason', e.target.value)}
+                style={{ fontSize: '12px', minWidth: '220px', flex: 1 }}
+                maxLength={500}
+                autoFocus
+              />
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  const reason = resolveForm.data.resolution_reason.trim();
+                  if (reason.length < 3) { alert('A meaningful resolution reason of at least 3 characters is required.'); return; }
+                  if (!confirm('Confirm exception resolution. You will be redirected for sensitive action confirmation if needed.')) return;
+                  resolveForm.post(route('finance.payables.supplier-invoices.resolve-exception', { invoice: invoice.id }));
+                }}
+                disabled={resolveForm.processing || resolveForm.data.resolution_reason.trim().length < 3}
+                style={{ fontSize: '12px' }}
+              >
+                <Icon name="check" /> {resolveForm.processing ? 'Processing...' : 'Confirm'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => { setShowResolveInput(false); resolveForm.setData('resolution_reason', ''); }}
+                style={{ fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+            </div>
+          )
+        )}
+        {canApprove && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              if (!confirm('Confirm approval. You will be redirected for sensitive action confirmation if needed.')) return;
+              approveForm.post(route('finance.payables.supplier-invoices.approve', { invoice: invoice.id }));
+            }}
+            disabled={approveForm.processing}
+            style={{ fontSize: '12px' }}
+          >
+            <Icon name="check" /> {approveForm.processing ? 'Processing...' : 'Approve Invoice'}
+          </button>
+        )}
+        {canReject && (
+          !showRejectInput ? (
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => { setShowRejectInput(false); rejectForm.setData('rejection_reason', ''); }}
+              onClick={() => setShowRejectInput(true)}
               style={{ fontSize: '12px' }}
             >
-              Cancel
+              <Icon name="x" /> Reject Invoice
             </button>
-          </div>
+          ) : (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Rejection reason (min 3 chars)"
+                value={rejectForm.data.rejection_reason}
+                onChange={(e) => rejectForm.setData('rejection_reason', e.target.value)}
+                style={{ fontSize: '12px', minWidth: '220px' }}
+                maxLength={500}
+                autoFocus
+              />
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  const reason = rejectForm.data.rejection_reason.trim();
+                  if (reason.length < 3) { alert('A meaningful rejection reason of at least 3 characters is required.'); return; }
+                  if (!confirm('Confirm rejection. You will be redirected for sensitive action confirmation if needed.')) return;
+                  rejectForm.post(route('finance.payables.supplier-invoices.reject', { invoice: invoice.id }));
+                }}
+                disabled={rejectForm.processing || rejectForm.data.rejection_reason.trim().length < 3}
+                style={{ fontSize: '12px' }}
+              >
+                <Icon name="x" /> {rejectForm.processing ? 'Processing...' : 'Confirm Reject'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => { setShowRejectInput(false); rejectForm.setData('rejection_reason', ''); }}
+                style={{ fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+            </div>
+          )
         )}
       </div>
     </div>

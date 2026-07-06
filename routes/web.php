@@ -67,6 +67,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.payables.supplier-invoices.approve');
         Route::post('/payables/supplier-invoices/{invoice}/reject', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'reject'])
             ->name('finance.payables.supplier-invoices.reject');
+        Route::post('/payables/supplier-invoices/{invoice}/resolve-exception', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'resolveException'])
+            ->name('finance.payables.supplier-invoices.resolve-exception');
         Route::get('/accounts-receivable', [FinanceController::class, 'accountsReceivable']);
         Route::get('/budget-watch', [FinanceController::class, 'budgetWatch']);
         Route::get('/general-ledger/grni-control', [\Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController::class, 'index'])
