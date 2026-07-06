@@ -410,3 +410,58 @@ Allowed repository paths:
 | Invoice OCR | Deferred |
 | Automated reconciliation | Deferred |
 | Mobile approval | Deferred |
+
+## Sprint 27 Supersession — Banking Operations Workspace and Controlled Bank Execution
+
+**Supersedes**: Historical Sprint 23 wording that deferred Bank Payment Execution (A5/D7) and Bank Reconciliation (A7/D12) as "deferred — no banking web workspace controller; API-only banking module; cross-domain complexity."
+
+**Current state (Sprint 27)**: The Banking module now has a source-proven web workspace controller (`BankingOperationsWorkspaceController`) as the Banking-owned action owner. The `bank-payment-execution` dedicated confirmation intent provides the execution confirmation convention. Bank Payment Execution and Manual Bank Reconciliation are now activation-ready with source-proven boundaries.
+
+The following Sprint 23 deferred items are now superseded:
+
+| Item | Sprint 23 Status | Sprint 27 Status |
+|---|---|---|
+| Bank Execution (D7) | DEFERRED | ACTIVATION-READY — Banking-owned workspace controller, `bank-payment-execution` confirmation, existing `PaymentExecutionService::recordConfirmedBankExecution()`, permission `finance.general-cashier.payment.execute` |
+| Bank Reconciliation (D12) | DEFERRED | ACTIVATION-READY — Banking-owned workspace controller, existing `ManualBankReconciliationService::reconcilePostedBankPayment()`, permission `finance.banking.reconciliation.manual`, no confirmation required |
+
+**Banking Operations Workspace boundary (Sprint 27)**:
+
+- Banking owns the new operational workspace and any Banking mutation routes
+- Existing Cashbook Evidence Workspace (`CashbookEvidenceWorkspaceController`) remains General Cashier-owned
+- Existing Bank Context Projection (`projectBankExecutionContext()`) in Cashbook Evidence remains read-only historical/operational evidence; ownership is NOT moved
+- The Banking workspace does not create a new Banking lifecycle
+- All Bank targets are re-resolved server-side; browser values are never trusted for amount, currency, account, statement line, scope, lifecycle, or authority
+
+**Bank execution confirmation (Sprint 27)**:
+
+- `bank-payment-execution` is a narrow backward-compatible sixth intent extension of `SensitiveActionConfirmationService::REGISTERED_INTENTS`
+- Uses existing server-owned TTL, actor/company/property/session binding, confirm/invalidate audit
+- Grants no authority; has no automatic continuation
+- Does not alter `finance-approval`, `cash-payment-execution`, `fx-break-glass`, or any other existing intent
+
+**Bank reconciliation confirmation (Sprint 27)**:
+
+- Manual Bank Reconciliation does NOT require confirmation
+- Follows accepted Cash Reconciliation pattern (A6) — operational evidence recording, not an approval/finalization decision
+- `ManualBankReconciliationService` does not call `SensitiveActionConfirmationService`; no confirmation enforcement is added
+
+**Deferred (not in Sprint 27 scope)**:
+
+- Automatic reconciliation
+- Bank API / public API / external bank integration
+- Cash ownership change
+- GL posting ownership change
+- Role/permission/schema/lifecycle-service change
+
+**Implementation manifest (Sprint 27)**:
+
+| Phase | Commit Subject | Scope |
+|---|---|---|
+| A | Sprint 27: Define banking operations activation boundary | ADR-068 update + ADR-070 |
+| B | Sprint 27: Add banking operations workspace | `BankingOperationsWorkspaceController`, `BankingOperationsWorkspace.tsx`, route, `BankingOperationsWorkspaceTest` |
+| C | Sprint 27: Add bank payment execution confirmation | `SensitiveActionConfirmationService` + `SensitiveActionConfirmationController` + `SensitiveActionConfirmationTest` extension |
+| D | Sprint 27: Add controlled bank payment execution actions | Bank execute route + controller action + page action + `BankPaymentExecutionWebActionTest` |
+| E | Sprint 27: Add bank reconciliation workspace | Reconciliation evidence projection + `BankReconciliationWorkspaceTest` |
+| F | Sprint 27: Add bank reconciliation actions | Reconciliation route + controller action + page action + `BankReconciliationWebActionTest` |
+
+Sprint 23 historical record preserved. Unrelated sections not reworded.
