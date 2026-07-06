@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { usePage } from '@inertiajs/react';
 import '../../../../css/ivorq-prototype.css';
 
@@ -8,10 +8,14 @@ import ModuleTabs from '../../../Components/Ivorq/workspace/ModuleTabs';
 import SplitLayout from '../../../Components/Ivorq/workspace/SplitLayout';
 import MainContent from '../../../Components/Ivorq/workspace/MainContent';
 import QuickFilterPanel from '../../../Components/Ivorq/patterns/QuickFilterPanel';
+import OperationalSnapshot from '../../../Components/Ivorq/patterns/OperationalSnapshot';
+import SnapshotCard from '../../../Components/Ivorq/patterns/SnapshotCard';
+import QueueList from '../../../Components/Ivorq/patterns/QueueList';
+import WorkCard from '../../../Components/Ivorq/housekeeping/WorkCard';
 import AttentionArea from '../../../Components/Ivorq/patterns/AttentionArea';
+import Button from '../../../Components/Ivorq/primitives/Button';
+import Icon from '../../../Components/Ivorq/primitives/Icon';
 import StatusBadge, { BadgeStatus } from '../../../Components/Ivorq/primitives/StatusBadge';
-
-declare const route: any;
 
 interface Invoice {
   id: string;
@@ -57,14 +61,16 @@ function statusBadge(status: string): BadgeStatus {
 
 export default function SupplierInvoiceControlWorkspace({ invoices }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
+  const [selectedId, setSelectedId] = useState<string | null>(invoices[0]?.id ?? null);
 
-  const pendingCount = invoices.filter((i) => i.status === 'PENDING').length;
-  const approvedCount = invoices.filter((i) => i.status === 'APPROVED').length;
-  const rejectedCount = invoices.filter((i) => i.status === 'REJECTED').length;
+  const pendingCount = useMemo(() => invoices.filter((invoice) => invoice.status === 'PENDING').length, [invoices]);
+  const approvedCount = useMemo(() => invoices.filter((invoice) => invoice.status === 'APPROVED').length, [invoices]);
+  const rejectedCount = useMemo(() => invoices.filter((invoice) => invoice.status === 'REJECTED').length, [invoices]);
+  const selectedInvoice = invoices.find((invoice) => invoice.id === selectedId) ?? invoices[0] ?? null;
 
   return (
     <div className="workspace">
-      <WorkspaceHeader title="Finance / Supplier Invoices" />
+      <WorkspaceHeader title="Supplier Invoice Control" />
 
       <ModuleTabs tabs={financeTabs} />
 
@@ -72,7 +78,13 @@ export default function SupplierInvoiceControlWorkspace({ invoices }: Props) {
         <QuickFilterPanel>
           <div style={{ display: 'grid', gap: '12px' }}>
             <div className="filter-group">
-              <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Summary</div>
+              <label className="filter-label">Current Property Scope</label>
+              <div className="finance-context-note">
+                Supplier invoice evidence projected for the active property.
+              </div>
+            </div>
+            <div className="filter-group">
+              <label className="filter-label">Lifecycle Summary</label>
               <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
                 <div>Pending: {pendingCount}</div>
                 <div>Approved: {approvedCount}</div>
@@ -80,68 +92,139 @@ export default function SupplierInvoiceControlWorkspace({ invoices }: Props) {
                 <div>Total: {invoices.length}</div>
               </div>
             </div>
+            <div className="filter-group">
+              <label className="filter-label">Selected Invoice</label>
+              <div style={{ fontSize: '13px', fontWeight: 700, wordBreak: 'break-word' }}>
+                {selectedInvoice?.vendor_invoice_number || 'No invoice selected'}
+              </div>
+              <div className="finance-context-note">
+                {selectedInvoice?.vendor_name || 'Supplier evidence unavailable'}
+              </div>
+            </div>
           </div>
         </QuickFilterPanel>
 
         <MainContent>
           {(flash?.success || flash?.error) && (
-            <div style={{
-              border: `1px solid var(--${flash.success ? 'ready-green' : 'critical-red'})`,
-              borderRadius: '6px', padding: '10px 12px', marginBottom: '14px',
-              color: `var(--${flash.success ? 'ready-green' : 'critical-red'})`,
-              background: 'var(--surface-card)', fontSize: '13px', fontWeight: 600,
-            }}>{flash.success || flash.error}</div>
+            <div className={`finance-flash ${flash.success ? 'success' : 'error'}`}>{flash.success || flash.error}</div>
           )}
 
-          {invoices.length === 0 ? (
-            <AttentionArea title="Supplier Invoices" badgeText="0" badgeType="inspection" areaType="inspection">
-              <div style={{ color: 'var(--text-secondary)', fontSize: '13px', padding: '20px 0' }}>
-                No supplier invoices for the current property.
+          <OperationalSnapshot>
+            <SnapshotCard value={pendingCount} label="Pending" statusColor="pending-purple" />
+            <SnapshotCard value={approvedCount} label="Approved" statusColor="ready-green" />
+            <SnapshotCard value={rejectedCount} label="Rejected" statusColor="critical-red" />
+            <SnapshotCard value={invoices.length} label="Total Invoices" statusColor="inspection-blue" />
+          </OperationalSnapshot>
+
+          {invoices.length === 0 && (
+            <AttentionArea title="Supplier Invoice Queue" badgeText="No Data" badgeType="neutral" areaType="neutral">
+              <div className="finance-empty-state">
+                No supplier invoices are projected for the current property.
               </div>
             </AttentionArea>
-          ) : (
-            <AttentionArea title="Supplier Invoices" badgeText={`${invoices.length}`} badgeType="inspection" areaType="inspection">
-              <div style={{ display: 'grid', gap: '10px' }}>
-                {invoices.map((inv) => (
-                  <div key={inv.id} style={{
-                    border: '1px solid var(--border-default)', borderRadius: '6px',
-                    padding: '12px', background: 'var(--surface-card)',
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '13px' }}>{inv.vendor_invoice_number}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          {inv.vendor_name || 'Unknown Vendor'} — {inv.grand_total_amount}
-                        </div>
-                      </div>
-                      <StatusBadge status={statusBadge(inv.status)}>{inv.status_label}</StatusBadge>
-                    </div>
+          )}
 
-                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', gap: '16px', borderTop: '1px solid var(--border-default)', paddingTop: '8px' }}>
-                      {inv.invoice_date && <span>Date: {inv.invoice_date}</span>}
-                      {inv.due_date && <span>Due: {inv.due_date}</span>}
-                      <span>Lines: {inv.line_count}</span>
-                      {inv.payment_status && <span>Payment: {inv.payment_status}</span>}
-                    </div>
+          {invoices.length > 0 && (
+            <div className="finance-master-detail">
+              <QueueList title="Supplier Invoice Queue" count={invoices.length}>
+                <div className="finance-queue-body">
+                  {invoices.map((invoice) => (
+                    <WorkCard
+                      key={invoice.id}
+                      className={selectedInvoice?.id === invoice.id ? 'is-selected' : ''}
+                      borderColor={invoice.status === 'REJECTED' ? 'critical-red' : invoice.status === 'APPROVED' ? 'ready-green' : 'pending-purple'}
+                      meta={
+                        <>
+                          <span>{invoice.invoice_date || 'Date unavailable'}</span>
+                          <StatusBadge status={statusBadge(invoice.status)}>{invoice.status_label}</StatusBadge>
+                        </>
+                      }
+                      title={invoice.vendor_invoice_number}
+                      detail={
+                        <span>
+                          {invoice.vendor_name || 'Unknown Vendor'}
+                          <br />
+                          {invoice.grand_total_amount}
+                        </span>
+                      }
+                      actions={
+                        <Button type="button" size="sm" variant="secondary" onClick={() => setSelectedId(invoice.id)}>
+                          <Icon name="search" /> Evidence
+                        </Button>
+                      }
+                    />
+                  ))}
+                </div>
+              </QueueList>
 
-                    {inv.approved_at && (
-                      <div style={{ fontSize: '11px', color: 'var(--ready-green)', marginTop: '4px' }}>
-                        Approved: {inv.approved_at}
-                      </div>
-                    )}
-                    {inv.rejected_at && (
-                      <div style={{ fontSize: '11px', color: 'var(--critical-red)', marginTop: '4px' }}>
-                        Rejected: {inv.rejected_at}
-                        {inv.rejection_reason && ` — ${inv.rejection_reason}`}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </AttentionArea>
+              {selectedInvoice ? (
+                <InvoiceEvidence invoice={selectedInvoice} />
+              ) : (
+                <AttentionArea title="Selected Invoice Evidence" badgeText="None" badgeType="neutral" areaType="neutral">
+                  <div className="finance-empty-state">Select an invoice to review supplier, invoice, and lifecycle evidence.</div>
+                </AttentionArea>
+              )}
+            </div>
           )}
         </MainContent>
       </SplitLayout>
+    </div>
+  );
+}
+
+function InvoiceEvidence({ invoice }: { invoice: Invoice }) {
+  return (
+    <AttentionArea
+      title="Selected Invoice Evidence"
+      badgeText={invoice.status_label}
+      badgeType={statusBadge(invoice.status)}
+      areaType={invoice.status === 'REJECTED' ? 'warning' : 'inspection'}
+    >
+      <div className="finance-evidence-grid">
+        <EvidenceCell label="Supplier Invoice" value={invoice.vendor_invoice_number} />
+        <EvidenceCell label="Supplier" value={invoice.vendor_name || 'Unknown Vendor'} />
+        <EvidenceCell label="Invoice Date" value={invoice.invoice_date || 'N/A'} />
+        <EvidenceCell label="Due Date" value={invoice.due_date || 'N/A'} />
+        <EvidenceCell label="Grand Total" value={invoice.grand_total_amount} />
+        <EvidenceCell label="Payment Status" value={invoice.payment_status || 'N/A'} />
+      </div>
+
+      <div className="finance-evidence-section">
+        <div className="finance-section-title">Supplier Invoice</div>
+        <div className="finance-evidence-list">
+          <EvidenceRow label="Subtotal" value={invoice.subtotal_amount} />
+          <EvidenceRow label="Tax" value={invoice.tax_amount} />
+          <EvidenceRow label="Amount Paid" value={invoice.amount_paid} />
+          <EvidenceRow label="Line Count" value={`${invoice.line_count}`} />
+        </div>
+      </div>
+
+      <div className="finance-evidence-section">
+        <div className="finance-section-title">Lifecycle / History</div>
+        <div className="finance-evidence-list">
+          <EvidenceRow label="Approval" value={invoice.approved_at || 'N/A'} />
+          <EvidenceRow label="Rejection" value={invoice.rejected_at || 'N/A'} />
+          {invoice.rejection_reason && <EvidenceRow label="Exception Reason" value={invoice.rejection_reason} />}
+        </div>
+      </div>
+    </AttentionArea>
+  );
+}
+
+function EvidenceCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div style={{ color: 'var(--text-secondary)', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700, wordBreak: 'break-word' }}>{value}</div>
+    </div>
+  );
+}
+
+function EvidenceRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="finance-evidence-row">
+      <span>{label}</span>
+      <span>{value}</span>
     </div>
   );
 }

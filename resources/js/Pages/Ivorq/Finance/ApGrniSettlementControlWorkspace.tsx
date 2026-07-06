@@ -12,7 +12,6 @@ import OperationalSnapshot from '../../../Components/Ivorq/patterns/OperationalS
 import SnapshotCard from '../../../Components/Ivorq/patterns/SnapshotCard';
 import QueueList from '../../../Components/Ivorq/patterns/QueueList';
 import WorkCard from '../../../Components/Ivorq/housekeeping/WorkCard';
-import BoardHeader from '../../../Components/Ivorq/housekeeping/BoardHeader';
 import AttentionArea from '../../../Components/Ivorq/patterns/AttentionArea';
 import Button from '../../../Components/Ivorq/primitives/Button';
 import Icon from '../../../Components/Ivorq/primitives/Icon';
@@ -121,6 +120,14 @@ interface PaymentProposal {
 
 type QueueKey = keyof Projection['queues'];
 
+interface QueuedSettlementItem {
+  item: SettlementItem;
+  queueKey: QueueKey;
+  queueTitle: string;
+  color: string;
+  status: BadgeStatus;
+}
+
 const queueDefinitions: Array<{ key: QueueKey; title: string; color: string; status: BadgeStatus }> = [
   { key: 'ready', title: 'Ready for Payment Proposal', color: 'ready-green', status: 'ready' },
   { key: 'aging', title: 'Posted AP Liability Aging', color: 'inspection-blue', status: 'inspection' },
@@ -175,10 +182,19 @@ function itemSubtitle(item: SettlementItem): string {
 
 export default function ApGrniSettlementControlWorkspace({ projection, payment_proposals, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
-  const allItems = useMemo(() => queueDefinitions.flatMap((definition) => projection.queues[definition.key]), [projection]);
-  const [selectedId, setSelectedId] = useState<string | null>(allItems[0]?.id ?? null);
+  const queuedItems = useMemo<QueuedSettlementItem[]>(
+    () => queueDefinitions.flatMap((definition) => projection.queues[definition.key].map((item) => ({
+      item,
+      queueKey: definition.key,
+      queueTitle: definition.title,
+      color: definition.color,
+      status: definition.status,
+    }))),
+    [projection]
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(queuedItems[0]?.item.id ?? null);
   const [cancelProposalId, setCancelProposalId] = useState<string | null>(null);
-  const selectedItem = allItems.find((item) => item.id === selectedId) ?? allItems[0] ?? null;
+  const selectedQueuedItem = queuedItems.find((queuedItem) => queuedItem.item.id === selectedId) ?? queuedItems[0] ?? null;
   const createForm = useForm<{ journal_entry_ids: string[] }>({ journal_entry_ids: [] });
   const cancelForm = useForm({ cancellation_reason: '' });
 
@@ -225,32 +241,26 @@ export default function ApGrniSettlementControlWorkspace({ projection, payment_p
             </div>
           </div>
           <div className="filter-group">
-            <label className="filter-label">Selected Invoice</label>
+            <label className="filter-label">Selected Source</label>
             <div style={{ fontSize: '13px', fontWeight: 700, wordBreak: 'break-word' }}>
-              {selectedItem ? itemTitle(selectedItem) : 'N/A'}
+              {selectedQueuedItem ? itemTitle(selectedQueuedItem.item) : 'No source selected'}
             </div>
-            <div style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '4px' }}>
-              {selectedItem ? itemSubtitle(selectedItem) : 'N/A'}
+            <div className="finance-context-note">
+              {selectedQueuedItem ? selectedQueuedItem.queueTitle : 'Current property has no settlement sources.'}
             </div>
           </div>
+          {!permissions.can_view && (
+            <div className="filter-group" style={{ borderTop: '1px solid var(--border-default)', paddingTop: '12px' }}>
+              <div className="finance-context-note">
+                View authority is not active for this workspace.
+              </div>
+            </div>
+          )}
         </QuickFilterPanel>
 
         <MainContent>
           {(flash?.success || flash?.error) && (
-            <div
-              style={{
-                border: `1px solid var(--${flash.success ? 'ready-green' : 'critical-red'})`,
-                borderRadius: '6px',
-                padding: '10px 12px',
-                marginBottom: '14px',
-                color: `var(--${flash.success ? 'ready-green' : 'critical-red'})`,
-                background: 'var(--surface-card)',
-                fontSize: '13px',
-                fontWeight: 600,
-              }}
-            >
-              {flash.success || flash.error}
-            </div>
+            <div className={`finance-flash ${flash.success ? 'success' : 'error'}`}>{flash.success || flash.error}</div>
           )}
 
           <OperationalSnapshot>
@@ -261,199 +271,246 @@ export default function ApGrniSettlementControlWorkspace({ projection, payment_p
             <SnapshotCard value={payment_proposals.length} label="Draft Proposals" statusColor="inspection-blue" />
           </OperationalSnapshot>
 
-          {selectedItem && (
-            <AttentionArea
-              title="Source Evidence"
-              badgeText={formatLabel(selectedItem.settlement_status)}
-              badgeType={selectedItem.reason ? 'warning' : 'ready'}
-              areaType={selectedItem.reason ? 'warning' : 'inspection'}
-            >
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-                  gap: '10px',
-                }}
-              >
-                <EvidenceCell label="Invoice" value={itemTitle(selectedItem)} />
-                <EvidenceCell label="Vendor" value={selectedItem.vendor?.name || 'N/A'} />
-                <EvidenceCell label="Amount" value={formatAmount(selectedItem.amount, selectedItem.currency_code)} />
-                <EvidenceCell label="Journal Date" value={formatDate(selectedItem.journal?.transaction_date)} />
-                <EvidenceCell label="Posted" value={formatDate(selectedItem.journal?.posting_date)} />
-                <EvidenceCell label="Age" value={selectedItem.age?.label || selectedItem.reason || 'Age unavailable.'} />
-              </div>
-
-              <div style={{ marginTop: '12px', display: 'grid', gap: '6px', fontSize: '12px' }}>
-                <EvidenceRow label="AP Journal" value={selectedItem.journal?.reference || selectedItem.journal?.status || 'N/A'} />
-                <EvidenceRow label="GRNI Candidate" value={selectedItem.candidate?.source_grni_candidate_id || 'N/A'} />
-                <EvidenceRow label="GRNI Journal" value={selectedItem.candidate?.source_grni_journal_entry_id || 'N/A'} />
-                <EvidenceRow label="Receiving" value={selectedItem.source?.receiving?.document_id || 'N/A'} />
-                <EvidenceRow label="Purchase Order" value={selectedItem.source?.purchase_order?.id || 'N/A'} />
-                {selectedItem.reason && <EvidenceRow label="Held Reason" value={selectedItem.reason} />}
+          {!permissions.can_view && (
+            <AttentionArea title="Access Denied" badgeText="No View Authority" badgeType="critical" areaType="warning">
+              <div className="finance-empty-state">
+                The server did not project view permission for AP / GRNI settlement control.
               </div>
             </AttentionArea>
           )}
 
-          <BoardHeader title="Settlement Control Queues" />
+          {permissions.can_view && queuedItems.length === 0 && payment_proposals.length === 0 && (
+            <AttentionArea title="Settlement Control" badgeText="No Data" badgeType="neutral" areaType="neutral">
+              <div className="finance-empty-state">
+                No AP / GRNI settlement sources or draft payment proposals are projected for the current property.
+              </div>
+            </AttentionArea>
+          )}
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-              gap: '12px',
-              alignItems: 'start',
-            }}
-          >
-            {queueDefinitions.map((definition) => (
-              <QueueList
-                key={definition.key}
-                title={<span>{definition.title}</span>}
-                count={projection.queues[definition.key].length}
-                headerStyle={{ minHeight: '48px' }}
-              >
-                <div style={{ display: 'grid', gap: '10px', padding: '10px' }}>
-                  {projection.queues[definition.key].length === 0 && (
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '12px', padding: '12px 4px' }}>
-                      No records.
-                    </div>
-                  )}
-
-                  {projection.queues[definition.key].map((item) => (
-                    <WorkCard
-                      key={item.id}
-                      borderColor={definition.color}
-                      meta={
-                        <>
-                          <span>{formatDate(item.journal?.transaction_date)}</span>
-                          <StatusBadge status={definition.status}>{formatLabel(item.settlement_status)}</StatusBadge>
-                        </>
-                      }
-                      title={itemTitle(item)}
-                      detail={
-                        <span>
-                          {itemSubtitle(item)}
-                          <br />
-                          {formatAmount(item.amount, item.currency_code)}
-                        </span>
-                      }
-                      actions={
-                        <>
-                          <Button type="button" size="sm" variant="secondary" onClick={() => setSelectedId(item.id)}>
-                            <Icon name="search" /> Details
-                          </Button>
-                          {definition.key === 'ready' && permissions.can_create_payment_proposal && item.journal && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              disabled={createForm.processing}
-                              onClick={() => createDraft(item.id)}
-                            >
-                              <Icon name="finance" /> Draft
+          {permissions.can_view && (queuedItems.length > 0 || payment_proposals.length > 0) && (
+            <div className="finance-master-detail">
+              <div style={{ display: 'grid', gap: '16px' }}>
+                <QueueList title="Settlement Source Queue" count={queuedItems.length}>
+                  <div className="finance-queue-body">
+                    {queuedItems.length === 0 && (
+                      <div className="finance-empty-state">No settlement sources are currently projected.</div>
+                    )}
+                    {queuedItems.map(({ item, queueKey, queueTitle, color, status }) => (
+                      <WorkCard
+                        key={item.id}
+                        className={selectedQueuedItem?.item.id === item.id ? 'is-selected' : ''}
+                        borderColor={color}
+                        meta={
+                          <>
+                            <span>{formatDate(item.journal?.transaction_date)}</span>
+                            <StatusBadge status={status}>{formatLabel(item.settlement_status)}</StatusBadge>
+                          </>
+                        }
+                        title={itemTitle(item)}
+                        detail={
+                          <span>
+                            {itemSubtitle(item)}
+                            <br />
+                            {formatAmount(item.amount, item.currency_code)}
+                          </span>
+                        }
+                        actions={
+                          <>
+                            <Button type="button" size="sm" variant="secondary" onClick={() => setSelectedId(item.id)}>
+                              <Icon name="search" /> Evidence
                             </Button>
-                          )}
-                        </>
-                      }
-                    />
-                  ))}
-                </div>
-              </QueueList>
-            ))}
-          </div>
-
-          <BoardHeader title="Draft Payment Proposals" />
-
-          <QueueList title={<span>Payment Proposal Drafts</span>} count={payment_proposals.length} headerStyle={{ minHeight: '48px' }}>
-            <div style={{ display: 'grid', gap: '10px', padding: '10px' }}>
-              {payment_proposals.length === 0 && (
-                <div style={{ color: 'var(--text-secondary)', fontSize: '12px', padding: '12px 4px' }}>
-                  No draft proposals.
-                </div>
-              )}
-
-              {payment_proposals.map((proposal) => (
-                <div key={proposal.id}>
-                  <WorkCard
-                    borderColor="inspection-blue"
-                    meta={
-                      <>
-                        <span>{formatDate(proposal.created_at)}</span>
-                        <StatusBadge status="inspection">{formatLabel(proposal.status)}</StatusBadge>
-                      </>
-                    }
-                    title={proposal.proposal_number}
-                    detail={
-                      <span>
-                        {proposal.vendor || 'Vendor unavailable'}
-                        <br />
-                        {formatAmount(proposal.total_amount, proposal.currency_code)}
-                      </span>
-                    }
-                    actions={
-                      permissions.can_cancel_payment_proposal && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          disabled={cancelForm.processing}
-                          onClick={() => setCancelProposalId(cancelProposalId === proposal.id ? null : proposal.id)}
-                        >
-                          <Icon name="warning" /> Cancel
-                        </Button>
-                      )
-                    }
-                  />
-
-                  {cancelProposalId === proposal.id && (
-                    <form
-                      onSubmit={(event) => submitCancel(event, proposal.id)}
-                      style={{
-                        marginTop: '8px',
-                        border: '1px solid var(--border-default)',
-                        borderRadius: '6px',
-                        padding: '8px',
-                        background: 'var(--surface-card)',
-                      }}
-                    >
-                      <textarea
-                        value={cancelForm.data.cancellation_reason}
-                        onChange={(event) => cancelForm.setData('cancellation_reason', event.target.value)}
-                        rows={3}
-                        required
-                        placeholder="Cancellation reason"
-                        style={{
-                          width: '100%',
-                          resize: 'vertical',
-                          border: '1px solid var(--border-default)',
-                          borderRadius: '6px',
-                          padding: '8px',
-                          fontSize: '12px',
-                        }}
+                            {queueKey === 'ready' && permissions.can_create_payment_proposal && item.journal && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={createForm.processing}
+                                onClick={() => createDraft(item.id)}
+                              >
+                                <Icon name="finance" /> Draft
+                              </Button>
+                            )}
+                          </>
+                        }
                       />
-                      <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setCancelProposalId(null);
-                            cancelForm.reset('cancellation_reason');
-                          }}
-                        >
-                          Back
-                        </Button>
-                        <Button type="submit" size="sm" disabled={cancelForm.processing}>
-                          <Icon name="warning" /> Cancel Draft
-                        </Button>
+                    ))}
+                  </div>
+                </QueueList>
+
+                <QueueList title="Draft Payment Proposals" count={payment_proposals.length}>
+                  <div className="finance-queue-body">
+                    {payment_proposals.length === 0 && (
+                      <div className="finance-empty-state">No draft proposals.</div>
+                    )}
+                    {payment_proposals.map((proposal) => (
+                      <div key={proposal.id}>
+                        <WorkCard
+                          borderColor="inspection-blue"
+                          meta={
+                            <>
+                              <span>{formatDate(proposal.created_at)}</span>
+                              <StatusBadge status="inspection">{formatLabel(proposal.status)}</StatusBadge>
+                            </>
+                          }
+                          title={proposal.proposal_number}
+                          detail={
+                            <span>
+                              {proposal.vendor || 'Vendor unavailable'}
+                              <br />
+                              {formatAmount(proposal.total_amount, proposal.currency_code)}
+                            </span>
+                          }
+                          actions={
+                            permissions.can_cancel_payment_proposal && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                disabled={cancelForm.processing}
+                                onClick={() => setCancelProposalId(cancelProposalId === proposal.id ? null : proposal.id)}
+                              >
+                                <Icon name="warning" /> Cancel
+                              </Button>
+                            )
+                          }
+                        />
+
+                        {cancelProposalId === proposal.id && (
+                          <form
+                            onSubmit={(event) => submitCancel(event, proposal.id)}
+                            style={{
+                              marginTop: '8px',
+                              border: '1px solid var(--border-default)',
+                              borderRadius: '6px',
+                              padding: '8px',
+                              background: 'var(--surface-card)',
+                            }}
+                          >
+                            <textarea
+                              value={cancelForm.data.cancellation_reason}
+                              onChange={(event) => cancelForm.setData('cancellation_reason', event.target.value)}
+                              rows={3}
+                              required
+                              placeholder="Cancellation reason"
+                              style={{
+                                width: '100%',
+                                resize: 'vertical',
+                                border: '1px solid var(--border-default)',
+                                borderRadius: '6px',
+                                padding: '8px',
+                                fontSize: '12px',
+                              }}
+                            />
+                            <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => {
+                                  setCancelProposalId(null);
+                                  cancelForm.reset('cancellation_reason');
+                                }}
+                              >
+                                Back
+                              </Button>
+                              <Button type="submit" size="sm" disabled={cancelForm.processing}>
+                                <Icon name="warning" /> Cancel Draft
+                              </Button>
+                            </div>
+                          </form>
+                        )}
                       </div>
-                    </form>
-                  )}
-                </div>
-              ))}
+                    ))}
+                  </div>
+                </QueueList>
+              </div>
+
+              {selectedQueuedItem ? (
+                <SettlementEvidence queuedItem={selectedQueuedItem} />
+              ) : (
+                <AttentionArea title="Selected Settlement Evidence" badgeText="None" badgeType="neutral" areaType="neutral">
+                  <div className="finance-empty-state">Select a settlement source to review supplier, invoice, GRNI/AP, and lifecycle evidence.</div>
+                </AttentionArea>
+              )}
             </div>
-          </QueueList>
+          )}
         </MainContent>
       </SplitLayout>
     </div>
+  );
+}
+
+function SettlementEvidence({ queuedItem }: { queuedItem: QueuedSettlementItem }) {
+  const { item, queueTitle, status } = queuedItem;
+
+  return (
+    <AttentionArea
+      title="Selected Settlement Evidence"
+      badgeText={formatLabel(item.settlement_status)}
+      badgeType={item.reason ? 'warning' : status}
+      areaType={item.reason ? 'warning' : 'inspection'}
+    >
+      <div className="finance-evidence-grid">
+        <EvidenceCell label="Queue" value={queueTitle} />
+        <EvidenceCell label="Supplier Invoice" value={itemTitle(item)} />
+        <EvidenceCell label="Supplier" value={item.vendor?.name || 'N/A'} />
+        <EvidenceCell label="Amount" value={formatAmount(item.amount, item.currency_code)} />
+        <EvidenceCell label="Business Date" value={item.age?.current_business_date || 'N/A'} />
+        <EvidenceCell label="Age" value={item.age?.label || 'Age unavailable'} />
+      </div>
+
+      <div className="finance-evidence-section">
+        <div className="finance-section-title">Supplier</div>
+        <div className="finance-evidence-list">
+          <EvidenceRow label="Name" value={item.vendor?.name || 'N/A'} />
+          <EvidenceRow label="Code" value={item.vendor?.code || 'N/A'} />
+          <EvidenceRow label="Property" value={item.property || 'N/A'} />
+        </div>
+      </div>
+
+      <div className="finance-evidence-section">
+        <div className="finance-section-title">GRNI / AP</div>
+        <div className="finance-evidence-list">
+          <EvidenceRow label="AP Journal" value={item.journal?.reference || item.journal?.status || 'N/A'} />
+          <EvidenceRow label="GRNI Candidate" value={item.candidate?.source_grni_candidate_id || item.source?.source_grni?.candidate_id || 'N/A'} />
+          <EvidenceRow label="GRNI Journal" value={item.candidate?.source_grni_journal_entry_id || item.source?.source_grni?.journal_entry_id || 'N/A'} />
+          <EvidenceRow label="Source GRNI Amount" value={item.source?.source_grni?.amount || 'N/A'} />
+        </div>
+      </div>
+
+      <div className="finance-evidence-section">
+        <div className="finance-section-title">Receiving / Purchase Order</div>
+        <div className="finance-evidence-list">
+          <EvidenceRow label="Receiving Document" value={item.source?.receiving?.document_id || 'N/A'} />
+          <EvidenceRow label="Receiving Line" value={item.source?.receiving?.line_id || 'N/A'} />
+          <EvidenceRow label="Inventory Receipt Line" value={item.source?.receiving?.inventory_receipt_line_id || 'N/A'} />
+          <EvidenceRow label="Purchase Order" value={item.source?.purchase_order?.id || 'N/A'} />
+          <EvidenceRow label="Purchase Order Line" value={item.source?.purchase_order?.line_id || 'N/A'} />
+        </div>
+      </div>
+
+      <div className="finance-evidence-section">
+        <div className="finance-section-title">Lifecycle / History</div>
+        <div className="finance-evidence-list">
+          <EvidenceRow label="Posted" value={item.journal?.posted_at || formatDate(item.journal?.posting_date)} />
+          <EvidenceRow label="Posted By" value={item.journal?.posted_by || 'N/A'} />
+          <EvidenceRow label="Finalized" value={item.journal?.finalized_at || 'N/A'} />
+          <EvidenceRow label="Finalized By" value={item.journal?.finalized_by || 'N/A'} />
+          <EvidenceRow label="Candidate Status" value={formatLabel(item.candidate?.status)} />
+          <EvidenceRow label="Approved" value={item.candidate?.approved_at || 'N/A'} />
+          <EvidenceRow label="Rejected" value={item.candidate?.rejected_at || 'N/A'} />
+        </div>
+      </div>
+
+      {(item.reason || item.candidate?.rejection_reason) && (
+        <div className="finance-evidence-section">
+          <div className="finance-section-title">Exception / Reason</div>
+          <div className="finance-evidence-list">
+            {item.reason && <EvidenceRow label="Held Reason" value={item.reason} />}
+            {item.candidate?.rejection_reason && <EvidenceRow label="Rejection Reason" value={item.candidate.rejection_reason} />}
+          </div>
+        </div>
+      )}
+    </AttentionArea>
   );
 }
 
@@ -468,9 +525,9 @@ function EvidenceCell({ label, value }: { label: string; value: string }) {
 
 function EvidenceRow({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '130px minmax(0, 1fr)', gap: '8px' }}>
-      <span style={{ color: 'var(--text-secondary)', fontWeight: 700 }}>{label}</span>
-      <span style={{ color: 'var(--text-primary)', wordBreak: 'break-word' }}>{value}</span>
+    <div className="finance-evidence-row">
+      <span>{label}</span>
+      <span>{value}</span>
     </div>
   );
 }

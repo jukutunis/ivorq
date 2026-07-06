@@ -1,6 +1,19 @@
 import React, { ReactNode } from 'react';
 
-export type BadgeStatus = 'vip' | 'critical' | 'warning' | 'ready' | 'inspection' | 'pending' | 'neutral';
+export type BadgeStatus =
+  | 'vip'
+  | 'critical'
+  | 'warning'
+  | 'ready'
+  | 'inspection'
+  | 'pending'
+  | 'neutral'
+  | 'draft'
+  | 'overdue'
+  | 'vacant'
+  | 'success'
+  | 'error'
+  | 'info';
 
 interface StatusBadgeProps {
   status: BadgeStatus;
