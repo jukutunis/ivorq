@@ -52,7 +52,7 @@ The accepted lifecycle is:
 |---|---|---|---|---|---|
 | D1 | Payables | Approve Supplier Invoice | `SupplierInvoiceApprovalService::approve()` | Yes (Sprint 24) | Activated |
 | D2 | Payables | Reject Supplier Invoice | `SupplierInvoiceApprovalService::reject()` | Yes (Sprint 24) | Activated |
-| D3 | Payables | Resolve Match Exception | `SupplierInvoiceExceptionReviewService::resolveException()` | No | No controller |
+| D3 | Payables | Resolve Match Exception | `SupplierInvoiceExceptionReviewService::resolveException()` | Yes (Sprint 25) | Activated |
 | D4 | Payables | Approve Payment Proposal | `PaymentProposalApprovalService::approve()` | Yes (Sprint 24) | Activated |
 | D5 | Payables | Reject Payment Proposal | `PaymentProposalApprovalService::reject()` | Yes (Sprint 24) | Activated |
 | D6 | GeneralCashier | Record Cash Execution | `PaymentExecutionService::recordCashExecution()` | No | Deferred — browser-supplied cash instrument and proposal item selection; no source-proven web action convention; no execution workspace controller; no source-proven confirmation intent (finance-approval is for approval decisions, not operational execution) |
@@ -105,7 +105,9 @@ All Finance routes are under `Route::middleware(['auth', 'active.property'])`. P
 
 **Activated in Sprint 24**: Supplier invoice approval and rejection web routes are now exposed through `SupplierInvoiceControlWorkspaceController` using `SupplierInvoiceApprovalService::approve()/reject()` with permission `finance.payables.supplier-invoice.approve` and `finance-approval` sensitive confirmation enforcement following the same pattern as Payment Proposal approval actions.
 
-**Not delivered**: Exception resolution (D3 — deferred), invoice creation (no source-proven route).
+**Activated in Sprint 25**: Supplier invoice exception resolution web route is now exposed through `SupplierInvoiceControlWorkspaceController` using `SupplierInvoiceExceptionReviewService::resolveException()` with permission `finance.payables.supplier-invoice.review-exception` and `finance-approval` sensitive confirmation enforcement. Exception resolution is a prerequisite for approval of invoices with Exception match results and records immutable Finance review evidence without changing the invoice status.
+
+**Not delivered**: Invoice creation (no source-proven route).
 
 ## Cash payment execution workspace boundary
 
@@ -143,7 +145,7 @@ Actions D4-D5 (proposal approve/reject) and D1-D2 (supplier invoice approve/reje
 
 Cash and Bank execution (D6, D7) do not currently have a source-proven confirmation intent. The `finance-approval` intent is scoped to approval/finalization decisions, not operational payment execution. Execution confirmation policy remains deferred until a future package sources the exact execution authorization and confirmation boundary.
 
-### Sprint 24 activated route contracts
+### Sprint 24-25 activated route contracts
 
 | Action | Route | Controller Method | Service Method | Permission | Confirmation |
 |---|---|---|---|---|---|
@@ -151,10 +153,12 @@ Cash and Bank execution (D6, D7) do not currently have a source-proven confirmat
 | Reject Payment Proposal | `POST /finance/payables/payment-proposals/{proposal}/reject` | `PaymentProposalControlWorkspaceController@reject` | `PaymentProposalApprovalService::reject()` | `finance.payables.payment-proposal.approve` | `finance-approval` |
 | Approve Supplier Invoice | `POST /finance/payables/supplier-invoices/{invoice}/approve` | `SupplierInvoiceControlWorkspaceController@approve` | `SupplierInvoiceApprovalService::approve()` | `finance.payables.supplier-invoice.approve` | `finance-approval` |
 | Reject Supplier Invoice | `POST /finance/payables/supplier-invoices/{invoice}/reject` | `SupplierInvoiceControlWorkspaceController@reject` | `SupplierInvoiceApprovalService::reject()` | `finance.payables.supplier-invoice.approve` | `finance-approval` |
+| Resolve Invoice Exception | `POST /finance/payables/supplier-invoices/{invoice}/resolve-exception` | `SupplierInvoiceControlWorkspaceController@resolveException` | `SupplierInvoiceExceptionReviewService::resolveException()` | `finance.payables.supplier-invoice.review-exception` | `finance-approval` |
 
 Input contracts:
 - Approve (both): no body input; actor, property, company resolved server-side
 - Reject (both): `rejection_reason` (required, string, min 3, max 500); actor, property, company resolved server-side
+- Resolve Exception: `resolution_reason` (required, string, min 3, max 500); actor, property, company resolved server-side
 
 The browser must not supply amount, currency, account, bank, allocation, invoice, journal, property, company, actor, or status.
 
@@ -215,6 +219,7 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 
 | Decision | Status |
 |---|---|
+| Exception resolution | Activated Sprint 25 |
 | Invoice approval/rejection web routes | Activated Sprint 24 |
 | Cash execution web route | Deferred — browser-supplied cash instrument and proposal item selection required; no execution workspace controller; no confirmation convention |
 | Bank execution web route | Deferred — browser-supplied bank account and statement line selection required; no execution workspace controller; no confirmation convention |
