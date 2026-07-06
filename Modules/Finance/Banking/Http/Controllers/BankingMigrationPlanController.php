@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
+use Modules\Finance\Banking\Services\BankingMigrationDryRunService;
 use Modules\Finance\Banking\Services\BankingMigrationPlanService;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
@@ -108,6 +109,30 @@ class BankingMigrationPlanController extends Controller
             return redirect()
                 ->route('finance.banking.migration.index')
                 ->with('success', 'Dry run requested.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('error', $exception->getMessage());
+        }
+    }
+
+    public function executeDryRun(Request $request, string $planId): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can(BankingMigrationPlanService::PERMISSION_MANAGE)) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $this->resolvePropertyId($request);
+
+        $service = app(BankingMigrationDryRunService::class);
+
+        try {
+            $service->executeDryRun($planId, $user);
+
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('success', 'Dry run completed.');
         } catch (Throwable $exception) {
             return redirect()
                 ->route('finance.banking.migration.index')
