@@ -22,6 +22,10 @@ class BankingPermissionSeeder extends Seeder
             'banking.reconciliation.view',
             'banking.reconciliation.create',
             'banking.reconciliation.manage',
+
+            // Banking — Migration Control Plane
+            'finance.banking.migration.view',
+            'finance.banking.migration.manage',
         ];
 
         foreach ($permissions as $permission) {

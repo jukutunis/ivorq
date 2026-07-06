@@ -67,6 +67,10 @@ class PermissionSeeder extends Seeder
             'finance.fx-adjustment.view',
             'finance.payment-adjustment-config.record',
             'finance.payment-adjustment-config.approve',
+
+            // Banking — Migration Control Plane
+            'finance.banking.migration.view',
+            'finance.banking.migration.manage',
         ];
 
         foreach ($permissions as $name) {

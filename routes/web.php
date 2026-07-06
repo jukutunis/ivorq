@@ -73,6 +73,12 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.banking.bank-payment-execute.execute');
         Route::post('/banking/bank-reconciliation', [\Modules\Finance\Banking\Http\Controllers\BankingOperationsWorkspaceController::class, 'reconcile'])
             ->name('finance.banking.bank-reconciliation.reconcile');
+        Route::get('/banking/migration', [\Modules\Finance\Banking\Http\Controllers\BankingMigrationPlanController::class, 'index'])
+            ->name('finance.banking.migration.index');
+        Route::post('/banking/migration/plan', [\Modules\Finance\Banking\Http\Controllers\BankingMigrationPlanController::class, 'create'])
+            ->name('finance.banking.migration.plan.create');
+        Route::post('/banking/migration/plan/{plan}/request-dry-run', [\Modules\Finance\Banking\Http\Controllers\BankingMigrationPlanController::class, 'requestDryRun'])
+            ->name('finance.banking.migration.plan.request-dry-run');
         Route::get('/payables/supplier-invoices', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'index'])
             ->name('finance.payables.supplier-invoices.index');
         Route::post('/payables/supplier-invoices/{invoice}/approve', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'approve'])
