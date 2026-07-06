@@ -50,13 +50,13 @@ The accepted lifecycle is:
 
 | # | Domain | Action | Service | Web Route? | Blocker |
 |---|---|---|---|---|---|
-| D1 | Payables | Approve Supplier Invoice | `SupplierInvoiceApprovalService::approve()` | No | No controller |
-| D2 | Payables | Reject Supplier Invoice | `SupplierInvoiceApprovalService::reject()` | No | No controller |
+| D1 | Payables | Approve Supplier Invoice | `SupplierInvoiceApprovalService::approve()` | Yes (Sprint 24) | Activated |
+| D2 | Payables | Reject Supplier Invoice | `SupplierInvoiceApprovalService::reject()` | Yes (Sprint 24) | Activated |
 | D3 | Payables | Resolve Match Exception | `SupplierInvoiceExceptionReviewService::resolveException()` | No | No controller |
 | D4 | Payables | Approve Payment Proposal | `PaymentProposalApprovalService::approve()` | Yes (Sprint 24) | Activated |
 | D5 | Payables | Reject Payment Proposal | `PaymentProposalApprovalService::reject()` | Yes (Sprint 24) | Activated |
-| D6 | GeneralCashier | Record Cash Execution | `PaymentExecutionService::recordCashExecution()` | No | No controller |
-| D7 | GeneralCashier | Record Confirmed Bank Execution | `PaymentExecutionService::recordConfirmedBankExecution()` | No | No controller |
+| D6 | GeneralCashier | Record Cash Execution | `PaymentExecutionService::recordCashExecution()` | No | Deferred — browser-supplied cash instrument and proposal item selection; no source-proven web action convention; no execution workspace controller; no source-proven confirmation intent (finance-approval is for approval decisions, not operational execution) |
+| D7 | Banking | Record Confirmed Bank Execution | `PaymentExecutionService::recordConfirmedBankExecution()` | No | Deferred — browser-supplied bank account and statement line selection; no source-proven web action convention; no execution workspace controller; no source-proven confirmation intent |
 | D8 | GeneralCashier | Record Cash Count | `CashCountAndBaselineService::recordCashCount()` | No | No controller |
 | D9 | GeneralCashier | Perform Manual Cash Reconciliation | `ManualCashReconciliationService::reconcile()` | No | No controller |
 | D10 | Banking | Register Bank Account | `BankingSourceEvidenceService::registerBankAccount()` | No | API-only |
@@ -100,20 +100,24 @@ All Finance routes are under `Route::middleware(['auth', 'active.property'])`. P
 - Supplier invoices with match status, match details, GRNI/AP evidence
 - Three-way match results (matched vs. exception)
 - Exception queue with variance details
+- Approve and reject actions for eligible invoices (D1, D2 — activated in Sprint 24)
+- Server-projected capability gating including `can_approve` and `can_reject`
 
-**Not delivered**: Invoice approve/reject (D1, D2 — deferred), exception resolution (D3 — deferred), invoice creation (no source-proven route).
+**Activated in Sprint 24**: Supplier invoice approval and rejection web routes are now exposed through `SupplierInvoiceControlWorkspaceController` using `SupplierInvoiceApprovalService::approve()/reject()` with permission `finance.payables.supplier-invoice.approve` and `finance-approval` sensitive confirmation enforcement following the same pattern as Payment Proposal approval actions.
+
+**Not delivered**: Exception resolution (D3 — deferred), invoice creation (no source-proven route).
 
 ## Cash payment execution workspace boundary
 
 **Deliverable**: Read-only projection of existing Cash execution evidence and Cashbook transactions.
 
-**Not delivered**: Cash execution recording (D6 — deferred), cash count (D8 — deferred), cash reconciliation (D9 — deferred).
+**Not delivered**: Cash execution recording (D6 — deferred). Cash execution requires browser-supplied cash instrument and proposal item selection, which are operational financial resource selections with no source-proven web action convention. The `PaymentExecutionService::recordCashExecution()` also requires cash session ownership resolution through `GeneralCashierOperationalFoundationService`, which is a server-side operational context that cannot safely accept browser-supplied identifiers. No source-proven confirmation intent exists for cash execution (the `finance-approval` intent is scoped to approval/finalization decisions, not operational payment execution). The existing `CashbookEvidenceWorkspace` is read-only with no execution controller. Cash count (D8) and cash reconciliation (D9) remain deferred.
 
 ## Bank payment execution workspace boundary
 
 **Deliverable**: Read-only projection of existing Bank execution evidence and bank statement lines.
 
-**Not delivered**: Bank execution recording (D7 — deferred), bank account registration (D10 — deferred), bank reconciliation (D12 — deferred).
+**Not delivered**: Bank execution recording (D7 — deferred). Bank execution additionally requires browser-supplied bank account selection and controlled bank statement line selection, which are operational financial resource selections with no source-proven web action convention. As with cash execution, no source-proven confirmation intent exists for bank execution. Bank account registration (D10) and bank reconciliation (D12) remain deferred.
 
 ## AP settlement allocation and payment-evidence boundary
 
@@ -135,7 +139,9 @@ All Finance routes are under `Route::middleware(['auth', 'active.property'])`. P
 
 ## Approval confirmation requirements
 
-Actions D4-D5 (proposal approve/reject) are now activated in Sprint 24 and require `finance-approval` confirmation enforcement. The controller follows the exact same pattern as `GrniControlWorkspaceController`: authorize action permission first, then require valid `SensitiveActionConfirmationService::hasValidConfirmation()` for `finance-approval` intent before invoking the lifecycle service. Missing confirmation redirects to `system.sensitive-action-confirmation.index` with the `finance-approval` intent and a server-owned error message. Actions D1-D3 (invoice approval/rejection, exception resolution) remain deferred. Existing confirmation enforcement for GRNI approve/reject/finalize and FX review/finalize remains unchanged.
+Actions D4-D5 (proposal approve/reject) and D1-D2 (supplier invoice approve/reject) are now activated in Sprint 24 and require `finance-approval` confirmation enforcement. The controller follows the exact same pattern as `GrniControlWorkspaceController`: authorize action permission first, then require valid `SensitiveActionConfirmationService::hasValidConfirmation()` for `finance-approval` intent before invoking the lifecycle service. Missing confirmation redirects to `system.sensitive-action-confirmation.index` with the `finance-approval` intent and a server-owned error message. Actions D3 (exception resolution) remains deferred. Existing confirmation enforcement for GRNI approve/reject/finalize and FX review/finalize remains unchanged.
+
+Cash and Bank execution (D6, D7) do not currently have a source-proven confirmation intent. The `finance-approval` intent is scoped to approval/finalization decisions, not operational payment execution. Execution confirmation policy remains deferred until a future package sources the exact execution authorization and confirmation boundary.
 
 ### Sprint 24 activated route contracts
 
@@ -143,10 +149,12 @@ Actions D4-D5 (proposal approve/reject) are now activated in Sprint 24 and requi
 |---|---|---|---|---|---|
 | Approve Payment Proposal | `POST /finance/payables/payment-proposals/{proposal}/approve` | `PaymentProposalControlWorkspaceController@approve` | `PaymentProposalApprovalService::approve()` | `finance.payables.payment-proposal.approve` | `finance-approval` |
 | Reject Payment Proposal | `POST /finance/payables/payment-proposals/{proposal}/reject` | `PaymentProposalControlWorkspaceController@reject` | `PaymentProposalApprovalService::reject()` | `finance.payables.payment-proposal.approve` | `finance-approval` |
+| Approve Supplier Invoice | `POST /finance/payables/supplier-invoices/{invoice}/approve` | `SupplierInvoiceControlWorkspaceController@approve` | `SupplierInvoiceApprovalService::approve()` | `finance.payables.supplier-invoice.approve` | `finance-approval` |
+| Reject Supplier Invoice | `POST /finance/payables/supplier-invoices/{invoice}/reject` | `SupplierInvoiceControlWorkspaceController@reject` | `SupplierInvoiceApprovalService::reject()` | `finance.payables.supplier-invoice.approve` | `finance-approval` |
 
 Input contracts:
-- Approve: no body input; actor, property, company resolved server-side
-- Reject: `rejection_reason` (required, string, min 3, max 500); actor, property, company resolved server-side
+- Approve (both): no body input; actor, property, company resolved server-side
+- Reject (both): `rejection_reason` (required, string, min 3, max 500); actor, property, company resolved server-side
 
 The browser must not supply amount, currency, account, bank, allocation, invoice, journal, property, company, actor, or status.
 
@@ -177,11 +185,9 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 
 | Item | Service Exists | Web Route? | Blocker |
 |---|---|---|---|---|
-| Invoice approval | Yes | No | No controller |
-| Invoice rejection | Yes | No | No controller |
 | Exception resolution | Yes | No | No controller |
-| Cash execution | Yes | No | No controller |
-| Bank execution | Yes | No | No controller |
+| Cash execution | Yes | No | Deferred — browser-supplied cash instrument and proposal item selection; no execution workspace controller; no source-proven confirmation convention |
+| Bank execution | Yes | No | Deferred — browser-supplied bank account and statement line selection; no execution workspace controller; no source-proven confirmation convention |
 | Cash count | Yes | No | No controller |
 | Cash reconciliation | Yes | No | No controller |
 | Bank reconciliation | Yes | No (API-only) | No web route |
@@ -201,17 +207,17 @@ Workspace views are read/projection only. Mutation actions call existing lifecyc
 ## Consequences
 
 1. **Operational visibility**: Finance users gain workspace views of payment proposals, invoices, match results, settlement allocations, and reconciliation evidence — all scoped to current property.
-2. **No new lifecycle**: All mutation actions call existing services only. No new state machine is introduced. Payment proposal approval/rejection routes activated in Sprint 24 using existing `PaymentProposalApprovalService`.
-3. **Deferred web actions**: 10 source-proven services remain without web exposure (D4/D5 activated in Sprint 24). Future packages may add controllers for these.
+2. **No new lifecycle**: All mutation actions call existing services only. No new state machine is introduced. Payment proposal and supplier invoice approval/rejection routes activated in Sprint 24 using existing services: `PaymentProposalApprovalService` and `SupplierInvoiceApprovalService`.
+3. **Deferred web actions**: 8 source-proven services remain without web exposure. Cash and Bank execution deferred due to browser-supplied operational resource selection requirements and unproven confirmation conventions.
 4. **No confirmation expansion**: Since no new approve/reject/finalize web actions are added, no new `finance-approval` confirmation enforcement is required.
 
 ## Deferred decisions
 
 | Decision | Status |
 |---|---|
-| Invoice approval/rejection web routes | Deferred — service exists, no controller |
-| Cash execution web route | Deferred — service exists, no controller |
-| Bank execution web route | Deferred — service exists, no controller |
+| Invoice approval/rejection web routes | Activated Sprint 24 |
+| Cash execution web route | Deferred — browser-supplied cash instrument and proposal item selection required; no execution workspace controller; no confirmation convention |
+| Bank execution web route | Deferred — browser-supplied bank account and statement line selection required; no execution workspace controller; no confirmation convention |
 | Cash/bank reconciliation web routes | Deferred — services exist, no controllers |
 | Payment scheduling | Deferred |
 | Bulk payment execution | Deferred |
