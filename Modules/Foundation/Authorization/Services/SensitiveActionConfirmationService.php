@@ -17,6 +17,7 @@ class SensitiveActionConfirmationService
         'finance-approval',
         'fx-break-glass',
         'administrative-sensitive-action',
+        'cash-payment-execution',
     ];
 
     private const SESSION_KEY = 'sensitive_action_confirmation';

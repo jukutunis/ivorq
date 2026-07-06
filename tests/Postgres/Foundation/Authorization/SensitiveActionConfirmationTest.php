@@ -27,6 +27,11 @@ class SensitiveActionConfirmationTest extends PostgresTestCase
         return 'finance-role-assignment';
     }
 
+    private function cashIntent(): string
+    {
+        return 'cash-payment-execution';
+    }
+
     public function test_unauthenticated_actor_cannot_open_confirmation_page(): void
     {
         $this->createFixtures();
@@ -475,6 +480,289 @@ class SensitiveActionConfirmationTest extends PostgresTestCase
         $content = $response->getContent();
         $this->assertStringNotContainsString((string) $this->actor->password, $content);
         $this->assertStringNotContainsString('password', $content);
+    }
+
+    public function test_cash_payment_execution_intent_is_accepted(): void
+    {
+        $this->createFixtures();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('system.sensitive-action-confirmation.index', ['intent' => $this->cashIntent()]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('Ivorq/System/SensitiveActionConfirmation')
+                ->where('intent', $this->cashIntent())
+                ->where('isConfirmed', false)
+            );
+    }
+
+    public function test_cash_payment_execution_valid_password_creates_confirmation(): void
+    {
+        $this->createFixtures();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => $this->cashIntent(),
+                'password' => 'password',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('success', 'Sensitive action confirmed.');
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('system.sensitive-action-confirmation.index', ['intent' => $this->cashIntent()]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('isConfirmed', true)
+            );
+    }
+
+    public function test_cash_payment_execution_wrong_password_is_rejected(): void
+    {
+        $this->createFixtures();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => $this->cashIntent(),
+                'password' => 'wrong-password',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'The password is incorrect.');
+    }
+
+    public function test_cash_payment_execution_confirmation_bound_to_actor(): void
+    {
+        $this->createFixtures();
+
+        $otherActor = $this->user('Cash Exec Other', 'cash-exec-other@example.test');
+        $this->attachProperty($otherActor, $this->property);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => $this->cashIntent(),
+                'password' => 'password',
+            ])
+            ->assertSessionHas('success');
+
+        $this->flushSession();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($otherActor, 'web')
+            ->get(route('system.sensitive-action-confirmation.index', ['intent' => $this->cashIntent()]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('isConfirmed', false)
+            );
+    }
+
+    public function test_cash_payment_execution_confirmation_bound_to_property(): void
+    {
+        $this->createFixtures();
+
+        $otherProperty = Property::create([
+            'company_id' => $this->company->id,
+            'name' => 'Cash Exec Other Property',
+            'slug' => 'cash-exec-other-property',
+            'code' => 'CEOP',
+            'timezone' => 'UTC',
+            'currency' => 'USD',
+            'is_active' => true,
+        ]);
+        $this->attachProperty($this->actor, $otherProperty);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => $this->cashIntent(),
+                'password' => 'password',
+            ])
+            ->assertSessionHas('success');
+
+        $otherSession = [
+            'active_property_id' => $otherProperty->id,
+            'active_company_id' => $this->company->id,
+            'current_property_id' => $otherProperty->id,
+        ];
+
+        $this->withSession($otherSession)
+            ->actingAs($this->actor, 'web')
+            ->get(route('system.sensitive-action-confirmation.index', ['intent' => $this->cashIntent()]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('isConfirmed', false)
+            );
+    }
+
+    public function test_cash_payment_execution_confirmation_expires_after_ttl(): void
+    {
+        $this->createFixtures();
+
+        Carbon::setTestNow(Carbon::now());
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => $this->cashIntent(),
+                'password' => 'password',
+            ])
+            ->assertSessionHas('success');
+
+        Carbon::setTestNow(Carbon::now()->addMinutes(SensitiveActionConfirmationService::CONFIRMATION_TTL_MINUTES + 1));
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('system.sensitive-action-confirmation.index', ['intent' => $this->cashIntent()]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('isConfirmed', false)
+            );
+
+        Carbon::setTestNow();
+    }
+
+    public function test_cash_payment_execution_invalidation_works(): void
+    {
+        $this->createFixtures();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => $this->cashIntent(),
+                'password' => 'password',
+            ])
+            ->assertSessionHas('success');
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->delete(route('system.sensitive-action-confirmation.destroy'), [
+                'intent' => $this->cashIntent(),
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('success', 'Sensitive action confirmation ended.');
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('system.sensitive-action-confirmation.index', ['intent' => $this->cashIntent()]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('isConfirmed', false)
+            );
+    }
+
+    public function test_cash_payment_execution_confirmation_creates_audit_evidence(): void
+    {
+        $this->createFixtures();
+
+        $countBefore = AuditLog::query()
+            ->where('event', 'sensitive_action_confirmed')
+            ->count();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => $this->cashIntent(),
+                'password' => 'password',
+            ])
+            ->assertSessionHas('success');
+
+        $countAfter = AuditLog::query()
+            ->where('event', 'sensitive_action_confirmed')
+            ->count();
+
+        $this->assertGreaterThan($countBefore, $countAfter);
+    }
+
+    public function test_cash_payment_execution_confirmation_grants_no_role_or_permission(): void
+    {
+        $this->createFixtures();
+
+        $this->actor->refresh();
+        $this->actor->syncRoles([]);
+        $this->actor->syncPermissions([]);
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => $this->cashIntent(),
+                'password' => 'password',
+            ])
+            ->assertSessionHas('success');
+
+        $this->actor->refresh();
+
+        $this->assertSame(0, DB::table('model_has_roles')
+            ->where('model_id', $this->actor->id)
+            ->count());
+        $this->assertSame(0, DB::table('model_has_permissions')
+            ->where('model_id', $this->actor->id)
+            ->count());
+    }
+
+    public function test_cash_payment_execution_no_domain_tables_mutated(): void
+    {
+        $this->createFixtures();
+
+        $before = $this->domainTableCounts();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => $this->cashIntent(),
+                'password' => 'password',
+            ])
+            ->assertSessionHas('success');
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->delete(route('system.sensitive-action-confirmation.destroy'), [
+                'intent' => $this->cashIntent(),
+            ])
+            ->assertSessionHas('success');
+
+        foreach ($before as $table => $count) {
+            $this->assertSame($count, DB::table($table)->count(), "Table {$table} mutated.");
+        }
+    }
+
+    public function test_existing_finance_approval_intent_unchanged(): void
+    {
+        $this->createFixtures();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('intent', 'finance-approval')
+                ->where('isConfirmed', false)
+            );
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => 'finance-approval',
+                'password' => 'password',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('success');
+    }
+
+    public function test_existing_fx_break_glass_intent_unchanged(): void
+    {
+        $this->createFixtures();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('system.sensitive-action-confirmation.index', ['intent' => 'fx-break-glass']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('intent', 'fx-break-glass')
+                ->where('isConfirmed', false)
+            );
     }
 
     private function createFixtures(): void

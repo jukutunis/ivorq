@@ -131,6 +131,7 @@ class SensitiveActionConfirmationController extends Controller
             'finance-approval' => 'Finance Approval',
             'fx-break-glass' => 'FX Break‑Glass Activation',
             'administrative-sensitive-action' => 'Administrative Sensitive Action',
+            'cash-payment-execution' => 'Cash Payment Execution',
         ];
 
         return $labels[$intent] ?? $intent;
