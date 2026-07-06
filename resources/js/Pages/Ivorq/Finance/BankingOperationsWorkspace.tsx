@@ -117,9 +117,6 @@ interface ReconciliationSessionRecord {
   currency_code: string | null;
   statement_date_start: string | null;
   statement_date_end: string | null;
-  opening_balance: string;
-  reconciled_balance: string;
-  unreconciled_balance: string;
   matches_count: number;
   completed_at: string | null;
   finalized_at: string | null;
@@ -650,8 +647,6 @@ export default function BankingOperationsWorkspace({ bank_accounts, statement_li
                             Currency: {session.currency_code || 'N/A'}
                             <br />
                             Matches: {session.matches_count}
-                            <br />
-                            Opening: {session.opening_balance} | Reconciled: {session.reconciled_balance} | Unreconciled: {session.unreconciled_balance}
                           </span>
                         }
                         actions={<></>}

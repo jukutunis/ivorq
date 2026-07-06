@@ -58,7 +58,11 @@ No `activate`, `reopen`, `archive`, `discard`, or `exception` transitions exist.
 
 ### Confirmation policy
 
-None of the existing Reconciliation Session lifecycle services call `SensitiveActionConfirmationService`. Session creation, completion, cancellation, finalization, and match storage do not require confirmation. This is consistent with operational evidence recording (not an approval/finalization decision). No new confirmation intent is created by this ADR.
+None of the existing Reconciliation Session lifecycle services call `SensitiveActionConfirmationService`. Session creation, completion, cancellation, finalization, and match storage do not currently require confirmation. Sprint 28 exposes no session lifecycle mutation through any Inertia web route; the read-only workspace does not create, complete, finalize, cancel, or delete any reconciliation session.
+
+Existing legacy Reconciliation Session services do not currently enforce `SensitiveActionConfirmationService`. Sprint 28 exposes no session lifecycle mutation. The absence of existing confirmation enforcement does not authorize a future Inertia web action for completion, finalization, cancellation, deletion, or any other session transition. Any future activation requires a dedicated source-proof, authorization, lifecycle, and confirmation-policy review.
+
+No new confirmation intent is created by this ADR.
 
 ### Statement-line ownership and uniqueness
 
