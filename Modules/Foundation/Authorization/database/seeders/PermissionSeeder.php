@@ -102,9 +102,6 @@ class PermissionSeeder extends Seeder
             'inventory.adjustment.create',
             'inventory.adjustment.approve',
             'inventory.adjustment.post',
-
-            // Inventory — Cost Control (read-only)
-            'inventory.cost-control.view',
         ];
 
         foreach ($permissions as $name) {

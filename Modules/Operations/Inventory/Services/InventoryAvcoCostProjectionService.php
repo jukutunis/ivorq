@@ -5,6 +5,7 @@ namespace Modules\Operations\Inventory\Services;
 use Carbon\Carbon;
 use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
 use Modules\Foundation\Property\Models\Property;
+use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Inventory\Enums\InventoryCostEligibilityStatusEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
@@ -12,6 +13,7 @@ use Modules\Operations\Inventory\Models\GoodsReceipt;
 use Modules\Operations\Inventory\Models\GoodsReceiptLine;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryStockMovement;
+use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
 
@@ -209,9 +211,9 @@ class InventoryAvcoCostProjectionService
             'inventory_item_id' => $inventoryItemId,
             'controlled_ledger_quantity' => $controlledLedgerQuantity->getValue(),
             'costed_controlled_quantity' => $costedQuantity->getValue(),
-            'derived_avco_unit_cost' => $derivedAvco?->getValue(),
+            'derived_avco_unit_cost' => $eligibilityStatus === InventoryCostEligibilityStatusEnum::CostingReady
+                ? $derivedAvco?->getValue() : null,
             'derived_controlled_cost_value' => $eligibilityStatus === InventoryCostEligibilityStatusEnum::CostingReady
-                || ($derivedControlledValue !== null && !$derivedControlledValue->isZero())
                 ? $derivedControlledValue->getValue() : null,
             'base_currency_code' => $baseCurrency,
             'eligibility_status' => $eligibilityStatus->value,
@@ -244,7 +246,7 @@ class InventoryAvcoCostProjectionService
 
         $receipt = $goodsReceiptLine->goodsReceipt;
 
-        if (!$receipt || (string) $receipt->status !== 'Posted') {
+        if (!$receipt || $receipt->status !== GoodsReceiptStatusEnum::Posted) {
             return [
                 'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence,
                 'reason' => 'Goods Receipt is not posted.',
@@ -280,8 +282,16 @@ class InventoryAvcoCostProjectionService
             ];
         }
 
-        $poStatus = (string) $po->status;
-        if (!in_array($poStatus, ['Approved', 'Issued', 'PartiallyReceived', 'FullyReceived'], true)) {
+        $poStatus = $po->status instanceof PurchaseOrderStatusEnum
+            ? $po->status->value
+            : (string) $po->status;
+        $allowedStatuses = [
+            PurchaseOrderStatusEnum::Approved->value,
+            PurchaseOrderStatusEnum::Issued->value,
+            PurchaseOrderStatusEnum::PartiallyReceived->value,
+            PurchaseOrderStatusEnum::FullyReceived->value,
+        ];
+        if (!in_array($poStatus, $allowedStatuses, true)) {
             return [
                 'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence,
                 'reason' => 'Purchase Order is not in an approved commercial state.',

@@ -14,7 +14,7 @@ class InventoryCostControlWorkspaceController extends Controller
 {
     public function index(Request $request): InertiaResponse
     {
-        if (!auth()->user()->can('viewAny', \Modules\Operations\Inventory\Models\InventoryStockMovement::class)) {
+        if (!auth()->user()->hasPermissionTo('inventory.cost-control.view')) {
             abort(403, 'Unauthorized.');
         }
 
@@ -43,7 +43,7 @@ class InventoryCostControlWorkspaceController extends Controller
 
     public function project(Request $request): array
     {
-        if (!auth()->user()->can('viewAny', \Modules\Operations\Inventory\Models\InventoryStockMovement::class)) {
+        if (!auth()->user()->hasPermissionTo('inventory.cost-control.view')) {
             abort(403, 'Unauthorized.');
         }
 

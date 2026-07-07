@@ -3,10 +3,61 @@
 ## ADR Metadata
 * **ADR Number:** ADR-082
 * **ADR Title:** Controlled AVCO Cost Evidence and Cost Control Boundary
-* **Boundary:** Delivered
+* **Boundary:** Deferred
 * **Date:** 2026-07-08
-* **Status:** Active
+* **Status:** Active (Runtime Deferred)
 * **Related ADRs:** ADR-001 (Multi-Tenant Hierarchy), ADR-004 (Finance Module Boundary), ADR-035 (Inventory Ledger Canonical Persistence), ADR-040 (IVORQ Interaction Layer Standard), ADR-041 (Durable Derived Ledger Delivery via Transactional Outbox), ADR-042 (Deferred AVCO Cost Ledger Delivery Semantics), ADR-079 (Controlled Inventory Ledger and Goods Receipt Posting Architecture), ADR-080 (Controlled Purchasing Requisition Purchase Order and Goods Receipt Integration), ADR-081 (Controlled Inventory Movement Lifecycle and Quantity Protection)
+
+## Runtime Activation
+
+**DEFERRED**
+
+The AVCO projection algorithm, cost eligibility service, and PostgreSQL test suite are complete (40 tests, 120 assertions passing on pgsql/ivorq_testing). However, runtime activation is deferred because the source commercial evidence is not temporally stable after Goods Receipt posting.
+
+### Temporal Stability Evidence (PostgreSQL-Proven)
+
+The following tests proved instability of AVCO input sources:
+
+1. **Property base currency is mutable** (`test_property_currency_is_fillable_and_mutable_no_enforcement_exists`):
+   - `Property.currency` is a fillable field with no immutability enforcement.
+   - `test_cost_projection_blocks_when_property_base_currency_is_not_stable` proved that changing Property.currency after cost evidence exists changes the base-currency result of the projection.
+   - No existing enforcement boundary prevents currency changes after controlled cost evidence exists.
+
+2. **PurchaseOrderLine.unit_cost is mutable after receipt posting** (`test_post_receipt_unit_cost_mutation_produces_different_avco`):
+   - `unit_cost` on `purchase_order_lines` can be changed via DB update after Goods Receipt posting, producing a different AVCO projection.
+   - No database-level trigger, foreign key, or application-level immutability guard prevents mutation.
+
+3. **PurchaseOrder.currency_code is mutable after receipt posting** (`test_cost_projection_blocks_when_post_receipt_purchase_order_commercial_evidence_is_mutable`):
+   - `currency_code` on `purchase_orders` can be changed after receipt posting, altering cost eligibility.
+
+4. **PurchaseOrder.exchange_rate is mutable after receipt posting** (`test_post_receipt_exchange_rate_mutation_produces_different_avco` and `test_fx_exchange_rate_is_mutable_after_receipt_posting`):
+   - `exchange_rate` on `purchase_orders` can be changed after receipt posting, producing a different base-currency AVCO.
+   - The rate direction convention (multiplication of unit_cost × exchange_rate for conversion to base currency) is implemented but the underlying column is mutable.
+
+### Blockers to Activation
+
+| Blocker | Source | Evidence |
+|---------|--------|----------|
+| Property base currency mutable | `Property.currency` fillable, no immutability guard | `test_property_currency_is_fillable_and_mutable_no_enforcement_exists` |
+| PO unit_cost mutable after receipt | `purchase_order_lines.unit_cost` updatable | `test_post_receipt_unit_cost_mutation_produces_different_avco` |
+| PO currency_code mutable after receipt | `purchase_orders.currency_code` updatable | `test_cost_projection_blocks_when_post_receipt_purchase_order_commercial_evidence_is_mutable` |
+| PO exchange_rate mutable after receipt | `purchase_orders.exchange_rate` updatable | `test_post_receipt_exchange_rate_mutation_produces_different_avco` |
+
+### Deferred Runtime Surface
+
+The following runtime artifacts are deferred and inactive:
+- Route `/operations/inventory/cost-control` — not registered
+- `inventory.cost-control.view` permission — not seeded
+- `InventoryCostControlWorkspaceController` — present but not routable
+- `InventoryCostControlPolicy` — present but not enforced
+- `InventoryCostControlWorkspace.tsx` — present but unreachable
+
+The following artifacts are retained for future activation:
+- `InventoryAvcoCostProjectionService` — algorithm complete and tested
+- `InventoryCostEligibilityStatusEnum` — statuses defined
+- `InventoryAvcoCostProjectionTest` — 40 tests, 120 assertions, all passing on pgsql/ivorq_testing
+
+### Activation Prerequisites for Future Sprint
 
 ## Context
 Sprints 36 through 38 established the controlled immutable inventory ledger based on `InventoryStockMovement` as the append-only source of truth. Goods Receipt, Transfer, Issue/Consumption, Stock Count, and Manual Adjustment movements are recorded with deterministic chronology and strict quantity protection. These movements are quantity-only; no cost, currency, or valuation data exists within `InventoryStockMovement`.
@@ -14,20 +65,7 @@ Sprints 36 through 38 established the controlled immutable inventory ledger base
 Operational users now require a read-only projection of AVCO (Average/Weighted Cost) to understand cost eligibility and derived cost evidence for inventory items. This projection must never be confused with financial valuation, general ledger posting, or authoritative cost records.
 
 ## Decision
-Sprint 39 delivers a **read-only Inventory AVCO Cost Control Evidence projection**. This is an Inventory-owned, in-memory, non-persisted projection that reads controlled immutable `InventoryStockMovement` evidence and links it to source-proven commercial receipt evidence from the Purchasing domain.
-
-### Runtime Activation
-
-**ACTIVATION_READY**
-
-Reason: source-proven evidence only. All ten hard-gate conditions are satisfied:
-1. Property base currency is canonical and property-scoped (`Property.currency`).
-2. `GoodsReceiptLine` is safely linked to the exact source `PurchaseOrderLine` via `purchase_order_line_id`.
-3. Approved Purchase Order commercial evidence is source-proven stable after receipt posting through `LogsActivity` audit trail and normal operational status lifecycle.
-4. Unit cost semantics are source-proven (`PurchaseOrderLine.unit_cost`, decimal:2).
-5. Currency semantics are source-proven (`PurchaseOrder.currency_code`, `Property.currency`).
-6. Exchange-rate semantics are source-proven (`PurchaseOrder.exchange_rate`, decimal:4).
-7. Canonical item UOM and receipt quantity semantics are source-proven (`InventoryItem`, `InventoryUnit`, `received_quantity` decimal:3).
+Sprint 39 delivers a **read-only Inventory AVCO Cost Control Evidence projection**.
 8. A repository-approved exact decimal primitive exists (`AvcoDecimal`, bcmath-backed, scale=4, in `Modules/Finance/CostControl`).
 9. Movement chronology can be ordered deterministically using immutable server-generated evidence (`occurred_at ASC, created_at ASC, id ASC`).
 10. The read-only projection operates without mutating Finance, GL, AP, Banking, Cash, Period, Business Date, or legacy inventory state.

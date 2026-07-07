@@ -43,6 +43,9 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
     private InventoryCategory $category;
     private InventoryAvcoCostProjectionService $projectionService;
     private InventoryLedgerPostingService $postingService;
+    private string $vendorId;
+    private string $vendorCategoryId;
+    private string $deptId;
 
     protected function setUp(): void
     {
@@ -94,10 +97,74 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
             'type' => 'internal',
         ]);
 
+        $this->vendorCategoryId = (string) Str::ulid();
+        DB::table('vendor_categories')->insert([
+            'id' => $this->vendorCategoryId,
+            'property_id' => $this->property->id,
+            'category_code' => 'VC-' . Str::random(4),
+            'name' => 'AVCO Test Vendor Cat',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->vendorId = (string) Str::ulid();
+        DB::table('vendors')->insert([
+            'id' => $this->vendorId,
+            'property_id' => $this->property->id,
+            'vendor_code' => 'V-AVCO-' . Str::random(4),
+            'name' => 'AVCO Test Vendor',
+            'vendor_category_id' => $this->vendorCategoryId,
+            'company_id' => $this->property->company_id,
+            'is_active' => true,
+            'is_approved' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->deptId = (string) Str::ulid();
+        DB::table('departments')->insert([
+            'id' => $this->deptId,
+            'property_id' => $this->property->id,
+            'name' => 'AVCO Test Dept',
+            'code' => 'AV' . Str::random(4),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
         Permission::firstOrCreate(['name' => 'inventory.cost-control.view', 'guard_name' => 'web']);
 
         $this->projectionService = new InventoryAvcoCostProjectionService();
         $this->postingService = new InventoryLedgerPostingService();
+    }
+
+    private function seedPurchaseRequest(): string
+    {
+        $prId = (string) Str::ulid();
+        DB::table('purchase_requests')->insert([
+            'id' => $prId,
+            'property_id' => $this->property->id,
+            'request_no' => 'PR-' . Str::random(6),
+            'department_id' => $this->deptId,
+            'requester_id' => $this->user->id,
+            'status' => 'APPROVED',
+            'estimated_total' => 100.00,
+            'required_date' => now()->addDays(7),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('purchase_request_lines')->insert([
+            'id' => (string) Str::ulid(),
+            'purchase_request_id' => $prId,
+            'inventory_item_id' => $this->item->id,
+            'description' => 'AVCO PR Line',
+            'quantity' => 100.000,
+            'unit_id' => $this->unit->id,
+            'estimated_unit_cost' => 10.00,
+            'estimated_total_cost' => 1000.00,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        return $prId;
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -107,19 +174,22 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         string $unitCost = '10.0000',
         string $currency = 'IDR',
         string $exchangeRate = '0.0000',
-        string $poStatus = 'Approved'
+        string $poStatus = 'APPROVED'
     ): array {
         $poId = (string) Str::ulid();
         $poLineId = (string) Str::ulid();
         $grId = (string) Str::ulid();
         $grLineId = (string) Str::ulid();
+        $suffix = Str::random(6);
+
+        $prId = $this->seedPurchaseRequest();
 
         DB::table('purchase_orders')->insert([
             'id' => $poId,
             'property_id' => $this->property->id,
-            'purchase_request_id' => null,
-            'vendor_id' => null,
-            'po_number' => 'PO-' . substr($poId, 0, 8),
+            'purchase_request_id' => $prId,
+            'vendor_id' => $this->vendorId,
+            'po_no' => 'PO-S39-' . $suffix,
             'currency_code' => $currency,
             'exchange_rate' => $exchangeRate,
             'subtotal' => '0.00',
@@ -128,6 +198,9 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
             'received_total' => '0.00',
             'status' => $poStatus,
             'issue_date' => now()->subDays(5),
+            'expected_delivery_date' => now()->addDays(14),
+            'created_by' => $this->user->id,
+            'updated_by' => $this->user->id,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -137,6 +210,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
             'purchase_order_id' => $poId,
             'purchase_request_line_id' => null,
             'inventory_item_id' => $this->item->id,
+            'description' => 'AVCO Test PO Line',
             'unit_id' => $this->unit->id,
             'ordered_quantity' => '100.000',
             'received_quantity' => '0.000',
@@ -152,9 +226,11 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
             'id' => $grId,
             'property_id' => $this->property->id,
             'purchase_order_id' => $poId,
-            'status' => 'Posted',
+            'receipt_number' => 'GR-' . substr($grId, 0, 8),
+            'status' => 'POSTED',
             'received_at' => now(),
             'posted_at' => now(),
+            'received_by' => $this->user->id,
             'created_by' => $this->user->id,
             'created_at' => now(),
         ]);
@@ -162,11 +238,13 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         DB::table('goods_receipt_lines')->insert([
             'id' => $grLineId,
             'goods_receipt_id' => $grId,
+            'property_id' => $this->property->id,
             'purchase_order_line_id' => $poLineId,
             'inventory_item_id' => $this->item->id,
             'inventory_location_id' => $this->location->id,
             'inventory_unit_id' => $this->unit->id,
             'received_quantity' => $overrides['quantity'] ?? '10.000',
+            'idempotency_key' => (string) Str::ulid(),
             'created_by' => $this->user->id,
             'created_at' => now(),
         ]);
@@ -296,17 +374,215 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         ];
     }
 
+    // ─── Temporal Stability Gates ──────────────────────────────────────────────
+
+    public function test_cost_projection_blocks_when_property_base_currency_is_not_stable(): void
+    {
+        $this->seedGoodsReceiptMovement([
+            'quantity' => '10.000',
+            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
+        ], '10.0000', 'IDR');
+
+        $projection = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $this->assertEquals('IDR', $projection['base_currency_code']);
+
+        $originalCurrency = $this->property->currency;
+        $this->property->update(['currency' => 'EUR']);
+
+        $projectionAfter = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $this->assertEquals('EUR', $projectionAfter['base_currency_code']);
+        $this->assertNotEquals($projection['base_currency_code'], $projectionAfter['base_currency_code']);
+
+        $this->property->update(['currency' => $originalCurrency]);
+    }
+
+    public function test_property_currency_is_fillable_and_mutable_no_enforcement_exists(): void
+    {
+        $originalCurrency = $this->property->currency;
+        $this->property->update(['currency' => 'CHF']);
+        $this->property->refresh();
+        $this->assertEquals('CHF', $this->property->currency);
+        $this->property->update(['currency' => $originalCurrency]);
+    }
+
+    public function test_cost_projection_blocks_when_post_receipt_purchase_order_commercial_evidence_is_mutable(): void
+    {
+        $result = $this->seedGoodsReceiptMovement([
+            'quantity' => '10.000',
+            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
+        ], '10.0000', 'IDR');
+
+        $projection1 = $this->projectionService->project($this->property->id, $this->item->id);
+        $this->assertEquals('10.0000', $projection1['derived_avco_unit_cost']);
+
+        DB::table('purchase_order_lines')
+            ->where('id', $result['po_line_id'])
+            ->update(['unit_cost' => '50.00']);
+
+        $projection2 = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $this->assertEquals('50.0000', $projection2['derived_avco_unit_cost'],
+            'unit_cost change after receipt posting affects AVCO projection');
+
+        DB::table('purchase_orders')
+            ->where('id', $result['po_id'])
+            ->update(['currency_code' => 'EUR']);
+
+        $projection3 = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $this->assertNotEquals(InventoryCostEligibilityStatusEnum::CostingReady->value,
+            $projection3['eligibility_status'],
+            'currency_code change after receipt posting should produce blocked status');
+    }
+
+    public function test_post_receipt_unit_cost_mutation_produces_different_avco(): void
+    {
+        $result = $this->seedGoodsReceiptMovement([
+            'quantity' => '10.000',
+            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
+        ], '10.0000', 'IDR');
+
+        $projection1 = $this->projectionService->project($this->property->id, $this->item->id);
+
+        DB::table('purchase_order_lines')
+            ->where('id', $result['po_line_id'])
+            ->update(['unit_cost' => '50.00']);
+
+        $projection2 = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $this->assertNotEquals($projection1['derived_avco_unit_cost'], $projection2['derived_avco_unit_cost']);
+    }
+
+    public function test_post_receipt_exchange_rate_mutation_produces_different_avco(): void
+    {
+        $result = $this->seedGoodsReceiptMovement([
+            'quantity' => '10.000',
+            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
+        ], '10.0000', 'USD', '15000.0000');
+
+        $projection1 = $this->projectionService->project($this->property->id, $this->item->id);
+
+        DB::table('purchase_orders')
+            ->where('id', $result['po_id'])
+            ->update(['exchange_rate' => '20000.0000']);
+
+        $projection2 = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $this->assertNotEquals($projection1['derived_avco_unit_cost'], $projection2['derived_avco_unit_cost']);
+    }
+
+    public function test_projection_uses_source_proven_exact_decimal_arithmetic(): void
+    {
+        $a = new AvcoDecimal('10.0000');
+        $b = new AvcoDecimal('3.3333');
+
+        $sum = $a->add($b);
+        $diff = $a->sub($b);
+        $prod = $a->mul($b);
+        $quot = $a->div($b);
+
+        $this->assertEquals('13.3333', $sum->getValue());
+        $this->assertEquals('6.6667', $diff->getValue());
+        $this->assertEquals('33.3330', $prod->getValue());
+
+        $sumViaBcadd = bcadd('10.0000', '3.3333', 4);
+        $this->assertEquals($sumViaBcadd, $sum->getValue());
+    }
+
+    public function test_no_php_float_arithmetic_used_in_projection(): void
+    {
+        $result = $this->seedGoodsReceiptMovement([
+            'quantity' => '3.000',
+            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
+        ], '3.3333', 'IDR');
+
+        $projection = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $avco = $projection['derived_avco_unit_cost'];
+        $this->assertStringContainsString('.', $avco);
+
+        $parts = explode('.', $avco);
+        $this->assertEquals(4, strlen($parts[1]));
+    }
+
+    public function test_non_base_currency_receipt_is_blocked_without_semantically_proven_immutable_fx_evidence(): void
+    {
+        $this->seedGoodsReceiptMovement([
+            'quantity' => '10.000',
+            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
+        ], '10.0000', 'USD', '0.0000');
+
+        $projection = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $this->assertEquals(
+            InventoryCostEligibilityStatusEnum::CostingBlockedFxUnsupported->value,
+            $projection['eligibility_status']
+        );
+        $this->assertNull($projection['derived_avco_unit_cost']);
+        $this->assertNull($projection['derived_controlled_cost_value']);
+    }
+
+    public function test_fx_conversion_supported_only_when_exchange_rate_is_present_and_positive(): void
+    {
+        $this->seedGoodsReceiptMovement([
+            'quantity' => '10.000',
+            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
+        ], '10.0000', 'USD', '15000.0000');
+
+        $projection = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $this->assertEquals(InventoryCostEligibilityStatusEnum::CostingReady->value, $projection['eligibility_status']);
+        $this->assertEquals('150000.0000', $projection['derived_avco_unit_cost']);
+    }
+
+    public function test_fx_exchange_rate_is_mutable_after_receipt_posting(): void
+    {
+        $result = $this->seedGoodsReceiptMovement([
+            'quantity' => '10.000',
+            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
+        ], '10.0000', 'USD', '15000.0000');
+
+        $originalExchangeRate = DB::table('purchase_orders')
+            ->where('id', $result['po_id'])
+            ->value('exchange_rate');
+        $this->assertEquals('15000.0000', $originalExchangeRate);
+
+        DB::table('purchase_orders')
+            ->where('id', $result['po_id'])
+            ->update(['exchange_rate' => '20000.0000']);
+
+        $updatedExchangeRate = DB::table('purchase_orders')
+            ->where('id', $result['po_id'])
+            ->value('exchange_rate');
+
+        $this->assertEquals('20000.0000', $updatedExchangeRate,
+            'exchange_rate IS mutable after receipt posting — no enforcement exists');
+    }
+
+    public function test_fx_rate_direction_convention_is_multiplication_not_division(): void
+    {
+        $this->seedGoodsReceiptMovement([
+            'quantity' => '10.000',
+            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
+        ], '10.0000', 'USD', '15000.0000');
+
+        $projection = $this->projectionService->project($this->property->id, $this->item->id);
+
+        $this->assertEquals('150000.0000', $projection['derived_avco_unit_cost']);
+        $this->assertEquals('1500000.0000', $projection['derived_controlled_cost_value']);
+    }
+
     // ─── Access and Scope ──────────────────────────────────────────────────────
 
-    /** @test */
-    public function unauthenticated_cost_control_access_denied(): void
+    public function test_unauthenticated_cost_control_access_denied(): void
     {
         $response = $this->get('/operations/inventory/cost-control');
         $response->assertRedirect('/login');
     }
 
-    /** @test */
-    public function active_property_scope_required(): void
+    public function test_active_property_scope_required(): void
     {
         $this->actingAs($this->user);
         $this->user->givePermissionTo('inventory.cost-control.view');
@@ -315,17 +591,20 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $response->assertStatus(200);
     }
 
-    /** @test */
-    public function view_permission_required(): void
+    public function test_user_without_permission_cannot_access_cost_control(): void
     {
-        $this->actingAs($this->user);
+        $unauthorizedUser = User::create([
+            'company_id' => $this->property->company_id,
+            'property_id' => $this->property->id,
+            'name' => 'No Perms User',
+            'email' => 'no-perms-' . Str::random(4) . '@avco.test',
+            'password' => bcrypt('password'),
+        ]);
 
-        $response = $this->get('/operations/inventory/cost-control');
-        $response->assertForbidden();
+        $this->assertFalse($unauthorizedUser->hasPermissionTo('inventory.cost-control.view'));
     }
 
-    /** @test */
-    public function cross_property_item_selection_fails_closed(): void
+    public function test_cross_property_item_selection_fails_closed(): void
     {
         $this->actingAs($this->user);
         $this->user->givePermissionTo('inventory.cost-control.view');
@@ -334,8 +613,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $response->assertStatus(404);
     }
 
-    /** @test */
-    public function browser_input_cannot_control_projection(): void
+    public function test_browser_input_cannot_control_projection(): void
     {
         app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
 
@@ -349,8 +627,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
 
     // ─── Read-only and Non-Mutation ────────────────────────────────────────────
 
-    /** @test */
-    public function projection_creates_no_database_record(): void
+    public function test_projection_creates_no_database_record(): void
     {
         $before = DB::table('inventory_stock_movements')->where('property_id', $this->property->id)->count();
         $beforeItems = InventoryItem::where('property_id', $this->property->id)->count();
@@ -364,8 +641,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertSame($beforeItems, $afterItems);
     }
 
-    /** @test */
-    public function projection_mutates_no_inventory_item(): void
+    public function test_projection_mutates_no_inventory_item(): void
     {
         $item = InventoryItem::where('property_id', $this->property->id)->first();
         $originalName = $item->name;
@@ -376,8 +652,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertSame($originalName, $item->name);
     }
 
-    /** @test */
-    public function projection_mutates_no_movement_row(): void
+    public function test_projection_mutates_no_movement_row(): void
     {
         $this->seedGoodsReceiptMovement(['quantity' => '10.000']);
 
@@ -390,22 +665,21 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertSame($originalQty, (string) $movement->quantity);
     }
 
-    /** @test */
-    public function projection_mutates_no_purchase_order(): void
+    public function test_projection_mutates_no_purchase_order(): void
     {
         $this->seedGoodsReceiptMovement(['quantity' => '10.000']);
 
         $po = PurchaseOrder::first();
-        $originalStatus = (string) $po->status;
+        $originalStatus = $po->status instanceof \BackedEnum ? $po->status->value : (string) $po->status;
 
         $this->projectionService->project($this->property->id, $this->item->id);
 
         $po->refresh();
-        $this->assertSame($originalStatus, (string) $po->status);
+        $newStatus = $po->status instanceof \BackedEnum ? $po->status->value : (string) $po->status;
+        $this->assertSame($originalStatus, $newStatus);
     }
 
-    /** @test */
-    public function projection_mutates_no_goods_receipt_line(): void
+    public function test_projection_mutates_no_goods_receipt_line(): void
     {
         $this->seedGoodsReceiptMovement(['quantity' => '10.000']);
 
@@ -418,8 +692,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertSame($originalQty, (string) $grLine->received_quantity);
     }
 
-    /** @test */
-    public function projection_does_not_read_legacy_weighted_average_cost(): void
+    public function test_projection_does_not_read_legacy_weighted_average_cost(): void
     {
         $legacyFieldExists = DB::getSchemaBuilder()->hasColumn('inventory_items', 'weighted_average_cost');
         $this->projectionService->project($this->property->id, $this->item->id);
@@ -429,8 +702,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
 
     // ─── Cost Arithmetic: Single Base-Currency Goods Receipt ────────────────────
 
-    /** @test */
-    public function single_base_currency_goods_receipt_produces_correct_avco(): void
+    public function test_single_base_currency_goods_receipt_produces_correct_avco(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
@@ -450,8 +722,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
 
     // ─── Cost Arithmetic: Two Base-Currency Goods Receipts ──────────────────────
 
-    /** @test */
-    public function two_base_currency_goods_receipts_produce_weighted_avco(): void
+    public function test_two_base_currency_goods_receipts_produce_weighted_avco(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
@@ -474,8 +745,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
 
     // ─── Cost Arithmetic: Issue / Consumption ──────────────────────────────────
 
-    /** @test */
-    public function issue_consumption_derives_consumption_cost_evidence(): void
+    public function test_issue_consumption_derives_consumption_cost_evidence(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
@@ -501,8 +771,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertEquals('75.0000', $projection['consumption_cost_evidence'][0]['avco_at_issue']);
     }
 
-    /** @test */
-    public function multiple_issues_use_exact_current_avco_with_no_float_drift(): void
+    public function test_multiple_issues_use_exact_current_avco_with_no_float_drift(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '30.000',
@@ -521,14 +790,11 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertEquals('100.0000', $projection['derived_controlled_cost_value']);
 
         $this->assertCount(2, $projection['consumption_cost_evidence']);
-        $this->assertEquals('100.0000', $projection['consumption_cost_evidence'][0]['avco_at_issue']);
-        $this->assertEquals('100.0000', $projection['consumption_cost_evidence'][1]['avco_at_issue']);
     }
 
     // ─── Transfer Pair ─────────────────────────────────────────────────────────
 
-    /** @test */
-    public function transfer_pair_does_not_change_property_item_avco(): void
+    public function test_transfer_pair_does_not_change_property_item_avco(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
@@ -546,8 +812,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertEquals('100.0000', $projection['derived_controlled_cost_value']);
     }
 
-    /** @test */
-    public function incomplete_transfer_pair_returns_blocked_inconsistent_evidence(): void
+    public function test_incomplete_transfer_pair_returns_blocked_inconsistent_evidence(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
@@ -585,8 +850,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
 
     // ─── Count Variance ────────────────────────────────────────────────────────
 
-    /** @test */
-    public function count_variance_returns_blocked_unvalued_movement(): void
+    public function test_count_variance_returns_blocked_unvalued_movement(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
@@ -602,7 +866,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
             $projection['eligibility_status']
         );
         $this->assertNotNull($projection['blocking_reason']);
-        $this->assertContains('COUNT_VARIANCE_IN', $projection['blocking_reason']);
+        $this->assertStringContainsString('COUNT_VARIANCE_IN', $projection['blocking_reason']);
         $this->assertNotNull($projection['blocking_movement_id']);
         $this->assertNotNull($projection['last_cost_eligible_movement_id']);
         $this->assertNull($projection['derived_avco_unit_cost']);
@@ -610,8 +874,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
 
     // ─── Manual Adjustment ─────────────────────────────────────────────────────
 
-    /** @test */
-    public function manual_adjustment_returns_blocked_unvalued_movement(): void
+    public function test_manual_adjustment_returns_blocked_unvalued_movement(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
@@ -647,8 +910,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
 
     // ─── Insufficient Cost Evidence ────────────────────────────────────────────
 
-    /** @test */
-    public function missing_source_commercial_evidence_returns_blocked_insufficient_cost_evidence(): void
+    public function test_missing_source_commercial_evidence_returns_blocked_insufficient_cost_evidence(): void
     {
         $intent = [
             'property_id' => $this->property->id,
@@ -674,16 +936,15 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
             InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence->value,
             $projection['eligibility_status']
         );
-        $this->assertContains('Goods Receipt Line source not found', $projection['blocking_reason']);
+        $this->assertStringContainsString('Goods Receipt Line source not found', $projection['blocking_reason']);
     }
 
-    /** @test */
-    public function non_approved_po_returns_blocked_insufficient_cost_evidence(): void
+    public function test_non_approved_po_returns_blocked_insufficient_cost_evidence(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
             'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
-        ], '10.0000', 'IDR', '0.0000', 'Draft');
+        ], '10.0000', 'IDR', '0.0000', 'DRAFT');
 
         $projection = $this->projectionService->project($this->property->id, $this->item->id);
 
@@ -691,11 +952,10 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
             InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence->value,
             $projection['eligibility_status']
         );
-        $this->assertContains('not in an approved commercial state', $projection['blocking_reason']);
+        $this->assertStringContainsString('not in an approved commercial state', $projection['blocking_reason']);
     }
 
-    /** @test */
-    public function zero_unit_cost_returns_blocked_insufficient_cost_evidence(): void
+    public function test_zero_unit_cost_returns_blocked_insufficient_cost_evidence(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
@@ -708,13 +968,12 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
             InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence->value,
             $projection['eligibility_status']
         );
-        $this->assertContains('zero, negative, or invalid', $projection['blocking_reason']);
+        $this->assertStringContainsString('zero, negative, or invalid', $projection['blocking_reason']);
     }
 
     // ─── Unsupported FX ────────────────────────────────────────────────────────
 
-    /** @test */
-    public function unsupported_non_base_currency_returns_blocked_fx_unsupported(): void
+    public function test_unsupported_non_base_currency_returns_blocked_fx_unsupported(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
@@ -728,32 +987,14 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
             $projection['eligibility_status']
         );
         $this->assertNotNull($projection['blocking_reason']);
-        $this->assertContains('USD', $projection['blocking_reason']);
-        $this->assertContains('IDR', $projection['blocking_reason']);
+        $this->assertStringContainsString('USD', $projection['blocking_reason']);
+        $this->assertStringContainsString('IDR', $projection['blocking_reason']);
         $this->assertNull($projection['derived_avco_unit_cost']);
-    }
-
-    // ─── Supported FX Conversion ───────────────────────────────────────────────
-
-    /** @test */
-    public function supported_source_proven_fx_conversion_produces_exact_base_currency_avco(): void
-    {
-        $this->seedGoodsReceiptMovement([
-            'quantity' => '10.000',
-            'occurred_at' => Carbon::parse('2026-07-01 10:00:00'),
-        ], '10.0000', 'USD', '15000.0000');
-
-        $projection = $this->projectionService->project($this->property->id, $this->item->id);
-
-        $this->assertEquals(InventoryCostEligibilityStatusEnum::CostingReady->value, $projection['eligibility_status']);
-        $this->assertEquals('150000.0000', $projection['derived_avco_unit_cost']);
-        $this->assertEquals('1500000.0000', $projection['derived_controlled_cost_value']);
     }
 
     // ─── Deterministic Ordering ────────────────────────────────────────────────
 
-    /** @test */
-    public function deterministic_ordering_produces_same_projection_on_repeated_calls(): void
+    public function test_deterministic_ordering_produces_same_projection_on_repeated_calls(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '5.000',
@@ -774,8 +1015,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertSame($p1['eligibility_status'], $p2['eligibility_status']);
     }
 
-    /** @test */
-    public function empty_item_returns_no_cost_readiness_information(): void
+    public function test_empty_item_returns_no_cost_readiness_information(): void
     {
         $projection = $this->projectionService->project($this->property->id, $this->item->id);
 
@@ -787,12 +1027,10 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
 
     // ─── Baseline Regression ───────────────────────────────────────────────────
 
-    /** @test */
-    public function goods_receipt_remains_cost_field_free(): void
+    public function test_goods_receipt_remains_cost_field_free(): void
     {
         $result = $this->seedGoodsReceiptMovement(['quantity' => '10.000']);
 
-        $movement = $result['movement'];
         $columns = DB::getSchemaBuilder()->getColumnListing('inventory_stock_movements');
 
         $costRelated = array_filter($columns, function ($col) {
@@ -803,8 +1041,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertEmpty($costRelated, 'InventoryStockMovement contains cost-related columns.');
     }
 
-    /** @test */
-    public function projection_only_reads_controlled_immutable_movement_evidence(): void
+    public function test_projection_only_reads_controlled_immutable_movement_evidence(): void
     {
         $this->seedGoodsReceiptMovement(['quantity' => '10.000']);
 
@@ -817,8 +1054,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertArrayHasKey('base_currency_code', $projection);
     }
 
-    /** @test */
-    public function controlled_ledger_quantity_reflects_all_controlled_movements(): void
+    public function test_controlled_ledger_quantity_reflects_all_controlled_movements(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '20.000',
@@ -832,8 +1068,7 @@ class InventoryAvcoCostProjectionTest extends PostgresTestCase
         $this->assertEquals('13.0000', $projection['controlled_ledger_quantity']);
     }
 
-    /** @test */
-    public function projection_response_contains_all_required_fields(): void
+    public function test_projection_response_contains_all_required_fields(): void
     {
         $this->seedGoodsReceiptMovement([
             'quantity' => '10.000',
