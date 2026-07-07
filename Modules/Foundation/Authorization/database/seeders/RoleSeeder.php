@@ -145,6 +145,7 @@ class RoleSeeder extends Seeder
             'finance.journal-candidate.materialize-draft',
             'finance.banking.migration.view',
             'finance.banking.migration.mapping.review',
+            'finance.banking.migration.pilot.authorization.review',
         ]);
 
         $financeManager = Role::firstOrCreate([

@@ -72,6 +72,7 @@ class PermissionSeeder extends Seeder
             'finance.banking.migration.view',
             'finance.banking.migration.manage',
             'finance.banking.migration.mapping.review',
+            'finance.banking.migration.pilot.authorization.review',
         ];
 
         foreach ($permissions as $name) {
