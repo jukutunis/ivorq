@@ -11,52 +11,23 @@
 
 ## Runtime Activation
 
-**DEFERRED**
+**ACTIVATION_READY** (from immutable receipt commercial evidence only, per ADR-083)
 
-The AVCO projection algorithm, cost eligibility service, and PostgreSQL test suite are complete (40 tests, 120 assertions passing on pgsql/ivorq_testing). However, runtime activation is deferred because the source commercial evidence is not temporally stable after Goods Receipt posting.
+AVCO source: Immutable `GoodsReceiptLineCommercialEvidence` snapshot only.
+Base currency: Immutable property base-currency snapshot only.
+FX: Non-base-currency receipt snapshots remain `COSTING_BLOCKED_FX_UNSUPPORTED`.
+No current PurchaseOrder commercial terms, current Property currency, or exchange-rate snapshot is used for AVCO calculation.
 
-### Temporal Stability Evidence (PostgreSQL-Proven)
+Property currency immutability enforced by:
+- Property model booted updating hook (`isDirty('currency')` check).
+- PostgreSQL trigger `fn_block_property_currency_change()`.
 
-The following tests proved instability of AVCO input sources:
+Receipt commercial evidence immutability enforced by:
+- `GoodsReceiptLineCommercialEvidence` model booted updating/deleting guards.
+- PostgreSQL trigger `fn_block_commercial_evidence_mutation()`.
 
-1. **Property base currency is mutable** (`test_property_currency_is_fillable_and_mutable_no_enforcement_exists`):
-   - `Property.currency` is a fillable field with no immutability enforcement.
-   - `test_cost_projection_blocks_when_property_base_currency_is_not_stable` proved that changing Property.currency after cost evidence exists changes the base-currency result of the projection.
-   - No existing enforcement boundary prevents currency changes after controlled cost evidence exists.
-
-2. **PurchaseOrderLine.unit_cost is mutable after receipt posting** (`test_post_receipt_unit_cost_mutation_produces_different_avco`):
-   - `unit_cost` on `purchase_order_lines` can be changed via DB update after Goods Receipt posting, producing a different AVCO projection.
-   - No database-level trigger, foreign key, or application-level immutability guard prevents mutation.
-
-3. **PurchaseOrder.currency_code is mutable after receipt posting** (`test_cost_projection_blocks_when_post_receipt_purchase_order_commercial_evidence_is_mutable`):
-   - `currency_code` on `purchase_orders` can be changed after receipt posting, altering cost eligibility.
-
-4. **PurchaseOrder.exchange_rate is mutable after receipt posting** (`test_post_receipt_exchange_rate_mutation_produces_different_avco` and `test_fx_exchange_rate_is_mutable_after_receipt_posting`):
-   - `exchange_rate` on `purchase_orders` can be changed after receipt posting, producing a different base-currency AVCO.
-   - The rate direction convention (multiplication of unit_cost × exchange_rate for conversion to base currency) is implemented but the underlying column is mutable.
-
-### Blockers to Activation
-
-| Blocker | Source | Evidence |
-|---------|--------|----------|
-| Property base currency mutable | `Property.currency` fillable, no immutability guard | `test_property_currency_is_fillable_and_mutable_no_enforcement_exists` |
-| PO unit_cost mutable after receipt | `purchase_order_lines.unit_cost` updatable | `test_post_receipt_unit_cost_mutation_produces_different_avco` |
-| PO currency_code mutable after receipt | `purchase_orders.currency_code` updatable | `test_cost_projection_blocks_when_post_receipt_purchase_order_commercial_evidence_is_mutable` |
-| PO exchange_rate mutable after receipt | `purchase_orders.exchange_rate` updatable | `test_post_receipt_exchange_rate_mutation_produces_different_avco` |
-
-### Deferred Runtime Surface
-
-The following runtime artifacts are deferred and inactive:
-- Route `/operations/inventory/cost-control` — not registered
-- `inventory.cost-control.view` permission — not seeded
-- `InventoryCostControlWorkspaceController` — present but not routable
-- `InventoryCostControlPolicy` — present but not enforced
-- `InventoryCostControlWorkspace.tsx` — present but unreachable
-
-The following artifacts are retained for future activation:
-- `InventoryAvcoCostProjectionService` — algorithm complete and tested
-- `InventoryCostEligibilityStatusEnum` — statuses defined
-- `InventoryAvcoCostProjectionTest` — 40 tests, 120 assertions, all passing on pgsql/ivorq_testing
+Sprint 39.1 (ADR-083) established the immutable evidence foundation.
+Sprint 39.2 activated AVCO runtime from that foundation.
 
 ### Activation Prerequisites for Future Sprint
 
