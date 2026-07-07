@@ -26,6 +26,7 @@ class BankingPermissionSeeder extends Seeder
             // Banking — Migration Control Plane
             'finance.banking.migration.view',
             'finance.banking.migration.manage',
+            'finance.banking.migration.mapping.review',
         ];
 
         foreach ($permissions as $permission) {
