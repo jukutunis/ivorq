@@ -14,6 +14,7 @@ use Modules\Finance\Banking\Models\BankingMigrationPlan;
 use Modules\Finance\Banking\Models\BankingMigrationTargetIntake;
 use Modules\Finance\Banking\Models\ControlledBankAccount;
 use Modules\Finance\Banking\Services\BankingMigrationDryRunService;
+use Modules\Finance\Banking\Services\BankingMigrationPilotAuthorizationService;
 use Modules\Finance\Banking\Services\BankingMigrationPlanService;
 use Modules\Finance\Banking\Services\BankingMigrationTargetIntakeService;
 use Modules\Foundation\User\Models\User;
@@ -296,6 +297,69 @@ class BankingMigrationPlanController extends Controller
             return redirect()
                 ->route('finance.banking.migration.index')
                 ->with('success', 'Mapping proposal review recorded.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('error', $exception->getMessage());
+        }
+    }
+
+    public function requestPilotAuthorization(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can(BankingMigrationPilotAuthorizationService::PERMISSION_REQUEST)) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $this->resolvePropertyId($request);
+
+        $validated = $request->validate([
+            'banking_migration_target_intake_id' => ['required', 'string', 'size:26'],
+        ]);
+
+        $service = app(BankingMigrationPilotAuthorizationService::class);
+
+        try {
+            $service->request(
+                $validated['banking_migration_target_intake_id'],
+                $user
+            );
+
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('success', 'Pilot authorization requested.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('error', $exception->getMessage());
+        }
+    }
+
+    public function reviewPilotAuthorization(Request $request, string $pilotAuthId): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can(BankingMigrationPilotAuthorizationService::PERMISSION_REVIEW)) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $this->resolvePropertyId($request);
+
+        $validated = $request->validate([
+            'review_outcome' => ['required', 'string', 'in:REVIEW_ACCEPTED,REVIEW_REJECTED'],
+        ]);
+
+        $service = app(BankingMigrationPilotAuthorizationService::class);
+
+        try {
+            $service->review(
+                $pilotAuthId,
+                $validated['review_outcome'],
+                $user
+            );
+
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('success', 'Pilot authorization review recorded.');
         } catch (Throwable $exception) {
             return redirect()
                 ->route('finance.banking.migration.index')

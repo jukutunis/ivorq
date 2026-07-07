@@ -127,6 +127,7 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
   const [showProposeForm, setShowProposeForm] = useState<boolean>(false);
+  const [showRequestPilotForm, setShowRequestPilotForm] = useState<boolean>(false);
 
   const planCount = useMemo(() => plans.length, [plans]);
   const draftCount = useMemo(() => plans.filter((p) => p.status === 'DRAFT').length, [plans]);
@@ -165,6 +166,12 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
     controlled_bank_account_id: '',
   });
 
+  const requestPilotForm = useForm<{
+    banking_migration_target_intake_id: string;
+  }>({
+    banking_migration_target_intake_id: '',
+  });
+
   const submitCreate = (event: React.FormEvent) => {
     event.preventDefault();
     createForm.post(route('finance.banking.migration.plan.create'), {
@@ -184,6 +191,24 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
         setShowProposeForm(false);
         proposeForm.reset();
       },
+    });
+  };
+
+  const submitRequestPilot = (event: React.FormEvent) => {
+    event.preventDefault();
+    requestPilotForm.post(route('finance.banking.migration.pilot-authorization.request'), {
+      preserveScroll: true,
+      onSuccess: () => {
+        setShowRequestPilotForm(false);
+        requestPilotForm.reset();
+      },
+    });
+  };
+
+  const submitPilotReview = (pilotAuthId: string, outcome: string) => {
+    const form = useForm<{ review_outcome: string }>({ review_outcome: outcome });
+    form.post(route('finance.banking.migration.pilot-authorization.review', { pilotAuth: pilotAuthId }), {
+      preserveScroll: true,
     });
   };
 
@@ -229,6 +254,9 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
               </Button>
               <Button type="button" variant="primary" onClick={() => setShowProposeForm(!showProposeForm)}>
                 {showProposeForm ? 'Cancel' : 'Propose Mapping'}
+              </Button>
+              <Button type="button" variant="primary" onClick={() => setShowRequestPilotForm(!showRequestPilotForm)}>
+                {showRequestPilotForm ? 'Cancel' : 'Request Pilot Authorization'}
               </Button>
             </>
           )}
@@ -402,6 +430,67 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
                 </div>
               </form>
             </AttentionArea>
+          )}
+
+          {showRequestPilotForm && canManage && target_intakes && (
+            (() => {
+              const eligibleIntakes = target_intakes.filter(
+                (t) => t.status === 'REVIEW_ACCEPTED' && t.source_category === 'bank_account'
+              );
+              const activePilotAuthTargetIntakeIds = pilot_authorizations
+                ?.filter((p) => p.status === 'REQUESTED' || p.status === 'REVIEW_ACCEPTED')
+                ?.map((p) => p.target_intake_id) ?? [];
+              const currentlyEligible = eligibleIntakes.filter(
+                (t) => !activePilotAuthTargetIntakeIds.includes(t.id)
+              );
+
+              if (currentlyEligible.length === 0) {
+                return (
+                  <AttentionArea title="Request Pilot Authorization" badgeText="No Eligible Intakes" badgeType="neutral" areaType="inspection">
+                    <div className="finance-empty-state">
+                      No REVIEW_ACCEPTED target intakes are currently eligible for pilot authorization request.
+                      Each target intake must have source model BankAccount and no active pilot authorization.
+                    </div>
+                  </AttentionArea>
+                );
+              }
+
+              return (
+                <AttentionArea title="Request Pilot Authorization" badgeText="Control Plane" badgeType="inspection" areaType="inspection">
+                  <form onSubmit={submitRequestPilot} style={{ display: 'grid', gap: '12px' }}>
+                    <div className="filter-group">
+                      <label className="filter-label">Target Intake (REVIEW_ACCEPTED, BankAccount source)</label>
+                      <select
+                        value={requestPilotForm.data.banking_migration_target_intake_id}
+                        onChange={(e) => requestPilotForm.setData('banking_migration_target_intake_id', e.target.value)}
+                        style={{ width: '100%', padding: '6px 8px' }}
+                      >
+                        <option value="">Select an eligible target intake...</option>
+                        {currentlyEligible.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            Intake {t.id} (Plan: {t.migration_plan_id})
+                          </option>
+                        ))}
+                      </select>
+                      <div className="finance-context-note">
+                        Only REVIEW_ACCEPTED target intakes with BankAccount source are eligible. No legacy account numbers, target account numbers, balances, amounts, or financial payloads are submitted.
+                      </div>
+                    </div>
+                    <div className="finance-context-note">
+                      Property, plan, manifest entry, source model, actor, authority, and audit evidence are server-resolved. Only target intake ID is accepted from browser input. Request and review are independent control-plane governance actions.
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <Button type="submit" variant="primary" disabled={requestPilotForm.processing}>
+                        Request Pilot Authorization
+                      </Button>
+                      <Button type="button" variant="secondary" onClick={() => setShowRequestPilotForm(false)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                </AttentionArea>
+              );
+            })()
           )}
 
           <OperationalSnapshot>
@@ -686,7 +775,30 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
                                 Correlation: {auth.correlation_id}
                               </span>
                             }
-                            actions={<></>}
+                            actions={
+                              canReviewPilotAuth && auth.status === 'REQUESTED' ? (
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="primary"
+                                    onClick={() => submitPilotReview(auth.id, 'REVIEW_ACCEPTED')}
+                                  >
+                                    Accept
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => submitPilotReview(auth.id, 'REVIEW_REJECTED')}
+                                  >
+                                    Reject
+                                  </Button>
+                                </div>
+                              ) : (
+                                <></>
+                              )
+                            }
                           />
                         ))}
                       </div>
