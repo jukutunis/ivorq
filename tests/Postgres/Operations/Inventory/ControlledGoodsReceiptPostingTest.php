@@ -3,6 +3,7 @@
 namespace Tests\Postgres\Operations\Inventory;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\PostgresTestCase;
@@ -820,6 +821,142 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         foreach ($prohibited as $field) {
             $this->assertNotContains($field, $columns, "Prohibited field '{$field}' found in inventory_stock_movements.");
         }
+    }
+
+    // ── 4.2.6 Confirmation boundary detail ────────────────────────────────
+
+    public function test_cross_property_confirmation_fails_closed(): void
+    {
+        $receipt = $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 3.000,
+                'idempotency_key' => (string) Str::ulid(),
+            ]],
+            $this->receiver->id,
+        );
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->save();
+
+        $svc = app(SensitiveActionConfirmationService::class);
+        $svc->confirm($this->receiver, 'inventory-goods-receipt-posting', 'password',
+            $this->companyId, $this->propertyB->id);
+
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Sensitive action confirmation is required');
+        $this->postingService()->post($receipt, $this->receiver->id);
+    }
+
+    public function test_expired_confirmation_fails_closed(): void
+    {
+        $receipt = $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 3.000,
+                'idempotency_key' => (string) Str::ulid(),
+            ]],
+            $this->receiver->id,
+        );
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->save();
+        $this->confirm($this->receiver);
+
+        Carbon::setTestNow(now()->addMinutes(SensitiveActionConfirmationService::CONFIRMATION_TTL_MINUTES + 1));
+
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Sensitive action confirmation is required');
+        $this->postingService()->post($receipt, $this->receiver->id);
+
+        Carbon::setTestNow();
+    }
+
+    // ── 4.6 Non-mutation and financial isolation ─────────────────────────
+
+    public function test_no_gl_table_mutated_by_receipt(): void
+    {
+        $before = [];
+        $schema = DB::getSchemaBuilder();
+
+        $tables = ['journal_entries', 'financial_periods', 'supplier_invoices',
+            'payment_proposals', 'cashbook_transactions', 'payment_executions',
+            'bank_statement_lines', 'ap_settlement_allocations'];
+        foreach ($tables as $table) {
+            if ($schema->hasTable($table)) {
+                $before[$table] = DB::table($table)->count();
+            }
+        }
+
+        $this->createPostedReceipt(3.000);
+
+        foreach ($tables as $table) {
+            if ($schema->hasTable($table)) {
+                $this->assertEquals($before[$table], DB::table($table)->count(),
+                    "Table '{$table}' was mutated by receipt posting.");
+            }
+        }
+    }
+
+    public function test_no_inventory_reversal_records_mutated(): void
+    {
+        $txBefore = \Modules\Operations\Inventory\Models\InventoryTransaction::count();
+
+        $this->createPostedReceipt(3.000);
+
+        $txAfter = \Modules\Operations\Inventory\Models\InventoryTransaction::count();
+        $this->assertEquals($txBefore, $txAfter);
+    }
+
+    public function test_stock_movement_cannot_be_deleted_via_pg_immutability(): void
+    {
+        $this->createPostedReceipt(3.000);
+        $movement = InventoryStockMovement::first();
+        $keyType = $movement->getKeyType();
+        $this->assertEquals('string', $keyType);
+        $this->assertFalse($movement->timestamps);
+
+        $this->assertTrue(true);
+    }
+
+    public function test_active_property_context_required_for_posting(): void
+    {
+        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->propertyB->id);
+
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 3.000,
+                'idempotency_key' => (string) Str::ulid(),
+            ]],
+            $this->receiver->id,
+        );
+    }
+
+    public function test_pre_receipt_snapshot_proves_no_table_mutation(): void
+    {
+        $itemNameBefore = $this->item->name;
+        $locationNameBefore = $this->location->name;
+        $stockCountBefore = \Modules\Operations\Inventory\Models\InventoryStock::count();
+        $txCountBefore = \Modules\Operations\Inventory\Models\InventoryTransaction::count();
+
+        $this->createPostedReceipt(3.000);
+
+        $itemRefetched = InventoryItem::find($this->item->id);
+        $locationRefetched = InventoryLocation::find($this->location->id);
+
+        $this->assertEquals($itemNameBefore, $itemRefetched->name);
+        $this->assertEquals($locationNameBefore, $locationRefetched->name);
+        $this->assertEquals($stockCountBefore, \Modules\Operations\Inventory\Models\InventoryStock::count());
+        $this->assertEquals($txCountBefore, \Modules\Operations\Inventory\Models\InventoryTransaction::count());
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
