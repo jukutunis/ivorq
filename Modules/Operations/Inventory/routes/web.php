@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Operations\Inventory\Http\Controllers\GoodsReceiptController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryAdjustmentController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryCategoryController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryDashboardController;
@@ -91,6 +92,18 @@ Route::middleware(['web', 'auth'])
         // ── Controlled Inventory Ledger ────────────────────────────────────────
         Route::get('ledger', [InventoryLedgerWorkspaceController::class, 'index'])
             ->name('ledger.index');
+
+        // ── Controlled Goods Receipts ──────────────────────────────────────
+        Route::get('goods-receipts', [GoodsReceiptController::class, 'index'])
+            ->name('goods-receipts.index');
+        Route::get('goods-receipts/{goodsReceipt}', [GoodsReceiptController::class, 'show'])
+            ->name('goods-receipts.show');
+        Route::post('goods-receipts', [GoodsReceiptController::class, 'createDraft'])
+            ->name('goods-receipts.create');
+        Route::post('goods-receipts/{goodsReceipt}/confirm', [GoodsReceiptController::class, 'submitForConfirmation'])
+            ->name('goods-receipts.confirm');
+        Route::post('goods-receipts/{goodsReceipt}/post', [GoodsReceiptController::class, 'post'])
+            ->name('goods-receipts.post');
 
         // ── Reversals ─────────────────────────────────────────────────────────
         Route::get('reversals/{transaction}', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalWorkspaceController::class, 'index'])

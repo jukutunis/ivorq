@@ -20,6 +20,7 @@ class SensitiveActionConfirmationService
         'cash-payment-execution',
         'bank-payment-execution',
         'banking-migration-account-identity-pilot-execution',
+        'inventory-goods-receipt-posting',
     ];
 
     private const SESSION_KEY = 'sensitive_action_confirmation';
