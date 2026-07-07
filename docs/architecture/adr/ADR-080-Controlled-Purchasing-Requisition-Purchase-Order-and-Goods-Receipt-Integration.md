@@ -4,6 +4,20 @@
 **Date:** 2026-07-07
 **Related ADRs:** ADR-001, ADR-002, ADR-003, ADR-004, ADR-006, ADR-008, ADR-029, ADR-032, ADR-040, ADR-079
 
+## Validation Status
+
+Wave 1 / boundary: Delivered (Sprint 36).
+Wave 2 / controlled Goods Receipt posting: Delivered and PostgreSQL-validated.
+Goods Receipt posting: Enabled only through the approved Inventory Ledger boundary.
+Costing, valuation, GL, AP, supplier invoice, return, reversal, transfer, issue, count, adjustment, and POS integration: Not authorized.
+
+**PostgreSQL Validation Evidence:**
+- `InventoryStockMovementLedgerTest`: 21 tests, 49 assertions, 0 failures, 0 errors (pgsql/ivorq_testing)
+- `ControlledGoodsReceiptPostingTest`: 7 tests, 11 assertions, 0 failures, 0 errors (pgsql/ivorq_testing)
+- Full Banking/Finance Master Regression: 194 tests, 0 failures, 0 errors
+- `npm run build`: successful
+- All 15 touched PHP files: no syntax errors
+
 ## 1. Narrow Purchasing Scope
 
 This ADR defines an inventory-item purchase workflow for a single property. The pilot scope is:

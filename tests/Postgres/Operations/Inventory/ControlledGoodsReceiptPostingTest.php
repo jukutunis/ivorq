@@ -204,6 +204,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
             'purchase_request_id' => $prId,
             'vendor_id' => $vendorId,
             'issue_date' => now(),
+            'expected_delivery_date' => now()->addDays(14),
             'status' => PurchaseOrderStatusEnum::Approved->value,
             'created_by' => $userId,
             'approved_by' => $approverId,
@@ -218,6 +219,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
             'id' => $poLineId,
             'purchase_order_id' => $poId,
             'inventory_item_id' => $this->item->id,
+            'description' => 'GR Test PO Line',
             'unit_id' => $unitId,
             'ordered_quantity' => 10.000,
             'received_quantity' => 0,
@@ -351,7 +353,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
         $this->postingService()->post($receipt, $this->user->id);
         $po = PurchaseOrder::find($this->po->id);
-        $this->assertEquals(PurchaseOrderStatusEnum::PartiallyReceived->value, $po->status);
+        $this->assertEquals(PurchaseOrderStatusEnum::PartiallyReceived, $po->status);
     }
 
     public function test_full_receipt_sets_fully_received(): void
@@ -378,7 +380,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
         $this->postingService()->post($receipt, $this->user->id);
         $po = PurchaseOrder::find($this->po->id);
-        $this->assertEquals(PurchaseOrderStatusEnum::FullyReceived->value, $po->status);
+        $this->assertEquals(PurchaseOrderStatusEnum::FullyReceived, $po->status);
     }
 
     public function test_no_mutable_stock_balance_written(): void
