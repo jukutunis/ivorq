@@ -7,16 +7,35 @@
 ## Validation Status
 
 Wave 1 / boundary: Delivered (Sprint 36).
-Wave 2 / controlled Goods Receipt posting: Delivered and PostgreSQL-validated.
-Goods Receipt posting: Enabled only through the approved Inventory Ledger boundary.
-Costing, valuation, GL, AP, supplier invoice, return, reversal, transfer, issue, count, adjustment, and POS integration: Not authorized.
 
-**PostgreSQL Validation Evidence:**
-- `InventoryStockMovementLedgerTest`: 21 tests, 49 assertions, 0 failures, 0 errors (pgsql/ivorq_testing)
-- `ControlledGoodsReceiptPostingTest`: 7 tests, 11 assertions, 0 failures, 0 errors (pgsql/ivorq_testing)
+Controlled Goods Receipt posting:
+Delivered and PostgreSQL-validated.
+
+Inventory Ledger posting:
+Mandatory and authoritative for Sprint 37 receipt movements.
+
+Costing, valuation, AVCO, FIFO, GL, AP invoice, payment,
+supplier return, receipt reversal, transfer, issue, count,
+adjustment, POS consumption, and stock migration:
+NOT AUTHORIZED
+
+**PostgreSQL Validation Evidence (pgsql/ivorq_testing):**
+- `InventoryStockMovementLedgerTest`: 21 tests, 49 assertions, 0 failures, 0 errors
+- `ControlledGoodsReceiptPostingTest`: 54 tests, 104 assertions, 0 failures, 0 errors
+- `SensitiveActionConfirmationTest`: 45 tests, 386 assertions, 0 failures, 0 errors
 - Full Banking/Finance Master Regression: 194 tests, 0 failures, 0 errors
-- `npm run build`: successful
-- All 15 touched PHP files: no syntax errors
+- `InventoryReversalWorkspaceTest`: 8 tests, 2 errors (INHERITED_REVERSAL_TEST_DEBT_CONFIRMED — pre-existing trigger conflict, not caused by Sprint 36/37)
+- Concurrency: CONCURRENCY_TEST_HARNESS_GAP — no repository-compatible independent-process convention exists
+
+**Commit chain:**
+```
+20a67c5 Sprint 36: Define controlled inventory ledger boundary
+dca73af Sprint 37: Define controlled purchasing and receiving boundary
+bd6ad75 Sprint 37: Validate controlled goods receipt posting
+183acaf Sprint 37: Prove controlled goods receipt boundaries
+ff8430e Sprint 37: Complete controlled goods receipt validation
+265c3d4 Sprint 37: Prove receipt confirmation and concurrency safety
+```
 
 ## 1. Narrow Purchasing Scope
 
