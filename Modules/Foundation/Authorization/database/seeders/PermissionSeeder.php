@@ -84,6 +84,24 @@ class PermissionSeeder extends Seeder
             'inventory.purchasing.purchase-order.create',
             'inventory.purchasing.purchase-order.approve',
             'inventory.purchasing.goods-receipt.receive',
+
+            // Inventory — Transfers
+            'inventory.transfer.create',
+            'inventory.transfer.post',
+
+            // Inventory — Issues
+            'inventory.issue.create',
+            'inventory.issue.post',
+
+            // Inventory — Stock Counts
+            'inventory.stock-count.create',
+            'inventory.stock-count.approve',
+            'inventory.stock-count.post',
+
+            // Inventory — Adjustments
+            'inventory.adjustment.create',
+            'inventory.adjustment.approve',
+            'inventory.adjustment.post',
         ];
 
         foreach ($permissions as $name) {

@@ -46,6 +46,15 @@ class InventoryTransferPolicy
     }
 
     /**
+     * Posting a transfer executes the confirmed movement (Sprint 38).
+     */
+    public function post(User $user, InventoryTransfer $transfer): bool
+    {
+        return $user->hasPermissionTo('inventory.transfer.post')
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $transfer->property_id);
+    }
+
+    /**
      * Cancellation allowed from Draft or Submitted (BR-054).
      */
     public function cancel(User $user, InventoryTransfer $transfer): bool

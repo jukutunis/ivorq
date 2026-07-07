@@ -13,6 +13,7 @@ use Modules\Operations\Inventory\Models\InventoryReceipt;
 use Modules\Operations\Inventory\Models\InventoryStockMovement;
 use Modules\Operations\Inventory\Models\InventoryTransfer;
 use Modules\Operations\Inventory\Models\InventoryUnit;
+use Modules\Operations\Inventory\Models\StockCountSession;
 use Modules\Operations\Inventory\Policies\InventoryAdjustmentPolicy;
 use Modules\Operations\Inventory\Policies\InventoryCategoryPolicy;
 use Modules\Operations\Inventory\Policies\InventoryIssuePolicy;
@@ -22,6 +23,7 @@ use Modules\Operations\Inventory\Policies\InventoryLocationPolicy;
 use Modules\Operations\Inventory\Policies\InventoryReceiptPolicy;
 use Modules\Operations\Inventory\Policies\InventoryTransferPolicy;
 use Modules\Operations\Inventory\Policies\InventoryUnitPolicy;
+use Modules\Operations\Inventory\Policies\StockCountPolicy;
 
 class InventoryServiceProvider extends ServiceProvider
 {
@@ -47,5 +49,6 @@ class InventoryServiceProvider extends ServiceProvider
         Gate::policy(InventoryTransfer::class,    InventoryTransferPolicy::class);
         Gate::policy(InventoryAdjustment::class,  InventoryAdjustmentPolicy::class);
         Gate::policy(InventoryStockMovement::class, InventoryLedgerPolicy::class);
+        Gate::policy(StockCountSession::class,    StockCountPolicy::class);
     }
 }

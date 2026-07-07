@@ -67,6 +67,15 @@ class InventoryAdjustmentPolicy
     /**
      * Cancellation by any user with create permission (draft) or approve permission (submitted).
      */
+    /**
+     * Posting an adjustment applies the confirmed stock change (Sprint 38).
+     */
+    public function post(User $user, InventoryAdjustment $adjustment): bool
+    {
+        return $user->hasPermissionTo('inventory.adjustment.post')
+            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $adjustment->property_id);
+    }
+
     public function cancel(User $user, InventoryAdjustment $adjustment): bool
     {
         return $user->hasPermissionTo('inventory.adjustment.create')
