@@ -12,6 +12,7 @@ use Modules\Operations\Inventory\Http\Controllers\InventoryLocationController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryReceiptController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryStockCardController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryTransferController;
+use Modules\Operations\Inventory\Http\Controllers\InventoryCostControlWorkspaceController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryUnitController;
 
 Route::middleware(['web', 'auth'])
@@ -104,6 +105,13 @@ Route::middleware(['web', 'auth'])
             ->name('goods-receipts.confirm');
         Route::post('goods-receipts/{goodsReceipt}/post', [GoodsReceiptController::class, 'post'])
             ->name('goods-receipts.post');
+
+        // ── Cost Control (read-only) ────────────────────────────────────────────
+        Route::get('cost-control', [InventoryCostControlWorkspaceController::class, 'index'])
+            ->name('cost-control.index');
+
+        Route::get('cost-control/project', [InventoryCostControlWorkspaceController::class, 'project'])
+            ->name('cost-control.project');
 
         // ── Reversals ─────────────────────────────────────────────────────────
         Route::get('reversals/{transaction}', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalWorkspaceController::class, 'index'])

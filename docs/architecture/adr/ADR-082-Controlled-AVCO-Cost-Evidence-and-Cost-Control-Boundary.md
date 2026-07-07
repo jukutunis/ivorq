@@ -3,9 +3,10 @@
 ## ADR Metadata
 * **ADR Number:** ADR-082
 * **ADR Title:** Controlled AVCO Cost Evidence and Cost Control Boundary
-* **Boundary:** Deferred
+* **Boundary:** Delivered
 * **Date:** 2026-07-08
-* **Status:** Active (Runtime Deferred)
+* **Status:** Active
+* **Runtime Activation:** ACTIVATION_READY (from immutable receipt commercial evidence only, per ADR-083)
 * **Related ADRs:** ADR-001 (Multi-Tenant Hierarchy), ADR-004 (Finance Module Boundary), ADR-035 (Inventory Ledger Canonical Persistence), ADR-040 (IVORQ Interaction Layer Standard), ADR-041 (Durable Derived Ledger Delivery via Transactional Outbox), ADR-042 (Deferred AVCO Cost Ledger Delivery Semantics), ADR-079 (Controlled Inventory Ledger and Goods Receipt Posting Architecture), ADR-080 (Controlled Purchasing Requisition Purchase Order and Goods Receipt Integration), ADR-081 (Controlled Inventory Movement Lifecycle and Quantity Protection)
 
 ## Runtime Activation

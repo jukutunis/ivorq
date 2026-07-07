@@ -10,6 +10,7 @@ use Modules\Operations\Inventory\Enums\InventoryCostEligibilityStatusEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
 use Modules\Operations\Inventory\Models\GoodsReceipt;
+use Modules\Operations\Inventory\Models\GoodsReceiptLineCommercialEvidence;
 use Modules\Operations\Inventory\Models\GoodsReceiptLine;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryStockMovement;
@@ -253,76 +254,55 @@ class InventoryAvcoCostProjectionService
             ];
         }
 
-        $poLine = PurchaseOrderLine::with('purchaseOrder')
-            ->find($goodsReceiptLine->purchase_order_line_id);
+        $evidence = GoodsReceiptLineCommercialEvidence::where(
+            'goods_receipt_line_id',
+            $goodsReceiptLine->id
+        )->first();
 
-        if (!$poLine) {
+        if (!$evidence) {
             return [
                 'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence,
-                'reason' => 'Purchase Order Line not found.',
+                'reason' => 'No immutable receipt commercial evidence snapshot exists for this receipt line.',
             ];
         }
 
-        $unitCostRaw = (string) $poLine->unit_cost;
+        $snapshotPropertyCurrency = strtoupper((string) $evidence->property_base_currency_code_snapshot);
+
+        if ($snapshotPropertyCurrency !== $baseCurrency) {
+            return [
+                'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInconsistentMovementEvidence,
+                'reason' => sprintf(
+                    'Snapshot property currency %s does not match current property base currency %s.',
+                    $snapshotPropertyCurrency,
+                    $baseCurrency
+                ),
+            ];
+        }
+
+        $snapshotPoCurrency = strtoupper((string) $evidence->purchase_order_currency_code_snapshot);
+
+        if ($snapshotPoCurrency !== $snapshotPropertyCurrency) {
+            return [
+                'status' => InventoryCostEligibilityStatusEnum::CostingBlockedFxUnsupported,
+                'reason' => sprintf(
+                    'Receipt is in non-base-currency %s. Only base-currency items are cost-eligible.',
+                    $snapshotPoCurrency
+                ),
+            ];
+        }
+
+        $unitCostRaw = (string) $evidence->purchase_order_unit_cost_snapshot;
         $unitCostNumeric = (float) $unitCostRaw;
 
         if ($unitCostNumeric <= 0) {
             return [
                 'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence,
-                'reason' => 'Purchase Order Line unit cost is zero, negative, or invalid.',
+                'reason' => 'Immutable snapshot unit cost is zero, negative, or invalid.',
             ];
         }
 
-        $po = $poLine->purchaseOrder;
-
-        if (!$po) {
-            return [
-                'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence,
-                'reason' => 'Purchase Order not found.',
-            ];
-        }
-
-        $poStatus = $po->status instanceof PurchaseOrderStatusEnum
-            ? $po->status->value
-            : (string) $po->status;
-        $allowedStatuses = [
-            PurchaseOrderStatusEnum::Approved->value,
-            PurchaseOrderStatusEnum::Issued->value,
-            PurchaseOrderStatusEnum::PartiallyReceived->value,
-            PurchaseOrderStatusEnum::FullyReceived->value,
-        ];
-        if (!in_array($poStatus, $allowedStatuses, true)) {
-            return [
-                'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence,
-                'reason' => 'Purchase Order is not in an approved commercial state.',
-            ];
-        }
-
-        $poCurrency = strtoupper((string) ($po->currency_code ?? 'IDR'));
-        $exchangeRateRaw = (string) ($po->exchange_rate ?? '0');
-        $exchangeRateNumeric = (float) $exchangeRateRaw;
-
-        $receiptValue = null;
-
-        if ($poCurrency === $baseCurrency) {
-            $unitCostDecimal = new AvcoDecimal($unitCostRaw);
-            $receiptValue = $unitCostDecimal->mul($quantityDecimal);
-        } elseif ($exchangeRateNumeric > 0) {
-            $exchangeRateDecimal = new AvcoDecimal($exchangeRateRaw);
-            $unitCostDecimal = new AvcoDecimal($unitCostRaw);
-            $convertedUnitCost = $unitCostDecimal->mul($exchangeRateDecimal);
-            $receiptValue = $convertedUnitCost->mul($quantityDecimal);
-        } else {
-            return [
-                'status' => InventoryCostEligibilityStatusEnum::CostingBlockedFxUnsupported,
-                'reason' => sprintf(
-                    'Goods Receipt source currency %s differs from property base currency %s '
-                    . 'and no valid source-proven exchange rate exists.',
-                    $poCurrency,
-                    $baseCurrency
-                ),
-            ];
-        }
+        $unitCostDecimal = new AvcoDecimal($unitCostRaw);
+        $receiptValue = $unitCostDecimal->mul($quantityDecimal);
 
         $newCostedQuantity = $costedQuantity->add($quantityDecimal);
         $newDerivedControlledValue = $derivedControlledValue->add($receiptValue);
