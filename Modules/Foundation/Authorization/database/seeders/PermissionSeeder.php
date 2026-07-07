@@ -35,6 +35,9 @@ class PermissionSeeder extends Seeder
             // Logbook & Supervisory Scope
             'logbook.clarify', 'department.supervisors.manage',
 
+            // Front Desk - Controlled Operational Lifecycle
+            'frontdesk.arrival.view',
+
             // Finance & GL Review Lifecycle
             'finance.journal-candidate.review',
             'finance.journal-candidate.materialize-draft',

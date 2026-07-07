@@ -20,7 +20,7 @@ use App\Http\Controllers\Ivorq\ShiftLogController;
 Route::middleware(['auth', 'active.property'])->group(function () {
     Route::get('/frontdesk', fn() => redirect('/frontdesk/arrivals'));
     Route::prefix('frontdesk')->group(function () {
-        Route::get('/arrivals', [FrontDeskController::class, 'arrivals']);
+        Route::get('/arrivals', [FrontDeskController::class, 'arrivals'])->name('frontdesk.arrivals');
         Route::get('/departures', [FrontDeskController::class, 'departures']);
         Route::get('/in-house', [FrontDeskController::class, 'inHouse']);
         Route::get('/room-readiness', [FrontDeskController::class, 'roomReadiness']);

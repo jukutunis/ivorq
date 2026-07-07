@@ -1,7 +1,6 @@
 import React from 'react';
 import '../../../../css/ivorq-prototype.css';
 
-import { frontDeskData } from '../../../data/ivorq/frontDesk';
 import IvorqLayout from '../../../Layouts/IvorqLayout';
 import WorkspaceHeader from '../../../Components/Ivorq/workspace/WorkspaceHeader';
 import ModuleTabs from '../../../Components/Ivorq/workspace/ModuleTabs';
@@ -10,154 +9,230 @@ import MainContent from '../../../Components/Ivorq/workspace/MainContent';
 import QuickFilterPanel from '../../../Components/Ivorq/patterns/QuickFilterPanel';
 import OperationalSnapshot from '../../../Components/Ivorq/patterns/OperationalSnapshot';
 import SnapshotCard from '../../../Components/Ivorq/patterns/SnapshotCard';
-import AttentionArea from '../../../Components/Ivorq/patterns/AttentionArea';
-import AttentionCard from '../../../Components/Ivorq/patterns/AttentionCard';
 import QueueList from '../../../Components/Ivorq/patterns/QueueList';
 import QueueItem from '../../../Components/Ivorq/patterns/QueueItem';
 import Button from '../../../Components/Ivorq/primitives/Button';
 import StatusBadge from '../../../Components/Ivorq/primitives/StatusBadge';
 import Icon from '../../../Components/Ivorq/primitives/Icon';
 
-const FrontDeskWorkspace = ({ activeTab = 'arrivals' }: { activeTab?: string }) => {
+type ArrivalRow = {
+  reservation_id: string;
+  reservation_number: string;
+  reservation_status: string;
+  arrival_date: string | null;
+  departure_date: string | null;
+  guest: { id: string; name: string; vip_level: number | null } | null;
+  room_type: string | null;
+  assigned_room: { id: string; number: string; room_type: string | null } | null;
+  housekeeping: {
+    state: string;
+    cleanliness_status: string | null;
+    readiness_state: string | null;
+    source: string;
+  };
+  engineering: {
+    state: string;
+    source: string;
+    active_block_count: number;
+  };
+  eligibility: {
+    eligible: boolean;
+    state: string;
+    blockers: string[];
+  };
+  source_requirements: {
+    guest_registration: string;
+    identity_document: string;
+  };
+};
+
+type ArrivalWorkspace = {
+  property: { id: string; name: string; company_id: string };
+  businessRuleDate: string;
+  filters: { search: string; arrival_date: string };
+  policy: {
+    guestRegistrationRequirement: string;
+    identityDocumentRequirement: string;
+  };
+  snapshots: {
+    totalArrivals: number;
+    arrivalReady: number;
+    blockedArrivals: number;
+    unassignedEligible: number;
+    assignedReadyToCheckIn: number;
+  };
+  views: {
+    arrivingToday: ArrivalRow[];
+    expectedArrivals: ArrivalRow[];
+    blockedArrivals: ArrivalRow[];
+    unassignedEligibleArrivals: ArrivalRow[];
+    assignedReadyToCheckIn: ArrivalRow[];
+  };
+  financeMarker: string;
+};
+
+type Props = {
+  activeTab?: string;
+  arrivalWorkspace?: ArrivalWorkspace;
+};
+
+const emptyWorkspace: ArrivalWorkspace = {
+  property: { id: '', name: 'Active Property', company_id: '' },
+  businessRuleDate: '',
+  filters: { search: '', arrival_date: '' },
+  policy: {
+    guestRegistrationRequirement: 'Not configured by canonical source.',
+    identityDocumentRequirement: 'Not configured by canonical source.',
+  },
+  snapshots: {
+    totalArrivals: 0,
+    arrivalReady: 0,
+    blockedArrivals: 0,
+    unassignedEligible: 0,
+    assignedReadyToCheckIn: 0,
+  },
+  views: {
+    arrivingToday: [],
+    expectedArrivals: [],
+    blockedArrivals: [],
+    unassignedEligibleArrivals: [],
+    assignedReadyToCheckIn: [],
+  },
+  financeMarker: 'Financial settlement: Not evaluated in Front Desk Package A.',
+};
+
+const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWorkspace }: Props) => {
   const tabs = [
-    { href: '/frontdesk/arrivals', label: 'Arrivals', badge: 24 },
-    { href: '/frontdesk/departures', label: 'Departures', badge: 18 },
-    { href: '/frontdesk/in-house', label: 'In House', badge: 142 },
+    { href: '/frontdesk/arrivals', label: 'Arrivals', badge: arrivalWorkspace.snapshots.totalArrivals },
+    { href: '/frontdesk/departures', label: 'Departures' },
+    { href: '/frontdesk/in-house', label: 'In House' },
     { href: '/frontdesk/room-readiness', label: 'Room Readiness' },
     { href: '/frontdesk/reservation-board', label: 'Reservation Board' },
   ];
 
   return (
-    <>
-      <div className="workspace">
-        <WorkspaceHeader title="Guest Arrival Operations">
-          <Button variant="secondary">
-            <Icon name="refresh" /> Refresh
-          </Button>
-          <Button variant="secondary">
-            <Icon name="print" /> Print
-          </Button>
-          <Button variant="secondary">
-            <Icon name="export-pdf" /> Export PDF
-          </Button>
-          <Button variant="secondary">
-            <Icon name="export-xlsx" /> Export XLSX
-          </Button>
-          <Button variant="secondary">
-            <Icon name="walk-in" /> Walk-In
-          </Button>
-          <Button variant="primary">
-            <Icon name="new-reservation" /> New Reservation
-          </Button>
-        </WorkspaceHeader>
+    <div className="workspace">
+      <WorkspaceHeader title="Arrival Queue">
+        <Button variant="secondary">
+          <Icon name="refresh" /> Refresh
+        </Button>
+      </WorkspaceHeader>
 
-        <ModuleTabs tabs={tabs} />
+      <ModuleTabs tabs={tabs} />
 
-        <SplitLayout>
-          <QuickFilterPanel>
-            <div className="filter-group"><label className="filter-label">Search</label><input type="text" className="filter-input" placeholder="Guest, Res #, Room..." /></div>
-            <div className="filter-group"><label className="filter-label">Arrival Date</label><input type="date" className="filter-input" defaultValue="2026-06-14" /></div>
+      <SplitLayout>
+        <QuickFilterPanel>
+          <form method="get" action="/frontdesk/arrivals">
             <div className="filter-group">
-              <label className="filter-label">Status</label>
-              <select className="filter-input">
-                <option>All</option>
-                <option>Due In</option>
-                <option>Early Arrival</option>
-              </select>
+              <label className="filter-label">Search</label>
+              <input
+                type="text"
+                name="search"
+                className="filter-input"
+                placeholder="Guest or reservation"
+                defaultValue={arrivalWorkspace.filters.search}
+              />
             </div>
             <div className="filter-group">
-              <label className="filter-label">Payment</label>
-              <select className="filter-input">
-                <option>All</option>
-                <option>Guaranteed</option>
-                <option>Missing Guarantee</option>
-              </select>
+              <label className="filter-label">Arrival Date</label>
+              <input
+                type="date"
+                name="arrival_date"
+                className="filter-input"
+                defaultValue={arrivalWorkspace.filters.arrival_date}
+              />
             </div>
-            <div className="filter-group">
-              <label className="filter-label">Room Readiness</label>
-              <select className="filter-input">
-                <option>All</option>
-                <option>Ready</option>
-                <option>Not Ready</option>
-                <option>No Room Assigned</option>
-              </select>
-            </div>
-          </QuickFilterPanel>
+            <Button variant="secondary" size="sm">
+              <Icon name="search" /> Apply
+            </Button>
+          </form>
 
-          <MainContent>
-            <OperationalSnapshot>
-              <SnapshotCard value={frontDeskData.snapshots.totalArrivals} label="Total Arrivals" />
-              <SnapshotCard value={frontDeskData.snapshots.vipDueIn} label="VIP Due In" statusColor="vip-gold" />
-              <SnapshotCard value={frontDeskData.snapshots.noRoomAssigned} label="No Room Assigned" statusColor="critical-red" />
-              <SnapshotCard value={frontDeskData.snapshots.roomsNotReady} label="Rooms Not Ready" statusColor="warning-amber" />
-            </OperationalSnapshot>
+          <div className="filter-group">
+            <label className="filter-label">Guest Registration</label>
+            <div className="filter-hint">{arrivalWorkspace.policy.guestRegistrationRequirement}</div>
+          </div>
+          <div className="filter-group">
+            <label className="filter-label">Identity Document</label>
+            <div className="filter-hint">{arrivalWorkspace.policy.identityDocumentRequirement}</div>
+          </div>
+          <div className="filter-group">
+            <label className="filter-label">Financial Settlement</label>
+            <div className="filter-hint">{arrivalWorkspace.financeMarker.replace('Financial settlement: ', '')}</div>
+          </div>
+        </QuickFilterPanel>
 
-            <AttentionArea title="Arrival Attention Needed" badgeText={`${frontDeskData.attentionItems.length} Issues`} badgeType="warning" areaType="warning">
-              {frontDeskData.attentionItems.map((item) => (
-                <AttentionCard
-                  key={item.id}
-                  title={
-                    <>
-                      {item.badge && <StatusBadge status="vip" style={{ marginRight: '4px' }}>{item.badge}</StatusBadge>}
-                      {item.title}
-                    </>
-                  }
-                  meta={item.meta}
-                  actions={item.actions.map((act, i) => (
-                    <Button key={i} variant="secondary" size="sm">{act}</Button>
-                  ))}
-                />
-              ))}
-            </AttentionArea>
+        <MainContent>
+          <OperationalSnapshot>
+            <SnapshotCard value={arrivalWorkspace.snapshots.totalArrivals} label="Arriving Today" />
+            <SnapshotCard value={arrivalWorkspace.snapshots.arrivalReady} label="Arrival Ready" statusColor="ready-green" />
+            <SnapshotCard value={arrivalWorkspace.snapshots.blockedArrivals} label="Blocked Arrivals" statusColor="warning-amber" />
+            <SnapshotCard value={arrivalWorkspace.snapshots.unassignedEligible} label="Unassigned Eligible" />
+            <SnapshotCard value={arrivalWorkspace.snapshots.assignedReadyToCheckIn} label="Assigned Ready" statusColor="ready-green" />
+          </OperationalSnapshot>
 
-            <QueueList title="Check-In Queue" count={frontDeskData.checkInQueue.length}>
-              {frontDeskData.checkInQueue.map((item) => (
-                <QueueItem
-                  key={item.id}
-                  title={
-                    <>
-                      {item.name}
-                      {item.vip && <StatusBadge status="vip" style={{ fontSize: '11px', padding: '2px 6px', marginLeft: '6px' }}>VIP</StatusBadge>}
-                    </>
-                  }
-                  meta={
-                    <>
-                      <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{item.roomType}</span> •{' '}
-                      <span
-                        style={{
-                          fontWeight: 600,
-                          color: item.roomStatusReady
-                            ? 'var(--ready-green)'
-                            : item.roomStatusWarning
-                            ? 'var(--warning-amber)'
-                            : item.roomStatusCritical
-                            ? 'var(--critical-red)'
-                            : 'inherit',
-                        }}
-                      >
-                        {item.roomStatus}
-                      </span>{' '}
-                      • <span style={{ fontSize: '11px', opacity: 0.7 }}>{item.reservationId}</span>
-                    </>
-                  }
-                  actions={item.actions.map((act, i) => (
-                    <Button
-                      key={i}
-                      variant={act.includes('Start') ? 'primary' : 'secondary'}
-                      size="sm"
-                    >
-                      {act}
-                    </Button>
-                  ))}
-                />
-              ))}
-            </QueueList>
-          </MainContent>
-        </SplitLayout>
-      </div>
-    </>
+          <ArrivalQueue title="Arriving Today" rows={arrivalWorkspace.views.arrivingToday} />
+          <ArrivalQueue title="Expected Arrivals" rows={arrivalWorkspace.views.expectedArrivals} />
+          <ArrivalQueue title="Blocked Arrivals" rows={arrivalWorkspace.views.blockedArrivals} />
+          <ArrivalQueue title="Unassigned Eligible Arrivals" rows={arrivalWorkspace.views.unassignedEligibleArrivals} />
+          <ArrivalQueue title="Assigned / Ready-to-Check-In" rows={arrivalWorkspace.views.assignedReadyToCheckIn} />
+        </MainContent>
+      </SplitLayout>
+    </div>
   );
 };
+
+function ArrivalQueue({ title, rows }: { title: string; rows: ArrivalRow[] }) {
+  return (
+    <QueueList title={title} count={rows.length}>
+      {rows.length === 0 ? (
+        <QueueItem title="No source-proven arrivals" meta="No reservation evidence matched this view." />
+      ) : (
+        rows.map((row) => (
+          <QueueItem
+            key={`${title}-${row.reservation_id}`}
+            title={
+              <>
+                {row.guest?.name ?? 'Guest linkage missing'}
+                {row.guest?.vip_level ? (
+                  <StatusBadge status="vip" style={{ fontSize: '11px', padding: '2px 6px', marginLeft: '6px' }}>
+                    VIP {row.guest.vip_level}
+                  </StatusBadge>
+                ) : null}
+              </>
+            }
+            meta={<ArrivalMeta row={row} />}
+            actions={<EligibilityBadge row={row} />}
+          />
+        ))
+      )}
+    </QueueList>
+  );
+}
+
+function ArrivalMeta({ row }: { row: ArrivalRow }) {
+  const room = row.assigned_room ? `Room ${row.assigned_room.number}` : 'No room assigned';
+  const blockers = row.eligibility.blockers.length > 0 ? row.eligibility.blockers.join(' | ') : 'No operational blocker';
+
+  return (
+    <>
+      <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{row.reservation_number}</span>{' '}
+      <span>Arrival {row.arrival_date ?? 'Not configured'}</span>{' '}
+      <span>Room type {row.room_type ?? 'Not configured'}</span>{' '}
+      <span>{room}</span>{' '}
+      <span>Housekeeping {row.housekeeping.readiness_state ?? row.housekeeping.state}</span>{' '}
+      <span>Engineering {row.engineering.state}</span>{' '}
+      <span>{blockers}</span>
+    </>
+  );
+}
+
+function EligibilityBadge({ row }: { row: ArrivalRow }) {
+  return row.eligibility.eligible ? (
+    <StatusBadge status="ready">Arrival Ready</StatusBadge>
+  ) : (
+    <StatusBadge status="warning">Blocked</StatusBadge>
+  );
+}
 
 FrontDeskWorkspace.layout = (page: React.ReactNode) => <IvorqLayout children={page} />;
 export default FrontDeskWorkspace;

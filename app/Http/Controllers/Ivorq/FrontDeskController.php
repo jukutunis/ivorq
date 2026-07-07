@@ -3,13 +3,18 @@
 namespace App\Http\Controllers\Ivorq;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
+use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
 {
-    public function arrivals()
+    public function arrivals(Request $request, ArrivalEligibilityProjectionService $arrivals)
     {
-        return Inertia::render('Ivorq/FrontDesk/FrontDeskWorkspace', ['activeTab' => 'arrivals']);
+        return Inertia::render('Ivorq/FrontDesk/FrontDeskWorkspace', [
+            'activeTab' => 'arrivals',
+            'arrivalWorkspace' => $arrivals->workspace($request->user(), $request->only(['search', 'arrival_date'])),
+        ]);
     }
 
     public function departures()
