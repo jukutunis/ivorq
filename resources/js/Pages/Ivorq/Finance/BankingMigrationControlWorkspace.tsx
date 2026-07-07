@@ -94,11 +94,28 @@ interface ProposalContext {
   }>;
 }
 
+interface ExecutionPrecondition {
+  pilot_authorization_id: string;
+  pilot_authorization_status: string;
+  manifest_source_scope: string;
+  manifest_source_snapshot: string;
+  exception_quarantine_state: string;
+  target_intake_review_state: string;
+  pilot_auth_review_state: string;
+  target_operational_state: string;
+  property_boundary: string;
+  future_lineage_contract: string;
+  future_execution_permission: string;
+  future_cutover_permission: string;
+  summary_status: string;
+}
+
 interface Props {
   plans: MigrationPlan[];
   target_intakes: TargetIntake[];
   pilot_authorizations: PilotAuthorization[];
   proposal_context: ProposalContext;
+  execution_preconditions: ExecutionPrecondition[];
   permissions: {
     can_view: boolean;
     can_manage: boolean;
@@ -123,7 +140,7 @@ const financeTabs = [
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 
-export default function BankingMigrationControlWorkspace({ plans, target_intakes, pilot_authorizations = [], proposal_context, permissions, constants }: Props) {
+export default function BankingMigrationControlWorkspace({ plans, target_intakes, pilot_authorizations = [], proposal_context, execution_preconditions = [], permissions, constants }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
   const [showProposeForm, setShowProposeForm] = useState<boolean>(false);
@@ -814,6 +831,134 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
               </>
             );
           })()}
+          {canView && execution_preconditions && execution_preconditions.length > 0 && (() => {
+            const preconditionStyle = (value: string): string => {
+              switch (value) {
+                case 'BANK_ACCOUNT_ONLY': return 'ready-green';
+                case 'UNCHANGED': return 'ready-green';
+                case 'CLEAR': return 'ready-green';
+                case 'REVIEW_ACCEPTED': return 'ready-green';
+                case 'ACTIVE': return 'ready-green';
+                case 'VALID': return 'ready-green';
+                case 'ARCHITECTURE_DEFINED': return 'ready-green';
+                case 'CHANGED': return 'critical-red';
+                case 'BLOCKED': return 'critical-red';
+                case 'NOT_ACCEPTED': return 'inspection-blue';
+                case 'INACTIVE': return 'critical-red';
+                case 'INVALID': return 'critical-red';
+                case 'UNAVAILABLE': return 'neutral';
+                case 'NOT_IMPLEMENTED': return 'neutral';
+                case 'NOT_AUTHORIZED': return 'neutral';
+                default: return 'neutral';
+              }
+            };
+
+            type PreconBadge = 'ready' | 'critical' | 'inspection' | 'neutral';
+
+            const preconditionBadge = (value: string): PreconBadge => {
+              switch (value) {
+                case 'BANK_ACCOUNT_ONLY': return 'ready';
+                case 'UNCHANGED': return 'ready';
+                case 'CLEAR': return 'ready';
+                case 'REVIEW_ACCEPTED': return 'ready';
+                case 'ACTIVE': return 'ready';
+                case 'VALID': return 'ready';
+                case 'ARCHITECTURE_DEFINED': return 'ready';
+                case 'CHANGED': return 'critical';
+                case 'BLOCKED': return 'critical';
+                case 'INACTIVE': return 'critical';
+                case 'INVALID': return 'critical';
+                case 'NOT_ACCEPTED': return 'inspection';
+                default: return 'neutral';
+              }
+            };
+
+            const conditionCount = execution_preconditions.length;
+            const readyCount = execution_preconditions.filter((e) => e.summary_status === 'EXECUTION_IMPLEMENTATION_DEFERRED').length;
+
+            return (
+              <>
+                <QueueList title="Future Pilot Execution Preconditions" count={conditionCount}>
+                  <div className="finance-queue-body">
+                    {execution_preconditions.map((precon, idx) => (
+                      <WorkCard
+                        key={precon.pilot_authorization_id || idx}
+                        borderColor="neutral"
+                        meta={
+                          <StatusBadge status={preconditionBadge(precon.pilot_auth_review_state) as any}>
+                            {precon.pilot_authorization_status || '—'}
+                          </StatusBadge>
+                        }
+                        title={`Authorization ${precon.pilot_authorization_id}`}
+                        detail={
+                          <div style={{ fontSize: '11px', lineHeight: '1.8', color: 'var(--text-secondary)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                              <span>Manifest Source Scope:</span>
+                              <span style={{ color: `var(--status-${preconditionStyle(precon.manifest_source_scope)})`, fontWeight: 500 }}>{precon.manifest_source_scope}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                              <span>Source Snapshot:</span>
+                              <span style={{ color: `var(--status-${preconditionStyle(precon.manifest_source_snapshot)})`, fontWeight: 500 }}>{precon.manifest_source_snapshot}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                              <span>Quarantine:</span>
+                              <span style={{ color: `var(--status-${preconditionStyle(precon.exception_quarantine_state)})`, fontWeight: 500 }}>{precon.exception_quarantine_state}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                              <span>Target Intake Review:</span>
+                              <span style={{ color: `var(--status-${preconditionStyle(precon.target_intake_review_state)})`, fontWeight: 500 }}>{precon.target_intake_review_state}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                              <span>Pilot Auth Review:</span>
+                              <span style={{ color: `var(--status-${preconditionStyle(precon.pilot_auth_review_state)})`, fontWeight: 500 }}>{precon.pilot_auth_review_state}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                              <span>Target Status:</span>
+                              <span style={{ color: `var(--status-${preconditionStyle(precon.target_operational_state)})`, fontWeight: 500 }}>{precon.target_operational_state}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                              <span>Property Boundary:</span>
+                              <span style={{ color: `var(--status-${preconditionStyle(precon.property_boundary)})`, fontWeight: 500 }}>{precon.property_boundary}</span>
+                            </div>
+                            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--border-default)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                                <span>Lineage Contract:</span>
+                                <span style={{ fontWeight: 500 }}>{precon.future_lineage_contract}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                                <span>Execution:</span>
+                                <span>{precon.future_execution_permission}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                                <span>Cutover:</span>
+                                <span>{precon.future_cutover_permission}</span>
+                              </div>
+                              <div style={{ marginTop: '4px', fontWeight: 600, textAlign: 'right', color: 'var(--text-secondary)' }}>
+                                {precon.summary_status}
+                              </div>
+                            </div>
+                          </div>
+                        }
+                      />
+                    ))}
+                  </div>
+                </QueueList>
+
+                <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: 'var(--surface-secondary)', border: '1px solid var(--border-default)', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    Future Pilot Execution Preconditions is a read-only server projection. No source/target financial fields are read, compared, or projected. No execution, cutover, correction, or rollback action is exposed. All execution and cutover capabilities remain deferred. Every projection returns EXECUTION_IMPLEMENTATION_DEFERRED.
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+          {canView && execution_preconditions && execution_preconditions.length === 0 && (
+            <AttentionArea title="Future Pilot Execution Preconditions" badgeText="No Eligible Records" badgeType="neutral" areaType="neutral">
+              <div className="finance-empty-state">
+                No pilot authorization records are currently available for execution precondition evidence projection. Pilot authorization records must be non-ARCHIVED to appear here. Execution implementation remains deferred.
+              </div>
+            </AttentionArea>
+          )}
         </MainContent>
       </SplitLayout>
     </div>

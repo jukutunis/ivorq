@@ -8,6 +8,8 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
+use Modules\Finance\Banking\Models\BankAccount;
+use Modules\Finance\Banking\Models\BankingMigrationExceptionQuarantine;
 use Modules\Finance\Banking\Models\BankingMigrationManifestEntry;
 use Modules\Finance\Banking\Models\BankingMigrationPilotAuthorization;
 use Modules\Finance\Banking\Models\BankingMigrationPlan;
@@ -128,11 +130,14 @@ class BankingMigrationPlanController extends Controller
                 ->all();
         }
 
+        $executionPreconditions = $this->projectExecutionPreconditions($propertyId, $canView);
+
         return Inertia::render('Ivorq/Finance/BankingMigrationControlWorkspace', [
             'plans' => array_values($plans),
             'target_intakes' => array_values($targetIntakes),
             'pilot_authorizations' => array_values($pilotAuthorizations),
             'proposal_context' => $this->projectProposalContext($propertyId, $canManage),
+            'execution_preconditions' => $executionPreconditions,
             'permissions' => [
                 'can_view' => $canView,
                 'can_manage' => $canManage,
@@ -430,5 +435,173 @@ class BankingMigrationPlanController extends Controller
             'eligible_manifest_entries' => array_values($eligibleEntries),
             'available_controlled_accounts' => array_values($availableAccounts),
         ];
+    }
+
+    private function projectExecutionPreconditions(string $propertyId, bool $canView): array
+    {
+        if (!$canView) {
+            return [];
+        }
+
+        $pilotAuths = BankingMigrationPilotAuthorization::with(['targetIntake', 'migrationPlan', 'manifestEntry'])
+            ->where('property_id', $propertyId)
+            ->where('status', '!=', \Modules\Finance\Banking\Enums\BankingMigrationPilotAuthorizationStatusEnum::ARCHIVED->value)
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get();
+
+        if ($pilotAuths->isEmpty()) {
+            return [];
+        }
+
+        $sourceUlids = $pilotAuths->pluck('manifestEntry.source_ulid')->filter()->unique()->values()->all();
+        $targetAccountIds = $pilotAuths->pluck('targetIntake.controlled_bank_account_id')->filter()->unique()->values()->all();
+        $planIds = $pilotAuths->pluck('migration_plan_id')->unique()->values()->all();
+
+        $sourceAccounts = [];
+        if (!empty($sourceUlids)) {
+            $sourceAccounts = BankAccount::whereIn('id', $sourceUlids)
+                ->where('property_id', $propertyId)
+                ->get(['id', 'property_id', 'created_at', 'updated_at'])
+                ->keyBy('id')
+                ->all();
+        }
+
+        $targetAccounts = [];
+        if (!empty($targetAccountIds)) {
+            $targetAccounts = ControlledBankAccount::whereIn('id', $targetAccountIds)
+                ->where('property_id', $propertyId)
+                ->get(['id', 'property_id', 'is_active'])
+                ->keyBy('id')
+                ->all();
+        }
+
+        $quarantinedSourceUlids = [];
+        if (!empty($planIds) && !empty($sourceUlids)) {
+            $quarantinedSourceUlids = BankingMigrationExceptionQuarantine::whereIn('migration_plan_id', $planIds)
+                ->where('is_resolved', false)
+                ->whereIn('source_ulid', $sourceUlids)
+                ->pluck('source_ulid')
+                ->unique()
+                ->values()
+                ->all();
+        }
+        $quarantinedSet = array_flip($quarantinedSourceUlids);
+
+        $preconditions = [];
+
+        foreach ($pilotAuths as $pilotAuth) {
+            $manifestEntry = $pilotAuth->manifestEntry;
+            $targetIntake = $pilotAuth->targetIntake;
+            $plan = $pilotAuth->migrationPlan;
+
+            $manifestSourceScope = 'UNAVAILABLE';
+            if ($manifestEntry) {
+                $manifestSourceScope = $manifestEntry->source_model === 'BankAccount'
+                    ? 'BANK_ACCOUNT_ONLY'
+                    : 'UNAVAILABLE';
+            }
+
+            $manifestSourceSnapshot = 'UNAVAILABLE';
+            if ($manifestEntry && !empty($manifestEntry->source_snapshot_hash) && !empty($manifestEntry->source_ulid)) {
+                $sourceAccount = $sourceAccounts[$manifestEntry->source_ulid] ?? null;
+                if ($sourceAccount) {
+                    $currentSnapshotHash = $this->buildSafeSourceSnapshotHash(
+                        $manifestEntry->source_model,
+                        $manifestEntry->source_ulid,
+                        $manifestEntry->source_property_id,
+                        $sourceAccount->created_at,
+                        $sourceAccount->updated_at
+                    );
+                    $manifestSourceSnapshot = hash_equals($manifestEntry->source_snapshot_hash, $currentSnapshotHash)
+                        ? 'UNCHANGED'
+                        : 'CHANGED';
+                }
+            }
+
+            $quarantineState = 'UNAVAILABLE';
+            if ($manifestEntry && !empty($manifestEntry->source_ulid)) {
+                $quarantineState = isset($quarantinedSet[$manifestEntry->source_ulid])
+                    ? 'BLOCKED'
+                    : 'CLEAR';
+            }
+
+            $targetIntakeReviewState = 'UNAVAILABLE';
+            if ($targetIntake) {
+                $targetIntakeReviewState = $targetIntake->status?->value === 'REVIEW_ACCEPTED'
+                    ? 'REVIEW_ACCEPTED'
+                    : 'NOT_ACCEPTED';
+            }
+
+            $pilotAuthReviewState = 'UNAVAILABLE';
+            if ($pilotAuth->status) {
+                $pilotAuthReviewState = $pilotAuth->status->value === 'REVIEW_ACCEPTED'
+                    ? 'REVIEW_ACCEPTED'
+                    : 'NOT_ACCEPTED';
+            }
+
+            $targetOperationalState = 'UNAVAILABLE';
+            if ($targetIntake && !empty($targetIntake->controlled_bank_account_id)) {
+                $targetAccount = $targetAccounts[$targetIntake->controlled_bank_account_id] ?? null;
+                if ($targetAccount) {
+                    $targetOperationalState = $targetAccount->is_active ? 'ACTIVE' : 'INACTIVE';
+                }
+            }
+
+            $propertyBoundary = 'UNAVAILABLE';
+            if ($plan && $manifestEntry && $targetIntake) {
+                $planProp = $plan->property_id;
+                $sourceProp = $manifestEntry->source_property_id;
+                $targetAccount = $targetAccounts[$targetIntake->controlled_bank_account_id] ?? null;
+                $targetProp = $targetAccount->property_id ?? null;
+
+                if ($planProp && $sourceProp && $targetProp) {
+                    $propertyBoundary = ($planProp === $sourceProp && $sourceProp === $targetProp && $targetProp === $propertyId)
+                        ? 'VALID'
+                        : 'INVALID';
+                }
+            }
+
+            $preconditions[] = [
+                'pilot_authorization_id' => $pilotAuth->id,
+                'pilot_authorization_status' => $pilotAuth->status?->value,
+                'manifest_source_scope' => $manifestSourceScope,
+                'manifest_source_snapshot' => $manifestSourceSnapshot,
+                'exception_quarantine_state' => $quarantineState,
+                'target_intake_review_state' => $targetIntakeReviewState,
+                'pilot_auth_review_state' => $pilotAuthReviewState,
+                'target_operational_state' => $targetOperationalState,
+                'property_boundary' => $propertyBoundary,
+                'future_lineage_contract' => 'ARCHITECTURE_DEFINED',
+                'future_execution_permission' => 'NOT_IMPLEMENTED',
+                'future_cutover_permission' => 'NOT_AUTHORIZED',
+                'summary_status' => 'EXECUTION_IMPLEMENTATION_DEFERRED',
+            ];
+        }
+
+        return $preconditions;
+    }
+
+    private function buildSafeSourceSnapshotHash(
+        string $sourceModel,
+        string $sourceUid,
+        string $sourcePropertyId,
+        mixed $createdAt,
+        mixed $updatedAt
+    ): string {
+        $createdAtStr = $createdAt !== null
+            ? ($createdAt instanceof \DateTimeInterface ? $createdAt->format('Y-m-d H:i:s') : (string) $createdAt)
+            : 'null';
+        $updatedAtStr = $updatedAt !== null
+            ? ($updatedAt instanceof \DateTimeInterface ? $updatedAt->format('Y-m-d H:i:s') : (string) $updatedAt)
+            : 'null';
+
+        return hash('sha256', implode('|', [
+            $sourceModel,
+            $sourceUid,
+            $sourcePropertyId,
+            $createdAtStr,
+            $updatedAtStr,
+        ]));
     }
 }
