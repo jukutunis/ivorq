@@ -8,9 +8,13 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
+use Modules\Finance\Banking\Models\BankingMigrationManifestEntry;
+use Modules\Finance\Banking\Models\BankingMigrationPlan;
 use Modules\Finance\Banking\Models\BankingMigrationTargetIntake;
+use Modules\Finance\Banking\Models\ControlledBankAccount;
 use Modules\Finance\Banking\Services\BankingMigrationDryRunService;
 use Modules\Finance\Banking\Services\BankingMigrationPlanService;
+use Modules\Finance\Banking\Services\BankingMigrationTargetIntakeService;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
 use Throwable;
@@ -94,6 +98,7 @@ class BankingMigrationPlanController extends Controller
         return Inertia::render('Ivorq/Finance/BankingMigrationControlWorkspace', [
             'plans' => array_values($plans),
             'target_intakes' => array_values($targetIntakes),
+            'proposal_context' => $this->projectProposalContext($propertyId, $canManage),
             'permissions' => [
                 'can_view' => $canView,
                 'can_manage' => $canManage,
@@ -195,5 +200,137 @@ class BankingMigrationPlanController extends Controller
         app(CurrentPropertyService::class)->setPropertyId($propertyId);
 
         return $propertyId;
+    }
+
+    public function propose(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can(BankingMigrationPlanService::PERMISSION_MANAGE)) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $this->resolvePropertyId($request);
+
+        $validated = $request->validate([
+            'banking_migration_plan_id' => ['required', 'string', 'size:26'],
+            'banking_migration_manifest_entry_id' => ['required', 'string', 'size:26'],
+            'controlled_bank_account_id' => ['required', 'string', 'size:26'],
+        ]);
+
+        $service = app(BankingMigrationTargetIntakeService::class);
+
+        try {
+            $service->propose(
+                $validated['banking_migration_plan_id'],
+                $validated['banking_migration_manifest_entry_id'],
+                $validated['controlled_bank_account_id'],
+                $user
+            );
+
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('success', 'Target intake mapping proposal created.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('error', $exception->getMessage());
+        }
+    }
+
+    public function review(Request $request, string $intakeId): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can('finance.banking.migration.mapping.review')) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $this->resolvePropertyId($request);
+
+        $validated = $request->validate([
+            'review_outcome' => ['required', 'string', 'in:REVIEW_ACCEPTED,REVIEW_REJECTED'],
+        ]);
+
+        $service = app(BankingMigrationTargetIntakeService::class);
+
+        try {
+            $service->review(
+                $intakeId,
+                $validated['review_outcome'],
+                $user
+            );
+
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('success', 'Mapping proposal review recorded.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('error', $exception->getMessage());
+        }
+    }
+
+    private function projectProposalContext(string $propertyId, bool $canManage): array
+    {
+        if (!$canManage) {
+            return [
+                'eligible_plans' => [],
+                'eligible_manifest_entries' => [],
+                'available_controlled_accounts' => [],
+            ];
+        }
+
+        $eligiblePlans = BankingMigrationPlan::where('property_id', $propertyId)
+            ->whereIn('status', ['DRY_RUN_COMPLETED', 'DRAFT', 'DRY_RUN_REQUESTED', 'BLOCKED'])
+            ->orderByDesc('created_at')
+            ->limit(20)
+            ->get()
+            ->map(fn (BankingMigrationPlan $plan) => [
+                'id' => $plan->id,
+                'status' => $plan->status?->value,
+                'source_domain' => $plan->source_domain,
+                'target_domain' => $plan->target_domain,
+                'correlation_id' => $plan->correlation_id,
+            ])
+            ->values()
+            ->all();
+
+        $planIds = array_column($eligiblePlans, 'id');
+        $eligibleEntries = [];
+        if (!empty($planIds)) {
+            $eligibleEntries = BankingMigrationManifestEntry::whereIn('migration_plan_id', $planIds)
+                ->where('source_model', 'BankAccount')
+                ->where('inventory_status', 'INVENTORIED')
+                ->orderByDesc('created_at')
+                ->limit(50)
+                ->get()
+                ->map(fn (BankingMigrationManifestEntry $entry) => [
+                    'id' => $entry->id,
+                    'migration_plan_id' => $entry->migration_plan_id,
+                    'source_domain' => $entry->source_domain,
+                    'source_model' => $entry->source_model,
+                    'inventory_status' => $entry->inventory_status?->value,
+                ])
+                ->values()
+                ->all();
+        }
+
+        $availableAccounts = ControlledBankAccount::where('property_id', $propertyId)
+            ->where('is_active', true)
+            ->orderBy('account_name')
+            ->limit(50)
+            ->get()
+            ->map(fn (ControlledBankAccount $account) => [
+                'id' => $account->id,
+                'account_name' => $account->account_name,
+                'bank_name' => $account->bank_name,
+            ])
+            ->values()
+            ->all();
+
+        return [
+            'eligible_plans' => array_values($eligiblePlans),
+            'eligible_manifest_entries' => array_values($eligibleEntries),
+            'available_controlled_accounts' => array_values($availableAccounts),
+        ];
     }
 }

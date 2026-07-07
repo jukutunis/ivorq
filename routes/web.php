@@ -81,6 +81,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.banking.migration.plan.request-dry-run');
         Route::post('/banking/migration/plan/{plan}/execute-dry-run', [\Modules\Finance\Banking\Http\Controllers\BankingMigrationPlanController::class, 'executeDryRun'])
             ->name('finance.banking.migration.plan.execute-dry-run');
+        Route::post('/banking/migration/target-intake/propose', [\Modules\Finance\Banking\Http\Controllers\BankingMigrationPlanController::class, 'propose'])
+            ->name('finance.banking.migration.target-intake.propose');
+        Route::post('/banking/migration/target-intake/{intake}/review', [\Modules\Finance\Banking\Http\Controllers\BankingMigrationPlanController::class, 'review'])
+            ->name('finance.banking.migration.target-intake.review');
         Route::get('/payables/supplier-invoices', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'index'])
             ->name('finance.payables.supplier-invoices.index');
         Route::post('/payables/supplier-invoices/{invoice}/approve', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'approve'])

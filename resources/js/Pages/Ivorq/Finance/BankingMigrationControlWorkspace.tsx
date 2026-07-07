@@ -54,9 +54,32 @@ interface TargetIntake {
   updated_at: string | null;
 }
 
+interface ProposalContext {
+  eligible_plans: Array<{
+    id: string;
+    status: string;
+    source_domain: string;
+    target_domain: string;
+    correlation_id: string;
+  }>;
+  eligible_manifest_entries: Array<{
+    id: string;
+    migration_plan_id: string;
+    source_domain: string;
+    source_model: string;
+    inventory_status: string;
+  }>;
+  available_controlled_accounts: Array<{
+    id: string;
+    account_name: string;
+    bank_name: string;
+  }>;
+}
+
 interface Props {
   plans: MigrationPlan[];
   target_intakes: TargetIntake[];
+  proposal_context: ProposalContext;
   permissions: {
     can_view: boolean;
     can_manage: boolean;
@@ -80,9 +103,10 @@ const financeTabs = [
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 
-export default function BankingMigrationControlWorkspace({ plans, target_intakes, permissions, constants }: Props) {
+export default function BankingMigrationControlWorkspace({ plans, target_intakes, proposal_context, permissions, constants }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
+  const [showProposeForm, setShowProposeForm] = useState<boolean>(false);
 
   const planCount = useMemo(() => plans.length, [plans]);
   const draftCount = useMemo(() => plans.filter((p) => p.status === 'DRAFT').length, [plans]);
@@ -105,6 +129,16 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
     request_identity: '',
   });
 
+  const proposeForm = useForm<{
+    banking_migration_plan_id: string;
+    banking_migration_manifest_entry_id: string;
+    controlled_bank_account_id: string;
+  }>({
+    banking_migration_plan_id: '',
+    banking_migration_manifest_entry_id: '',
+    controlled_bank_account_id: '',
+  });
+
   const submitCreate = (event: React.FormEvent) => {
     event.preventDefault();
     createForm.post(route('finance.banking.migration.plan.create'), {
@@ -113,6 +147,24 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
         setShowCreateForm(false);
         createForm.reset();
       },
+    });
+  };
+
+  const submitPropose = (event: React.FormEvent) => {
+    event.preventDefault();
+    proposeForm.post(route('finance.banking.migration.target-intake.propose'), {
+      preserveScroll: true,
+      onSuccess: () => {
+        setShowProposeForm(false);
+        proposeForm.reset();
+      },
+    });
+  };
+
+  const submitReview = (intakeId: string, outcome: string) => {
+    const form = useForm<{ review_outcome: string }>({ review_outcome: outcome });
+    form.post(route('finance.banking.migration.target-intake.review', { intake: intakeId }), {
+      preserveScroll: true,
     });
   };
 
@@ -145,9 +197,14 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
       <WorkspaceHeader title="Banking Migration Control">
         <div style={{ display: 'flex', gap: '8px' }}>
           {canManage && (
-            <Button type="button" variant="primary" onClick={() => setShowCreateForm(!showCreateForm)}>
-              {showCreateForm ? 'Cancel' : 'New Migration Plan'}
-            </Button>
+            <>
+              <Button type="button" variant="primary" onClick={() => setShowCreateForm(!showCreateForm)}>
+                {showCreateForm ? 'Cancel' : 'New Migration Plan'}
+              </Button>
+              <Button type="button" variant="primary" onClick={() => setShowProposeForm(!showProposeForm)}>
+                {showProposeForm ? 'Cancel' : 'Propose Mapping'}
+              </Button>
+            </>
           )}
         </div>
       </WorkspaceHeader>
@@ -171,6 +228,15 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
                 <div>Dry Run Requested: {dryRunRequestedCount}</div>
                 <div>Dry Run Completed: {dryRunCompletedCount}</div>
                 <div>Blocked: {blockedCount}</div>
+              </div>
+            </div>
+            <div className="filter-group">
+              <label className="filter-label">Mapping Summary</label>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                <div>Total Intakes: {targetIntakeCount}</div>
+                <div>Proposed: {proposedCount}</div>
+                <div>Accepted: {acceptedCount}</div>
+                <div>Rejected: {rejectedCount}</div>
               </div>
             </div>
             <div className="filter-group" style={{ borderTop: '1px solid var(--border-default)', paddingTop: '12px' }}>
@@ -230,6 +296,71 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
                     Create Plan
                   </Button>
                   <Button type="button" variant="secondary" onClick={() => setShowCreateForm(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </AttentionArea>
+          )}
+
+          {showProposeForm && canManage && proposal_context?.eligible_manifest_entries && (
+            <AttentionArea title="Propose Account-Level Mapping" badgeText="Control Plane" badgeType="inspection" areaType="inspection">
+              <form onSubmit={submitPropose} style={{ display: 'grid', gap: '12px' }}>
+                <div className="filter-group">
+                  <label className="filter-label">Migration Plan</label>
+                  <select
+                    value={proposeForm.data.banking_migration_plan_id}
+                    onChange={(e) => proposeForm.setData('banking_migration_plan_id', e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">Select a plan...</option>
+                    {proposal_context.eligible_plans.map((p) => (
+                      <option key={p.id} value={p.id}>Plan {p.id} ({p.status})</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <label className="filter-label">Manifest Entry (Source)</label>
+                  <select
+                    value={proposeForm.data.banking_migration_manifest_entry_id}
+                    onChange={(e) => proposeForm.setData('banking_migration_manifest_entry_id', e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">Select a manifest entry...</option>
+                    {proposal_context.eligible_manifest_entries
+                      .filter((e) => e.migration_plan_id === proposeForm.data.banking_migration_plan_id)
+                      .map((e) => (
+                        <option key={e.id} value={e.id}>Entry {e.id} ({e.source_model}, {e.inventory_status})</option>
+                      ))}
+                  </select>
+                  <div className="finance-context-note">
+                    Only BankAccount manifest entries with INVENTORIED status are eligible. Source is always legacy_banking.
+                  </div>
+                </div>
+                <div className="filter-group">
+                  <label className="filter-label">Controlled Bank Account (Target)</label>
+                  <select
+                    value={proposeForm.data.controlled_bank_account_id}
+                    onChange={(e) => proposeForm.setData('controlled_bank_account_id', e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">Select a controlled account...</option>
+                    {proposal_context.available_controlled_accounts.map((a) => (
+                      <option key={a.id} value={a.id}>{a.account_name} ({a.bank_name})</option>
+                    ))}
+                  </select>
+                  <div className="finance-context-note">
+                    Target must be an existing active controlled bank account in the current property. No target is suggested, ranked, or auto-selected. No legacy field is compared to target fields.
+                  </div>
+                </div>
+                <div className="finance-context-note">
+                  Property, source domain, target domain, actor, authority, and audit evidence are server-resolved. Only plan, manifest entry, and controlled account IDs are accepted from browser input.
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <Button type="submit" variant="primary" disabled={proposeForm.processing}>
+                    Propose Mapping
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => setShowProposeForm(false)}>
                     Cancel
                   </Button>
                 </div>
@@ -399,7 +530,30 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
                                 Correlation: {intake.correlation_id}
                               </span>
                             }
-                            actions={<></>}
+                            actions={
+                              canReview && intake.status === 'PROPOSED' ? (
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="primary"
+                                    onClick={() => submitReview(intake.id, 'REVIEW_ACCEPTED')}
+                                  >
+                                    Accept
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => submitReview(intake.id, 'REVIEW_REJECTED')}
+                                  >
+                                    Reject
+                                  </Button>
+                                </div>
+                              ) : (
+                                <></>
+                              )
+                            }
                           />
                         ))}
                       </div>
