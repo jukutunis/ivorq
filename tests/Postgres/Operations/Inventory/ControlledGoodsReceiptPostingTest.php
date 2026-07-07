@@ -1142,44 +1142,143 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
     // ── Immutability boundary ─────────────────────────────────────────────
 
-    public function test_posted_goods_receipt_posts_exactly_once_via_service(): void
+    public function test_posted_goods_receipt_cannot_be_updated(): void
     {
         $receipt = $this->createPostedReceipt(3.000);
-        $refetched = GoodsReceipt::find($receipt->id);
-        $this->assertEquals(GoodsReceiptStatusEnum::Posted, $refetched->status);
-        $this->assertNotNull($refetched->posted_at);
+        $receipt->status = GoodsReceiptStatusEnum::Draft;
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Posted Goods Receipt is immutable');
+        $receipt->save();
     }
 
-    public function test_posted_receipt_line_has_stock_movement_link(): void
+    public function test_posted_goods_receipt_cannot_be_deleted(): void
     {
         $receipt = $this->createPostedReceipt(3.000);
-        $line = $receipt->lines->first();
-        $this->assertNotNull($line->stock_movement_id);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Posted Goods Receipt is immutable');
+        $receipt->delete();
     }
 
-    public function test_goods_receipt_status_is_accurately_stored(): void
-    {
-        $receipt = $this->createPostedReceipt(3.000);
-        $refetched = GoodsReceipt::find($receipt->id);
-        $this->assertEquals(GoodsReceiptStatusEnum::Posted, $refetched->status);
-    }
-
-    public function test_goods_receipt_line_quantity_is_accurate(): void
+    public function test_posted_goods_receipt_line_cannot_be_updated(): void
     {
         $receipt = $this->createPostedReceipt(3.000);
         $line = $receipt->lines->first();
-        $refetched = GoodsReceiptLine::find($line->id);
-        $this->assertEquals(3.000, (float) $refetched->received_quantity);
+        $line->received_quantity = 99.000;
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Line of a posted Goods Receipt is immutable');
+        $line->save();
     }
 
-    public function test_inventory_stock_movement_cannot_be_deleted_via_eloquent(): void
+    public function test_posted_goods_receipt_line_cannot_be_deleted(): void
+    {
+        $receipt = $this->createPostedReceipt(3.000);
+        $line = $receipt->lines->first();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Line of a posted Goods Receipt is immutable');
+        $line->delete();
+    }
+
+    public function test_inventory_stock_movement_cannot_be_updated(): void
     {
         $this->createPostedReceipt(3.000);
         $movement = InventoryStockMovement::first();
-        $this->assertFalse($movement->timestamps,
-            'Stock movement has no updated_at, confirming append-only design');
+        $movement->quantity = 99.000;
 
-        $this->assertTrue(true);
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Inventory Stock Movement is immutable');
+        $movement->save();
+    }
+
+    public function test_inventory_stock_movement_cannot_be_deleted(): void
+    {
+        $this->createPostedReceipt(3.000);
+        $movement = InventoryStockMovement::first();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Inventory Stock Movement is immutable');
+        $movement->delete();
+    }
+
+    public function test_draft_receipt_can_still_be_updated(): void
+    {
+        $receipt = $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 3.000,
+                'idempotency_key' => (string) Str::ulid(),
+            ]],
+            $this->receiver->id,
+        );
+        $this->assertEquals(GoodsReceiptStatusEnum::Draft, $receipt->status);
+
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->save();
+        $this->assertEquals(GoodsReceiptStatusEnum::ConfirmationPending, $receipt->fresh()->status);
+    }
+
+    // ── Two-connection concurrency proof ──────────────────────────────────
+
+    public function test_two_connection_sequential_over_receipt_protected(): void
+    {
+        $this->createPostedReceipt(7.000);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Over-receipt');
+
+        $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 7.000,
+                'idempotency_key' => (string) Str::ulid(),
+            ]],
+            $this->receiver->id,
+        );
+    }
+
+    public function test_two_connection_duplicate_idempotency_blocked_by_pg(): void
+    {
+        $idemKey = (string) Str::ulid();
+
+        $receipt = $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 3.000,
+                'idempotency_key' => $idemKey,
+            ]],
+            $this->receiver->id,
+        );
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->save();
+        $this->confirm($this->receiver);
+        $this->postingService()->post($receipt, $this->receiver->id);
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table('goods_receipt_lines')->insert([
+            'id' => (string) Str::ulid(),
+            'goods_receipt_id' => $receipt->id,
+            'property_id' => $this->property->id,
+            'purchase_order_line_id' => $this->poLine->id,
+            'inventory_item_id' => $this->item->id,
+            'inventory_location_id' => $this->location->id,
+            'inventory_unit_id' => $this->unitId,
+            'received_quantity' => 3.000,
+            'idempotency_key' => $idemKey,
+            'created_by' => $this->receiver->id,
+            'created_at' => now(),
+        ]);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
