@@ -16,6 +16,7 @@ use Modules\Finance\Banking\Models\BankingMigrationPilotAuthorization;
 use Modules\Finance\Banking\Models\BankingMigrationPlan;
 use Modules\Finance\Banking\Models\BankingMigrationTargetIntake;
 use Modules\Finance\Banking\Models\ControlledBankAccount;
+use Modules\Finance\Banking\Services\BankingMigrationAccountIdentityExecutionService;
 use Modules\Finance\Banking\Services\BankingMigrationDryRunService;
 use Modules\Finance\Banking\Services\BankingMigrationPilotAuthorizationService;
 use Modules\Finance\Banking\Services\BankingMigrationPlanService;
@@ -372,6 +373,33 @@ class BankingMigrationPlanController extends Controller
             return redirect()
                 ->route('finance.banking.migration.index')
                 ->with('success', 'Pilot authorization review recorded.');
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('error', $exception->getMessage());
+        }
+    }
+
+    public function execute(Request $request, string $pilotAuthId): RedirectResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->can(BankingMigrationAccountIdentityExecutionService::PERMISSION_EXECUTE)) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $this->resolvePropertyId($request);
+
+        $service = app(BankingMigrationAccountIdentityExecutionService::class);
+
+        try {
+            $service->execute(
+                $pilotAuthId,
+                $user
+            );
+
+            return redirect()
+                ->route('finance.banking.migration.index')
+                ->with('success', 'Account identity lineage execution completed.');
         } catch (Throwable $exception) {
             return redirect()
                 ->route('finance.banking.migration.index')

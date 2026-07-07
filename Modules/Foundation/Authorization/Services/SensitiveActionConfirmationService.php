@@ -19,6 +19,7 @@ class SensitiveActionConfirmationService
         'administrative-sensitive-action',
         'cash-payment-execution',
         'bank-payment-execution',
+        'banking-migration-account-identity-pilot-execution',
     ];
 
     private const SESSION_KEY = 'sensitive_action_confirmation';

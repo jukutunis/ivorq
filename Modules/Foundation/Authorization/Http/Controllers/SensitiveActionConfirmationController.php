@@ -133,6 +133,7 @@ class SensitiveActionConfirmationController extends Controller
             'administrative-sensitive-action' => 'Administrative Sensitive Action',
             'cash-payment-execution' => 'Cash Payment Execution',
             'bank-payment-execution' => 'Bank Payment Execution',
+            'banking-migration-account-identity-pilot-execution' => 'Banking Account Identity Pilot Execution',
         ];
 
         return $labels[$intent] ?? $intent;
@@ -143,6 +144,7 @@ class SensitiveActionConfirmationController extends Controller
         $routes = [
             'finance-role-assignment' => 'finance.fx-operational-role-assignments.index',
             'finance-approval' => 'dashboard',
+            'banking-migration-account-identity-pilot-execution' => 'finance.banking.migration.index',
         ];
 
         return $routes[$intent] ?? null;

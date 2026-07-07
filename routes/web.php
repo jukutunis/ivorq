@@ -89,6 +89,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.banking.migration.pilot-authorization.request');
         Route::post('/banking/migration/pilot-authorization/{pilotAuth}/review', [\Modules\Finance\Banking\Http\Controllers\BankingMigrationPlanController::class, 'reviewPilotAuthorization'])
             ->name('finance.banking.migration.pilot-authorization.review');
+        Route::post('/banking/migration/pilot-authorization/{pilotAuth}/execute', [\Modules\Finance\Banking\Http\Controllers\BankingMigrationPlanController::class, 'execute'])
+            ->name('finance.banking.migration.pilot-authorization.execute');
         Route::get('/payables/supplier-invoices', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'index'])
             ->name('finance.payables.supplier-invoices.index');
         Route::post('/payables/supplier-invoices/{invoice}/approve', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'approve'])
