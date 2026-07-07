@@ -6,13 +6,18 @@
 
 ## Validation Status
 
-Wave 1 / boundary: Delivered (Sprint 36).
-
 Controlled Goods Receipt posting:
-Delivered and PostgreSQL-validated.
+Delivered and PostgreSQL-validated (58 tests, 114 assertions, 0 failures, 0 errors)
 
-Inventory Ledger posting:
-Mandatory and authoritative for Sprint 37 receipt movements.
+Immutability:
+- GoodsReceipt: Eloquent updating/deleting blocked when status=POSTED
+- GoodsReceiptLine: Eloquent updating/deleting blocked when parent receipt is POSTED
+- InventoryStockMovement: Eloquent updating/deleting always blocked (append-only)
+
+Concurrency:
+CONCURRENCY_TEST_HARNESS_GAP — No repository-compatible independent-process or
+two-connection test convention exists. Protection via PostgreSQL unique constraints
+on source correlation and idempotency, plus sequential remaining-quantity guard.
 
 Costing, valuation, AVCO, FIFO, GL, AP invoice, payment,
 supplier return, receipt reversal, transfer, issue, count,
@@ -21,20 +26,15 @@ NOT AUTHORIZED
 
 **PostgreSQL Validation Evidence (pgsql/ivorq_testing):**
 - `InventoryStockMovementLedgerTest`: 21 tests, 49 assertions, 0 failures, 0 errors
-- `ControlledGoodsReceiptPostingTest`: 54 tests, 104 assertions, 0 failures, 0 errors
+- `ControlledGoodsReceiptPostingTest`: 58 tests, 114 assertions, 0 failures, 0 errors
 - `SensitiveActionConfirmationTest`: 45 tests, 386 assertions, 0 failures, 0 errors
 - Full Banking/Finance Master Regression: 194 tests, 0 failures, 0 errors
-- `InventoryReversalWorkspaceTest`: 8 tests, 2 errors (INHERITED_REVERSAL_TEST_DEBT_CONFIRMED — pre-existing trigger conflict, not caused by Sprint 36/37)
-- Concurrency: CONCURRENCY_TEST_HARNESS_GAP — no repository-compatible independent-process convention exists
+- `InventoryReversalWorkspaceTest`: 8 tests, 2 errors (INHERITED_REVERSAL_TEST_DEBT_CONFIRMED)
 
 **Commit chain:**
 ```
-20a67c5 Sprint 36: Define controlled inventory ledger boundary
-dca73af Sprint 37: Define controlled purchasing and receiving boundary
-bd6ad75 Sprint 37: Validate controlled goods receipt posting
-183acaf Sprint 37: Prove controlled goods receipt boundaries
-ff8430e Sprint 37: Complete controlled goods receipt validation
-265c3d4 Sprint 37: Prove receipt confirmation and concurrency safety
+72bb73f Sprint 37: Enforce posted goods receipt immutability
+2a8c4f1 Sprint 37: Prove receipt concurrency safety
 ```
 
 ## 1. Narrow Purchasing Scope
