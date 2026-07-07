@@ -32,11 +32,35 @@ interface MigrationPlan {
   updated_at: string | null;
 }
 
+interface TargetIntake {
+  id: string;
+  migration_plan_id: string;
+  manifest_entry_id: string;
+  source_domain: string;
+  source_model: string;
+  source_category: string | null;
+  target_domain: string;
+  target_model: string;
+  controlled_bank_account_id: string;
+  status: string;
+  correlation_id: string;
+  proposal_actor_id: string;
+  review_actor_id: string | null;
+  review_outcome: string | null;
+  review_timestamp: string | null;
+  execution_authority: string;
+  cutover_authority: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 interface Props {
   plans: MigrationPlan[];
+  target_intakes: TargetIntake[];
   permissions: {
     can_view: boolean;
     can_manage: boolean;
+    can_review: boolean;
   };
   constants: {
     source_domain: string;
@@ -56,7 +80,7 @@ const financeTabs = [
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 
-export default function BankingMigrationControlWorkspace({ plans, permissions, constants }: Props) {
+export default function BankingMigrationControlWorkspace({ plans, target_intakes, permissions, constants }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
 
@@ -68,6 +92,12 @@ export default function BankingMigrationControlWorkspace({ plans, permissions, c
 
   const canView = permissions?.can_view ?? false;
   const canManage = permissions?.can_manage ?? false;
+  const canReview = permissions?.can_review ?? false;
+
+  const targetIntakeCount = useMemo(() => target_intakes?.length ?? 0, [target_intakes]);
+  const proposedCount = useMemo(() => target_intakes?.filter((t) => t.status === 'PROPOSED').length ?? 0, [target_intakes]);
+  const acceptedCount = useMemo(() => target_intakes?.filter((t) => t.status === 'REVIEW_ACCEPTED').length ?? 0, [target_intakes]);
+  const rejectedCount = useMemo(() => target_intakes?.filter((t) => t.status === 'REVIEW_REJECTED').length ?? 0, [target_intakes]);
 
   const createForm = useForm<{
     request_identity: string;
@@ -154,7 +184,8 @@ export default function BankingMigrationControlWorkspace({ plans, permissions, c
               <label className="filter-label">Capability</label>
               <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
                 <div>View: {canView ? 'Authorized' : 'Unauthorized'}</div>
-                <div>Manage: {canManage ? 'Authorized' : 'Unauthorized'}</div>
+                <div>Propose: {canManage ? 'Authorized' : 'Unauthorized'}</div>
+                <div>Review: {canReview ? 'Authorized' : 'Unauthorized'}</div>
                 <div>Cutover: {constants.cutover_not_authorized}</div>
                 <div>Execution: {constants.execution_unavailable}</div>
               </div>
@@ -289,6 +320,101 @@ export default function BankingMigrationControlWorkspace({ plans, permissions, c
               </div>
             </>
           )}
+
+          {canView && (() => {
+            const intakeStatusColor = (status: string): string => {
+              switch (status) {
+                case 'PROPOSED': return 'inspection-blue';
+                case 'REVIEW_ACCEPTED': return 'ready-green';
+                case 'REVIEW_REJECTED': return 'critical-red';
+                case 'ARCHIVED': return 'neutral';
+                default: return 'neutral';
+              }
+            };
+
+            const intakeStatusBadge = (status: string): string => {
+              switch (status) {
+                case 'REVIEW_ACCEPTED': return 'ready';
+                case 'REVIEW_REJECTED': return 'critical';
+                case 'PROPOSED': return 'inspection';
+                default: return 'neutral';
+              }
+            };
+
+            return (
+              <>
+                <OperationalSnapshot>
+                  <SnapshotCard value={targetIntakeCount} label="Target Intakes" statusColor="inspection-blue" />
+                  <SnapshotCard value={proposedCount} label="Proposed" statusColor="inspection-blue" />
+                  <SnapshotCard value={acceptedCount} label="Accepted" statusColor="ready-green" />
+                  <SnapshotCard value={rejectedCount} label="Rejected" statusColor="critical-red" />
+                </OperationalSnapshot>
+
+                {targetIntakeCount === 0 && (
+                  <AttentionArea title="Target-Intake Mapping" badgeText="No Mappings" badgeType="neutral" areaType="neutral">
+                    <div className="finance-empty-state">
+                      No target-intake mapping proposals exist for the current property.
+                      Account-level mapping proposals record human-governed planning decisions. No data-plane migration is authorized.
+                    </div>
+                  </AttentionArea>
+                )}
+
+                {targetIntakeCount > 0 && (
+                  <>
+                    <QueueList title={`Target Intakes (${targetIntakeCount})`} count={targetIntakeCount}>
+                      <div className="finance-queue-body">
+                        {target_intakes.map((intake) => (
+                          <WorkCard
+                            key={intake.id}
+                            borderColor={intakeStatusColor(intake.status)}
+                            meta={
+                              <>
+                                <span>{intake.created_at || 'Date unavailable'}</span>
+                                <StatusBadge status={intakeStatusBadge(intake.status) as any}>
+                                  {intake.status}
+                                </StatusBadge>
+                              </>
+                            }
+                            title={`Intake ${intake.id}`}
+                            detail={
+                              <span>
+                                Source: {intake.source_domain} / {intake.source_category || intake.source_model}
+                                <br />
+                                Target: {intake.target_domain} / {intake.target_model}
+                                <br />
+                                Plan: {intake.migration_plan_id}
+                                <br />
+                                Manifest: {intake.manifest_entry_id}
+                                <br />
+                                Cutover: {intake.cutover_authority}
+                                <br />
+                                Execution: {intake.execution_authority}
+                                {intake.review_outcome && (
+                                  <>
+                                    <br />
+                                    Review: {intake.review_outcome} ({intake.review_timestamp || 'timestamp unavailable'})
+                                  </>
+                                )}
+                                <br />
+                                Correlation: {intake.correlation_id}
+                              </span>
+                            }
+                            actions={<></>}
+                          />
+                        ))}
+                      </div>
+                    </QueueList>
+
+                    <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: 'var(--surface-secondary)', border: '1px solid var(--border-default)', borderRadius: '4px' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                        Target-intake mapping proposals are non-executable control-plane planning records. No legacy account numbers, target account numbers, balances, amounts, currencies, external references, or financial payloads are projected. No mapping score, confidence, or candidate ranking exists. Review-accepted proposals remain MIGRATION_EXECUTION_NOT_AUTHORIZED and CUTOVER_NOT_AUTHORIZED.
+                      </div>
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })()}
         </MainContent>
       </SplitLayout>
     </div>

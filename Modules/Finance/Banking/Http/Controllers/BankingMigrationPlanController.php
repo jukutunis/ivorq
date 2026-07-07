@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
+use Modules\Finance\Banking\Models\BankingMigrationTargetIntake;
 use Modules\Finance\Banking\Services\BankingMigrationDryRunService;
 use Modules\Finance\Banking\Services\BankingMigrationPlanService;
 use Modules\Foundation\User\Models\User;
@@ -46,11 +47,57 @@ class BankingMigrationPlanController extends Controller
             }, $planModels);
         }
 
+        $canReview = $actor instanceof User && $actor->can('finance.banking.migration.mapping.review');
+
+        $targetIntakes = [];
+        if ($canView) {
+            $targetIntakes = BankingMigrationTargetIntake::with(['manifestEntry', 'controlledBankAccount'])
+                ->where('property_id', $propertyId)
+                ->orderByDesc('created_at')
+                ->limit(50)
+                ->get()
+                ->map(function (BankingMigrationTargetIntake $intake) {
+                    $sourceCategory = null;
+                    if ($intake->manifestEntry) {
+                        $sourceCategory = match ($intake->manifestEntry->source_model) {
+                            'BankAccount' => 'bank_account',
+                            default => $intake->manifestEntry->source_model,
+                        };
+                    }
+
+                    return [
+                        'id' => $intake->id,
+                        'migration_plan_id' => $intake->migration_plan_id,
+                        'manifest_entry_id' => $intake->manifest_entry_id,
+                        'source_domain' => $intake->source_domain,
+                        'source_model' => $intake->source_model,
+                        'source_category' => $sourceCategory,
+                        'target_domain' => $intake->target_domain,
+                        'target_model' => $intake->target_model,
+                        'controlled_bank_account_id' => $intake->controlled_bank_account_id,
+                        'status' => $intake->status?->value,
+                        'correlation_id' => $intake->correlation_id,
+                        'proposal_actor_id' => $intake->proposal_actor_id,
+                        'review_actor_id' => $intake->review_actor_id,
+                        'review_outcome' => $intake->review_outcome,
+                        'review_timestamp' => $intake->review_timestamp?->toIso8601String(),
+                        'execution_authority' => $intake->execution_authority,
+                        'cutover_authority' => $intake->cutover_authority,
+                        'created_at' => $intake->created_at?->toIso8601String(),
+                        'updated_at' => $intake->updated_at?->toIso8601String(),
+                    ];
+                })
+                ->values()
+                ->all();
+        }
+
         return Inertia::render('Ivorq/Finance/BankingMigrationControlWorkspace', [
             'plans' => array_values($plans),
+            'target_intakes' => array_values($targetIntakes),
             'permissions' => [
                 'can_view' => $canView,
                 'can_manage' => $canManage,
+                'can_review' => $canReview,
             ],
             'constants' => [
                 'source_domain' => BankingMigrationPlanService::SOURCE_DOMAIN,
