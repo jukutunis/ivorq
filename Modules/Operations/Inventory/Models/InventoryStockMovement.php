@@ -7,6 +7,7 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
+use Modules\Operations\Inventory\Enums\InventoryMovementSourceLegEnum;
 use RuntimeException;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasUlid;
@@ -31,6 +32,7 @@ class InventoryStockMovement extends Model
         return [
             'movement_type' => InventoryMovementTypeEnum::class,
             'direction' => InventoryMovementDirectionEnum::class,
+            'source_leg' => InventoryMovementSourceLegEnum::class,
             'quantity' => 'decimal:3',
             'occurred_at' => 'datetime',
             'created_at' => 'datetime',
