@@ -477,9 +477,9 @@ class BankingMigrationPilotAuthorizationActionTest extends PostgresTestCase
     {
         $this->createFixtures();
 
-        $before = $this->fullSnapshot();
-
         $intake = $this->createReviewAcceptedTargetIntake();
+
+        $before = $this->fullSnapshot();
 
         setPermissionsTeamId($this->property->id);
 
@@ -923,6 +923,10 @@ class BankingMigrationPilotAuthorizationActionTest extends PostgresTestCase
         Permission::firstOrCreate(['name' => BankingMigrationPlanService::PERMISSION_MANAGE, 'guard_name' => 'web']);
         Permission::firstOrCreate(['name' => 'finance.banking.migration.mapping.review', 'guard_name' => 'web']);
         Permission::firstOrCreate(['name' => 'finance.banking.migration.pilot.authorization.review', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'finance.fx-adjustment.view', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'finance.journal-entry.post', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'finance.payables.ap-settlement.allocate', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'finance.fx-adjustment-candidate.create', 'guard_name' => 'web']);
 
         $this->financeManager = User::create([
             'name' => 'PAA FM ' . $companySuffix,
