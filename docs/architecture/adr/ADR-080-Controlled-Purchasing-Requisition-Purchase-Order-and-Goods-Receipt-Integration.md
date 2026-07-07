@@ -15,19 +15,23 @@ Immutability:
 - InventoryStockMovement: Eloquent updating/deleting always blocked (append-only)
 
 Concurrency:
-CONCURRENCY_TEST_HARNESS_GAP — Independent two-process PostgreSQL concurrency
-could not be proven. A complete worker script exists at
-tests/Postgres/Operations/Inventory/Support/ControlledGoodsReceiptConcurrencyWorker.php
-that correctly boots Laravel, authenticates, issues sensitive confirmation,
-and calls ControlledGoodsReceiptPostingService through a file-based barrier
-protocol. However, proc_open PHP subprocesses on Windows cannot reliably
-bootstrap the full Laravel application with PostgreSQL within the
-RefreshDatabase test transaction context (fixtures committed via
-DB::commit() remain invisible to subprocesses due to PDO transaction
-isolation). Sequential protection is proven via:
-- remaining-quantity guard (test_sequential_over_receipt_protected)
-- PostgreSQL unique constraint on (property_id, idempotency_key)
-- PostgreSQL unique constraint on (property_id, source_type, source_id)
+POSTGRESQL TWO-CONTEXT PROOF PASSED.
+
+Two independent Laravel/PHP worker processes with independent PostgreSQL
+connections were validated against the same Purchase Order line using a
+disposable isolated PostgreSQL database. Both over-receipt and duplicate
+receipt posting were prevented through the actual controlled posting
+boundary, row-lock/revalidation behavior, idempotency, and source-correlation
+enforcement.
+
+Isolated concurrency test: 2 tests, 13 assertions, 0 failures, 0 errors.
+Workers boot separate Laravel containers with independent pg_backend_pid().
+Coordinator holds lockForUpdate() on PO line until both workers enter
+lock-acquisition stage; lock release deterministically proves real contention.
+
+DB lifecycle: ivorq_concurrency_<runid> created, migrated, seeded, tested, and
+successfully dropped with connection termination before DROP DATABASE.
+ivorq_testing never altered.
 
 Costing, valuation, AVCO, FIFO, GL, AP invoice, payment,
 supplier return, receipt reversal, transfer, issue, count,
