@@ -69,7 +69,6 @@ class InventoryLedgerPostingService
             'property_id', 'inventory_item_id', 'inventory_location_id',
             'inventory_unit_id', 'movement_type', 'direction',
             'quantity',             'source_domain', 'source_type', 'source_id',
-            'source_leg',
             'correlation_id', 'idempotency_key',
             'occurred_at', 'created_by',
         ];
@@ -171,7 +170,7 @@ class InventoryLedgerPostingService
             'source_domain' => $intent['source_domain'],
             'source_type' => $intent['source_type'],
             'source_id' => $intent['source_id'],
-            'source_leg' => $intent['source_leg'] ?? null,
+            'source_leg' => isset($intent['source_leg']) ? $intent['source_leg'] : InventoryMovementSourceLegEnum::Primary,
             'correlation_id' => $intent['correlation_id'],
             'idempotency_key' => $intent['idempotency_key'],
             'occurred_at' => $intent['occurred_at'] ?? $now,
