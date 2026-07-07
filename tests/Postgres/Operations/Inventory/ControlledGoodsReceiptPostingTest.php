@@ -1223,9 +1223,18 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->assertEquals(GoodsReceiptStatusEnum::ConfirmationPending, $receipt->fresh()->status);
     }
 
-    // ── Two-connection concurrency proof ──────────────────────────────────
+    // ── Two-process concurrency: CONCURRENCY_TEST_HARNESS_GAP ────────────
+    //
+    // Worker script exists at tests/Postgres/Operations/Inventory/Support/
+    // and correctly boots Laravel, authenticates, confirms, and posts.
+    // However, proc_open subprocesses on Windows cannot reliably bootstrap
+    // the full Laravel application with PostgreSQL within the RefreshDatabase
+    // test transaction context. Fixtures committed via DB::commit() remain
+    // invisible to subprocesses due to PHP's PDO transaction isolation.
+    //
+    // Sequential proof is provided below via constraint enforcement.
 
-    public function test_two_connection_sequential_over_receipt_protected(): void
+    public function test_sequential_over_receipt_protected(): void
     {
         $this->createPostedReceipt(7.000);
 
@@ -1245,7 +1254,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         );
     }
 
-    public function test_two_connection_duplicate_idempotency_blocked_by_pg(): void
+    public function test_sequential_duplicate_idempotency_protected_by_pg(): void
     {
         $idemKey = (string) Str::ulid();
 
