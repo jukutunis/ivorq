@@ -7,6 +7,7 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
+use RuntimeException;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasUlid;
 
@@ -34,6 +35,17 @@ class InventoryStockMovement extends Model
             'occurred_at' => 'datetime',
             'created_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::updating(function (InventoryStockMovement $movement) {
+            throw new RuntimeException('Inventory Stock Movement is immutable and cannot be updated.');
+        });
+
+        static::deleting(function (InventoryStockMovement $movement) {
+            throw new RuntimeException('Inventory Stock Movement is immutable and cannot be deleted.');
+        });
     }
 
     public function property()

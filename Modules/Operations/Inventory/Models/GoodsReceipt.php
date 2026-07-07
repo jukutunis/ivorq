@@ -7,6 +7,7 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
+use RuntimeException;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasUlid;
 
@@ -33,6 +34,29 @@ class GoodsReceipt extends Model
             'posted_at' => 'datetime',
             'created_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::updating(function (GoodsReceipt $receipt) {
+            $original = $receipt->getOriginal('status');
+            if ($original instanceof GoodsReceiptStatusEnum) {
+                $original = $original->value;
+            }
+            if ($original === GoodsReceiptStatusEnum::Posted->value) {
+                throw new RuntimeException('Posted Goods Receipt is immutable and cannot be updated.');
+            }
+        });
+
+        static::deleting(function (GoodsReceipt $receipt) {
+            $original = $receipt->getOriginal('status');
+            if ($original instanceof GoodsReceiptStatusEnum) {
+                $original = $original->value;
+            }
+            if ($original === GoodsReceiptStatusEnum::Posted->value) {
+                throw new RuntimeException('Posted Goods Receipt is immutable and cannot be deleted.');
+            }
+        });
     }
 
     public function property()
