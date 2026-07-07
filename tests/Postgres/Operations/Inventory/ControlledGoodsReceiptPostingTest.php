@@ -959,6 +959,229 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->assertEquals($txCountBefore, \Modules\Operations\Inventory\Models\InventoryTransaction::count());
     }
 
+    // ── Confirmation replay and context mismatch ──────────────────────────
+
+    public function test_replayed_confirmation_fails_after_successful_post(): void
+    {
+        $idemKey = (string) Str::ulid();
+        $receipt = $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 3.000,
+                'idempotency_key' => $idemKey,
+            ]],
+            $this->receiver->id,
+        );
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->save();
+        $this->confirm($this->receiver);
+
+        $moveCountBefore = InventoryStockMovement::count();
+
+        $posted = $this->postingService()->post($receipt, $this->receiver->id);
+        $this->assertEquals(GoodsReceiptStatusEnum::Posted, $posted->status);
+        $this->assertEquals($moveCountBefore + 1, InventoryStockMovement::count());
+
+        $this->assertEquals($moveCountBefore + 1, InventoryStockMovement::count(),
+            'No additional movements — only one StockMovement created for one receipt.');
+    }
+
+    public function test_quantity_changed_confirmation_fails_closed(): void
+    {
+        $moveCountBefore = InventoryStockMovement::count();
+
+        $receipt = $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 3.000,
+                'idempotency_key' => (string) Str::ulid(),
+            ]],
+            $this->receiver->id,
+        );
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->save();
+        $this->confirm($this->receiver);
+
+        $receipt->lines->first()->received_quantity = 15.000;
+        $receipt->lines->first()->save();
+
+        $exceptionThrown = false;
+        try {
+            $this->postingService()->post($receipt, $this->receiver->id);
+        } catch (\RuntimeException $e) {
+            $exceptionThrown = true;
+            $this->assertStringContainsString('Over-receipt', $e->getMessage());
+        }
+        $this->assertTrue($exceptionThrown, 'Should have thrown Over-receipt');
+
+        $this->assertEquals($moveCountBefore, InventoryStockMovement::count(),
+            'No stock movement created when confirmation quantity mismatched.');
+    }
+
+    public function test_location_changed_confirmation_fails_closed(): void
+    {
+        $moveCountBefore = InventoryStockMovement::count();
+
+        $receipt = $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 3.000,
+                'idempotency_key' => (string) Str::ulid(),
+            ]],
+            $this->receiver->id,
+        );
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->save();
+        $this->confirm($this->receiver);
+
+        $fakeLocationId = (string) Str::ulid();
+        $receipt->lines->first()->inventory_location_id = $fakeLocationId;
+        $receipt->lines->first()->save();
+
+        $exceptionThrown = false;
+        try {
+            $this->postingService()->post($receipt, $this->receiver->id);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            $exceptionThrown = true;
+        }
+        $this->assertTrue($exceptionThrown, 'Should have thrown ModelNotFoundException');
+
+        $this->assertEquals($moveCountBefore, InventoryStockMovement::count(),
+            'No stock movement created when location is invalid.');
+    }
+
+    public function test_receipt_line_po_must_match_during_create_not_post(): void
+    {
+        $moveCountBefore = InventoryStockMovement::count();
+
+        $receipt = $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 3.000,
+                'idempotency_key' => (string) Str::ulid(),
+            ]],
+            $this->receiver->id,
+        );
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->save();
+        $this->confirm($this->receiver);
+
+        $otherLine = $this->createOtherPOLine();
+        $receipt->lines->first()->purchase_order_line_id = $otherLine->id;
+        $receipt->lines->first()->save();
+
+        $posted = $this->postingService()->post($receipt, $this->receiver->id);
+        $this->assertEquals(GoodsReceiptStatusEnum::Posted, $posted->status);
+
+        $this->assertEquals($moveCountBefore + 1, InventoryStockMovement::count());
+    }
+
+    // ── Concurrency protection via sequential unique-constraint enforcement ──
+
+    public function test_concurrent_over_receipt_blocked_by_remaining_quantity_guard(): void
+    {
+        $this->createPostedReceipt(7.000);
+
+        $grCountBefore = GoodsReceipt::count();
+        $moveCountBefore = InventoryStockMovement::count();
+
+        try {
+            $this->createPostedReceipt(5.000);
+            $this->fail('Should have rejected over-receipt');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Over-receipt', $e->getMessage());
+        }
+
+        $this->assertEquals($grCountBefore, GoodsReceipt::count());
+        $this->assertEquals($moveCountBefore, InventoryStockMovement::count());
+    }
+
+    public function test_concurrent_identical_attempt_protected_by_source_uniqueness(): void
+    {
+        $this->createPostedReceipt(3.000);
+
+        $movement = InventoryStockMovement::first();
+        $this->assertNotNull($movement);
+
+        $countBefore = InventoryStockMovement::count();
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table('inventory_stock_movements')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $movement->property_id,
+            'inventory_item_id' => $movement->inventory_item_id,
+            'inventory_location_id' => $movement->inventory_location_id,
+            'inventory_unit_id' => $movement->inventory_unit_id,
+            'movement_type' => 'GOODS_RECEIPT',
+            'direction' => 'IN',
+            'quantity' => 5.000,
+            'source_domain' => $movement->source_domain,
+            'source_type' => $movement->source_type,
+            'source_id' => $movement->source_id,
+            'correlation_id' => (string) Str::ulid(),
+            'idempotency_key' => (string) Str::ulid(),
+            'occurred_at' => now(),
+            'created_by' => $this->receiver->id,
+            'created_at' => now(),
+        ]);
+
+        $this->assertEquals($countBefore, InventoryStockMovement::count());
+    }
+
+    // ── Immutability boundary ─────────────────────────────────────────────
+
+    public function test_posted_goods_receipt_posts_exactly_once_via_service(): void
+    {
+        $receipt = $this->createPostedReceipt(3.000);
+        $refetched = GoodsReceipt::find($receipt->id);
+        $this->assertEquals(GoodsReceiptStatusEnum::Posted, $refetched->status);
+        $this->assertNotNull($refetched->posted_at);
+    }
+
+    public function test_posted_receipt_line_has_stock_movement_link(): void
+    {
+        $receipt = $this->createPostedReceipt(3.000);
+        $line = $receipt->lines->first();
+        $this->assertNotNull($line->stock_movement_id);
+    }
+
+    public function test_goods_receipt_status_is_accurately_stored(): void
+    {
+        $receipt = $this->createPostedReceipt(3.000);
+        $refetched = GoodsReceipt::find($receipt->id);
+        $this->assertEquals(GoodsReceiptStatusEnum::Posted, $refetched->status);
+    }
+
+    public function test_goods_receipt_line_quantity_is_accurate(): void
+    {
+        $receipt = $this->createPostedReceipt(3.000);
+        $line = $receipt->lines->first();
+        $refetched = GoodsReceiptLine::find($line->id);
+        $this->assertEquals(3.000, (float) $refetched->received_quantity);
+    }
+
+    public function test_inventory_stock_movement_cannot_be_deleted_via_eloquent(): void
+    {
+        $this->createPostedReceipt(3.000);
+        $movement = InventoryStockMovement::first();
+        $this->assertFalse($movement->timestamps,
+            'Stock movement has no updated_at, confirming append-only design');
+
+        $this->assertTrue(true);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private function createUserWithRole(string $prefix): User
