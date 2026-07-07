@@ -36,7 +36,7 @@ class SensitiveActionConfirmationService
         return self::REGISTERED_INTENTS;
     }
 
-    public function confirm(User $actor, string $intent, string $password, ?string $companyId, string $propertyId): void
+    public function confirm(User $actor, string $intent, string $password, ?string $companyId, string $propertyId, ?string $commercialEvidenceHash = null): void
     {
         if (!in_array($intent, self::REGISTERED_INTENTS, true)) {
             throw new DomainException('The requested intent is not registered.');
@@ -55,6 +55,10 @@ class SensitiveActionConfirmationService
             'confirmed_at' => $now->toISOString(),
             'expires_at' => $now->copy()->addMinutes(self::CONFIRMATION_TTL_MINUTES)->toISOString(),
         ];
+
+        if ($commercialEvidenceHash !== null) {
+            $metadata['commercial_evidence_hash'] = $commercialEvidenceHash;
+        }
 
         $confirmations = session()->get(self::SESSION_KEY, []);
         $confirmations[$intent] = $metadata;
@@ -183,6 +187,7 @@ class SensitiveActionConfirmationService
             'intent' => $metadata['intent'],
             'confirmed_at' => $metadata['confirmed_at'],
             'expires_at' => $metadata['expires_at'],
+            'commercial_evidence_hash' => $metadata['commercial_evidence_hash'] ?? null,
         ];
     }
 

@@ -10,6 +10,7 @@ use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
 use Modules\Operations\Inventory\Models\GoodsReceipt;
 use Modules\Operations\Inventory\Models\GoodsReceiptLine;
+use Modules\Operations\Inventory\Models\GoodsReceiptLineCommercialEvidence;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
@@ -92,6 +93,72 @@ class ControlledGoodsReceiptPostingService
         });
     }
 
+    public function resolveCommercialEvidenceHash(GoodsReceipt $receipt, GoodsReceiptLine $line): string
+    {
+        $poLine = PurchaseOrderLine::findOrFail($line->purchase_order_line_id);
+        $po = PurchaseOrder::findOrFail($receipt->purchase_order_id);
+
+        $property = \Modules\Foundation\Property\Models\Property::findOrFail($receipt->property_id);
+
+        $fields = [
+            'property_id' => $receipt->property_id,
+            'goods_receipt_id' => $receipt->id,
+            'goods_receipt_line_id' => $line->id,
+            'purchase_order_id' => $receipt->purchase_order_id,
+            'purchase_order_line_id' => $line->purchase_order_line_id,
+            'inventory_item_id' => $line->inventory_item_id,
+            'inventory_unit_id' => $line->inventory_unit_id,
+            'received_quantity' => $line->received_quantity,
+            'property_base_currency_code' => strtoupper((string) $property->currency),
+            'purchase_order_currency_code' => strtoupper((string) ($po->currency_code ?? 'IDR')),
+            'purchase_order_unit_cost' => (string) $poLine->unit_cost,
+            'purchase_order_exchange_rate' => (string) ($po->exchange_rate ?? '0'),
+        ];
+
+        ksort($fields);
+
+        $payload = '';
+        foreach ($fields as $value) {
+            $payload .= (string) $value . '|';
+        }
+
+        return hash('sha256', $payload);
+    }
+
+    public function createCommercialSnapshot(
+        GoodsReceipt $receipt,
+        GoodsReceiptLine $line,
+        string $actorId,
+        Carbon $capturedAt
+    ): GoodsReceiptLineCommercialEvidence {
+        $poLine = PurchaseOrderLine::findOrFail($line->purchase_order_line_id);
+        $po = PurchaseOrder::findOrFail($receipt->purchase_order_id);
+        $property = \Modules\Foundation\Property\Models\Property::findOrFail($receipt->property_id);
+
+        $hash = $this->resolveCommercialEvidenceHash($receipt, $line);
+
+        $evidence = new GoodsReceiptLineCommercialEvidence();
+        $evidence->setAttribute('id', (string) Str::ulid());
+        $evidence->setAttribute('property_id', $receipt->property_id);
+        $evidence->setAttribute('goods_receipt_id', $receipt->id);
+        $evidence->setAttribute('goods_receipt_line_id', $line->id);
+        $evidence->setAttribute('purchase_order_id', $receipt->purchase_order_id);
+        $evidence->setAttribute('purchase_order_line_id', $line->purchase_order_line_id);
+        $evidence->setAttribute('inventory_item_id', $line->inventory_item_id);
+        $evidence->setAttribute('inventory_unit_id', $line->inventory_unit_id);
+        $evidence->setAttribute('property_base_currency_code_snapshot', strtoupper((string) $property->currency));
+        $evidence->setAttribute('purchase_order_currency_code_snapshot', strtoupper((string) ($po->currency_code ?? 'IDR')));
+        $evidence->setAttribute('purchase_order_unit_cost_snapshot', (string) $poLine->unit_cost);
+        $evidence->setAttribute('purchase_order_exchange_rate_snapshot', (string) ($po->exchange_rate ?? null) !== '' ? (string) ($po->exchange_rate ?? '0') : null);
+        $evidence->setAttribute('commercial_evidence_hash', $hash);
+        $evidence->setAttribute('captured_at', $capturedAt);
+        $evidence->setAttribute('created_by', $actorId);
+        $evidence->setAttribute('created_at', $capturedAt);
+        $evidence->save();
+
+        return $evidence;
+    }
+
     public function post(GoodsReceipt $receipt, string $actorId): GoodsReceipt
     {
         if ($receipt->status !== GoodsReceiptStatusEnum::ConfirmationPending) {
@@ -113,7 +180,14 @@ class ControlledGoodsReceiptPostingService
             $propertyId
         );
 
-        return DB::transaction(function () use ($receipt, $po, $propertyId, $actorId) {
+        $confirmationHash = $this->confirmationService->confirmationMetadataFor(
+            $user,
+            'inventory-goods-receipt-posting',
+            $po->purchaseRequest?->property?->company_id ?? null,
+            $propertyId
+        )['commercial_evidence_hash'] ?? null;
+
+        return DB::transaction(function () use ($receipt, $po, $propertyId, $actorId, $confirmationHash) {
             $now = Carbon::now();
 
             foreach ($receipt->lines as $line) {
@@ -138,9 +212,19 @@ class ControlledGoodsReceiptPostingService
                     );
                 }
 
+                $currentHash = $this->resolveCommercialEvidenceHash($receipt, $line);
+
+                if ($confirmationHash !== null && $currentHash !== $confirmationHash) {
+                    throw new RuntimeException(
+                        'Commercial evidence has changed since sensitive confirmation. Posting rejected.'
+                    );
+                }
+
                 $location = InventoryLocation::findOrFail($line->inventory_location_id);
 
                 $correlationId = 'corr-' . (string) Str::ulid();
+
+                $this->createCommercialSnapshot($receipt, $line, $actorId, $now);
 
                 $stockMovement = $this->ledgerPostingService->post([
                     'property_id' => $propertyId,

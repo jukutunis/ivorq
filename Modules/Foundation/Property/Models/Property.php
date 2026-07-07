@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use RuntimeException;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
@@ -36,6 +37,15 @@ class Property extends Model
     protected $casts = [
         'is_active' => 'boolean',
     ];
+
+    protected static function booted(): void
+    {
+        static::updating(function (Property $property) {
+            if ($property->isDirty('currency')) {
+                throw new RuntimeException('Property base currency is immutable and cannot be changed.');
+            }
+        });
+    }
 
     public function getActivitylogOptions(): LogOptions
     {
