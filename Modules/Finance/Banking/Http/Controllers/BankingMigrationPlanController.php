@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 use Modules\Finance\Banking\Models\BankingMigrationManifestEntry;
+use Modules\Finance\Banking\Models\BankingMigrationPilotAuthorization;
 use Modules\Finance\Banking\Models\BankingMigrationPlan;
 use Modules\Finance\Banking\Models\BankingMigrationTargetIntake;
 use Modules\Finance\Banking\Models\ControlledBankAccount;
@@ -52,6 +53,7 @@ class BankingMigrationPlanController extends Controller
         }
 
         $canReview = $actor instanceof User && $actor->can('finance.banking.migration.mapping.review');
+        $canReviewPilotAuth = $actor instanceof User && $actor->can('finance.banking.migration.pilot.authorization.review');
 
         $targetIntakes = [];
         if ($canView) {
@@ -95,14 +97,46 @@ class BankingMigrationPlanController extends Controller
                 ->all();
         }
 
+        $pilotAuthorizations = [];
+        if ($canView) {
+            $pilotAuthorizations = BankingMigrationPilotAuthorization::with(['targetIntake', 'migrationPlan'])
+                ->where('property_id', $propertyId)
+                ->orderByDesc('created_at')
+                ->limit(50)
+                ->get()
+                ->map(function (BankingMigrationPilotAuthorization $auth) {
+                    return [
+                        'id' => $auth->id,
+                        'migration_plan_id' => $auth->migration_plan_id,
+                        'manifest_entry_id' => $auth->manifest_entry_id,
+                        'target_intake_id' => $auth->target_intake_id,
+                        'authorization_scope' => $auth->authorization_scope,
+                        'status' => $auth->status?->value,
+                        'correlation_id' => $auth->correlation_id,
+                        'request_actor_id' => $auth->request_actor_id,
+                        'review_actor_id' => $auth->review_actor_id,
+                        'review_outcome' => $auth->review_outcome,
+                        'review_timestamp' => $auth->review_timestamp?->toIso8601String(),
+                        'execution_authority' => $auth->execution_authority,
+                        'cutover_authority' => $auth->cutover_authority,
+                        'created_at' => $auth->created_at?->toIso8601String(),
+                        'updated_at' => $auth->updated_at?->toIso8601String(),
+                    ];
+                })
+                ->values()
+                ->all();
+        }
+
         return Inertia::render('Ivorq/Finance/BankingMigrationControlWorkspace', [
             'plans' => array_values($plans),
             'target_intakes' => array_values($targetIntakes),
+            'pilot_authorizations' => array_values($pilotAuthorizations),
             'proposal_context' => $this->projectProposalContext($propertyId, $canManage),
             'permissions' => [
                 'can_view' => $canView,
                 'can_manage' => $canManage,
                 'can_review' => $canReview,
+                'can_review_pilot_auth' => $canReviewPilotAuth,
             ],
             'constants' => [
                 'source_domain' => BankingMigrationPlanService::SOURCE_DOMAIN,

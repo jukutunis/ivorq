@@ -54,6 +54,24 @@ interface TargetIntake {
   updated_at: string | null;
 }
 
+interface PilotAuthorization {
+  id: string;
+  migration_plan_id: string;
+  manifest_entry_id: string;
+  target_intake_id: string;
+  authorization_scope: string;
+  status: string;
+  correlation_id: string;
+  request_actor_id: string;
+  review_actor_id: string | null;
+  review_outcome: string | null;
+  review_timestamp: string | null;
+  execution_authority: string;
+  cutover_authority: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 interface ProposalContext {
   eligible_plans: Array<{
     id: string;
@@ -79,11 +97,13 @@ interface ProposalContext {
 interface Props {
   plans: MigrationPlan[];
   target_intakes: TargetIntake[];
+  pilot_authorizations: PilotAuthorization[];
   proposal_context: ProposalContext;
   permissions: {
     can_view: boolean;
     can_manage: boolean;
     can_review: boolean;
+    can_review_pilot_auth: boolean;
   };
   constants: {
     source_domain: string;
@@ -103,7 +123,7 @@ const financeTabs = [
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 
-export default function BankingMigrationControlWorkspace({ plans, target_intakes, proposal_context, permissions, constants }: Props) {
+export default function BankingMigrationControlWorkspace({ plans, target_intakes, pilot_authorizations = [], proposal_context, permissions, constants }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
   const [showProposeForm, setShowProposeForm] = useState<boolean>(false);
@@ -117,11 +137,17 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
   const canView = permissions?.can_view ?? false;
   const canManage = permissions?.can_manage ?? false;
   const canReview = permissions?.can_review ?? false;
+  const canReviewPilotAuth = permissions?.can_review_pilot_auth ?? false;
 
   const targetIntakeCount = useMemo(() => target_intakes?.length ?? 0, [target_intakes]);
   const proposedCount = useMemo(() => target_intakes?.filter((t) => t.status === 'PROPOSED').length ?? 0, [target_intakes]);
   const acceptedCount = useMemo(() => target_intakes?.filter((t) => t.status === 'REVIEW_ACCEPTED').length ?? 0, [target_intakes]);
   const rejectedCount = useMemo(() => target_intakes?.filter((t) => t.status === 'REVIEW_REJECTED').length ?? 0, [target_intakes]);
+
+  const pilotAuthCount = useMemo(() => pilot_authorizations?.length ?? 0, [pilot_authorizations]);
+  const pilotAuthRequestedCount = useMemo(() => pilot_authorizations?.filter((p) => p.status === 'REQUESTED').length ?? 0, [pilot_authorizations]);
+  const pilotAuthAcceptedCount = useMemo(() => pilot_authorizations?.filter((p) => p.status === 'REVIEW_ACCEPTED').length ?? 0, [pilot_authorizations]);
+  const pilotAuthRejectedCount = useMemo(() => pilot_authorizations?.filter((p) => p.status === 'REVIEW_REJECTED').length ?? 0, [pilot_authorizations]);
 
   const createForm = useForm<{
     request_identity: string;
@@ -239,6 +265,15 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
                 <div>Rejected: {rejectedCount}</div>
               </div>
             </div>
+            <div className="filter-group">
+              <label className="filter-label">Pilot Authorization Summary</label>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                <div>Total Authorizations: {pilotAuthCount}</div>
+                <div>Requested: {pilotAuthRequestedCount}</div>
+                <div>Review Accepted: {pilotAuthAcceptedCount}</div>
+                <div>Review Rejected: {pilotAuthRejectedCount}</div>
+              </div>
+            </div>
             <div className="filter-group" style={{ borderTop: '1px solid var(--border-default)', paddingTop: '12px' }}>
               <label className="filter-label">Domains</label>
               <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
@@ -251,7 +286,8 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
               <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
                 <div>View: {canView ? 'Authorized' : 'Unauthorized'}</div>
                 <div>Propose: {canManage ? 'Authorized' : 'Unauthorized'}</div>
-                <div>Review: {canReview ? 'Authorized' : 'Unauthorized'}</div>
+                <div>Mapping Review: {canReview ? 'Authorized' : 'Unauthorized'}</div>
+                <div>Pilot Auth Review: {canReviewPilotAuth ? 'Authorized' : 'Unauthorized'}</div>
                 <div>Cutover: {constants.cutover_not_authorized}</div>
                 <div>Execution: {constants.execution_unavailable}</div>
               </div>
@@ -562,6 +598,103 @@ export default function BankingMigrationControlWorkspace({ plans, target_intakes
                     <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: 'var(--surface-secondary)', border: '1px solid var(--border-default)', borderRadius: '4px' }}>
                       <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
                         Target-intake mapping proposals are non-executable control-plane planning records. No legacy account numbers, target account numbers, balances, amounts, currencies, external references, or financial payloads are projected. No mapping score, confidence, or candidate ranking exists. Review-accepted proposals remain MIGRATION_EXECUTION_NOT_AUTHORIZED and CUTOVER_NOT_AUTHORIZED.
+                      </div>
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })()}
+          {canView && pilot_authorizations && (() => {
+            const pilotAuthCount = pilot_authorizations.length;
+            const pilotRequestedCount = pilotAuthRequestedCount;
+            const pilotAcceptedCount = pilotAuthAcceptedCount;
+            const pilotRejectedCount = pilotAuthRejectedCount;
+
+            const pilotAuthStatusColor = (status: string): string => {
+              switch (status) {
+                case 'REQUESTED': return 'inspection-blue';
+                case 'REVIEW_ACCEPTED': return 'ready-green';
+                case 'REVIEW_REJECTED': return 'critical-red';
+                case 'ARCHIVED': return 'neutral';
+                default: return 'neutral';
+              }
+            };
+
+            const pilotAuthStatusBadge = (status: string): string => {
+              switch (status) {
+                case 'REVIEW_ACCEPTED': return 'ready';
+                case 'REVIEW_REJECTED': return 'critical';
+                case 'REQUESTED': return 'inspection';
+                default: return 'neutral';
+              }
+            };
+
+            return (
+              <>
+                <OperationalSnapshot>
+                  <SnapshotCard value={pilotAuthCount} label="Pilot Authorizations" statusColor="inspection-blue" />
+                  <SnapshotCard value={pilotRequestedCount} label="Requested" statusColor="inspection-blue" />
+                  <SnapshotCard value={pilotAcceptedCount} label="Review Accepted" statusColor="ready-green" />
+                  <SnapshotCard value={pilotRejectedCount} label="Review Rejected" statusColor="critical-red" />
+                </OperationalSnapshot>
+
+                {pilotAuthCount === 0 && (
+                  <AttentionArea title="Pilot Authorization" badgeText="No Authorizations" badgeType="neutral" areaType="neutral">
+                    <div className="finance-empty-state">
+                      No pilot authorization records exist for the current property.
+                      Pilot authorization is a control-plane governance record. No data-plane migration is authorized.
+                    </div>
+                  </AttentionArea>
+                )}
+
+                {pilotAuthCount > 0 && (
+                  <>
+                    <QueueList title={`Pilot Authorizations (${pilotAuthCount})`} count={pilotAuthCount}>
+                      <div className="finance-queue-body">
+                        {pilot_authorizations.map((auth) => (
+                          <WorkCard
+                            key={auth.id}
+                            borderColor={pilotAuthStatusColor(auth.status)}
+                            meta={
+                              <>
+                                <span>{auth.created_at || 'Date unavailable'}</span>
+                                <StatusBadge status={pilotAuthStatusBadge(auth.status) as any}>
+                                  {auth.status}
+                                </StatusBadge>
+                              </>
+                            }
+                            title={`Authorization ${auth.id}`}
+                            detail={
+                              <span>
+                                Scope: {auth.authorization_scope}
+                                <br />
+                                Target Intake: {auth.target_intake_id}
+                                <br />
+                                Plan: {auth.migration_plan_id}
+                                <br />
+                                Migration Execution: {auth.execution_authority}
+                                <br />
+                                Cutover: {auth.cutover_authority}
+                                {auth.review_outcome && (
+                                  <>
+                                    <br />
+                                    Review: {auth.review_outcome} ({auth.review_timestamp || 'timestamp unavailable'})
+                                  </>
+                                )}
+                                <br />
+                                Correlation: {auth.correlation_id}
+                              </span>
+                            }
+                            actions={<></>}
+                          />
+                        ))}
+                      </div>
+                    </QueueList>
+
+                    <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: 'var(--surface-secondary)', border: '1px solid var(--border-default)', borderRadius: '4px' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                        Pilot authorization records are non-executable control-plane governance records. No legacy account numbers, target account numbers, balances, amounts, currencies, external references, or financial payloads are projected. Review-accepted authorization records remain MIGRATION_EXECUTION_NOT_IMPLEMENTED and CUTOVER_NOT_AUTHORIZED. No operational Banking service consumes authorization results.
                       </div>
                     </div>
                   </>
