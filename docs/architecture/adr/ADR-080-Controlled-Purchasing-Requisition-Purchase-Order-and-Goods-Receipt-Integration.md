@@ -15,9 +15,19 @@ Immutability:
 - InventoryStockMovement: Eloquent updating/deleting always blocked (append-only)
 
 Concurrency:
-CONCURRENCY_TEST_HARNESS_GAP — No repository-compatible independent-process or
-two-connection test convention exists. Protection via PostgreSQL unique constraints
-on source correlation and idempotency, plus sequential remaining-quantity guard.
+CONCURRENCY_TEST_HARNESS_GAP — Independent two-process PostgreSQL concurrency
+could not be proven. A complete worker script exists at
+tests/Postgres/Operations/Inventory/Support/ControlledGoodsReceiptConcurrencyWorker.php
+that correctly boots Laravel, authenticates, issues sensitive confirmation,
+and calls ControlledGoodsReceiptPostingService through a file-based barrier
+protocol. However, proc_open PHP subprocesses on Windows cannot reliably
+bootstrap the full Laravel application with PostgreSQL within the
+RefreshDatabase test transaction context (fixtures committed via
+DB::commit() remain invisible to subprocesses due to PDO transaction
+isolation). Sequential protection is proven via:
+- remaining-quantity guard (test_sequential_over_receipt_protected)
+- PostgreSQL unique constraint on (property_id, idempotency_key)
+- PostgreSQL unique constraint on (property_id, source_type, source_id)
 
 Costing, valuation, AVCO, FIFO, GL, AP invoice, payment,
 supplier return, receipt reversal, transfer, issue, count,
