@@ -6,6 +6,7 @@ use Modules\Operations\Inventory\Http\Controllers\InventoryCategoryController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryDashboardController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryIssueController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryItemController;
+use Modules\Operations\Inventory\Http\Controllers\InventoryLedgerWorkspaceController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryLocationController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryReceiptController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryStockCardController;
@@ -86,6 +87,10 @@ Route::middleware(['web', 'auth'])
         // ── Stock Cards (read-only) ───────────────────────────────────────────
         Route::get('stock-cards',        [InventoryStockCardController::class, 'index'])->name('stock-cards.index');
         Route::get('stock-cards/{card}', [InventoryStockCardController::class, 'show'])->name('stock-cards.show');
+
+        // ── Controlled Inventory Ledger ────────────────────────────────────────
+        Route::get('ledger', [InventoryLedgerWorkspaceController::class, 'index'])
+            ->name('ledger.index');
 
         // ── Reversals ─────────────────────────────────────────────────────────
         Route::get('reversals/{transaction}', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalWorkspaceController::class, 'index'])

@@ -73,6 +73,17 @@ class PermissionSeeder extends Seeder
             'finance.banking.migration.manage',
             'finance.banking.migration.mapping.review',
             'finance.banking.migration.pilot.authorization.review',
+            'finance.banking.migration.pilot.execution.execute',
+
+            // Inventory — Controlled Ledger
+            'inventory.ledger.view',
+
+            // Inventory — Purchasing
+            'inventory.purchasing.requisition.create',
+            'inventory.purchasing.requisition.approve',
+            'inventory.purchasing.purchase-order.create',
+            'inventory.purchasing.purchase-order.approve',
+            'inventory.purchasing.goods-receipt.receive',
         ];
 
         foreach ($permissions as $name) {
