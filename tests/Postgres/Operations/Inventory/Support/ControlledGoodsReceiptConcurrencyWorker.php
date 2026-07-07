@@ -22,24 +22,22 @@ if (!$config) {
     exit(1);
 }
 
-putenv('APP_ENV=testing');
-putenv('DB_CONNECTION=pgsql');
-putenv('DB_DATABASE=ivorq_testing');
-
-$dbUsername = $config['db_username'] ?? getenv('DB_USERNAME');
-$dbPassword = $config['db_password'] ?? getenv('DB_PASSWORD');
-if ($dbUsername) { putenv('DB_USERNAME=' . $dbUsername); }
-if ($dbPassword) { putenv('DB_PASSWORD=' . $dbPassword); }
-
 $workerId = $config['worker_id'];
 $barrierDir = $config['barrier_dir'];
 $resultFile = $config['result_file'];
 $request = $config['request'];
+$dbName = $config['db_name'] ?? null;
 
 require __DIR__ . '/../../../../vendor/autoload.php';
 
 $app = require_once __DIR__ . '/../../../../bootstrap/app.php';
 $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+if ($dbName) {
+    config(['database.connections.pgsql.database' => $dbName]);
+    \Illuminate\Support\Facades\DB::purge('pgsql');
+    \Illuminate\Support\Facades\DB::reconnect('pgsql');
+}
 
 $result = [
     'worker_id' => $workerId,
