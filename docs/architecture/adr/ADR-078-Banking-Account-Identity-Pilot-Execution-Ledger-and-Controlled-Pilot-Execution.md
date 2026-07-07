@@ -277,8 +277,9 @@ Execution request browser input may contain only `banking_migration_pilot_author
 
 | Wave | Status | Content |
 |---|---|---|
-| Wave 1 | To be delivered | ADR-078, immutable execution ledger schema, model, enum, policy, permission boundary, read-only workspace projection |
-| Wave 2 | Conditional | Sensitive-confirmed account identity pilot execution service, controller action, confirmation intent, PostgreSQL tests |
+| Wave 1 | Delivered | ADR-078, immutable execution ledger schema, model, enum, policy, permission boundary, read-only workspace projection |
+| Wave 2 | Delivered and PostgreSQL-validated | Sensitive-confirmed account identity pilot execution service, controller action, route, confirmation intent `banking-migration-account-identity-pilot-execution`, focused PostgreSQL tests |
+| Account-identity lineage pilot execution | Enabled only within Sprint 35's narrow immutable-ledger boundary | No broader migration, balance migration, statement-line migration, reconciliation migration, payment migration, or property cutover |
 | Future broader migration | NOT AUTHORIZED | Requires separate ADR/package |
 | Property cutover | NOT AUTHORIZED | Requires separate ADR/package |
 
@@ -329,4 +330,4 @@ Before any broader migration or cutover:
 
 ---
 
-**Implementation status:** Wave 1 delivered. Wave 2 classification: PENDING. Future broader migration: NOT AUTHORIZED. Property cutover: NOT AUTHORIZED.
+**Implementation status:** Wave 1 delivered. Wave 2 delivered and PostgreSQL-validated. Account-identity lineage pilot execution enabled only within Sprint 35's narrow immutable-ledger boundary. No legacy or controlled operational Banking mutation. No balance, statement-line, reconciliation, payment, journal, Cashbook, Financial Period, Business Date, or AP Settlement mutation. No operational bridge, dual-write, backfill, property cutover, legacy freeze, rollback, or correction capability. Future broader migration: NOT AUTHORIZED. Property cutover: NOT AUTHORIZED.
