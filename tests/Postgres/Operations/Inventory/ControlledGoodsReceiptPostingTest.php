@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 use Tests\PostgresTestCase;
 use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
+use Modules\Operations\Inventory\Enums\InventoryMovementSourceLegEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
 use Modules\Operations\Inventory\Models\GoodsReceipt;
 use Modules\Operations\Inventory\Models\GoodsReceiptLine;
@@ -717,6 +718,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->assertEquals(InventoryMovementDirectionEnum::In, $movement->direction);
         $this->assertEquals('purchasing', $movement->source_domain);
         $this->assertEquals(GoodsReceiptLine::class, $movement->source_type);
+        $this->assertEquals('PRIMARY', $movement->source_leg->value);
     }
 
     public function test_pg_source_correlation_uniqueness_enforced(): void
