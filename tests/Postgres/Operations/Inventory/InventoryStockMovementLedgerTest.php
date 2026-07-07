@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\PostgresTestCase;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
+use Modules\Operations\Inventory\Enums\InventoryMovementSourceLegEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
 use Modules\Operations\Inventory\Models\InventoryStockMovement;
 use Modules\Operations\Inventory\Models\InventoryItem;
@@ -195,13 +196,13 @@ class InventoryStockMovementLedgerTest extends PostgresTestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Invalid movement type');
 
-        $intent = $this->makePostingIntent(['movement_type' => 'TRANSFER_OUT']);
+        $intent = $this->makePostingIntent(['movement_type' => 'BOGUS_MOVEMENT_TYPE']);
         $this->postingService()->post($intent);
     }
 
     public function test_rejects_invalid_direction(): void
     {
-        $intent = $this->makePostingIntent(['direction' => 'OUT']);
+        $intent = $this->makePostingIntent(['direction' => 'BOGUS_DIRECTION']);
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Invalid direction');
@@ -257,6 +258,7 @@ class InventoryStockMovementLedgerTest extends PostgresTestCase
             'source_domain' => 'purchasing',
             'source_type' => 'GoodsReceiptLine',
             'source_id' => (string) Str::ulid(),
+            'source_leg' => 'PRIMARY',
             'correlation_id' => (string) Str::ulid(),
             'idempotency_key' => $idempotencyKey,
             'occurred_at' => $now,
@@ -292,6 +294,7 @@ class InventoryStockMovementLedgerTest extends PostgresTestCase
             'source_domain' => 'purchasing',
             'source_type' => 'GoodsReceiptLine',
             'source_id' => $sourceId,
+            'source_leg' => 'PRIMARY',
             'correlation_id' => (string) Str::ulid(),
             'idempotency_key' => (string) Str::ulid(),
             'occurred_at' => $now,
@@ -434,5 +437,235 @@ class InventoryStockMovementLedgerTest extends PostgresTestCase
 
         $this->assertFalse(property_exists($movement, 'updated_at'));
         $this->assertFalse($movement->timestamps);
+    }
+
+    public function test_goods_receipt_source_leg_is_primary(): void
+    {
+        $intent = $this->makePostingIntent();
+        $movement = $this->postingService()->post($intent);
+
+        $this->assertEquals('PRIMARY', $movement->source_leg->value);
+    }
+
+    public function test_schema_permits_all_approved_movement_types(): void
+    {
+        $approved = [
+            'GOODS_RECEIPT',
+            'TRANSFER_OUT',
+            'TRANSFER_IN',
+            'ISSUE_CONSUMPTION',
+            'COUNT_VARIANCE_IN',
+            'COUNT_VARIANCE_OUT',
+            'MANUAL_ADJUSTMENT_IN',
+            'MANUAL_ADJUSTMENT_OUT',
+        ];
+
+        foreach ($approved as $type) {
+            $direction = InventoryMovementTypeEnum::from($type)->direction();
+
+            $movement = $this->postingService()->post([
+                'property_id' => $this->property->id,
+                'inventory_item_id' => $this->item->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unit->id,
+                'movement_type' => $type,
+                'direction' => $direction,
+                'source_leg' => InventoryMovementSourceLegEnum::Primary,
+                'quantity' => 1.000,
+                'source_domain' => 'inventory',
+                'source_type' => 'SchemaProof',
+                'source_id' => (string) Str::ulid(),
+                'correlation_id' => (string) Str::ulid(),
+                'idempotency_key' => (string) Str::ulid(),
+                'occurred_at' => now(),
+                'created_by' => $this->user->id,
+            ]);
+
+            $this->assertNotNull($movement);
+            $this->assertEquals($type, $movement->movement_type->value);
+        }
+    }
+
+    public function test_source_leg_enables_paired_outbound_inbound(): void
+    {
+        $correlationId = (string) Str::ulid();
+        $sourceId = (string) Str::ulid();
+
+        $this->seedGoodsReceiptInbound(20.000);
+
+        $out = $this->postingService()->post([
+            'property_id' => $this->property->id,
+            'inventory_item_id' => $this->item->id,
+            'inventory_location_id' => $this->location->id,
+            'inventory_unit_id' => $this->unit->id,
+            'movement_type' => InventoryMovementTypeEnum::TransferOut,
+            'direction' => InventoryMovementDirectionEnum::Out,
+            'source_leg' => InventoryMovementSourceLegEnum::Outbound,
+            'quantity' => 5.000,
+            'source_domain' => 'inventory',
+            'source_type' => 'InventoryTransferLine',
+            'source_id' => $sourceId,
+            'correlation_id' => $correlationId,
+            'idempotency_key' => 'leg-out-' . (string) Str::ulid(),
+            'occurred_at' => now(),
+            'created_by' => $this->user->id,
+        ]);
+
+        $in = $this->postingService()->post([
+            'property_id' => $this->property->id,
+            'inventory_item_id' => $this->item->id,
+            'inventory_location_id' => $this->location->id,
+            'inventory_unit_id' => $this->unit->id,
+            'movement_type' => InventoryMovementTypeEnum::TransferIn,
+            'direction' => InventoryMovementDirectionEnum::In,
+            'source_leg' => InventoryMovementSourceLegEnum::Inbound,
+            'quantity' => 5.000,
+            'source_domain' => 'inventory',
+            'source_type' => 'InventoryTransferLine',
+            'source_id' => $sourceId,
+            'correlation_id' => $correlationId,
+            'idempotency_key' => 'leg-in-' . (string) Str::ulid(),
+            'occurred_at' => now(),
+            'created_by' => $this->user->id,
+        ]);
+
+        $this->assertEquals('OUTBOUND', $out->source_leg->value);
+        $this->assertEquals('INBOUND', $in->source_leg->value);
+        $this->assertEquals($sourceId, $out->source_id);
+        $this->assertEquals($sourceId, $in->source_id);
+    }
+
+    public function test_out_movement_rejected_when_controlled_quantity_insufficient(): void
+    {
+        $this->seedGoodsReceiptInbound(5.000);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Insufficient controlled quantity');
+
+        $this->postingService()->post([
+            'property_id' => $this->property->id,
+            'inventory_item_id' => $this->item->id,
+            'inventory_location_id' => $this->location->id,
+            'inventory_unit_id' => $this->unit->id,
+            'movement_type' => InventoryMovementTypeEnum::IssueConsumption,
+            'direction' => InventoryMovementDirectionEnum::Out,
+            'source_leg' => InventoryMovementSourceLegEnum::Primary,
+            'quantity' => 10.000,
+            'source_domain' => 'inventory',
+            'source_type' => 'InventoryIssueLine',
+            'source_id' => (string) Str::ulid(),
+            'correlation_id' => (string) Str::ulid(),
+            'idempotency_key' => (string) Str::ulid(),
+            'occurred_at' => now(),
+            'created_by' => $this->user->id,
+        ]);
+    }
+
+    public function test_different_source_legs_permit_same_source_id(): void
+    {
+        $sourceId = (string) Str::ulid();
+
+        $this->postingService()->post([
+            'property_id' => $this->property->id,
+            'inventory_item_id' => $this->item->id,
+            'inventory_location_id' => $this->location->id,
+            'inventory_unit_id' => $this->unit->id,
+            'movement_type' => InventoryMovementTypeEnum::GoodsReceipt,
+            'direction' => InventoryMovementDirectionEnum::In,
+            'source_leg' => InventoryMovementSourceLegEnum::Primary,
+            'quantity' => 10.000,
+            'source_domain' => 'purchasing',
+            'source_type' => 'GoodsReceiptLine',
+            'source_id' => $sourceId,
+            'correlation_id' => (string) Str::ulid(),
+            'idempotency_key' => (string) Str::ulid(),
+            'occurred_at' => now(),
+            'created_by' => $this->user->id,
+        ]);
+
+        $this->postingService()->post([
+            'property_id' => $this->property->id,
+            'inventory_item_id' => $this->item->id,
+            'inventory_location_id' => $this->location->id,
+            'inventory_unit_id' => $this->unit->id,
+            'movement_type' => InventoryMovementTypeEnum::TransferOut,
+            'direction' => InventoryMovementDirectionEnum::Out,
+            'source_leg' => InventoryMovementSourceLegEnum::Outbound,
+            'quantity' => 2.000,
+            'source_domain' => 'inventory',
+            'source_type' => 'InventoryTransferLine',
+            'source_id' => $sourceId,
+            'correlation_id' => (string) Str::ulid(),
+            'idempotency_key' => (string) Str::ulid(),
+            'occurred_at' => now(),
+            'created_by' => $this->user->id,
+        ]);
+
+        $legCounts = InventoryStockMovement::where('source_id', $sourceId)->get();
+        $this->assertCount(2, $legCounts);
+    }
+
+    public function test_no_mutable_stock_balance_mutated_by_any_movement(): void
+    {
+        $stockBefore = \Modules\Operations\Inventory\Models\InventoryStock::count();
+
+        $this->postingService()->post([
+            'property_id' => $this->property->id,
+            'inventory_item_id' => $this->item->id,
+            'inventory_location_id' => $this->location->id,
+            'inventory_unit_id' => $this->unit->id,
+            'movement_type' => InventoryMovementTypeEnum::GoodsReceipt,
+            'direction' => InventoryMovementDirectionEnum::In,
+            'source_leg' => InventoryMovementSourceLegEnum::Primary,
+            'quantity' => 10.000,
+            'source_domain' => 'purchasing',
+            'source_type' => 'GoodsReceiptLine',
+            'source_id' => (string) Str::ulid(),
+            'correlation_id' => (string) Str::ulid(),
+            'idempotency_key' => (string) Str::ulid(),
+            'occurred_at' => now(),
+            'created_by' => $this->user->id,
+        ]);
+
+        $this->postingService()->post([
+            'property_id' => $this->property->id,
+            'inventory_item_id' => $this->item->id,
+            'inventory_location_id' => $this->location->id,
+            'inventory_unit_id' => $this->unit->id,
+            'movement_type' => InventoryMovementTypeEnum::IssueConsumption,
+            'direction' => InventoryMovementDirectionEnum::Out,
+            'source_leg' => InventoryMovementSourceLegEnum::Primary,
+            'quantity' => 3.000,
+            'source_domain' => 'inventory',
+            'source_type' => 'InventoryIssueLine',
+            'source_id' => (string) Str::ulid(),
+            'correlation_id' => (string) Str::ulid(),
+            'idempotency_key' => (string) Str::ulid(),
+            'occurred_at' => now(),
+            'created_by' => $this->user->id,
+        ]);
+
+        $this->assertEquals($stockBefore, \Modules\Operations\Inventory\Models\InventoryStock::count());
+    }
+
+    private function seedGoodsReceiptInbound(float $qty): void
+    {
+        $this->postingService()->post([
+            'property_id' => $this->property->id,
+            'inventory_item_id' => $this->item->id,
+            'inventory_location_id' => $this->location->id,
+            'inventory_unit_id' => $this->unit->id,
+            'movement_type' => InventoryMovementTypeEnum::GoodsReceipt,
+            'direction' => InventoryMovementDirectionEnum::In,
+            'source_leg' => InventoryMovementSourceLegEnum::Primary,
+            'quantity' => $qty,
+            'source_domain' => 'purchasing',
+            'source_type' => 'GoodsReceiptLine',
+            'source_id' => (string) Str::ulid(),
+            'correlation_id' => (string) Str::ulid(),
+            'idempotency_key' => (string) Str::ulid(),
+            'occurred_at' => now(),
+            'created_by' => $this->user->id,
+        ]);
     }
 }
