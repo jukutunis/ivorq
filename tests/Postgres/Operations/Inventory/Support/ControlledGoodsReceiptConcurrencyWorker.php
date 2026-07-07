@@ -32,6 +32,7 @@ if ($dbName) {
 $result = ['worker_id' => $workerId, 'pid' => getmypid(), 'pg_backend_pid' => null,
     'idempotency_key' => $request['lines'][0]['idempotency_key'] ?? null,
     'outcome' => 'UNKNOWN', 'receipt_id' => null, 'movement_ids' => [],
+    'commercial_evidence_count' => 0,
     'error_class' => null, 'error_message' => null, 'po_line_lock_acquired' => false];
 
 try {
@@ -78,6 +79,7 @@ try {
     foreach ($posted->lines as $line) {
         if ($line->stock_movement_id) { $result['movement_ids'][] = $line->stock_movement_id; }
     }
+    $result['commercial_evidence_count'] = \Illuminate\Support\Facades\DB::table('goods_receipt_line_commercial_evidences')->count();
     touch($barrierDir . '/posted-' . $workerId);
 
 } catch (\RuntimeException $e) {

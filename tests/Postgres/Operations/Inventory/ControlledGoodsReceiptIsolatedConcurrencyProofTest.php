@@ -26,6 +26,15 @@ class ControlledGoodsReceiptIsolatedConcurrencyProofTest extends TestCase
         $this->assertContains('POSTED', $outcomes, 'One worker must succeed: ' . json_encode($outcomes));
         $this->assertNull($result['error'] ?? null, 'Error: ' . ($result['error'] ?? 'none'));
         $this->assertEquals(true, $result['db_dropped'] ?? false, 'DB must be dropped: ' . ($result['drop_error'] ?? $result['drop_exception'] ?? 'none'));
+
+        $winner = ($wa['outcome'] ?? '') === 'POSTED' ? $wa : $wb;
+        $this->assertNotEmpty($winner['movement_ids'] ?? [], 'Winner must have at least one movement');
+        $this->assertEquals(1, $winner['commercial_evidence_count'] ?? 0,
+            'Winning worker must create exactly one commercial evidence snapshot');
+
+        $loser = ($wa['outcome'] ?? '') !== 'POSTED' ? $wa : $wb;
+        $this->assertEquals(0, $loser['commercial_evidence_count'] ?? -1,
+            'Losing worker must create no commercial evidence snapshot');
     }
 
     public function test_two_independent_identical_receipt_posts_create_one_canonical_outcome(): void
@@ -44,6 +53,11 @@ class ControlledGoodsReceiptIsolatedConcurrencyProofTest extends TestCase
         $this->assertTrue($dup['pg_different'] ?? false, 'Workers must have different PG backend PIDs');
         $this->assertNull($result['error'] ?? null, 'Error: ' . ($result['error'] ?? 'none'));
         $this->assertEquals(true, $result['db_dropped'] ?? false, 'DB must be dropped');
+
+        $onePosted = ($wa['outcome'] ?? '') === 'POSTED' ? $wa : $wb;
+        $this->assertNotEmpty($onePosted['movement_ids'] ?? [], 'At least one worker must have movements');
+        $this->assertEquals(1, $onePosted['commercial_evidence_count'] ?? 0,
+            'Duplicate scenario must have exactly one commercial evidence snapshot');
     }
 
     private function runCoordinator(string $runId): array

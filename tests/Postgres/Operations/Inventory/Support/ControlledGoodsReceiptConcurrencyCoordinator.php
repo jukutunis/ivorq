@@ -112,6 +112,7 @@ try {
 
     \Illuminate\Support\Facades\DB::table('purchase_order_lines')->where('id', $poLineId)->update(['received_quantity' => 0]);
     \Illuminate\Support\Facades\DB::table('purchase_orders')->where('id', $poId)->update(['status' => 'APPROVED']);
+    \Illuminate\Support\Facades\DB::statement('TRUNCATE TABLE goods_receipt_line_commercial_evidences');
     \Illuminate\Support\Facades\DB::table('goods_receipt_lines')->delete();
     \Illuminate\Support\Facades\DB::table('goods_receipts')->delete();
     \Illuminate\Support\Facades\DB::table('inventory_stock_movements')->delete();

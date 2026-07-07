@@ -41,9 +41,6 @@ class InventoryReversalWorkspaceTest extends PostgresTestCase
         $this->property = Property::first();
         $this->user = User::first();
 
-        $this->property->currency = 'USD';
-        $this->property->save();
-
         app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
 
         $this->businessDate = PropertyBusinessDate::updateOrCreate(
