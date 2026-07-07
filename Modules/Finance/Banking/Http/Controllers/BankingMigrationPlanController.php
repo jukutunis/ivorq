@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 use Modules\Finance\Banking\Models\BankAccount;
+use Modules\Finance\Banking\Models\BankingMigrationAccountIdentityExecution;
 use Modules\Finance\Banking\Models\BankingMigrationExceptionQuarantine;
 use Modules\Finance\Banking\Models\BankingMigrationManifestEntry;
 use Modules\Finance\Banking\Models\BankingMigrationPilotAuthorization;
@@ -132,10 +133,13 @@ class BankingMigrationPlanController extends Controller
 
         $executionPreconditions = $this->projectExecutionPreconditions($propertyId, $canView);
 
+        $executionLedger = $this->projectExecutionLedger($propertyId, $canView, $actor);
+
         return Inertia::render('Ivorq/Finance/BankingMigrationControlWorkspace', [
             'plans' => array_values($plans),
             'target_intakes' => array_values($targetIntakes),
             'pilot_authorizations' => array_values($pilotAuthorizations),
+            'execution_ledger' => $executionLedger,
             'proposal_context' => $this->projectProposalContext($propertyId, $canManage),
             'execution_preconditions' => $executionPreconditions,
             'permissions' => [
@@ -143,12 +147,15 @@ class BankingMigrationPlanController extends Controller
                 'can_manage' => $canManage,
                 'can_review' => $canReview,
                 'can_review_pilot_auth' => $canReviewPilotAuth,
+                'can_execute' => $actor instanceof User && $actor->can('finance.banking.migration.pilot.execution.execute'),
             ],
             'constants' => [
                 'source_domain' => BankingMigrationPlanService::SOURCE_DOMAIN,
                 'target_domain' => BankingMigrationPlanService::TARGET_DOMAIN,
                 'cutover_not_authorized' => BankingMigrationPlanService::CUTOVER_NOT_AUTHORIZED,
                 'execution_unavailable' => BankingMigrationPlanService::EXECUTION_UNAVAILABLE,
+                'execution_ledger_available' => true,
+                'execution_not_yet_activated' => 'ACCOUNT_IDENTITY_LINEAGE_EXECUTION_NOT_YET_ACTIVATED',
             ],
         ]);
     }
@@ -573,9 +580,10 @@ class BankingMigrationPlanController extends Controller
                 'target_operational_state' => $targetOperationalState,
                 'property_boundary' => $propertyBoundary,
                 'future_lineage_contract' => 'ARCHITECTURE_DEFINED',
-                'future_execution_permission' => 'NOT_IMPLEMENTED',
+                'future_execution_permission' => 'PERMISSION_REGISTERED',
                 'future_cutover_permission' => 'NOT_AUTHORIZED',
-                'summary_status' => 'EXECUTION_IMPLEMENTATION_DEFERRED',
+                'execution_ledger_schema' => 'AVAILABLE',
+                'summary_status' => 'EXECUTION_LEDGER_AVAILABLE_NOT_YET_ACTIVATED',
             ];
         }
 
@@ -603,5 +611,49 @@ class BankingMigrationPlanController extends Controller
             $createdAtStr,
             $updatedAtStr,
         ]));
+    }
+
+    private function projectExecutionLedger(string $propertyId, bool $canView, mixed $actor): array
+    {
+        if (!$canView) {
+            return [
+                'records' => [],
+                'summary' => [
+                    'total_executions' => 0,
+                    'execution_authority' => 'EXECUTION_LEDGER_UNAVAILABLE',
+                    'cutover_authority' => 'CUTOVER_NOT_AUTHORIZED',
+                ],
+            ];
+        }
+
+        $records = BankingMigrationAccountIdentityExecution::where('property_id', $propertyId)
+            ->orderByDesc('executed_at')
+            ->limit(50)
+            ->get()
+            ->map(function (BankingMigrationAccountIdentityExecution $record) {
+                return [
+                    'id' => $record->id,
+                    'outcome' => $record->outcome?->value,
+                    'executed_at' => $record->executed_at?->toIso8601String(),
+                    'correlation_id' => $record->correlation_id,
+                    'migration_plan_id' => $record->migration_plan_id,
+                    'pilot_authorization_id' => $record->pilot_authorization_id,
+                    'source_category' => 'bank_account',
+                    'execution_status' => 'ACCOUNT_IDENTITY_LINEAGE_EXECUTED',
+                    'cutover_status' => 'CUTOVER_NOT_AUTHORIZED',
+                    'created_at' => $record->created_at?->toIso8601String(),
+                ];
+            })
+            ->values()
+            ->all();
+
+        return [
+            'records' => $records,
+            'summary' => [
+                'total_executions' => count($records),
+                'execution_authority' => 'EXECUTION_LEDGER_AVAILABLE',
+                'cutover_authority' => 'CUTOVER_NOT_AUTHORIZED',
+            ],
+        ];
     }
 }

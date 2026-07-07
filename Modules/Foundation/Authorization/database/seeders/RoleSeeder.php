@@ -158,6 +158,7 @@ class RoleSeeder extends Seeder
             'finance.journal-entry-draft.authorize-finalization',
             'finance.banking.migration.view',
             'finance.banking.migration.manage',
+            'finance.banking.migration.pilot.execution.execute',
         ]);
 
         $generalLedgerAccountant = Role::firstOrCreate([
