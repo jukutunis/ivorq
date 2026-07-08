@@ -432,6 +432,166 @@ This activation does not authorize:
 - Package C Cost Ledger runtime;
 - generic workflow framework, queue, worker, broker, event bus, or outbox.
 
+FD-B3: Departure Operational Handover Evidence
+Allowed only after FD-B2 passes departure preparation evidence and regression.
+
+FD-B3 activation note:
+Front Desk owns:
+- non-financial operational handover evidence;
+- immutable handover status per stay;
+- read-only display of handover history;
+- operational notes bound to handover;
+- controlled handover confirmation.
+
+Front Desk does not own:
+- final checkout;
+- checkout execution;
+- checkout confirmation;
+- CHECKED_OUT, SETTLED, or DEPARTED state;
+- folio;
+- deposit;
+- payment;
+- refund;
+- room charge;
+- revenue;
+- tax;
+- AR;
+- GL;
+- Night Audit;
+- Cashier;
+- Banking;
+- Financial Period;
+- Business Date;
+- settlement;
+- invoice;
+- receipt;
+- paid status;
+- balance status;
+- financial readiness;
+- rate override;
+- reservation cancellation;
+- no-show settlement;
+- Housekeeping mutation;
+- Engineering mutation;
+- Room master overwrite;
+- Package C Cost Ledger runtime;
+- queue worker, broker, event bus, outbox, or external integration.
+
+### Source Ownership Matrix (FD-B3)
+
+| Fact | Owner | Front Desk Access |
+|---|---|---|
+| Departure operational handover | Front Desk | Read/Write (create only) |
+| Front Desk stay status | Front Desk | Read (IN_HOUSE required) |
+| Reservation departure_date | PMS Reservation | Read |
+| Guest identity | PMS Guest | Read |
+| Room identity | Housekeeping Room | Read |
+| Departure preparation events | Front Desk (FD-B2) | Read |
+| Due-out classification | Front Desk (FD-B1) | Read |
+| Folio / Payment / Revenue | Finance | None |
+| Housekeeping readiness mutation | Housekeeping | None |
+| Engineering availability mutation | Engineering | None |
+
+### Operational Handover Evidence Policy (FD-B3)
+
+Departure operational handover evidence is non-financial operational evidence only.
+Handover records do not change FrontDeskStay status, Reservation status, Room status,
+Housekeeping readiness, Engineering availability, or any financial state.
+
+### Allowed Handover Statuses (FD-B3)
+
+- OPERATIONAL_HANDOVER_READY
+- OPERATIONAL_HANDOVER_BLOCKED
+- OPERATIONAL_HANDOVER_REVIEWED
+
+### Forbidden Handover/Checkout/Finance Statuses (FD-B3)
+
+CHECKOUT_READY, READY_FOR_CHECKOUT, CHECKOUT_EXECUTED, CHECKED_OUT, SETTLED,
+DEPARTED, PAYMENT_READY, PAYMENT_TAKEN, FOLIO_CLOSED, BALANCE_CLEARED,
+INVOICE_GENERATED, REVENUE_POSTED, TAX_POSTED, AR_CLEARED, GL_POSTED,
+NIGHT_AUDIT_READY.
+
+### Idempotency Policy (FD-B3)
+
+property_id + idempotency_key → at most one handover outcome.
+property_id + front_desk_stay_id + source_hash → at most one equivalent handover outcome.
+
+### Immutability Policy (FD-B3)
+
+FrontDeskDepartureOperationalHandover is immutable. Application-level update and
+delete are blocked. PostgreSQL triggers enforce immutability at the database
+level. UPDATED_AT is null.
+
+### Concurrency and Lock Policy (FD-B3)
+
+FrontDeskStay row is locked FOR UPDATE before handover creation. No lock or
+mutation on Housekeeping, Engineering, Finance, Banking, or Room master rows.
+
+### Permission Boundary (FD-B3)
+
+- frontdesk.departure-preparation.view — read-only view (from FD-B1)
+- frontdesk.departure-operational-handover.create — create handover evidence (FD-B3)
+
+Finance, Engineering, Housekeeping, Banking, GL, AR, Tax, Cashier, Night Audit
+roles do not receive handover.create by default.
+
+### Workspace Policy (FD-B3)
+
+Operational Handover panel is displayed in the FD-B1 Departures workspace.
+Handover actions (Mark Operationally Ready, Mark Operationally Blocked,
+Mark Reviewed) are rendered only when the actor has
+frontdesk.departure-operational-handover.create permission.
+
+The UI must:
+- hide handover actions without create permission;
+- show read-only handover state with view permission;
+- show financial marker B3;
+- remain operational-only.
+
+Forbidden UI labels/buttons: Check Out, Checkout, Settle, Take Payment,
+Post Charge, Close Folio, Generate Invoice, Post Revenue, Mark Paid,
+Clear Balance, Balance, Paid, Unpaid, Folio, Invoice, Receipt, Revenue,
+Tax, AR, GL, Night Audit, Cashier, Banking, Financial Period, Business Date.
+
+### Audit Evidence (FD-B3)
+
+Handover creation writes audit evidence with server-resolved actor, property,
+handover status, target stay, source correlation, occurred_at, idempotency_key,
+and source_hash.
+
+### Financial Exclusion Policy (FD-B3)
+
+No financial fields (amount, currency, balance, folio_id, payment_id,
+invoice_id, tax_id, revenue_id, gl_account_id, ar_account_id,
+business_date_id, financial_period_id, night_audit_id, settlement_status,
+paid_status, checkout_status) are stored on departure operational handover records.
+
+### Explicit Non-Goals (FD-B3)
+
+This activation does not authorize:
+- final checkout or checkout execution;
+- FrontDeskStay CHECKED_OUT, SETTLED, DEPARTED, or CANCELLED state;
+- folio, deposit, payment, refund, room charge, revenue, tax, AR, GL;
+- Night Audit, Cashier, Banking, Financial Period, Business Date;
+- settlement, invoice, receipt, paid status, balance status;
+- Housekeeping readiness mutation;
+- Engineering availability mutation;
+- Package C Cost Ledger runtime;
+- generic workflow framework, queue, worker, broker, event bus, or outbox.
+
+### Final Acceptance Validation Gate (FD-B3)
+
+All FD-B3 PostgreSQL tests pass, full FD-B2 regression passes, full
+FD-B1 regression passes, full Front Desk Package A regression passes,
+full Housekeeping Package B regression passes, full ENG-A1 regression
+passes, full Inventory/AVCO/Sensitive baseline passes, Inventory Reversal
+inherited debt confirmed, Banking master passes, npm run build passes,
+PHP lint passes on all touched files.
+
+Concurrency proof: disposable DB created/migrated/tested/dropped with
+raw OS/PG PIDs exposed; duplicate idempotency produces one handover;
+simultaneous distinct handovers both succeed; stay remains IN_HOUSE.
+
 ### Final Acceptance Validation Gate (FD-B2)
 
 All FD-B2 PostgreSQL tests pass, full FD-B1 regression passes, full
