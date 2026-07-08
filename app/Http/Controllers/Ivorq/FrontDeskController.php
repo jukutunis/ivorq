@@ -13,6 +13,8 @@ use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomMoveService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -213,6 +215,61 @@ class FrontDeskController extends Controller
         } catch (DomainException $exception) {
             throw ValidationException::withMessages([
                 'room_move' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function createDeparturePreparationEvent(
+        Request $request,
+        string $stay,
+        FrontDeskDeparturePreparationEventService $eventService
+    ) {
+        $validated = $request->validate([
+            'event_type' => ['required', 'string', 'max:100'],
+            'note' => ['nullable', 'string', 'max:2000'],
+            'idempotency_key' => ['required', 'string', 'max:120'],
+        ]);
+
+        try {
+            $result = $eventService->create(
+                $request->user(),
+                $stay,
+                $validated['event_type'],
+                $validated['note'] ?? null,
+                $validated['idempotency_key']
+            );
+
+            return $request->expectsJson()
+                ? response()->json([
+                    'event_id' => $result['event']->id,
+                    'event_type' => $result['event']->event_type?->value,
+                    'occurred_at' => $result['event']->occurred_at?->toISOString(),
+                    'replayed' => $result['replayed'],
+                ])
+                : back()->with('success', $result['replayed']
+                    ? 'Event already recorded (idempotent).'
+                    : 'Departure preparation event recorded.');
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'departure_preparation_event' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function departurePreparationEvents(
+        Request $request,
+        string $stay,
+        FrontDeskDeparturePreparationEventProjectionService $projection
+    ) {
+        try {
+            $actionLog = $projection->actionLog($request->user(), $stay);
+
+            return $request->expectsJson()
+                ? response()->json($actionLog)
+                : back()->with('departureActionLog', $actionLog);
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'departure_action_log' => [$exception->getMessage()],
             ]);
         }
     }

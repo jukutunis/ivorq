@@ -41,6 +41,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('frontdesk.engineering-availability.show');
         Route::get('/housekeeping-readiness/{room}', [\Modules\Operations\FrontDesk\Http\Controllers\HousekeepingReadinessDependencyController::class, 'show'])
             ->name('frontdesk.housekeeping-readiness.show');
+        Route::post('/stays/{stay}/departure-preparation-events', [FrontDeskController::class, 'createDeparturePreparationEvent'])
+            ->name('frontdesk.stays.departure-preparation-events.store');
+        Route::get('/stays/{stay}/departure-preparation-events', [FrontDeskController::class, 'departurePreparationEvents'])
+            ->name('frontdesk.stays.departure-preparation-events.index');
     });
 
     Route::get('/housekeeping', fn() => redirect('/housekeeping/room-board'));

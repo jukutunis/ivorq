@@ -6,7 +6,9 @@ use Illuminate\Support\Carbon;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
+use Modules\Operations\FrontDesk\Enums\FrontDeskDeparturePreparationEventTypeEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskDeparturePreparationEvent;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
@@ -83,7 +85,7 @@ class FrontDeskDepartureQueueProjectionService
                 'dueOutFuture' => $stays->where('due_out_classification', self::DUE_OUT_FUTURE)->values()->all(),
                 'overdueDepartures' => $overdue->values()->all(),
             ],
-            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B1.',
+            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B2.',
         ];
     }
 
@@ -137,9 +139,68 @@ class FrontDeskDepartureQueueProjectionService
                 : 'NOT_EVALUATED',
             'departure_readiness' => $departureReadiness,
             'blocking_reasons' => $blockingReasons,
-            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B1.',
+            'departure_preparation_events' => $this->projectEvents($propertyId, $stay->id),
+            'can_create_departure_preparation_event' => $actor->can(FrontDeskDeparturePreparationEventService::CREATE_PERMISSION),
+            'allowed_event_types' => $actor->can(FrontDeskDeparturePreparationEventService::CREATE_PERMISSION)
+                ? $this->allowedEventTypesForWorkspace()
+                : [],
+            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B2.',
             'evaluated_at' => now()->toISOString(),
         ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function projectEvents(string $propertyId, string $stayId): array
+    {
+        return FrontDeskDeparturePreparationEvent::withoutGlobalScopes()
+            ->with(['createdBy'])
+            ->where('property_id', $propertyId)
+            ->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->limit(10)
+            ->get()
+            ->map(fn (FrontDeskDeparturePreparationEvent $event) => [
+                'id' => $event->id,
+                'event_type' => $event->event_type?->value,
+                'event_type_label' => $this->eventTypeLabel($event->event_type?->value),
+                'note' => $event->note,
+                'occurred_at' => $event->occurred_at?->toISOString(),
+                'created_by_name' => $event->createdBy?->name,
+                'source_hash' => $event->source_hash,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function allowedEventTypesForWorkspace(): array
+    {
+        return [
+            ['value' => 'DEPARTURE_NOTE_RECORDED', 'label' => 'Record Note'],
+            ['value' => 'DEPARTURE_TIME_CONFIRMED', 'label' => 'Confirm Departure Time'],
+            ['value' => 'LUGGAGE_ASSISTANCE_NOTED', 'label' => 'Luggage Assistance'],
+            ['value' => 'TRANSPORTATION_NOTED', 'label' => 'Transportation'],
+            ['value' => 'OPERATIONAL_BLOCKER_ACKNOWLEDGED', 'label' => 'Acknowledge Blocker'],
+            ['value' => 'GUEST_MESSAGE_NOTED', 'label' => 'Guest Message'],
+        ];
+    }
+
+    private function eventTypeLabel(?string $type): string
+    {
+        return match ($type) {
+            'DEPARTURE_NOTE_RECORDED' => 'Departure Note',
+            'DEPARTURE_TIME_CONFIRMED' => 'Departure Time Confirmed',
+            'LUGGAGE_ASSISTANCE_NOTED' => 'Luggage Assistance',
+            'TRANSPORTATION_NOTED' => 'Transportation',
+            'OPERATIONAL_BLOCKER_ACKNOWLEDGED' => 'Operational Blocker Acknowledged',
+            'GUEST_MESSAGE_NOTED' => 'Guest Message',
+            default => $type ?? 'Unknown',
+        };
     }
 
     private function classifyDueOut(?string $departureDate, string $today, string $tomorrow): string

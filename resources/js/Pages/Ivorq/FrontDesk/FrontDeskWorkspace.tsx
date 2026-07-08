@@ -155,6 +155,21 @@ type InHouseWorkspace = {
   financeMarker: string;
 };
 
+type DeparturePreparationEvent = {
+  id: string;
+  event_type: string;
+  event_type_label: string;
+  note: string | null;
+  occurred_at: string;
+  created_by_name: string | null;
+  source_hash: string;
+};
+
+type AllowedEventType = {
+  value: string;
+  label: string;
+};
+
 type DepartureRow = {
   stay_id: string;
   reservation_id: string;
@@ -171,6 +186,9 @@ type DepartureRow = {
   operational_checkout_readiness: string;
   departure_readiness: string;
   blocking_reasons: string[];
+  departure_preparation_events: DeparturePreparationEvent[];
+  can_create_departure_preparation_event: boolean;
+  allowed_event_types: AllowedEventType[];
   financial_marker: string;
   evaluated_at: string;
 };
@@ -253,7 +271,7 @@ const emptyDepartureWorkspace: DepartureWorkspace = {
     dueOutFuture: [],
     overdueDepartures: [],
   },
-  financial_marker: 'Financial settlement: Not evaluated in Front Desk Package B1.',
+  financial_marker: 'Financial settlement: Not evaluated in Front Desk Package B2.',
 };
 
 const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWorkspace, inHouseWorkspace = emptyInHouseWorkspace, departureWorkspace = emptyDepartureWorkspace }: Props) => {
@@ -545,6 +563,12 @@ function DepartureQueue({ title, rows }: { title: string; rows: DepartureRow[] }
               meta={<DepartureMeta row={row} />}
               actions={<DepartureActions row={row} />}
             />
+            {row.can_create_departure_preparation_event ? (
+              <DepartureActionForm stayId={row.stay_id} eventTypes={row.allowed_event_types} />
+            ) : null}
+            {row.departure_preparation_events.length > 0 ? (
+              <DepartureActionLogPanel events={row.departure_preparation_events} />
+            ) : null}
             {row.blocking_reasons.length > 0 ? (
               <DepartureBlockersPanel blockers={row.blocking_reasons} readiness={row.departure_readiness} />
             ) : null}
@@ -602,6 +626,85 @@ function DepartureActions({ row }: { row: DepartureRow }) {
   );
 }
 
+function DepartureActionForm({ stayId, eventTypes }: { stayId: string; eventTypes: AllowedEventType[] }) {
+  const [showForm, setShowForm] = React.useState(false);
+  const [selectedType, setSelectedType] = React.useState(eventTypes[0]?.value ?? '');
+
+  if (eventTypes.length === 0) return null;
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '10px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      {!showForm ? (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {eventTypes.map((et) => (
+            <Button key={et.value} size="sm" variant="secondary" onClick={() => { setShowForm(true); setSelectedType(et.value); }}>
+              <Icon name="note" /> {et.label}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <form method="post" action={`/frontdesk/stays/${stayId}/departure-preparation-events`} onSubmit={() => setShowForm(false)}>
+          <input type="hidden" name="event_type" value={selectedType} />
+          <input type="hidden" name="idempotency_key" value={`dpe-${stayId}-${selectedType}-${Date.now()}`} />
+          <div style={{ marginBottom: '8px' }}>
+            <label style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>
+              {eventTypes.find((et) => et.value === selectedType)?.label ?? selectedType}
+            </label>
+            <textarea name="note" rows={2} style={{
+              width: '100%', padding: '6px 8px', fontSize: '13px',
+              border: '1px solid var(--border-subtle)', borderRadius: '4px',
+              background: 'var(--surface-input)', color: 'var(--text-primary)',
+            }} placeholder="Optional note..." />
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <Button size="sm" type="submit"><Icon name="save" /> Record</Button>
+            <Button size="sm" variant="secondary" onClick={(e: React.MouseEvent) => { e.preventDefault(); setShowForm(false); }}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function DepartureActionLogPanel({ events }: { events: DeparturePreparationEvent[] }) {
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '10px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>
+        Departure Preparation Action Log ({events.length})
+      </div>
+      {events.map((event) => (
+        <div key={event.id} style={{
+          display: 'flex', alignItems: 'baseline', gap: '12px',
+          padding: '4px 0', borderBottom: '1px solid var(--border-subtle)',
+          fontSize: '12px',
+        }}>
+          <StatusBadge status="ready" style={{ fontSize: '10px', padding: '1px 6px', flexShrink: 0 }}>
+            {event.event_type_label}
+          </StatusBadge>
+          <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
+            {event.note ?? '—'}
+          </span>
+          <span style={{ color: 'var(--text-dimmed)', fontSize: '11px', flexShrink: 0 }}>
+            {event.created_by_name ?? 'System'}, {event.occurred_at ? new Date(event.occurred_at).toLocaleString() : ''}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DepartureBlockersPanel({ blockers, readiness }: { blockers: string[]; readiness: string }) {
   const statusColor = readiness === 'DEPARTURE_OPERATIONALLY_BLOCKED' ? 'warning-amber' : 'neutral';
 
@@ -627,7 +730,7 @@ function DepartureBlockersPanel({ blockers, readiness }: { blockers: string[]; r
         <span style={{ color: 'var(--text-warning)' }}>{blockers.join(' | ')}</span>
       </div>
       <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
-        Financial settlement: Not evaluated in Front Desk Package B1.
+        Financial settlement: Not evaluated in Front Desk Package B2.
       </div>
     </div>
   );
