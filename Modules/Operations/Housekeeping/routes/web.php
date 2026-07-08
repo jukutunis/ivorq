@@ -77,4 +77,18 @@ Route::middleware(['web', 'auth'])
                 Route::post('/reorder',      [CleaningChecklistController::class, 'reorderItems'])
                     ->name('reorder');
             });
+
+        // ── Room Readiness Transitions ─────────────────────────────────────
+        Route::prefix('room-readiness')
+            ->name('room-readiness.')
+            ->group(function () {
+                Route::post('/start-cleaning', [\Modules\Operations\Housekeeping\Http\Controllers\HousekeepingRoomReadinessController::class, 'startCleaning'])
+                    ->name('start-cleaning');
+                Route::post('/submit-inspection', [\Modules\Operations\Housekeeping\Http\Controllers\HousekeepingRoomReadinessController::class, 'submitInspection'])
+                    ->name('submit-inspection');
+                Route::post('/release-ready', [\Modules\Operations\Housekeeping\Http\Controllers\HousekeepingRoomReadinessController::class, 'releaseReady'])
+                    ->name('release-ready');
+                Route::get('/{room}', [\Modules\Operations\Housekeeping\Http\Controllers\HousekeepingRoomReadinessController::class, 'show'])
+                    ->name('show');
+            });
     });
