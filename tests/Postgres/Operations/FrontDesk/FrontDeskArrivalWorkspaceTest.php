@@ -13,6 +13,7 @@ use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 use Shared\Services\CurrentPropertyService;
 use Tests\PostgresTestCase;
@@ -63,6 +64,7 @@ class FrontDeskArrivalWorkspaceTest extends PostgresTestCase
         app(CurrentPropertyService::class)->setPropertyId($this->property->id);
         setPermissionsTeamId($this->property->id);
         Permission::firstOrCreate(['name' => ArrivalEligibilityProjectionService::VIEW_PERMISSION, 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => EngineeringRoomAvailabilityProjectionService::FRONT_DESK_VIEW_PERMISSION, 'guard_name' => 'web']);
     }
 
     protected function tearDown(): void
@@ -87,6 +89,7 @@ class FrontDeskArrivalWorkspaceTest extends PostgresTestCase
     public function test_active_property_required(): void
     {
         $this->actor->givePermissionTo(ArrivalEligibilityProjectionService::VIEW_PERMISSION);
+        $this->actor->givePermissionTo(EngineeringRoomAvailabilityProjectionService::FRONT_DESK_VIEW_PERMISSION);
 
         $this->withSession([])
             ->actingAs($this->actor, 'web')
@@ -97,6 +100,7 @@ class FrontDeskArrivalWorkspaceTest extends PostgresTestCase
     public function test_arrival_workspace_renders_server_resolved_read_only_projection(): void
     {
         $this->actor->givePermissionTo(ArrivalEligibilityProjectionService::VIEW_PERMISSION);
+        $this->actor->givePermissionTo(EngineeringRoomAvailabilityProjectionService::FRONT_DESK_VIEW_PERMISSION);
         $guestId = $this->guest('Workspace Guest');
         $roomId = $this->room('901');
         $reservationId = $this->reservation($guestId, 'RES-FDA-WEB', 'confirmed', '2026-07-08', $roomId);
@@ -112,7 +116,7 @@ class FrontDeskArrivalWorkspaceTest extends PostgresTestCase
                 ->where('arrivalWorkspace.views.arrivingToday.0.reservation_id', $reservationId)
                 ->where('arrivalWorkspace.views.arrivingToday.0.eligibility.eligible', true)
                 ->where('arrivalWorkspace.views.arrivingToday.0.housekeeping.source', 'Housekeeping Room')
-                ->where('arrivalWorkspace.views.arrivingToday.0.engineering.source', 'PMS RoomBlock')
+                ->where('arrivalWorkspace.views.arrivingToday.0.engineering.source', 'Engineering Availability Projection')
                 ->where('arrivalWorkspace.policy.identityDocumentRequirement', 'Not configured by canonical source.')
                 ->where('arrivalWorkspace.financeMarker', 'Financial settlement: Not evaluated in Front Desk Package A.')
             );
@@ -121,6 +125,7 @@ class FrontDeskArrivalWorkspaceTest extends PostgresTestCase
     public function test_cross_property_reservation_is_not_returned_to_workspace(): void
     {
         $this->actor->givePermissionTo(ArrivalEligibilityProjectionService::VIEW_PERMISSION);
+        $this->actor->givePermissionTo(EngineeringRoomAvailabilityProjectionService::FRONT_DESK_VIEW_PERMISSION);
 
         $guestId = $this->guest('Visible Workspace Guest');
         $visibleReservation = $this->reservation($guestId, 'RES-FDA-VISIBLE', 'confirmed', '2026-07-08');
@@ -150,6 +155,7 @@ class FrontDeskArrivalWorkspaceTest extends PostgresTestCase
     public function test_arrival_workspace_is_read_only_and_does_not_create_front_desk_or_finance_records(): void
     {
         $this->actor->givePermissionTo(ArrivalEligibilityProjectionService::VIEW_PERMISSION);
+        $this->actor->givePermissionTo(EngineeringRoomAvailabilityProjectionService::FRONT_DESK_VIEW_PERMISSION);
         $guestId = $this->guest('Read Only Workspace Guest');
         $this->reservation($guestId, 'RES-FDA-READONLY', 'confirmed', '2026-07-08');
 

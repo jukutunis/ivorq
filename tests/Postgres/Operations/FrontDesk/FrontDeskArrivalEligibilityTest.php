@@ -13,6 +13,7 @@ use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
+use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
 use Shared\Services\CurrentPropertyService;
 use Tests\PostgresTestCase;
 
@@ -45,7 +46,9 @@ class FrontDeskArrivalEligibilityTest extends PostgresTestCase
         app(CurrentPropertyService::class)->setPropertyId($this->property->id);
         setPermissionsTeamId($this->property->id);
         Permission::firstOrCreate(['name' => ArrivalEligibilityProjectionService::VIEW_PERMISSION, 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => EngineeringRoomAvailabilityProjectionService::FRONT_DESK_VIEW_PERMISSION, 'guard_name' => 'web']);
         $this->actor->givePermissionTo(ArrivalEligibilityProjectionService::VIEW_PERMISSION);
+        $this->actor->givePermissionTo(EngineeringRoomAvailabilityProjectionService::FRONT_DESK_VIEW_PERMISSION);
 
         $this->service = app(ArrivalEligibilityProjectionService::class);
         session($this->propertySession($this->property));
