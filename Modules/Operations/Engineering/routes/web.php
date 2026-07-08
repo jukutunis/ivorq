@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Operations\Engineering\Http\Controllers\AssetRequestController;
 use Modules\Operations\Engineering\Http\Controllers\EngineeringChecklistController;
+use Modules\Operations\Engineering\Http\Controllers\EngineeringRoomAvailabilityController;
 use Modules\Operations\Engineering\Http\Controllers\PreventiveMaintenanceController;
 use Modules\Operations\Engineering\Http\Controllers\PreventiveMaintenanceTaskController;
 use Modules\Operations\Engineering\Http\Controllers\TechnicianAssignmentController;
@@ -25,6 +26,13 @@ Route::middleware(['web', 'auth'])
 
         Route::post('work-orders/{wo}/approve', [WorkOrderController::class, 'approve'])
             ->name('work-orders.approve');
+
+        Route::get('engineering-room-availability/{room}', [EngineeringRoomAvailabilityController::class, 'show'])
+            ->name('engineering-room-availability.show');
+        Route::post('engineering-room-availability/blocks', [EngineeringRoomAvailabilityController::class, 'block'])
+            ->name('engineering-room-availability.blocks.store');
+        Route::post('engineering-room-availability/blocks/{block}/release', [EngineeringRoomAvailabilityController::class, 'release'])
+            ->name('engineering-room-availability.blocks.release');
 
         // ── Technician Assignments (nested under work-orders) ────────────────
         Route::prefix('work-orders/{wo}/assignments')

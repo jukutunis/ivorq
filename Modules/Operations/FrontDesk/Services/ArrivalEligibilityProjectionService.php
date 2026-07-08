@@ -7,6 +7,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
 use Modules\Operations\PMS\Enums\ReservationStatusEnum;
 use Modules\Operations\PMS\Models\Reservation;
 use Shared\Services\CurrentPropertyService;
@@ -43,8 +44,8 @@ class ArrivalEligibilityProjectionService
         $search = trim((string) ($filters['search'] ?? ''));
         $date = trim((string) ($filters['arrival_date'] ?? ''));
 
-        $reservations = $this->reservations($propertyId, $search, $date)->map(function (Reservation $reservation) use ($propertyId, $today) {
-            return $this->projectReservation($reservation, $propertyId, $today);
+        $reservations = $this->reservations($propertyId, $search, $date)->map(function (Reservation $reservation) use ($actor, $propertyId, $today) {
+            return $this->projectReservation($actor, $reservation, $propertyId, $today);
         })->values();
 
         $arrivingToday = $reservations
@@ -127,7 +128,7 @@ class ArrivalEligibilityProjectionService
     /**
      * @return array<string, mixed>
      */
-    private function projectReservation(Reservation $reservation, string $propertyId, string $today): array
+    private function projectReservation(User $actor, Reservation $reservation, string $propertyId, string $today): array
     {
         $guest = $reservation->primaryGuest;
         $room = $reservation->assignedRoom;
@@ -179,7 +180,7 @@ class ArrivalEligibilityProjectionService
                 'room_type' => $this->enumValue($room->room_type),
             ] : null,
             'housekeeping' => $this->housekeepingEvidence($room),
-            'engineering' => $this->roomBlockEvidence($room?->id, $propertyId),
+            'engineering' => $this->engineeringAvailabilityEvidence($actor, $room?->id),
             'eligibility' => [
                 'eligible' => $blockers === [],
                 'state' => $blockers === [] ? 'ARRIVAL_READY' : 'BLOCKED',
@@ -226,31 +227,27 @@ class ArrivalEligibilityProjectionService
     /**
      * @return array<string, mixed>
      */
-    private function roomBlockEvidence(?string $roomId, string $propertyId): array
+    private function engineeringAvailabilityEvidence(User $actor, ?string $roomId): array
     {
         if ($roomId === null) {
             return [
                 'state' => 'NOT_EVALUATED_NO_ROOM_ASSIGNED',
-                'source' => 'PMS RoomBlock',
+                'source' => 'Engineering Availability Projection',
                 'active_block_count' => 0,
             ];
         }
 
-        $now = now();
-        $count = DB::table('room_blocks')
-            ->where('property_id', $propertyId)
-            ->where('room_id', $roomId)
-            ->where('status', 'active')
-            ->where('start_at', '<=', $now)
-            ->where(function ($query) use ($now) {
-                $query->whereNull('end_at')->orWhere('end_at', '>=', $now);
-            })
-            ->count();
+        $projection = app(EngineeringRoomAvailabilityProjectionService::class)
+            ->forFrontDesk($actor, $roomId);
 
         return [
-            'state' => $count > 0 ? 'BLOCKED_BY_ACTIVE_ROOM_BLOCK' : 'NO_ACTIVE_ROOM_BLOCK',
-            'source' => 'PMS RoomBlock',
-            'active_block_count' => $count,
+            'state' => $projection['availability_status'],
+            'source' => 'Engineering Availability Projection',
+            'active_block_count' => $projection['availability_status'] === EngineeringRoomAvailabilityProjectionService::BLOCKED ? 1 : 0,
+            'blocking_source_type' => $projection['blocking_source_type'],
+            'blocking_source_id' => $projection['blocking_source_id'],
+            'blocking_reason' => $projection['blocking_reason'],
+            'evaluated_at' => $projection['evaluated_at'],
         ];
     }
 

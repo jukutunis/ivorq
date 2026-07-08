@@ -35,6 +35,12 @@ class EngineeringPermissionSeeder extends Seeder
             'engineering.checklist.create',
             'engineering.checklist.edit',
             'engineering.checklist.delete',
+
+            // Room Availability
+            'engineering.room-availability.view',
+            'engineering.room-availability.block',
+            'engineering.room-availability.release',
+            'frontdesk.engineering-availability.view',
         ];
 
         foreach ($permissions as $name) {

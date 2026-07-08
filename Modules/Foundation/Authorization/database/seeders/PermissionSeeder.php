@@ -37,6 +37,12 @@ class PermissionSeeder extends Seeder
 
             // Front Desk - Controlled Operational Lifecycle
             'frontdesk.arrival.view',
+            'frontdesk.engineering-availability.view',
+
+            // Engineering - Controlled Room Availability
+            'engineering.room-availability.view',
+            'engineering.room-availability.block',
+            'engineering.room-availability.release',
 
             // Finance & GL Review Lifecycle
             'finance.journal-candidate.review',

@@ -25,6 +25,7 @@ class SensitiveActionConfirmationService
         'inventory-issue-posting',
         'inventory-stock-count-posting',
         'inventory-adjustment-posting',
+        'engineering-room-availability-release',
     ];
 
     private const SESSION_KEY = 'sensitive_action_confirmation';

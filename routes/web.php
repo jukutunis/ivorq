@@ -25,6 +25,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
         Route::get('/in-house', [FrontDeskController::class, 'inHouse']);
         Route::get('/room-readiness', [FrontDeskController::class, 'roomReadiness']);
         Route::get('/reservation-board', [FrontDeskController::class, 'reservationBoard']);
+        Route::get('/engineering-availability/{room}', [\Modules\Operations\FrontDesk\Http\Controllers\EngineeringAvailabilityDependencyController::class, 'show'])
+            ->name('frontdesk.engineering-availability.show');
     });
 
     Route::get('/housekeeping', fn() => redirect('/housekeeping/room-board'));
