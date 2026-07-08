@@ -161,6 +161,7 @@ frontdesk.check-in.execute
 frontdesk.in-house.view
 frontdesk.room-move.execute
 frontdesk.checkout-readiness.view
+frontdesk.departure-preparation.view
 ```
 
 Finance, General Ledger, Accounts Payable, General Cashier, and Banking-only roles do not receive Front Desk action authority through Finance access.
@@ -260,6 +261,54 @@ and the financial exclusion marker. No Check Out, Settle, Pay, Deposit, Refund,
 Folio, Revenue, Tax, AR, GL, Night Audit, Cashier, Banking, Financial Period, or
 Business Date control is rendered. FD-A4 does not activate final checkout, folio
 settlement, or any financial behavior.
+
+FD-B1: Due-Out / Departure Preparation Workspace
+Allowed only after FD-A4 passes checkout readiness projection and Package A
+regression.
+
+FD-B1 activation note:
+The departure preparation workspace is a read-only Front Desk operational
+surface. It aggregates IN_HOUSE stays from the FrontDeskStay aggregate,
+resolves the departure date from the canonical Reservation source, evaluates
+Housekeeping readiness through the accepted Housekeeping dependency/projection,
+evaluates Engineering availability through the accepted Engineering
+dependency/projection, consumes FD-A4 checkout readiness as non-financial
+operational evidence, and classifies each stay into a due-out category
+(DUE_OUT_TODAY, DUE_OUT_TOMORROW, DUE_OUT_FUTURE, OVERDUE_DEPARTURE,
+DEPARTURE_DATE_UNKNOWN) and an operational readiness status
+(DEPARTURE_OPERATIONALLY_READY, DEPARTURE_OPERATIONALLY_BLOCKED,
+DEPARTURE_READINESS_UNKNOWN).
+
+Every departure projection row includes the mandatory non-financial marker:
+"Financial settlement: Not evaluated in Front Desk Package B1."
+
+The workspace is rendered as a dedicated Departures tab with snapshot cards
+(due-out today, overdue, ready, blocked), a departure queue with guest/room/
+departure date/readiness columns, and a detail panel for blocking reasons.
+No Check Out, Settle, Pay, Deposit, Refund, Folio, Revenue, Tax, AR, GL,
+Night Audit, Cashier, Banking, Financial Period, Business Date, or any
+financial settlement action is rendered or projected.
+
+Permission: frontdesk.departure-preparation.view — narrow, non-delegable
+read-only view authority. Housekeeping, Engineering, and Finance roles do
+not receive this permission by default.
+
+FD-B1 does not activate:
+- final checkout;
+- checkout execution;
+- checkout confirmation;
+- FrontDeskStay CHECKED_OUT, SETTLED, DEPARTED, or CANCELLED state;
+- folio, deposit, payment, refund, room charge, revenue, tax, AR, GL;
+- Night Audit, Cashier, Banking, Financial Period, Business Date;
+- settlement, balance due, paid status, invoice, receipt;
+- Housekeeping readiness mutation;
+- Engineering availability mutation;
+- Package C Cost Ledger runtime;
+- generic workflow framework, queue, worker, broker, event bus, or outbox.
+
+Concurrency policy: FD-B1 is a read-only projection. No write path exists.
+CONCURRENCY_NOT_REQUIRED_READ_ONLY_PROJECTION is recorded and proven by
+the absence of any mutation path in the service, controller, or route layer.
 ```
 
 If any gate fails, downstream Front Desk work must stop. Do not bypass readiness evidence, weaken property isolation, create fake room-status sources, or introduce placeholder runtime pages.
