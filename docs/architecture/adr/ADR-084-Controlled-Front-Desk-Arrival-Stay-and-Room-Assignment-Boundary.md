@@ -309,6 +309,141 @@ FD-B1 does not activate:
 Concurrency policy: FD-B1 is a read-only projection. No write path exists.
 CONCURRENCY_NOT_REQUIRED_READ_ONLY_PROJECTION is recorded and proven by
 the absence of any mutation path in the service, controller, or route layer.
+
+FD-B2: Departure Preparation Evidence
+Allowed only after FD-B1 passes departure preparation workspace and regression.
+
+FD-B2 activation note:
+Front Desk owns:
+- non-financial departure preparation event evidence;
+- departure preparation action history;
+- operational notes and guest-service preparation evidence;
+- read-only display of accepted FD-B1 due-out readiness.
+
+Front Desk does not own:
+- final checkout;
+- checkout execution;
+- folio;
+- payment;
+- financial settlement;
+- revenue;
+- tax;
+- AR;
+- GL;
+- Night Audit;
+- Cashier;
+- Banking;
+- Business Date;
+- Financial Period;
+- Housekeeping readiness mutation;
+- Engineering availability mutation.
+
+### Source Ownership Matrix
+
+| Fact | Owner | Front Desk Access |
+|---|---|---|
+| Departure preparation event | Front Desk | Read/Write (create only) |
+| Front Desk stay status | Front Desk | Read (IN_HOUSE required) |
+| Reservation departure_date | PMS Reservation | Read |
+| Guest identity | PMS Guest | Read |
+| Room identity | Housekeeping Room | Read |
+| Housekeeping readiness | Housekeeping | Read through accepted dependency |
+| Engineering availability | Engineering | Read through accepted dependency |
+| Due-out classification | Front Desk FD-B1 | Read |
+| Folio / Payment / Revenue | Finance | None |
+| Housekeeping readiness mutation | Housekeeping | None |
+| Engineering availability mutation | Engineering | None |
+
+### Event Evidence Policy
+
+Departure preparation events are non-financial operational evidence only.
+Events do not change FrontDeskStay status, Reservation status, Room status,
+Housekeeping readiness, or Engineering availability.
+
+### Allowed Event Types
+
+- DEPARTURE_NOTE_RECORDED
+- DEPARTURE_TIME_CONFIRMED
+- LUGGAGE_ASSISTANCE_NOTED
+- TRANSPORTATION_NOTED
+- OPERATIONAL_BLOCKER_ACKNOWLEDGED
+- GUEST_MESSAGE_NOTED
+
+### Forbidden Event Types
+
+CHECKOUT_EXECUTED, CHECKED_OUT, SETTLED, PAYMENT_TAKEN, FOLIO_CLOSED,
+BALANCE_CLEARED, INVOICE_GENERATED, REVENUE_POSTED, TAX_POSTED, AR_CLEARED,
+GL_POSTED, NIGHT_AUDIT_READY.
+
+### Idempotency Policy
+
+property_id + idempotency_key → at most one event outcome.
+property_id + front_desk_stay_id + source_hash → at most one equivalent event outcome.
+
+### Immutability Policy
+
+FrontDeskDeparturePreparationEvent is immutable. Application-level update and
+delete are blocked. PostgreSQL triggers enforce immutability at the database
+level. UPDATED_AT is null.
+
+### Concurrency and Lock Policy
+
+FrontDeskStay row is locked FOR UPDATE before event creation. No lock or
+mutation on Housekeeping, Engineering, Finance, Banking, or Room master rows.
+
+### Workspace Policy
+
+Departure Preparation Action Log is displayed in the FD-B1 Departures workspace.
+Actions (Record Note, Confirm Departure Time, Luggage Assistance,
+Transportation, Acknowledge Blocker, Guest Message) are rendered only when the
+actor has frontdesk.departure-preparation.event.create permission.
+
+### Permission Boundary
+
+- frontdesk.departure-preparation.view — read-only view (from FD-B1)
+- frontdesk.departure-preparation.event.create — create event evidence (FD-B2)
+
+Finance, Engineering, Housekeeping, Banking, GL, AR, Tax, Cashier, Night Audit
+roles do not receive event.create by default.
+
+### Audit Evidence
+
+Event creation writes audit evidence with server-resolved actor, property,
+event type, target stay, source correlation, occurred_at, idempotency_key,
+and source_hash.
+
+### Financial Exclusion Policy
+
+No financial fields (amount, currency, balance, folio_id, payment_id,
+invoice_id, tax_id, revenue_id, gl_account_id, ar_account_id,
+business_date_id, financial_period_id, night_audit_id, settlement_status,
+paid_status, checkout_status) are stored on departure preparation events.
+
+### Explicit Non-Goals (FD-B2)
+
+This activation does not authorize:
+- final checkout or checkout execution;
+- FrontDeskStay CHECKED_OUT, SETTLED, DEPARTED, or CANCELLED state;
+- folio, deposit, payment, refund, room charge, revenue, tax, AR, GL;
+- Night Audit, Cashier, Banking, Financial Period, Business Date;
+- settlement, invoice, receipt, paid status, balance status;
+- Housekeeping readiness mutation;
+- Engineering availability mutation;
+- Package C Cost Ledger runtime;
+- generic workflow framework, queue, worker, broker, event bus, or outbox.
+
+### Final Acceptance Validation Gate (FD-B2)
+
+All FD-B2 PostgreSQL tests pass, full FD-B1 regression passes, full
+Front Desk Package A regression passes, full Housekeeping Package B
+regression passes, full ENG-A1 regression passes, full Inventory/AVCO/
+Sensitive baseline passes, Inventory Reversal inherited debt confirmed,
+Banking master passes, npm run build passes, PHP lint passes on all
+touched files.
+
+Concurrency proof: disposable DB created/migrated/tested/dropped with
+raw OS/PG PIDs exposed; duplicate idempotency produces one event;
+simultaneous distinct events both succeed; stay remains IN_HOUSE.
 ```
 
 If any gate fails, downstream Front Desk work must stop. Do not bypass readiness evidence, weaken property isolation, create fake room-status sources, or introduce placeholder runtime pages.
