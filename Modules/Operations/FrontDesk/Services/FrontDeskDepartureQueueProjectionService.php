@@ -8,6 +8,7 @@ use Modules\Foundation\User\Models\User;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
 use Modules\Operations\FrontDesk\Enums\FrontDeskDeparturePreparationEventTypeEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskDepartureOperationalHandover;
 use Modules\Operations\FrontDesk\Models\FrontDeskDeparturePreparationEvent;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
@@ -85,7 +86,7 @@ class FrontDeskDepartureQueueProjectionService
                 'dueOutFuture' => $stays->where('due_out_classification', self::DUE_OUT_FUTURE)->values()->all(),
                 'overdueDepartures' => $overdue->values()->all(),
             ],
-            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B2.',
+            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
         ];
     }
 
@@ -144,7 +145,12 @@ class FrontDeskDepartureQueueProjectionService
             'allowed_event_types' => $actor->can(FrontDeskDeparturePreparationEventService::CREATE_PERMISSION)
                 ? $this->allowedEventTypesForWorkspace()
                 : [],
-            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B2.',
+            'departure_operational_handover' => $this->projectHandover($propertyId, $stay->id),
+            'can_create_operational_handover' => $actor->can(FrontDeskDepartureOperationalHandoverService::CREATE_PERMISSION),
+            'allowed_handover_statuses' => $actor->can(FrontDeskDepartureOperationalHandoverService::CREATE_PERMISSION)
+                ? $this->allowedHandoverStatusesForWorkspace()
+                : [],
+            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -188,6 +194,63 @@ class FrontDeskDepartureQueueProjectionService
             ['value' => 'OPERATIONAL_BLOCKER_ACKNOWLEDGED', 'label' => 'Acknowledge Blocker'],
             ['value' => 'GUEST_MESSAGE_NOTED', 'label' => 'Guest Message'],
         ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function projectHandover(string $propertyId, string $stayId): ?array
+    {
+        $handovers = FrontDeskDepartureOperationalHandover::withoutGlobalScopes()
+            ->with(['createdBy'])
+            ->where('property_id', $propertyId)
+            ->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->limit(10)
+            ->get()
+            ->map(fn (FrontDeskDepartureOperationalHandover $handover) => [
+                'id' => $handover->id,
+                'handover_status' => $handover->handover_status?->value,
+                'handover_status_label' => $this->handoverStatusLabel($handover->handover_status?->value),
+                'handover_note' => $handover->handover_note,
+                'occurred_at' => $handover->occurred_at?->toISOString(),
+                'created_by_name' => $handover->createdBy?->name,
+                'source_hash' => $handover->source_hash,
+            ])
+            ->values()
+            ->all();
+
+        if (empty($handovers)) {
+            return null;
+        }
+
+        return [
+            'latest' => $handovers[0],
+            'history' => $handovers,
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function allowedHandoverStatusesForWorkspace(): array
+    {
+        return [
+            ['value' => 'OPERATIONAL_HANDOVER_READY', 'label' => 'Mark Operationally Ready'],
+            ['value' => 'OPERATIONAL_HANDOVER_BLOCKED', 'label' => 'Mark Operationally Blocked'],
+            ['value' => 'OPERATIONAL_HANDOVER_REVIEWED', 'label' => 'Mark Reviewed'],
+        ];
+    }
+
+    private function handoverStatusLabel(?string $status): string
+    {
+        return match ($status) {
+            'OPERATIONAL_HANDOVER_READY' => 'Operationally Ready',
+            'OPERATIONAL_HANDOVER_BLOCKED' => 'Operationally Blocked',
+            'OPERATIONAL_HANDOVER_REVIEWED' => 'Reviewed',
+            default => $status ?? 'Unknown',
+        };
     }
 
     private function eventTypeLabel(?string $type): string
