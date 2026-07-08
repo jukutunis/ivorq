@@ -204,12 +204,12 @@ class FrontDeskDeparturePreparationEventWorkspaceTest extends PostgresTestCase
         [$stay] = $this->checkedInStay('5008');
 
         $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor);
-        $this->assertStringContainsString('Package B2', $queue['financial_marker']);
+        $this->assertStringContainsString('Package B3', $queue['financial_marker']);
 
         $log = app(FrontDeskDeparturePreparationEventProjectionService::class)->actionLog(
             $this->frontDeskActor, $stay->id
         );
-        $this->assertStringContainsString('Package B2', $log['financial_marker']);
+        $this->assertStringContainsString('Package B3', $log['financial_marker']);
     }
 
     // ── Workspace hides create action without permission ──
