@@ -25,10 +25,11 @@ class SensitiveActionConfirmationService
         'inventory-issue-posting',
         'inventory-stock-count-posting',
         'inventory-adjustment-posting',
-        'engineering-room-availability-release',
-        'frontdesk-check-in',
-        'frontdesk-room-move',
-    ];
+            'engineering-room-availability-release',
+            'frontdesk-check-in',
+            'frontdesk-room-move',
+            'housekeeping-room-release-ready',
+        ];
 
     private const SESSION_KEY = 'sensitive_action_confirmation';
 

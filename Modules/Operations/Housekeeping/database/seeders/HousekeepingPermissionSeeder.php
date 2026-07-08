@@ -39,6 +39,13 @@ class HousekeepingPermissionSeeder extends Seeder
             'housekeeping.inspection.create',
             'housekeeping.inspection.conduct',
             'housekeeping.inspection.approve',
+
+            // Room Readiness
+            'housekeeping.room-readiness.view',
+            'housekeeping.room-readiness.clean',
+            'housekeeping.room-readiness.submit-inspection',
+            'housekeeping.room-readiness.release-ready',
+            'frontdesk.housekeeping-readiness.view',
         ];
 
         foreach ($permissions as $name) {
