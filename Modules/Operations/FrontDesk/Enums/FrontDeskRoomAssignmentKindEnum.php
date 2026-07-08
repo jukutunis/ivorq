@@ -1,0 +1,8 @@
+<?php
+
+namespace Modules\Operations\FrontDesk\Enums;
+
+enum FrontDeskRoomAssignmentKindEnum: string
+{
+    case InitialAssignment = 'INITIAL_ASSIGNMENT';
+}

@@ -5,8 +5,11 @@ namespace Modules\Operations\FrontDesk\Services;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
 use Modules\Operations\PMS\Enums\ReservationStatusEnum;
 use Modules\Operations\PMS\Models\Reservation;
@@ -23,22 +26,7 @@ class ArrivalEligibilityProjectionService
      */
     public function workspace(User $actor, array $filters = []): array
     {
-        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
-        $companyId = session('active_company_id');
-
-        $property = Property::withoutGlobalScopes()
-            ->whereKey($propertyId)
-            ->where('company_id', $companyId)
-            ->where('is_active', true)
-            ->first();
-
-        if (! $property) {
-            throw new HttpException(403, 'Active property is required.');
-        }
-
-        if (! $actor->can(self::VIEW_PERMISSION)) {
-            throw new HttpException(403, 'Front Desk arrival view permission is required.');
-        }
+        [$propertyId, $property] = $this->authorizeView($actor);
 
         $today = Carbon::now($property->timezone ?: config('app.timezone'))->toDateString();
         $search = trim((string) ($filters['search'] ?? ''));
@@ -102,6 +90,30 @@ class ArrivalEligibilityProjectionService
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    public function reservation(User $actor, string $reservationId): array
+    {
+        [$propertyId, $property] = $this->authorizeView($actor);
+        $today = Carbon::now($property->timezone ?: config('app.timezone'))->toDateString();
+
+        $reservation = Reservation::withoutGlobalScopes()
+            ->with([
+                'primaryGuest' => fn ($query) => $query->withoutGlobalScopes(),
+                'assignedRoom' => fn ($query) => $query->withoutGlobalScopes(),
+            ])
+            ->whereKey($reservationId)
+            ->where('property_id', $propertyId)
+            ->first();
+
+        if (! $reservation) {
+            throw new HttpException(404, 'Reservation was not found for the active property.');
+        }
+
+        return $this->projectReservation($actor, $reservation, $propertyId, $today);
+    }
+
+    /**
      * @return Collection<int, Reservation>
      */
     private function reservations(string $propertyId, string $search, string $date): Collection
@@ -162,6 +174,9 @@ class ArrivalEligibilityProjectionService
             $blockers[] = 'Existing active stay evidence prevents duplicate arrival eligibility.';
         }
 
+        $housekeeping = $this->housekeepingEvidence($room);
+        $engineering = $this->engineeringAvailabilityEvidence($actor, $room?->id);
+
         return [
             'reservation_id' => $reservation->id,
             'reservation_number' => $reservation->reservation_number,
@@ -179,13 +194,15 @@ class ArrivalEligibilityProjectionService
                 'number' => $room->room_number,
                 'room_type' => $this->enumValue($room->room_type),
             ] : null,
-            'housekeeping' => $this->housekeepingEvidence($room),
-            'engineering' => $this->engineeringAvailabilityEvidence($actor, $room?->id),
+            'housekeeping' => $housekeeping,
+            'engineering' => $engineering,
+            'front_desk' => $this->frontDeskEvidence($reservation->id, $propertyId),
             'eligibility' => [
                 'eligible' => $blockers === [],
                 'state' => $blockers === [] ? 'ARRIVAL_READY' : 'BLOCKED',
                 'blockers' => $blockers,
             ],
+            'actions' => $this->frontDeskActions($actor, $reservation->id, $propertyId, $blockers, $housekeeping, $engineering),
             'source_requirements' => [
                 'guest_registration' => 'Not configured by canonical source.',
                 'identity_document' => 'Not configured by canonical source.',
@@ -262,5 +279,86 @@ class ArrivalEligibilityProjectionService
         }
 
         return (string) $value;
+    }
+
+    /**
+     * @return array{0: string, 1: Property}
+     */
+    private function authorizeView(User $actor): array
+    {
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        $companyId = session('active_company_id');
+
+        $property = Property::withoutGlobalScopes()
+            ->whereKey($propertyId)
+            ->where('company_id', $companyId)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $property) {
+            throw new HttpException(403, 'Active property is required.');
+        }
+
+        if (! $actor->can(self::VIEW_PERMISSION)) {
+            throw new HttpException(403, 'Front Desk arrival view permission is required.');
+        }
+
+        return [$propertyId, $property];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function frontDeskEvidence(string $reservationId, string $propertyId): ?array
+    {
+        if (! Schema::hasTable('front_desk_stays')) {
+            return null;
+        }
+
+        $stay = FrontDeskStay::withoutGlobalScopes()
+            ->where('property_id', $propertyId)
+            ->where('reservation_id', $reservationId)
+            ->with(['currentRoom' => fn ($query) => $query->withoutGlobalScopes()])
+            ->first();
+
+        if (! $stay) {
+            return null;
+        }
+
+        return [
+            'stay_id' => $stay->id,
+            'status' => $this->enumValue($stay->status),
+            'current_room_id' => $stay->current_room_id,
+            'current_room_assignment_id' => $stay->current_room_assignment_id,
+            'current_room_number' => $stay->currentRoom?->room_number,
+            'checked_in_at' => $stay->checked_in_at?->toISOString(),
+        ];
+    }
+
+    /**
+     * @param string[] $blockers
+     * @return array<string, mixed>
+     */
+    private function frontDeskActions(User $actor, string $reservationId, string $propertyId, array $blockers, array $housekeeping, array $engineering): array
+    {
+        $frontDesk = $this->frontDeskEvidence($reservationId, $propertyId);
+        $status = $frontDesk['status'] ?? null;
+        $housekeepingReady = in_array($housekeeping['readiness_state'] ?? null, ['ready_for_arrival', 'ready_for_sale', 'ready_for_vip'], true);
+        $engineeringReady = ($engineering['state'] ?? null) === EngineeringRoomAvailabilityProjectionService::AVAILABLE;
+
+        return [
+            'can_assign_room' => $blockers === []
+                && $frontDesk === null
+                && $housekeepingReady
+                && $engineeringReady
+                && $actor->can('frontdesk.room-assignment.create'),
+            'can_prepare_check_in' => $blockers === []
+                && $housekeepingReady
+                && $engineeringReady
+                && in_array($status, [FrontDeskStayStatusEnum::RoomAssigned->value, FrontDeskStayStatusEnum::CheckInConfirmationPending->value], true)
+                && $actor->can('frontdesk.check-in.execute'),
+            'can_view_in_house' => $status === FrontDeskStayStatusEnum::InHouse->value
+                && $actor->can('frontdesk.in-house.view'),
+        ];
     }
 }

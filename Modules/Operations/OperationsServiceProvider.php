@@ -39,5 +39,6 @@ class OperationsServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadMigrationsFrom(__DIR__ . '/GeneralCashier/database/migrations');
+        $this->loadMigrationsFrom(__DIR__ . '/FrontDesk/database/migrations');
     }
 }
