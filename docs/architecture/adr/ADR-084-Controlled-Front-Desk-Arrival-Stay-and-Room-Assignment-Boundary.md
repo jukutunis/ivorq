@@ -5,7 +5,7 @@
 * **ADR Title:** Controlled Front Desk Arrival, Stay, and Room Assignment Boundary
 * **Date:** 2026-07-08
 * **Status:** Active
-* **Related ADRs:** ADR-001 (Multi-Tenant Hierarchy), ADR-002 (Audit Trail Strategy), ADR-004 (Finance Module Boundary), ADR-029 (Security Roles and Permissions Governance), ADR-030 (Identity Authentication and Session Governance), ADR-034 (Night Audit and Hospitality Business Date Architecture), ADR-040 (IVORQ Interaction Layer Standard), ADR-066 (Sensitive Action Reauthentication and Session Confirmation Boundary)
+* **Related ADRs:** ADR-001 (Multi-Tenant Hierarchy), ADR-002 (Audit Trail Strategy), ADR-004 (Finance Module Boundary), ADR-029 (Security Roles and Permissions Governance), ADR-030 (Identity Authentication and Session Governance), ADR-034 (Night Audit and Hospitality Business Date Architecture), ADR-040 (IVORQ Interaction Layer Standard), ADR-066 (Sensitive Action Reauthentication and Session Confirmation Boundary), ADR-085 (Engineering Room Availability and Block Evidence Boundary)
 
 ## Context
 
@@ -185,6 +185,15 @@ Guest, Room, Housekeeping, and room-block evidence.
 FD-A2: Room Assignment and Controlled Check-in
 Allowed only after canonical and read-only room readiness, Engineering
 availability, and occupancy protection are proven.
+
+FD-A2 activation note:
+Controlled initial room assignment and controlled check-in may use the
+FrontDeskStay and FrontDeskRoomAssignment evidence boundary after ADR-085
+Engineering availability is read through the server-side Engineering
+availability projection. FD-A2 keeps Reservation, Guest, Room, Housekeeping,
+Engineering, folio, payment, revenue, tax, AR, GL, Night Audit, final
+checkout, Financial Period, and Business Date records read-only or untouched.
+FD-A2 does not activate room move or check-out readiness.
 
 FD-A3: In-House Stay and Controlled Room Move
 Allowed only after FD-A2 passes assignment, check-in, sensitive confirmation,
