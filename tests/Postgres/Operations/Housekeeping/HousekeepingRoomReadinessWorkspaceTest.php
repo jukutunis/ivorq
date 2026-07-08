@@ -274,7 +274,7 @@ class HousekeepingRoomReadinessWorkspaceTest extends PostgresTestCase
             'Revenue',
             'revenue',
             'Tax',
-            'AR',
+            'Accounts Receivable',
             'GL',
             'Night Audit',
             'Cashier',
