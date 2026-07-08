@@ -18,6 +18,7 @@ use Modules\Operations\FrontDesk\Services\FrontDeskCheckInService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomMoveService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
@@ -71,6 +72,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION,
             FrontDeskDepartureQueueProjectionService::VIEW_PERMISSION,
             FrontDeskDeparturePreparationEventService::CREATE_PERMISSION,
+            FrontDeskDepartureOperationalHandoverService::CREATE_PERMISSION,
         ]);
 
         $this->frontDeskViewOnlyActor->givePermissionTo([
@@ -275,6 +277,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION,
             FrontDeskDepartureQueueProjectionService::VIEW_PERMISSION,
             FrontDeskDeparturePreparationEventService::CREATE_PERMISSION,
+            FrontDeskDepartureOperationalHandoverService::CREATE_PERMISSION,
         ];
     }
 

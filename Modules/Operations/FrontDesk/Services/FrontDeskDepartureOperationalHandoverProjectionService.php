@@ -5,19 +5,19 @@ namespace Modules\Operations\FrontDesk\Services;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
-use Modules\Operations\FrontDesk\Models\FrontDeskDeparturePreparationEvent;
+use Modules\Operations\FrontDesk\Models\FrontDeskDepartureOperationalHandover;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Shared\Services\CurrentPropertyService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
-class FrontDeskDeparturePreparationEventProjectionService
+class FrontDeskDepartureOperationalHandoverProjectionService
 {
     public const VIEW_PERMISSION = 'frontdesk.departure-preparation.view';
 
     /**
      * @return array<string, mixed>
      */
-    public function actionLog(User $actor, string $frontDeskStayId): array
+    public function handover(User $actor, string $frontDeskStayId): array
     {
         $propertyId = $this->authorizeView($actor);
 
@@ -31,58 +31,56 @@ class FrontDeskDeparturePreparationEventProjectionService
             throw new HttpException(404, 'Front Desk stay not found.');
         }
 
-        $events = FrontDeskDeparturePreparationEvent::withoutGlobalScopes()
+        $handovers = FrontDeskDepartureOperationalHandover::withoutGlobalScopes()
+            ->with(['createdBy'])
             ->where('property_id', $propertyId)
             ->where('front_desk_stay_id', $frontDeskStayId)
             ->orderBy('occurred_at', 'desc')
             ->orderBy('created_at', 'desc')
             ->limit(50)
             ->get()
-            ->map(fn (FrontDeskDeparturePreparationEvent $event) => [
-                'id' => $event->id,
-                'event_type' => $event->event_type?->value,
-                'event_type_label' => $this->eventTypeLabel($event->event_type?->value),
-                'note' => $event->note,
-                'occurred_at' => $event->occurred_at?->toISOString(),
-                'created_by' => $event->created_by,
-                'created_by_name' => $event->createdBy?->name,
-                'source_hash' => $event->source_hash,
+            ->map(fn (FrontDeskDepartureOperationalHandover $handover) => [
+                'id' => $handover->id,
+                'handover_status' => $handover->handover_status?->value,
+                'handover_status_label' => $this->handoverStatusLabel($handover->handover_status?->value),
+                'handover_note' => $handover->handover_note,
+                'occurred_at' => $handover->occurred_at?->toISOString(),
+                'created_by' => $handover->created_by,
+                'created_by_name' => $handover->createdBy?->name,
+                'source_hash' => $handover->source_hash,
             ])
             ->values()
             ->all();
 
-        $canCreate = $actor->can(FrontDeskDeparturePreparationEventService::CREATE_PERMISSION);
+        $latestHandover = $handovers[0] ?? null;
+
+        $canCreate = $actor->can(FrontDeskDepartureOperationalHandoverService::CREATE_PERMISSION);
 
         return [
             'stay_id' => $frontDeskStayId,
             'property_id' => $propertyId,
-            'events' => $events,
-            'event_count' => count($events),
+            'latest_handover' => $latestHandover,
+            'handover_history' => $handovers,
+            'handover_count' => count($handovers),
             'actions' => [
-                'can_create_event' => $canCreate,
+                'can_create_handover' => $canCreate,
             ],
-            'allowed_event_types' => $canCreate ? [
-                ['value' => 'DEPARTURE_NOTE_RECORDED', 'label' => 'Record Note'],
-                ['value' => 'DEPARTURE_TIME_CONFIRMED', 'label' => 'Confirm Departure Time'],
-                ['value' => 'LUGGAGE_ASSISTANCE_NOTED', 'label' => 'Luggage Assistance'],
-                ['value' => 'TRANSPORTATION_NOTED', 'label' => 'Transportation'],
-                ['value' => 'OPERATIONAL_BLOCKER_ACKNOWLEDGED', 'label' => 'Acknowledge Blocker'],
-                ['value' => 'GUEST_MESSAGE_NOTED', 'label' => 'Guest Message'],
+            'allowed_handover_statuses' => $canCreate ? [
+                ['value' => 'OPERATIONAL_HANDOVER_READY', 'label' => 'Mark Operationally Ready'],
+                ['value' => 'OPERATIONAL_HANDOVER_BLOCKED', 'label' => 'Mark Operationally Blocked'],
+                ['value' => 'OPERATIONAL_HANDOVER_REVIEWED', 'label' => 'Mark Reviewed'],
             ] : [],
             'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
         ];
     }
 
-    private function eventTypeLabel(?string $type): string
+    private function handoverStatusLabel(?string $status): string
     {
-        return match ($type) {
-            'DEPARTURE_NOTE_RECORDED' => 'Departure Note',
-            'DEPARTURE_TIME_CONFIRMED' => 'Departure Time Confirmed',
-            'LUGGAGE_ASSISTANCE_NOTED' => 'Luggage Assistance',
-            'TRANSPORTATION_NOTED' => 'Transportation',
-            'OPERATIONAL_BLOCKER_ACKNOWLEDGED' => 'Operational Blocker Acknowledged',
-            'GUEST_MESSAGE_NOTED' => 'Guest Message',
-            default => $type ?? 'Unknown',
+        return match ($status) {
+            'OPERATIONAL_HANDOVER_READY' => 'Operationally Ready',
+            'OPERATIONAL_HANDOVER_BLOCKED' => 'Operationally Blocked',
+            'OPERATIONAL_HANDOVER_REVIEWED' => 'Reviewed',
+            default => $status ?? 'Unknown',
         };
     }
 

@@ -15,6 +15,8 @@ use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionSe
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -270,6 +272,61 @@ class FrontDeskController extends Controller
         } catch (DomainException $exception) {
             throw ValidationException::withMessages([
                 'departure_action_log' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function createDepartureOperationalHandover(
+        Request $request,
+        string $stay,
+        FrontDeskDepartureOperationalHandoverService $handoverService
+    ) {
+        $validated = $request->validate([
+            'handover_status' => ['required', 'string', 'max:50'],
+            'handover_note' => ['nullable', 'string', 'max:2000'],
+            'idempotency_key' => ['required', 'string', 'max:120'],
+        ]);
+
+        try {
+            $result = $handoverService->create(
+                $request->user(),
+                $stay,
+                $validated['handover_status'],
+                $validated['handover_note'] ?? null,
+                $validated['idempotency_key']
+            );
+
+            return $request->expectsJson()
+                ? response()->json([
+                    'handover_id' => $result['handover']->id,
+                    'handover_status' => $result['handover']->handover_status?->value,
+                    'occurred_at' => $result['handover']->occurred_at?->toISOString(),
+                    'replayed' => $result['replayed'],
+                ])
+                : back()->with('success', $result['replayed']
+                    ? 'Operational handover already recorded (idempotent).'
+                    : 'Departure operational handover recorded.');
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'departure_operational_handover' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function departureOperationalHandover(
+        Request $request,
+        string $stay,
+        FrontDeskDepartureOperationalHandoverProjectionService $projection
+    ) {
+        try {
+            $handover = $projection->handover($request->user(), $stay);
+
+            return $request->expectsJson()
+                ? response()->json($handover)
+                : back()->with('departureOperationalHandover', $handover);
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'departure_operational_handover' => [$exception->getMessage()],
             ]);
         }
     }
