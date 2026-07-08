@@ -13,10 +13,12 @@ use Modules\Foundation\User\Models\User;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityBlockService;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckInService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomMoveService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
@@ -68,6 +70,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskRoomMoveService::EXECUTE_PERMISSION,
             FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION,
             FrontDeskDepartureQueueProjectionService::VIEW_PERMISSION,
+            FrontDeskDeparturePreparationEventService::CREATE_PERMISSION,
         ]);
 
         $this->frontDeskViewOnlyActor->givePermissionTo([
@@ -271,6 +274,28 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskRoomMoveService::EXECUTE_PERMISSION,
             FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION,
             FrontDeskDepartureQueueProjectionService::VIEW_PERMISSION,
+            FrontDeskDeparturePreparationEventService::CREATE_PERMISSION,
         ];
+    }
+
+    protected function checkedInStay(string $roomNumber): array
+    {
+        [$reservation, , $room] = $this->assignReadyReservation($roomNumber);
+        $assigned = app(FrontDeskRoomAssignmentService::class)->assign(
+            $this->frontDeskActor, $reservation, $room, null, 'assign-' . Str::ulid()
+        );
+        $context = 'check-in-' . Str::ulid();
+        $hash = app(FrontDeskCheckInService::class)->prepareConfirmation(
+            $this->frontDeskActor, $assigned['stay']->id, $context
+        );
+        app(SensitiveActionConfirmationService::class)->confirm(
+            $this->frontDeskActor, FrontDeskCheckInService::INTENT,
+            'password', $this->property->company_id, $this->property->id, $hash
+        );
+        $stay = app(FrontDeskCheckInService::class)->checkIn(
+            $this->frontDeskActor, $assigned['stay']->id, $context
+        );
+
+        return [$stay->fresh(), $room, $reservation];
     }
 }
