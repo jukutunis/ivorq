@@ -51,8 +51,8 @@ class FrontDeskDeparturePreparationWorkspaceTest extends PostgresTestCase
             ->where('departureWorkspace.snapshots.dueOutToday', 1)
             ->where('departureWorkspace.views.dueOutToday.0.stay_id', $stay->id)
             ->where('departureWorkspace.views.dueOutToday.0.due_out_classification', FrontDeskDepartureQueueProjectionService::DUE_OUT_TODAY)
-            ->where('departureWorkspace.views.dueOutToday.0.financial_marker', 'Financial settlement: Not evaluated in Front Desk Package B1.')
-            ->where('departureWorkspace.financial_marker', 'Financial settlement: Not evaluated in Front Desk Package B1.')
+            ->where('departureWorkspace.views.dueOutToday.0.financial_marker', 'Financial settlement: Not evaluated in Front Desk Package B2.')
+            ->where('departureWorkspace.financial_marker', 'Financial settlement: Not evaluated in Front Desk Package B2.')
         );
     }
 

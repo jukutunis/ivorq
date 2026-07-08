@@ -297,8 +297,8 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $dueOutToday = $queue['views']['dueOutToday'];
 
         $this->assertNotEmpty($dueOutToday);
-        $this->assertSame('Financial settlement: Not evaluated in Front Desk Package B1.', $dueOutToday[0]['financial_marker']);
-        $this->assertSame('Financial settlement: Not evaluated in Front Desk Package B1.', $queue['financial_marker']);
+        $this->assertSame('Financial settlement: Not evaluated in Front Desk Package B2.', $dueOutToday[0]['financial_marker']);
+        $this->assertSame('Financial settlement: Not evaluated in Front Desk Package B2.', $queue['financial_marker']);
     }
 
     // ── No financial fields ──
