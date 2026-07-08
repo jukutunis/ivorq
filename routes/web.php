@@ -39,6 +39,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
         Route::get('/reservation-board', [FrontDeskController::class, 'reservationBoard']);
         Route::get('/engineering-availability/{room}', [\Modules\Operations\FrontDesk\Http\Controllers\EngineeringAvailabilityDependencyController::class, 'show'])
             ->name('frontdesk.engineering-availability.show');
+        Route::get('/housekeeping-readiness/{room}', [\Modules\Operations\FrontDesk\Http\Controllers\HousekeepingReadinessDependencyController::class, 'show'])
+            ->name('frontdesk.housekeeping-readiness.show');
     });
 
     Route::get('/housekeeping', fn() => redirect('/housekeeping/room-board'));
@@ -47,6 +49,7 @@ Route::middleware(['auth', 'active.property'])->group(function () {
         Route::get('/attendant-status', [HousekeepingController::class, 'attendantStatus']);
         Route::get('/inspections', [HousekeepingController::class, 'inspections']);
         Route::get('/lost-found', [HousekeepingController::class, 'lostFound']);
+        Route::get('/room-readiness', [HousekeepingController::class, 'roomReadiness']);
     });
 
     Route::get('/engineering', fn() => redirect('/engineering/work-orders'));

@@ -27,6 +27,7 @@ interface HousekeepingWorkspaceProps {
   rooms?: any[];
   tasks?: any[];
   attendants?: any[];
+  readinessRows?: any[];
   auth_user?: any;
 }
 
@@ -35,6 +36,7 @@ const HousekeepingWorkspace = ({
   rooms = [],
   tasks = [],
   attendants = [],
+  readinessRows = [],
   auth_user = null
 }: HousekeepingWorkspaceProps) => {
   const { props } = usePage();
@@ -45,6 +47,7 @@ const HousekeepingWorkspace = ({
     { href: '/housekeeping/room-board', label: 'Room Board', badge: tasks.filter(t => t.status !== 'completed' || !t.verified_at).length },
     { href: '/housekeeping/attendant-status', label: 'Attendant Status' },
     { href: '/housekeeping/inspections', label: 'Inspections', badge: tasks.filter(t => t.status === 'completed' && !t.verified_at).length },
+    { href: '/housekeeping/room-readiness', label: 'Room Readiness' },
     { href: '/housekeeping/lost-found', label: 'Lost & Found' },
   ];
 
@@ -374,6 +377,108 @@ const HousekeepingWorkspace = ({
         <ModuleTabs tabs={tabs} />
 
         <SplitLayout>
+          {activeTab === 'room_readiness' ? (
+            <>
+              <QuickFilterPanel>
+                <div className="filter-group">
+                  <label className="filter-label">Readiness Overview</label>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    Housekeeping room readiness status for Front Desk assignment eligibility.
+                  </p>
+                </div>
+              </QuickFilterPanel>
+              <MainContent>
+                <OperationalSnapshot>
+                  <SnapshotCard
+                    value={readinessRows.filter((r: any) => r.readiness_state === 'ready_for_sale' || r.readiness_state === 'ready_for_arrival' || r.readiness_state === 'ready_for_vip').length}
+                    label="Ready"
+                    statusColor="ready-green"
+                  />
+                  <SnapshotCard
+                    value={readinessRows.filter((r: any) => r.readiness_state === 'waiting_cleaning' || r.readiness_state === 'cleaning').length}
+                    label="Cleaning / Dirty"
+                    statusColor="warning-amber"
+                  />
+                  <SnapshotCard
+                    value={readinessRows.filter((r: any) => r.readiness_state === 'waiting_inspection').length}
+                    label="Pending Inspection"
+                    statusColor="inspection-blue"
+                  />
+                  <SnapshotCard
+                    value={readinessRows.filter((r: any) => r.readiness_state === 'blocked').length}
+                    label="Blocked"
+                    statusColor="critical"
+                  />
+                </OperationalSnapshot>
+
+                <div style={{ background: '#fff', borderRadius: '8px', border: '1px solid #E2E8F0', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+                        <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase' }}>Room</th>
+                        <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase' }}>Type</th>
+                        <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase' }}>Floor/Zone</th>
+                        <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase' }}>Cleanliness</th>
+                        <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase' }}>Readiness State</th>
+                        <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase' }}>Front Desk Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {readinessRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                            No rooms found for this property.
+                          </td>
+                        </tr>
+                      ) : (
+                        readinessRows.map((row: any) => {
+                          const readyStates = ['ready_for_sale', 'ready_for_arrival', 'ready_for_vip'];
+                          const isReady = readyStates.includes(row.readiness_state);
+                          const isBlocked = row.readiness_state === 'blocked';
+
+                          return (
+                            <tr key={row.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                              <td style={{ padding: '8px 16px', fontWeight: 500 }}>
+                                {row.room_number}
+                                {row.is_vip && <StatusBadge status="vip">VIP</StatusBadge>}
+                              </td>
+                              <td style={{ padding: '8px 16px', color: 'var(--text-secondary)' }}>{row.room_type}</td>
+                              <td style={{ padding: '8px 16px', color: 'var(--text-secondary)' }}>{row.floor || '-'} {row.zone ? `/ ${row.zone}` : ''}</td>
+                              <td style={{ padding: '8px 16px' }}>
+                                <StatusBadge status={
+                                  row.cleanliness_status === 'inspected' ? 'success' :
+                                  row.cleanliness_status === 'clean' ? 'info' :
+                                  row.cleanliness_status === 'dirty' ? 'warning' :
+                                  'default'
+                                }>{row.cleanliness_status}</StatusBadge>
+                              </td>
+                              <td style={{ padding: '8px 16px', fontSize: '12px' }}>
+                                <code style={{ background: '#F1F5F9', padding: '2px 6px', borderRadius: '3px' }}>{row.readiness_state}</code>
+                              </td>
+                              <td style={{ padding: '8px 16px' }}>
+                                {isReady ? (
+                                  <StatusBadge status="success">HOUSEKEEPING_READY</StatusBadge>
+                                ) : isBlocked ? (
+                                  <StatusBadge status="critical">HOUSEKEEPING_BLOCKED</StatusBadge>
+                                ) : (
+                                  <StatusBadge status="warning">HOUSEKEEPING_BLOCKED</StatusBadge>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ marginTop: '16px', padding: '12px', background: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  <strong style={{ color: 'var(--text-primary)' }}>Readiness Boundary:</strong> Front Desk treats only HOUSEKEEPING_READY rooms as eligible for assignment, check-in, and room move. HOUSEKEEPING_BLOCKED and HOUSEKEEPING_UNKNOWN rooms are treated as blocking. Readiness is Housekeeping-owned and projected read-only to Front Desk.
+                </div>
+              </MainContent>
+            </>
+          ) : (
+            <>
           <QuickFilterPanel>
             <div className="filter-group">
               <label className="filter-label">Floor / Zone</label>
@@ -477,6 +582,8 @@ const HousekeepingWorkspace = ({
               })}
             </WorkBoard>
           </MainContent>
+            </>
+          )}
         </SplitLayout>
       </div>
     </>
