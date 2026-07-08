@@ -11,6 +11,7 @@ use Modules\Operations\FrontDesk\Services\FrontDeskCheckInService;
 use Modules\Operations\FrontDesk\Services\FrontDeskInHouseWorkspaceService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomMoveService;
+use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -39,6 +40,21 @@ class FrontDeskController extends Controller
     public function roomReadiness()
     {
         return Inertia::render('Ivorq/FrontDesk/FrontDeskWorkspace', ['activeTab' => 'room_readiness']);
+    }
+
+    public function checkoutReadiness(Request $request, string $stay, FrontDeskCheckoutReadinessProjectionService $readiness)
+    {
+        try {
+            $readiness = $readiness->ready($request->user(), $stay);
+
+            return $request->expectsJson()
+                ? response()->json($readiness)
+                : back()->with('checkoutReadiness', $readiness);
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'checkout_readiness' => [$exception->getMessage()],
+            ]);
+        }
     }
 
     public function reservationBoard()

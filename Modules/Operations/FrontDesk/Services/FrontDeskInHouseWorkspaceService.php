@@ -17,7 +17,10 @@ class FrontDeskInHouseWorkspaceService
 {
     public const VIEW_PERMISSION = 'frontdesk.in-house.view';
 
-    public function __construct(private readonly EngineeringAvailabilityDependencyService $engineeringAvailability) {}
+    public function __construct(
+        private readonly EngineeringAvailabilityDependencyService $engineeringAvailability,
+        private readonly FrontDeskCheckoutReadinessProjectionService $checkoutReadiness,
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -119,7 +122,9 @@ class FrontDeskInHouseWorkspaceService
             'target_room_candidates' => $targetCandidates->all(),
             'actions' => [
                 'can_move_room' => $actor->can(FrontDeskRoomMoveService::EXECUTE_PERMISSION),
+                'can_view_checkout_readiness' => $actor->can(FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION),
             ],
+            'checkout_readiness' => $this->projectCheckoutReadiness($actor, $stay),
         ];
     }
 
@@ -214,5 +219,17 @@ class FrontDeskInHouseWorkspaceService
         }
 
         return (string) $value;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function projectCheckoutReadiness(User $actor, FrontDeskStay $stay): ?array
+    {
+        if (! $actor->can(FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION)) {
+            return null;
+        }
+
+        return $this->checkoutReadiness->ready($actor, $stay->id);
     }
 }

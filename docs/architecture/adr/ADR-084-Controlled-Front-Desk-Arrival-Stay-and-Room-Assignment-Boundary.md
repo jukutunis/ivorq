@@ -89,6 +89,37 @@ final checkout
 
 Check-out readiness is a derived read-only projection, not a mutable final status.
 
+### FD-A4 Check-out Readiness Evidence
+
+Check-out readiness is a deterministic server-resolved read-only projection delivered by `FrontDeskCheckoutReadinessProjectionService`. It evaluates operational readiness from non-financial source evidence and must never:
+
+- execute final checkout;
+- transition FrontDeskStay to CHECKED_OUT, SETTLED, DEPARTED, CANCELLED, or NO_SHOW;
+- create, read, or evaluate folio, deposit, payment, refund, room charge, revenue, tax, AR, GL, Cashier, Banking, Financial Period, Business Date, or Night Audit state;
+- mutate Housekeeping, Engineering, Room master, Guest, Reservation, or any source aggregate.
+
+**Readiness statuses (non-financial):**
+- `CHECKOUT_OPERATIONALLY_READY` — all operational non-financial evidence is consistent.
+- `CHECKOUT_OPERATIONALLY_BLOCKED` — at least one operational blocker is source-proven.
+- `CHECKOUT_READINESS_UNKNOWN` — a dependency is ambiguous or unsafe to evaluate.
+
+**Permitted readiness rules:**
+- READY requires: stay IN_HOUSE, current room exists and matches property, current assignment exists and matches stay, assignment matches current_room_id, guest and reservation identity resolvable, Housekeeping not blocking, Engineering AVAILABLE.
+- BLOCKED when any of the above is violated or inconsistent.
+- UNKNOWN only when a dependency is not configured, ambiguous, or unsafe.
+
+**Financial boundary marker:**
+Every readiness result must include exactly:
+`Financial settlement: Not evaluated in Front Desk Package A.`
+
+**Permission:**
+- `frontdesk.checkout-readiness.view` — narrow, non-delegable read-only view authority.
+
+**ADRs governing FD-A4:**
+- ADR-084 covers the checkout readiness projection boundary.
+- ADR-085 covers Engineering availability as a read-only dependency.
+- ADR-066 covers any future sensitive confirmation needs (not activated here).
+
 ### Property And Tenant Isolation
 
 Every Front Desk projection and controlled action must resolve the active property and tenant on the server. Browser-provided property, tenant, actor, audit timestamp, eligibility, status, readiness, or blocker values are ignored for authority. A reservation, guest, room, room block, Housekeeping status, Engineering availability fact, Front Desk stay, and Front Desk room assignment must all belong to the same active property. The active property must belong to the active tenant/company.
@@ -214,6 +245,21 @@ mutation.
 
 FD-A4: Check-out Readiness Evidence
 Allowed only after FD-A3 passes room move and concurrency proof.
+
+FD-A4 activation note:
+Check-out readiness is a derived read-only projection from the FrontDeskStay
+aggregate, current room assignment evidence, Housekeeping readiness, and
+Engineering availability. It does not create a final state transition, does not
+evaluate or mutate any financial source, and does not persist a separate
+readiness record. The projection returns deterministic server-resolved evidence:
+CHECKOUT_OPERATIONALLY_READY, CHECKOUT_OPERATIONALLY_BLOCKED, or
+CHECKOUT_READINESS_UNKNOWN. Every result includes the mandatory non-financial
+marker. A dedicated workspace panel displays readiness evidence, operational
+blockers, Housekeeping and Engineering dependency state, current room evidence,
+and the financial exclusion marker. No Check Out, Settle, Pay, Deposit, Refund,
+Folio, Revenue, Tax, AR, GL, Night Audit, Cashier, Banking, Financial Period, or
+Business Date control is rendered. FD-A4 does not activate final checkout, folio
+settlement, or any financial behavior.
 ```
 
 If any gate fails, downstream Front Desk work must stop. Do not bypass readiness evidence, weaken property isolation, create fake room-status sources, or introduce placeholder runtime pages.

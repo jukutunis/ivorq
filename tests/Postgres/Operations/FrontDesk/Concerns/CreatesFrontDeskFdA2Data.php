@@ -16,6 +16,7 @@ use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckInService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomMoveService;
+use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
 
 trait CreatesFrontDeskFdA2Data
@@ -62,6 +63,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskCheckInService::EXECUTE_PERMISSION,
             FrontDeskCheckInService::IN_HOUSE_VIEW_PERMISSION,
             FrontDeskRoomMoveService::EXECUTE_PERMISSION,
+            FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION,
         ]);
 
         $this->frontDeskViewOnlyActor->givePermissionTo([
@@ -261,6 +263,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskCheckInService::EXECUTE_PERMISSION,
             FrontDeskCheckInService::IN_HOUSE_VIEW_PERMISSION,
             FrontDeskRoomMoveService::EXECUTE_PERMISSION,
+            FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION,
         ];
     }
 }

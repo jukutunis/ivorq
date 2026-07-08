@@ -84,6 +84,38 @@ type ArrivalWorkspace = {
   financeMarker: string;
 };
 
+type CheckoutReadiness = {
+  property_id: string;
+  front_desk_stay_id: string;
+  reservation_id: string;
+  guest_id: string;
+  current_room_id: string | null;
+  current_room_assignment_id: string | null;
+  readiness_status: string;
+  operational_blockers: string[];
+  evidence: {
+    stay: { id: string; status: string | null; checked_in_at: string | null; checked_in_by: string | null };
+    reservation: { id: string; number: string | null; arrival_date: string | null; departure_date: string | null; room_type: string | null; status: string | null };
+    guest: { id: string; name: string | null; vip_level: number | null };
+    current_room: { id: string | null; number: string | null; room_type: string | null; readiness_state: string };
+    current_assignment: { id: string; assignment_kind: string | null; room_id: string; source_hash: string } | null;
+    assignment_history: Array<{
+      id: string;
+      assignment_kind: string | null;
+      room_id: string;
+      room_number: string | null;
+      assignment_reason: string | null;
+      occurred_at: string | null;
+      created_by: string;
+      source_hash: string;
+    }>;
+    housekeeping: { source: string; readiness_state: string; blocking: boolean; blocking_reason: string | null };
+    engineering: { source: string; availability_status: string; blocking: boolean; blocking_reason: string | null; blocking_source_type: string | null };
+  };
+  financial_marker: string;
+  evaluated_at: string;
+};
+
 type InHouseRow = {
   stay_id: string;
   reservation: { id: string; number: string | null; arrival_date: string | null; departure_date: string | null; room_type: string | null };
@@ -112,7 +144,8 @@ type InHouseRow = {
     eligible: boolean;
     blockers: string[];
   }>;
-  actions: { can_move_room: boolean };
+  actions: { can_move_room: boolean; can_view_checkout_readiness: boolean };
+  checkout_readiness: CheckoutReadiness | null;
 };
 
 type InHouseWorkspace = {
@@ -295,19 +328,23 @@ function InHouseQueue({ rows }: { rows: InHouseRow[] }) {
         <QueueItem title="No in-house stays" meta="No IN_HOUSE Front Desk stay evidence matched the active property." />
       ) : (
         rows.map((row) => (
-          <QueueItem
-            key={row.stay_id}
-            title={
-              <>
-                {row.guest.name ?? 'Guest linkage missing'}
-                <StatusBadge status="ready" style={{ fontSize: '11px', padding: '2px 6px', marginLeft: '6px' }}>
-                  In House
-                </StatusBadge>
-              </>
-            }
-            meta={<InHouseMeta row={row} />}
-            actions={<RoomMoveActions row={row} />}
-          />
+          <React.Fragment key={row.stay_id}>
+            <QueueItem
+              title={
+                <>
+                  {row.guest.name ?? 'Guest linkage missing'}
+                  <StatusBadge status="ready" style={{ fontSize: '11px', padding: '2px 6px', marginLeft: '6px' }}>
+                    In House
+                  </StatusBadge>
+                </>
+              }
+              meta={<InHouseMeta row={row} />}
+              actions={<RoomMoveActions row={row} />}
+            />
+            {row.actions.can_view_checkout_readiness && row.checkout_readiness ? (
+              <CheckoutReadinessPanel readiness={row.checkout_readiness} />
+            ) : null}
+          </React.Fragment>
         ))
       )}
     </QueueList>
@@ -405,6 +442,54 @@ function ArrivalActions({ row }: { row: ArrivalRow }) {
           </Button>
         </form>
       ) : null}
+    </div>
+  );
+}
+
+function CheckoutReadinessPanel({ readiness }: { readiness: CheckoutReadiness }) {
+  const statusColor = readiness.readiness_status === 'CHECKOUT_OPERATIONALLY_READY' ? 'ready-green'
+    : readiness.readiness_status === 'CHECKOUT_OPERATIONALLY_BLOCKED' ? 'warning-amber'
+    : 'neutral';
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '12px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Check-out Readiness</span>
+        <StatusBadge status="ready" style={{
+          fontSize: '11px', padding: '2px 8px',
+          backgroundColor: statusColor === 'ready-green' ? 'var(--status-ready-bg)' : statusColor === 'warning-amber' ? 'var(--status-pending-bg)' : 'var(--surface-disabled)',
+          color: statusColor === 'ready-green' ? 'var(--status-ready-fg)' : statusColor === 'warning-amber' ? 'var(--status-pending-fg)' : 'var(--text-disabled)',
+        }}>
+          {readiness.readiness_status}
+        </StatusBadge>
+      </div>
+
+      {readiness.operational_blockers.length > 0 ? (
+        <div style={{ marginBottom: '6px' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Blockers: </span>
+          <span style={{ color: 'var(--text-warning)' }}>{readiness.operational_blockers.join(' ')}</span>
+        </div>
+      ) : (
+        <div style={{ marginBottom: '6px', color: 'var(--text-success)' }}>
+          No operational blocker projected.
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+        <span>Room: {readiness.evidence.current_room.number ?? readiness.current_room_id ?? 'N/A'} ({readiness.evidence.current_room.readiness_state})</span>
+        <span>Assignment: {readiness.evidence.current_assignment?.assignment_kind ?? 'N/A'}</span>
+        <span>Housekeeping: {readiness.evidence.housekeeping.readiness_state} {readiness.evidence.housekeeping.blocking ? '(blocking)' : ''}</span>
+        <span>Engineering: {readiness.evidence.engineering.availability_status} {readiness.evidence.engineering.blocking ? `(${readiness.evidence.engineering.blocking_reason})` : ''}</span>
+      </div>
+
+      <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+        {readiness.financial_marker}
+      </div>
     </div>
   );
 }
