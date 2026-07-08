@@ -135,6 +135,7 @@ class SensitiveActionConfirmationController extends Controller
             'bank-payment-execution' => 'Bank Payment Execution',
             'banking-migration-account-identity-pilot-execution' => 'Banking Account Identity Pilot Execution',
             'engineering-room-availability-release' => 'Engineering Room Availability Release',
+            'frontdesk-check-in' => 'Front Desk Check-In',
         ];
 
         return $labels[$intent] ?? $intent;

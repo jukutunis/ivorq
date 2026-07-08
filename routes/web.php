@@ -21,6 +21,12 @@ Route::middleware(['auth', 'active.property'])->group(function () {
     Route::get('/frontdesk', fn() => redirect('/frontdesk/arrivals'));
     Route::prefix('frontdesk')->group(function () {
         Route::get('/arrivals', [FrontDeskController::class, 'arrivals'])->name('frontdesk.arrivals');
+        Route::post('/room-assignments', [FrontDeskController::class, 'assignRoom'])
+            ->name('frontdesk.room-assignments.store');
+        Route::post('/stays/{stay}/check-in-confirmation', [FrontDeskController::class, 'prepareCheckInConfirmation'])
+            ->name('frontdesk.stays.check-in-confirmation.store');
+        Route::post('/stays/{stay}/check-in', [FrontDeskController::class, 'checkIn'])
+            ->name('frontdesk.stays.check-in.store');
         Route::get('/departures', [FrontDeskController::class, 'departures']);
         Route::get('/in-house', [FrontDeskController::class, 'inHouse']);
         Route::get('/room-readiness', [FrontDeskController::class, 'roomReadiness']);

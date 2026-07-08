@@ -35,10 +35,23 @@ type ArrivalRow = {
     source: string;
     active_block_count: number;
   };
+  front_desk: {
+    stay_id: string;
+    status: string;
+    current_room_id: string | null;
+    current_room_assignment_id: string | null;
+    current_room_number: string | null;
+    checked_in_at: string | null;
+  } | null;
   eligibility: {
     eligible: boolean;
     state: string;
     blockers: string[];
+  };
+  actions: {
+    can_assign_room: boolean;
+    can_prepare_check_in: boolean;
+    can_view_in_house: boolean;
   };
   source_requirements: {
     guest_registration: string;
@@ -201,7 +214,7 @@ function ArrivalQueue({ title, rows }: { title: string; rows: ArrivalRow[] }) {
               </>
             }
             meta={<ArrivalMeta row={row} />}
-            actions={<EligibilityBadge row={row} />}
+            actions={<ArrivalActions row={row} />}
           />
         ))
       )}
@@ -218,19 +231,49 @@ function ArrivalMeta({ row }: { row: ArrivalRow }) {
       <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{row.reservation_number}</span>{' '}
       <span>Arrival {row.arrival_date ?? 'Not configured'}</span>{' '}
       <span>Room type {row.room_type ?? 'Not configured'}</span>{' '}
-      <span>{room}</span>{' '}
+      <span>{row.front_desk?.current_room_number ? `Front Desk Room ${row.front_desk.current_room_number}` : room}</span>{' '}
       <span>Housekeeping {row.housekeeping.readiness_state ?? row.housekeeping.state}</span>{' '}
       <span>Engineering {row.engineering.state}</span>{' '}
+      <span>{row.front_desk?.status ?? 'ARRIVAL_READY'}</span>{' '}
       <span>{blockers}</span>
     </>
   );
 }
 
-function EligibilityBadge({ row }: { row: ArrivalRow }) {
-  return row.eligibility.eligible ? (
-    <StatusBadge status="ready">Arrival Ready</StatusBadge>
-  ) : (
-    <StatusBadge status="warning">Blocked</StatusBadge>
+function ArrivalActions({ row }: { row: ArrivalRow }) {
+  const canAssign = row.actions.can_assign_room && row.assigned_room !== null;
+  const canPrepareCheckIn = row.actions.can_prepare_check_in && row.front_desk?.stay_id;
+
+  return (
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      {row.front_desk?.status === 'IN_HOUSE' ? (
+        <StatusBadge status="ready">In House</StatusBadge>
+      ) : row.eligibility.eligible ? (
+        <StatusBadge status="ready">Arrival Ready</StatusBadge>
+      ) : (
+        <StatusBadge status="warning">Blocked</StatusBadge>
+      )}
+
+      {canAssign ? (
+        <form method="post" action="/frontdesk/room-assignments">
+          <input type="hidden" name="reservation_id" value={row.reservation_id} />
+          <input type="hidden" name="room_id" value={row.assigned_room?.id ?? ''} />
+          <input type="hidden" name="idempotency_key" value={`initial-${row.reservation_id}-${row.assigned_room?.id ?? ''}`} />
+          <Button size="sm">
+            <Icon name="frontdesk" /> Assign Room
+          </Button>
+        </form>
+      ) : null}
+
+      {canPrepareCheckIn ? (
+        <form method="post" action={`/frontdesk/stays/${row.front_desk?.stay_id}/check-in-confirmation`}>
+          <input type="hidden" name="idempotency_context" value={`check-in-${row.front_desk?.stay_id}`} />
+          <Button size="sm">
+            <Icon name="walk-in" /> Check In
+          </Button>
+        </form>
+      ) : null}
+    </div>
   );
 }
 
