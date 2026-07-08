@@ -170,6 +170,26 @@ type AllowedEventType = {
   label: string;
 };
 
+type DepartureOperationalHandoverEntry = {
+  id: string;
+  handover_status: string;
+  handover_status_label: string;
+  handover_note: string | null;
+  occurred_at: string;
+  created_by_name: string | null;
+  source_hash: string;
+};
+
+type DepartureOperationalHandover = {
+  latest: DepartureOperationalHandoverEntry;
+  history: DepartureOperationalHandoverEntry[];
+} | null;
+
+type AllowedHandoverStatus = {
+  value: string;
+  label: string;
+};
+
 type DepartureRow = {
   stay_id: string;
   reservation_id: string;
@@ -189,6 +209,9 @@ type DepartureRow = {
   departure_preparation_events: DeparturePreparationEvent[];
   can_create_departure_preparation_event: boolean;
   allowed_event_types: AllowedEventType[];
+  departure_operational_handover: DepartureOperationalHandover;
+  can_create_operational_handover: boolean;
+  allowed_handover_statuses: AllowedHandoverStatus[];
   financial_marker: string;
   evaluated_at: string;
 };
@@ -563,6 +586,12 @@ function DepartureQueue({ title, rows }: { title: string; rows: DepartureRow[] }
               meta={<DepartureMeta row={row} />}
               actions={<DepartureActions row={row} />}
             />
+            {row.can_create_operational_handover ? (
+              <DepartureOperationalHandoverForm stayId={row.stay_id} handoverStatuses={row.allowed_handover_statuses} />
+            ) : null}
+            {row.departure_operational_handover ? (
+              <DepartureOperationalHandoverPanel handover={row.departure_operational_handover} />
+            ) : null}
             {row.can_create_departure_preparation_event ? (
               <DepartureActionForm stayId={row.stay_id} eventTypes={row.allowed_event_types} />
             ) : null}
@@ -705,6 +734,97 @@ function DepartureActionLogPanel({ events }: { events: DeparturePreparationEvent
   );
 }
 
+function DepartureOperationalHandoverForm({ stayId, handoverStatuses }: { stayId: string; handoverStatuses: AllowedHandoverStatus[] }) {
+  const [showForm, setShowForm] = React.useState(false);
+  const [selectedStatus, setSelectedStatus] = React.useState(handoverStatuses[0]?.value ?? '');
+
+  if (handoverStatuses.length === 0) return null;
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '10px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      {!showForm ? (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)', marginRight: '4px' }}>Operational Handover:</span>
+          {handoverStatuses.map((hs) => (
+            <Button key={hs.value} size="sm" variant="secondary" onClick={() => { setShowForm(true); setSelectedStatus(hs.value); }}>
+              <Icon name="note" /> {hs.label}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <form method="post" action={`/frontdesk/stays/${stayId}/departure-operational-handovers`} onSubmit={() => setShowForm(false)}>
+          <input type="hidden" name="handover_status" value={selectedStatus} />
+          <input type="hidden" name="idempotency_key" value={`doh-${stayId}-${selectedStatus}-${Date.now()}`} />
+          <div style={{ marginBottom: '8px' }}>
+            <label style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>
+              Handover Note (Optional)
+            </label>
+            <textarea name="handover_note" rows={2} style={{
+              width: '100%', padding: '6px 8px', fontSize: '13px',
+              border: '1px solid var(--border-subtle)', borderRadius: '4px',
+              background: 'var(--surface-input)', color: 'var(--text-primary)',
+            }} placeholder="Optional handover note..." />
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <Button size="sm" type="submit"><Icon name="save" /> Record Handover</Button>
+            <Button size="sm" variant="secondary" onClick={(e: React.MouseEvent) => { e.preventDefault(); setShowForm(false); }}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function DepartureOperationalHandoverPanel({ handover }: { handover: NonNullable<DepartureOperationalHandover> }) {
+  const statusColor = handover.latest.handover_status === 'OPERATIONAL_HANDOVER_READY' ? 'ready-green'
+    : handover.latest.handover_status === 'OPERATIONAL_HANDOVER_BLOCKED' ? 'warning-amber'
+    : handover.latest.handover_status === 'OPERATIONAL_HANDOVER_REVIEWED' ? 'ready-green'
+    : 'neutral';
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '10px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>
+        Operational Handover History ({handover.history.length})
+      </div>
+      {handover.history.map((entry) => (
+        <div key={entry.id} style={{
+          display: 'flex', alignItems: 'baseline', gap: '12px',
+          padding: '4px 0', borderBottom: '1px solid var(--border-subtle)',
+          fontSize: '12px',
+        }}>
+          <StatusBadge status="ready" style={{
+            fontSize: '10px', padding: '1px 8px', flexShrink: 0,
+            backgroundColor: entry.handover_status === 'OPERATIONAL_HANDOVER_READY' || entry.handover_status === 'OPERATIONAL_HANDOVER_REVIEWED'
+              ? 'var(--status-ready-bg)' : 'var(--status-pending-bg)',
+            color: entry.handover_status === 'OPERATIONAL_HANDOVER_READY' || entry.handover_status === 'OPERATIONAL_HANDOVER_REVIEWED'
+              ? 'var(--status-ready-fg)' : 'var(--status-pending-fg)',
+          }}>
+            {entry.handover_status_label}
+          </StatusBadge>
+          <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
+            {entry.handover_note ?? '—'}
+          </span>
+          <span style={{ color: 'var(--text-dimmed)', fontSize: '11px', flexShrink: 0 }}>
+            {entry.created_by_name ?? 'System'}, {entry.occurred_at ? new Date(entry.occurred_at).toLocaleString() : ''}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DepartureBlockersPanel({ blockers, readiness }: { blockers: string[]; readiness: string }) {
   const statusColor = readiness === 'DEPARTURE_OPERATIONALLY_BLOCKED' ? 'warning-amber' : 'neutral';
 
@@ -730,7 +850,7 @@ function DepartureBlockersPanel({ blockers, readiness }: { blockers: string[]; r
         <span style={{ color: 'var(--text-warning)' }}>{blockers.join(' | ')}</span>
       </div>
       <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
-        Financial settlement: Not evaluated in Front Desk Package B2.
+        Financial settlement: Not evaluated in Front Desk Package B3.
       </div>
     </div>
   );
