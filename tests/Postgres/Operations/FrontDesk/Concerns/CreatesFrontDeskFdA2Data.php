@@ -17,6 +17,8 @@ use Modules\Operations\FrontDesk\Services\FrontDeskCheckInService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomMoveService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
+use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
 
 trait CreatesFrontDeskFdA2Data
@@ -59,16 +61,19 @@ trait CreatesFrontDeskFdA2Data
         $this->frontDeskActor->givePermissionTo([
             ArrivalEligibilityProjectionService::VIEW_PERMISSION,
             EngineeringRoomAvailabilityProjectionService::FRONT_DESK_VIEW_PERMISSION,
+            HousekeepingRoomReadinessProjectionService::FRONT_DESK_VIEW_PERMISSION,
             FrontDeskRoomAssignmentService::CREATE_PERMISSION,
             FrontDeskCheckInService::EXECUTE_PERMISSION,
             FrontDeskCheckInService::IN_HOUSE_VIEW_PERMISSION,
             FrontDeskRoomMoveService::EXECUTE_PERMISSION,
             FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION,
+            FrontDeskDepartureQueueProjectionService::VIEW_PERMISSION,
         ]);
 
         $this->frontDeskViewOnlyActor->givePermissionTo([
             ArrivalEligibilityProjectionService::VIEW_PERMISSION,
             EngineeringRoomAvailabilityProjectionService::FRONT_DESK_VIEW_PERMISSION,
+            HousekeepingRoomReadinessProjectionService::FRONT_DESK_VIEW_PERMISSION,
             FrontDeskCheckInService::IN_HOUSE_VIEW_PERMISSION,
         ]);
 
@@ -259,11 +264,13 @@ trait CreatesFrontDeskFdA2Data
             EngineeringRoomAvailabilityProjectionService::ENGINEERING_VIEW_PERMISSION,
             EngineeringRoomAvailabilityBlockService::BLOCK_PERMISSION,
             EngineeringRoomAvailabilityBlockService::RELEASE_PERMISSION,
+            HousekeepingRoomReadinessProjectionService::FRONT_DESK_VIEW_PERMISSION,
             FrontDeskRoomAssignmentService::CREATE_PERMISSION,
             FrontDeskCheckInService::EXECUTE_PERMISSION,
             FrontDeskCheckInService::IN_HOUSE_VIEW_PERMISSION,
             FrontDeskRoomMoveService::EXECUTE_PERMISSION,
             FrontDeskCheckoutReadinessProjectionService::VIEW_PERMISSION,
+            FrontDeskDepartureQueueProjectionService::VIEW_PERMISSION,
         ];
     }
 }
