@@ -84,9 +84,48 @@ type ArrivalWorkspace = {
   financeMarker: string;
 };
 
+type InHouseRow = {
+  stay_id: string;
+  reservation: { id: string; number: string | null; arrival_date: string | null; departure_date: string | null; room_type: string | null };
+  guest: { id: string; name: string | null; vip_level: number | null };
+  status: string;
+  current_room: { id: string | null; number: string | null; room_type: string | null };
+  current_room_assignment_id: string | null;
+  checked_in_at: string | null;
+  checked_in_by: string | null;
+  assignment_history: Array<{
+    id: string;
+    assignment_kind: string | null;
+    room_id: string;
+    room_number: string | null;
+    assignment_reason: string | null;
+    occurred_at: string | null;
+    created_by: string;
+    source_hash: string;
+  }>;
+  target_room_candidates: Array<{
+    id: string;
+    number: string;
+    room_type: string | null;
+    housekeeping: { readiness_state: string; cleanliness_status: string | null };
+    engineering: { state: string; blocking_reason: string | null };
+    eligible: boolean;
+    blockers: string[];
+  }>;
+  actions: { can_move_room: boolean };
+};
+
+type InHouseWorkspace = {
+  property: { id: string; name: string; company_id: string };
+  snapshots: { inHouse: number; roomMoveReady: number; roomMoveBlocked: number };
+  views: { inHouseStays: InHouseRow[] };
+  financeMarker: string;
+};
+
 type Props = {
   activeTab?: string;
   arrivalWorkspace?: ArrivalWorkspace;
+  inHouseWorkspace?: InHouseWorkspace;
 };
 
 const emptyWorkspace: ArrivalWorkspace = {
@@ -114,7 +153,14 @@ const emptyWorkspace: ArrivalWorkspace = {
   financeMarker: 'Financial settlement: Not evaluated in Front Desk Package A.',
 };
 
-const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWorkspace }: Props) => {
+const emptyInHouseWorkspace: InHouseWorkspace = {
+  property: { id: '', name: 'Active Property', company_id: '' },
+  snapshots: { inHouse: 0, roomMoveReady: 0, roomMoveBlocked: 0 },
+  views: { inHouseStays: [] },
+  financeMarker: 'Financial settlement: Not evaluated in Front Desk Package A.',
+};
+
+const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWorkspace, inHouseWorkspace = emptyInHouseWorkspace }: Props) => {
   const tabs = [
     { href: '/frontdesk/arrivals', label: 'Arrivals', badge: arrivalWorkspace.snapshots.totalArrivals },
     { href: '/frontdesk/departures', label: 'Departures' },
@@ -125,7 +171,7 @@ const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWo
 
   return (
     <div className="workspace">
-      <WorkspaceHeader title="Arrival Queue">
+      <WorkspaceHeader title={activeTab === 'in_house' ? 'In-House Stays' : 'Arrival Queue'}>
         <Button variant="secondary">
           <Icon name="refresh" /> Refresh
         </Button>
@@ -135,30 +181,37 @@ const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWo
 
       <SplitLayout>
         <QuickFilterPanel>
-          <form method="get" action="/frontdesk/arrivals">
+          {activeTab === 'in_house' ? (
             <div className="filter-group">
-              <label className="filter-label">Search</label>
-              <input
-                type="text"
-                name="search"
-                className="filter-input"
-                placeholder="Guest or reservation"
-                defaultValue={arrivalWorkspace.filters.search}
-              />
+              <label className="filter-label">Room Move Control</label>
+              <div className="filter-hint">Target room eligibility is server-projected from Housekeeping and Engineering.</div>
             </div>
-            <div className="filter-group">
-              <label className="filter-label">Arrival Date</label>
-              <input
-                type="date"
-                name="arrival_date"
-                className="filter-input"
-                defaultValue={arrivalWorkspace.filters.arrival_date}
-              />
-            </div>
-            <Button variant="secondary" size="sm">
-              <Icon name="search" /> Apply
-            </Button>
-          </form>
+          ) : (
+            <form method="get" action="/frontdesk/arrivals">
+              <div className="filter-group">
+                <label className="filter-label">Search</label>
+                <input
+                  type="text"
+                  name="search"
+                  className="filter-input"
+                  placeholder="Guest or reservation"
+                  defaultValue={arrivalWorkspace.filters.search}
+                />
+              </div>
+              <div className="filter-group">
+                <label className="filter-label">Arrival Date</label>
+                <input
+                  type="date"
+                  name="arrival_date"
+                  className="filter-input"
+                  defaultValue={arrivalWorkspace.filters.arrival_date}
+                />
+              </div>
+              <Button variant="secondary" size="sm">
+                <Icon name="search" /> Apply
+              </Button>
+            </form>
+          )}
 
           <div className="filter-group">
             <label className="filter-label">Guest Registration</label>
@@ -170,24 +223,37 @@ const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWo
           </div>
           <div className="filter-group">
             <label className="filter-label">Financial Settlement</label>
-            <div className="filter-hint">{arrivalWorkspace.financeMarker.replace('Financial settlement: ', '')}</div>
+            <div className="filter-hint">{(activeTab === 'in_house' ? inHouseWorkspace.financeMarker : arrivalWorkspace.financeMarker).replace('Financial settlement: ', '')}</div>
           </div>
         </QuickFilterPanel>
 
         <MainContent>
-          <OperationalSnapshot>
-            <SnapshotCard value={arrivalWorkspace.snapshots.totalArrivals} label="Arriving Today" />
-            <SnapshotCard value={arrivalWorkspace.snapshots.arrivalReady} label="Arrival Ready" statusColor="ready-green" />
-            <SnapshotCard value={arrivalWorkspace.snapshots.blockedArrivals} label="Blocked Arrivals" statusColor="warning-amber" />
-            <SnapshotCard value={arrivalWorkspace.snapshots.unassignedEligible} label="Unassigned Eligible" />
-            <SnapshotCard value={arrivalWorkspace.snapshots.assignedReadyToCheckIn} label="Assigned Ready" statusColor="ready-green" />
-          </OperationalSnapshot>
+          {activeTab === 'in_house' ? (
+            <>
+              <OperationalSnapshot>
+                <SnapshotCard value={inHouseWorkspace.snapshots.inHouse} label="In House" statusColor="ready-green" />
+                <SnapshotCard value={inHouseWorkspace.snapshots.roomMoveReady} label="Move Ready" statusColor="ready-green" />
+                <SnapshotCard value={inHouseWorkspace.snapshots.roomMoveBlocked} label="Move Blocked" statusColor="warning-amber" />
+              </OperationalSnapshot>
+              <InHouseQueue rows={inHouseWorkspace.views.inHouseStays} />
+            </>
+          ) : (
+            <>
+              <OperationalSnapshot>
+                <SnapshotCard value={arrivalWorkspace.snapshots.totalArrivals} label="Arriving Today" />
+                <SnapshotCard value={arrivalWorkspace.snapshots.arrivalReady} label="Arrival Ready" statusColor="ready-green" />
+                <SnapshotCard value={arrivalWorkspace.snapshots.blockedArrivals} label="Blocked Arrivals" statusColor="warning-amber" />
+                <SnapshotCard value={arrivalWorkspace.snapshots.unassignedEligible} label="Unassigned Eligible" />
+                <SnapshotCard value={arrivalWorkspace.snapshots.assignedReadyToCheckIn} label="Assigned Ready" statusColor="ready-green" />
+              </OperationalSnapshot>
 
-          <ArrivalQueue title="Arriving Today" rows={arrivalWorkspace.views.arrivingToday} />
-          <ArrivalQueue title="Expected Arrivals" rows={arrivalWorkspace.views.expectedArrivals} />
-          <ArrivalQueue title="Blocked Arrivals" rows={arrivalWorkspace.views.blockedArrivals} />
-          <ArrivalQueue title="Unassigned Eligible Arrivals" rows={arrivalWorkspace.views.unassignedEligibleArrivals} />
-          <ArrivalQueue title="Assigned / Ready-to-Check-In" rows={arrivalWorkspace.views.assignedReadyToCheckIn} />
+              <ArrivalQueue title="Arriving Today" rows={arrivalWorkspace.views.arrivingToday} />
+              <ArrivalQueue title="Expected Arrivals" rows={arrivalWorkspace.views.expectedArrivals} />
+              <ArrivalQueue title="Blocked Arrivals" rows={arrivalWorkspace.views.blockedArrivals} />
+              <ArrivalQueue title="Unassigned Eligible Arrivals" rows={arrivalWorkspace.views.unassignedEligibleArrivals} />
+              <ArrivalQueue title="Assigned / Ready-to-Check-In" rows={arrivalWorkspace.views.assignedReadyToCheckIn} />
+            </>
+          )}
         </MainContent>
       </SplitLayout>
     </div>
@@ -219,6 +285,72 @@ function ArrivalQueue({ title, rows }: { title: string; rows: ArrivalRow[] }) {
         ))
       )}
     </QueueList>
+  );
+}
+
+function InHouseQueue({ rows }: { rows: InHouseRow[] }) {
+  return (
+    <QueueList title="In-House Guests" count={rows.length}>
+      {rows.length === 0 ? (
+        <QueueItem title="No in-house stays" meta="No IN_HOUSE Front Desk stay evidence matched the active property." />
+      ) : (
+        rows.map((row) => (
+          <QueueItem
+            key={row.stay_id}
+            title={
+              <>
+                {row.guest.name ?? 'Guest linkage missing'}
+                <StatusBadge status="ready" style={{ fontSize: '11px', padding: '2px 6px', marginLeft: '6px' }}>
+                  In House
+                </StatusBadge>
+              </>
+            }
+            meta={<InHouseMeta row={row} />}
+            actions={<RoomMoveActions row={row} />}
+          />
+        ))
+      )}
+    </QueueList>
+  );
+}
+
+function InHouseMeta({ row }: { row: InHouseRow }) {
+  const history = row.assignment_history
+    .map((assignment) => `${assignment.assignment_kind} ${assignment.room_number ?? assignment.room_id}`)
+    .join(' | ');
+  const blockers = row.target_room_candidates
+    .filter((candidate) => !candidate.eligible)
+    .map((candidate) => `Room ${candidate.number}: ${candidate.blockers.join(' ')}`)
+    .join(' | ');
+
+  return (
+    <>
+      <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{row.reservation.number ?? row.reservation.id}</span>{' '}
+      <span>Room {row.current_room.number ?? row.current_room.id ?? 'Not configured'}</span>{' '}
+      <span>Checked in {row.checked_in_at ?? 'Not configured'}</span>{' '}
+      <span>Assignments {history || 'No assignment history'}</span>{' '}
+      <span>{blockers || 'No room move blocker projected'}</span>
+    </>
+  );
+}
+
+function RoomMoveActions({ row }: { row: InHouseRow }) {
+  const firstEligible = row.target_room_candidates.find((candidate) => candidate.eligible);
+
+  return (
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      <StatusBadge status="ready">{row.status}</StatusBadge>
+      {row.actions.can_move_room && firstEligible ? (
+        <form method="post" action={`/frontdesk/stays/${row.stay_id}/room-move-confirmation`}>
+          <input type="hidden" name="target_room_id" value={firstEligible.id} />
+          <input type="hidden" name="move_reason" value={`Operational room move to ${firstEligible.number}`} />
+          <input type="hidden" name="idempotency_context" value={`room-move-${row.stay_id}-${firstEligible.id}`} />
+          <Button size="sm">
+            <Icon name="frontdesk" /> Room Move
+          </Button>
+        </form>
+      ) : null}
+    </div>
   );
 }
 

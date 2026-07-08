@@ -8,7 +8,9 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckInService;
+use Modules\Operations\FrontDesk\Services\FrontDeskInHouseWorkspaceService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
+use Modules\Operations\FrontDesk\Services\FrontDeskRoomMoveService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -26,9 +28,12 @@ class FrontDeskController extends Controller
         return Inertia::render('Ivorq/FrontDesk/FrontDeskWorkspace', ['activeTab' => 'departures']);
     }
 
-    public function inHouse()
+    public function inHouse(Request $request, FrontDeskInHouseWorkspaceService $inHouse)
     {
-        return Inertia::render('Ivorq/FrontDesk/FrontDeskWorkspace', ['activeTab' => 'in_house']);
+        return Inertia::render('Ivorq/FrontDesk/FrontDeskWorkspace', [
+            'activeTab' => 'in_house',
+            'inHouseWorkspace' => $inHouse->workspace($request->user()),
+        ]);
     }
 
     public function roomReadiness()
@@ -120,6 +125,74 @@ class FrontDeskController extends Controller
         } catch (DomainException $exception) {
             throw ValidationException::withMessages([
                 'check_in' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function prepareRoomMoveConfirmation(Request $request, string $stay, FrontDeskRoomMoveService $roomMove)
+    {
+        $validated = $request->validate([
+            'target_room_id' => ['required', 'string', 'size:26'],
+            'move_reason' => ['required', 'string', 'max:500'],
+            'idempotency_context' => ['required', 'string', 'max:120'],
+        ]);
+
+        try {
+            $hash = $roomMove->prepareConfirmation(
+                $request->user(),
+                $stay,
+                $validated['target_room_id'],
+                $validated['move_reason'],
+                $validated['idempotency_context']
+            );
+
+            return $request->expectsJson()
+                ? response()->json([
+                    'status' => 'ROOM_MOVE_CONFIRMATION_PENDING',
+                    'intent' => FrontDeskRoomMoveService::INTENT,
+                    'commercial_evidence_hash' => $hash,
+                ])
+                : redirect()
+                    ->route('system.sensitive-action-confirmation.index', ['intent' => FrontDeskRoomMoveService::INTENT])
+                    ->with('success', 'Room move confirmation prepared.');
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'room_move' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function roomMove(Request $request, string $stay, FrontDeskRoomMoveService $roomMove)
+    {
+        $validated = $request->validate([
+            'target_room_id' => ['required', 'string', 'size:26'],
+            'move_reason' => ['required', 'string', 'max:500'],
+            'idempotency_key' => ['required', 'string', 'max:120'],
+            'idempotency_context' => ['required', 'string', 'max:120'],
+        ]);
+
+        try {
+            $result = $roomMove->move(
+                $request->user(),
+                $stay,
+                $validated['target_room_id'],
+                $validated['move_reason'],
+                $validated['idempotency_key'],
+                $validated['idempotency_context']
+            );
+
+            return $request->expectsJson()
+                ? response()->json([
+                    'status' => 'IN_HOUSE',
+                    'stay_id' => $result['stay']->id,
+                    'current_room_id' => $result['stay']->current_room_id,
+                    'room_move_assignment_id' => $result['assignment']->id,
+                    'replayed' => $result['replayed'],
+                ])
+                : redirect('/frontdesk/in-house')->with('success', 'Room move completed.');
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'room_move' => [$exception->getMessage()],
             ]);
         }
     }

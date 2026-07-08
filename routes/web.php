@@ -27,6 +27,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('frontdesk.stays.check-in-confirmation.store');
         Route::post('/stays/{stay}/check-in', [FrontDeskController::class, 'checkIn'])
             ->name('frontdesk.stays.check-in.store');
+        Route::post('/stays/{stay}/room-move-confirmation', [FrontDeskController::class, 'prepareRoomMoveConfirmation'])
+            ->name('frontdesk.stays.room-move-confirmation.store');
+        Route::post('/stays/{stay}/room-move', [FrontDeskController::class, 'roomMove'])
+            ->name('frontdesk.stays.room-move.store');
         Route::get('/departures', [FrontDeskController::class, 'departures']);
         Route::get('/in-house', [FrontDeskController::class, 'inHouse']);
         Route::get('/room-readiness', [FrontDeskController::class, 'roomReadiness']);
