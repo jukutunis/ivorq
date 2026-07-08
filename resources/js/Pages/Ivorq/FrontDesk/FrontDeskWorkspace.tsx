@@ -155,10 +155,52 @@ type InHouseWorkspace = {
   financeMarker: string;
 };
 
+type DepartureRow = {
+  stay_id: string;
+  reservation_id: string;
+  reservation_number: string | null;
+  guest: { id: string; name: string | null; vip_level: number | null };
+  room: { id: string | null; number: string | null; room_type: string | null };
+  expected_departure_date: string | null;
+  due_out_classification: string;
+  front_desk_stay_status: string | null;
+  current_room_assignment_id: string | null;
+  checked_in_at: string | null;
+  housekeeping_readiness_status: string;
+  engineering_availability_status: string;
+  operational_checkout_readiness: string;
+  departure_readiness: string;
+  blocking_reasons: string[];
+  financial_marker: string;
+  evaluated_at: string;
+};
+
+type DepartureWorkspace = {
+  property: { id: string; name: string; company_id: string };
+  evaluated_at: string;
+  snapshots: {
+    dueOutToday: number;
+    dueOutTomorrow: number;
+    dueOutFuture: number;
+    overdueDeparture: number;
+    departureDateUnknown: number;
+    departureOperationallyReady: number;
+    departureOperationallyBlocked: number;
+  };
+  views: {
+    dueOutToday: DepartureRow[];
+    dueOutTomorrow: DepartureRow[];
+    dueOutFuture: DepartureRow[];
+    overdueDepartures: DepartureRow[];
+  };
+  financial_marker: string;
+};
+
 type Props = {
   activeTab?: string;
   arrivalWorkspace?: ArrivalWorkspace;
   inHouseWorkspace?: InHouseWorkspace;
+  departureWorkspace?: DepartureWorkspace;
 };
 
 const emptyWorkspace: ArrivalWorkspace = {
@@ -193,7 +235,28 @@ const emptyInHouseWorkspace: InHouseWorkspace = {
   financeMarker: 'Financial settlement: Not evaluated in Front Desk Package A.',
 };
 
-const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWorkspace, inHouseWorkspace = emptyInHouseWorkspace }: Props) => {
+const emptyDepartureWorkspace: DepartureWorkspace = {
+  property: { id: '', name: 'Active Property', company_id: '' },
+  evaluated_at: '',
+  snapshots: {
+    dueOutToday: 0,
+    dueOutTomorrow: 0,
+    dueOutFuture: 0,
+    overdueDeparture: 0,
+    departureDateUnknown: 0,
+    departureOperationallyReady: 0,
+    departureOperationallyBlocked: 0,
+  },
+  views: {
+    dueOutToday: [],
+    dueOutTomorrow: [],
+    dueOutFuture: [],
+    overdueDepartures: [],
+  },
+  financial_marker: 'Financial settlement: Not evaluated in Front Desk Package B1.',
+};
+
+const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWorkspace, inHouseWorkspace = emptyInHouseWorkspace, departureWorkspace = emptyDepartureWorkspace }: Props) => {
   const tabs = [
     { href: '/frontdesk/arrivals', label: 'Arrivals', badge: arrivalWorkspace.snapshots.totalArrivals },
     { href: '/frontdesk/departures', label: 'Departures' },
@@ -204,7 +267,7 @@ const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWo
 
   return (
     <div className="workspace">
-      <WorkspaceHeader title={activeTab === 'in_house' ? 'In-House Stays' : 'Arrival Queue'}>
+      <WorkspaceHeader title={activeTab === 'in_house' ? 'In-House Stays' : activeTab === 'departures' ? 'Due-Out / Departure Preparation' : 'Arrival Queue'}>
         <Button variant="secondary">
           <Icon name="refresh" /> Refresh
         </Button>
@@ -256,7 +319,7 @@ const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWo
           </div>
           <div className="filter-group">
             <label className="filter-label">Financial Settlement</label>
-            <div className="filter-hint">{(activeTab === 'in_house' ? inHouseWorkspace.financeMarker : arrivalWorkspace.financeMarker).replace('Financial settlement: ', '')}</div>
+            <div className="filter-hint">{(activeTab === 'in_house' ? inHouseWorkspace.financeMarker : activeTab === 'departures' ? departureWorkspace.financial_marker : arrivalWorkspace.financeMarker).replace('Financial settlement: ', '')}</div>
           </div>
         </QuickFilterPanel>
 
@@ -269,6 +332,20 @@ const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWo
                 <SnapshotCard value={inHouseWorkspace.snapshots.roomMoveBlocked} label="Move Blocked" statusColor="warning-amber" />
               </OperationalSnapshot>
               <InHouseQueue rows={inHouseWorkspace.views.inHouseStays} />
+            </>
+          ) : activeTab === 'departures' ? (
+            <>
+              <OperationalSnapshot>
+                <SnapshotCard value={departureWorkspace.snapshots.dueOutToday} label="Due Out Today" statusColor="ready-green" />
+                <SnapshotCard value={departureWorkspace.snapshots.overdueDeparture} label="Overdue" statusColor="warning-amber" />
+                <SnapshotCard value={departureWorkspace.snapshots.departureOperationallyReady} label="Ready" statusColor="ready-green" />
+                <SnapshotCard value={departureWorkspace.snapshots.departureOperationallyBlocked} label="Blocked" statusColor="warning-amber" />
+                <SnapshotCard value={departureWorkspace.snapshots.departureDateUnknown} label="Date Unknown" />
+              </OperationalSnapshot>
+              <DepartureQueue title="Due Out Today" rows={departureWorkspace.views.dueOutToday} />
+              <DepartureQueue title="Due Out Tomorrow" rows={departureWorkspace.views.dueOutTomorrow} />
+              <DepartureQueue title="Overdue Departures" rows={departureWorkspace.views.overdueDepartures} />
+              <DepartureQueue title="Future Due-Out" rows={departureWorkspace.views.dueOutFuture} />
             </>
           ) : (
             <>
@@ -442,6 +519,116 @@ function ArrivalActions({ row }: { row: ArrivalRow }) {
           </Button>
         </form>
       ) : null}
+    </div>
+  );
+}
+
+function DepartureQueue({ title, rows }: { title: string; rows: DepartureRow[] }) {
+  return (
+    <QueueList title={title} count={rows.length}>
+      {rows.length === 0 ? (
+        <QueueItem title="No due-out stays" meta="No IN_HOUSE stays matched this departure window." />
+      ) : (
+        rows.map((row) => (
+          <React.Fragment key={`${title}-${row.stay_id}`}>
+            <QueueItem
+              title={
+                <>
+                  {row.guest.name ?? 'Guest linkage missing'}
+                  {row.guest.vip_level ? (
+                    <StatusBadge status="vip" style={{ fontSize: '11px', padding: '2px 6px', marginLeft: '6px' }}>
+                      VIP {row.guest.vip_level}
+                    </StatusBadge>
+                  ) : null}
+                </>
+              }
+              meta={<DepartureMeta row={row} />}
+              actions={<DepartureActions row={row} />}
+            />
+            {row.blocking_reasons.length > 0 ? (
+              <DepartureBlockersPanel blockers={row.blocking_reasons} readiness={row.departure_readiness} />
+            ) : null}
+          </React.Fragment>
+        ))
+      )}
+    </QueueList>
+  );
+}
+
+function DepartureMeta({ row }: { row: DepartureRow }) {
+  const dueOutLabel = row.due_out_classification.replace(/_/g, ' ');
+
+  return (
+    <>
+      <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{row.reservation_number ?? row.reservation_id}</span>{' '}
+      <span>Room {row.room.number ?? row.room.id ?? 'N/A'}</span>{' '}
+      <span>{row.room.room_type ?? 'N/A'}</span>{' '}
+      <span>Departure {row.expected_departure_date ?? 'Unknown'}</span>{' '}
+      <span>{dueOutLabel}</span>{' '}
+      <span>HK: {row.housekeeping_readiness_status}</span>{' '}
+      <span>ENG: {row.engineering_availability_status}</span>{' '}
+      <span>Checkout: {row.operational_checkout_readiness}</span>
+    </>
+  );
+}
+
+function DepartureActions({ row }: { row: DepartureRow }) {
+  const readinessColor = row.departure_readiness === 'DEPARTURE_OPERATIONALLY_READY' ? 'ready-green'
+    : row.departure_readiness === 'DEPARTURE_OPERATIONALLY_BLOCKED' ? 'warning-amber'
+    : 'neutral';
+
+  const dueOutColor = row.due_out_classification === 'DUE_OUT_TODAY' ? 'ready-green'
+    : row.due_out_classification === 'OVERDUE_DEPARTURE' ? 'warning-amber'
+    : row.due_out_classification === 'DUE_OUT_TOMORROW' ? 'ready-green'
+    : 'neutral';
+
+  return (
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      <StatusBadge status="ready" style={{
+        fontSize: '11px', padding: '2px 8px',
+        backgroundColor: dueOutColor === 'ready-green' ? 'var(--status-ready-bg)' : dueOutColor === 'warning-amber' ? 'var(--status-pending-bg)' : 'var(--surface-disabled)',
+        color: dueOutColor === 'ready-green' ? 'var(--status-ready-fg)' : dueOutColor === 'warning-amber' ? 'var(--status-pending-fg)' : 'var(--text-disabled)',
+      }}>
+        {row.due_out_classification.replace(/_/g, ' ')}
+      </StatusBadge>
+      <StatusBadge status="ready" style={{
+        fontSize: '11px', padding: '2px 8px',
+        backgroundColor: readinessColor === 'ready-green' ? 'var(--status-ready-bg)' : readinessColor === 'warning-amber' ? 'var(--status-pending-bg)' : 'var(--surface-disabled)',
+        color: readinessColor === 'ready-green' ? 'var(--status-ready-fg)' : readinessColor === 'warning-amber' ? 'var(--status-pending-fg)' : 'var(--text-disabled)',
+      }}>
+        {row.departure_readiness.replace(/_/g, ' ')}
+      </StatusBadge>
+    </div>
+  );
+}
+
+function DepartureBlockersPanel({ blockers, readiness }: { blockers: string[]; readiness: string }) {
+  const statusColor = readiness === 'DEPARTURE_OPERATIONALLY_BLOCKED' ? 'warning-amber' : 'neutral';
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '12px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Departure Readiness</span>
+        <StatusBadge status="ready" style={{
+          fontSize: '11px', padding: '2px 8px',
+          backgroundColor: statusColor === 'warning-amber' ? 'var(--status-pending-bg)' : 'var(--surface-disabled)',
+          color: statusColor === 'warning-amber' ? 'var(--status-pending-fg)' : 'var(--text-disabled)',
+        }}>
+          {readiness.replace(/_/g, ' ')}
+        </StatusBadge>
+      </div>
+      <div style={{ marginBottom: '6px' }}>
+        <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Blockers: </span>
+        <span style={{ color: 'var(--text-warning)' }}>{blockers.join(' | ')}</span>
+      </div>
+      <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+        Financial settlement: Not evaluated in Front Desk Package B1.
+      </div>
     </div>
   );
 }

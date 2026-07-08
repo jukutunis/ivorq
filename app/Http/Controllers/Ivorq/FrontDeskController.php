@@ -12,6 +12,7 @@ use Modules\Operations\FrontDesk\Services\FrontDeskInHouseWorkspaceService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomMoveService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -24,9 +25,12 @@ class FrontDeskController extends Controller
         ]);
     }
 
-    public function departures()
+    public function departures(Request $request, FrontDeskDepartureQueueProjectionService $departures)
     {
-        return Inertia::render('Ivorq/FrontDesk/FrontDeskWorkspace', ['activeTab' => 'departures']);
+        return Inertia::render('Ivorq/FrontDesk/FrontDeskWorkspace', [
+            'activeTab' => 'departures',
+            'departureWorkspace' => $departures->queue($request->user()),
+        ]);
     }
 
     public function inHouse(Request $request, FrontDeskInHouseWorkspaceService $inHouse)
