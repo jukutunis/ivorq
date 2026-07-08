@@ -199,6 +199,19 @@ FD-A3: In-House Stay and Controlled Room Move
 Allowed only after FD-A2 passes assignment, check-in, sensitive confirmation,
 and actual two-context PostgreSQL concurrency proof.
 
+FD-A3 activation note:
+In-house operational workspace and controlled room move may use the existing
+FrontDeskStay and immutable FrontDeskRoomAssignment evidence boundary. ROOM_MOVE
+assignment evidence is allowed only for an IN_HOUSE stay, must keep the stay
+IN_HOUSE, and must update the current room through server-side controlled
+execution. Room move execution locks the stay row and source/target Room rows in
+stable sorted room identity order, revalidates Housekeeping readiness and ADR-085
+Engineering availability for the target room, and preserves historical
+INITIAL_ASSIGNMENT evidence. FD-A3 does not activate check-out readiness, final
+checkout, folio, payment, revenue, tax, AR, GL, Night Audit, Financial Period,
+Business Date, Housekeeping mutation, Engineering mutation, or Room master
+mutation.
+
 FD-A4: Check-out Readiness Evidence
 Allowed only after FD-A3 passes room move and concurrency proof.
 ```
