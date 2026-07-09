@@ -107,14 +107,27 @@ All baseline runs must:
 Future packages can reference this registry:
 
 ```powershell
-# Run a specific baseline
+# Run all active baselines (default acceptance gate)
+.\scripts\validation\Invoke-IvorqRegressionBaseline.ps1 -All
+
+# Run active + candidate baselines (for candidate evaluation)
+.\scripts\validation\Invoke-IvorqRegressionBaseline.ps1 -All -IncludeCandidates
+
+# Run a specific baseline (any status — diagnostic)
 .\scripts\validation\Invoke-IvorqRegressionBaseline.ps1 -BaselineId inventory-reversal-inherited-debt-v1
 
-# Run all baselines
-.\scripts\validation\Invoke-IvorqRegressionBaseline.ps1 -All
+# Run a candidate baseline explicitly
+.\scripts\validation\Invoke-IvorqRegressionBaseline.ps1 -BaselineId banking-master-baseline-v2-candidate
 ```
 
 Future package authors must not invent new broad filters as acceptance gates. If a new baseline is needed, add it to the manifest with exact classes and owner review.
+
+### Default Selection Policy
+
+- **`-All` runs active baselines only.** This is the default acceptance gate. It must pass with exit code 0.
+- **`-All -IncludeCandidates` adds candidate baselines.** Use for candidate evaluation; candidate mismatches are diagnostic, not gating.
+- **`-BaselineId` runs the exact baseline regardless of status.** Candidate mismatch still returns non-zero exit code — it is diagnostic evidence, not a clean pass.
+- Candidate baselines are not active acceptance gates. Their failures must not block a package acceptance gate.
 
 ## Owner Approval Requirement
 

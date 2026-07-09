@@ -349,6 +349,106 @@ class RegressionBaselineManifestTest extends PostgresTestCase
     }
 
     // -----------------------------------------------------------------
+    // Active/candidate selection integrity tests (PR #3 final fix)
+    // -----------------------------------------------------------------
+
+    public function test_active_baselines_are_the_only_default_acceptance_gates(): void
+    {
+        $activeIds = [];
+        foreach ($this->manifest->baselines as $baseline) {
+            if ($baseline->status === 'active') {
+                $activeIds[] = $baseline->id;
+            }
+        }
+
+        $expectedActiveIds = [
+            'frontdesk-operational-baseline',
+            'housekeeping-room-readiness-baseline',
+            'engineering-availability-baseline',
+            'inventory-reversal-inherited-debt-v1',
+        ];
+
+        $this->assertCount(
+            4,
+            $activeIds,
+            "Must have exactly 4 active baselines. Found: " . implode(', ', $activeIds)
+        );
+
+        foreach ($expectedActiveIds as $id) {
+            $this->assertContains(
+                $id,
+                $activeIds,
+                "Required active baseline '{$id}' is missing or not active."
+            );
+        }
+    }
+
+    public function test_candidate_baselines_are_not_active_gates(): void
+    {
+        $candidateIds = [];
+        foreach ($this->manifest->baselines as $baseline) {
+            if ($baseline->status === 'candidate') {
+                $candidateIds[] = $baseline->id;
+            }
+        }
+
+        $expectedCandidateIds = [
+            'inventory-avco-sensitive-baseline-v2-candidate',
+            'banking-master-baseline-v2-candidate',
+        ];
+
+        $this->assertCount(
+            2,
+            $candidateIds,
+            "Must have exactly 2 candidate baselines. Found: " . implode(', ', $candidateIds)
+        );
+
+        foreach ($expectedCandidateIds as $id) {
+            $this->assertContains(
+                $id,
+                $candidateIds,
+                "Required candidate baseline '{$id}' is missing or not candidate."
+            );
+        }
+    }
+
+    public function test_inventory_avco_sensitive_candidate_remains_candidate(): void
+    {
+        $candidate = $this->findBaseline('inventory-avco-sensitive-baseline-v2-candidate');
+        $this->assertNotNull($candidate, 'inventory-avco-sensitive-baseline-v2-candidate must exist.');
+        $this->assertEquals(
+            'candidate',
+            $candidate->status,
+            'inventory-avco-sensitive-baseline-v2-candidate must remain candidate. Do not promote to active without owner approval.'
+        );
+    }
+
+    public function test_banking_master_candidate_remains_candidate(): void
+    {
+        $candidate = $this->findBaseline('banking-master-baseline-v2-candidate');
+        $this->assertNotNull($candidate, 'banking-master-baseline-v2-candidate must exist.');
+        $this->assertEquals(
+            'candidate',
+            $candidate->status,
+            'banking-master-baseline-v2-candidate must remain candidate. Do not promote to active without owner approval.'
+        );
+    }
+
+    public function test_runner_script_contains_include_candidates_switch(): void
+    {
+        $runnerPath = base_path('scripts/validation/Invoke-IvorqRegressionBaseline.ps1');
+        $this->assertFileExists($runnerPath, 'Runner script must exist at scripts/validation/Invoke-IvorqRegressionBaseline.ps1.');
+
+        $content = file_get_contents($runnerPath);
+
+        $this->assertStringContainsString(
+            'IncludeCandidates',
+            $content,
+            'Runner script must contain IncludeCandidates switch for explicit candidate opt-in.'
+        );
+    }
+
+    // -----------------------------------------------------------------
     // Remaining original tests
     // -----------------------------------------------------------------
 

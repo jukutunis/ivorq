@@ -162,6 +162,8 @@ Debt is not "pre-existing" by default — each entry must be proven or explicitl
 
 **What was done:** The v2 candidate baseline (`inventory-avco-sensitive-baseline-v2-candidate`) is marked with `execution_mode: individual`. Each test class must be run independently. The Sensitive/Foundation subgroup (3 classes: SensitiveActionConfirmationTest, FinanceApprovalConfirmationTest, FinanceFinalizationConfirmationTest) passes cleanly in batch at 58 tests / 436 assertions.
 
+**Current diagnostic run (PR #3, 2026-07-09):** Individual mode across all 51 classes produced **591 tests / 6148 assertions / 0 failures / 98 errors**. The 98 errors are seed-state tolerance issues (RefreshDatabase foreign key violations, not-null constraint violations on individual class runs). This is candidate/debt evidence — NOT an active acceptance gate failure.
+
 **Why this is not an FD-B3 defect:** FD-B3 does not modify any Inventory, AVCO, CostControl, or test infrastructure code.
 
 **Owner action needed:**

@@ -9,6 +9,7 @@
 #   .\Invoke-IvorqRegressionBaseline.ps1 -BaselineId inventory-reversal-inherited-debt-v1
 #   .\Invoke-IvorqRegressionBaseline.ps1 -BaselineId banking-master-baseline-v2-candidate
 #   .\Invoke-IvorqRegressionBaseline.ps1 -All
+#   .\Invoke-IvorqRegressionBaseline.ps1 -All -IncludeCandidates
 
 param(
     [Parameter(Mandatory = $false)]
@@ -16,6 +17,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [switch]$All,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$IncludeCandidates,
 
     [string]$ManifestPath,
 
@@ -63,8 +67,15 @@ $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
 
 # Select baselines to run
 $selected = @()
+$targetPolicy = ''
 if ($All) {
-    $selected = $manifest.baselines
+    if ($IncludeCandidates) {
+        $selected = $manifest.baselines | Where-Object { $_.status -eq 'active' -or $_.status -eq 'candidate' }
+        $targetPolicy = 'active + candidate'
+    } else {
+        $selected = $manifest.baselines | Where-Object { $_.status -eq 'active' }
+        $targetPolicy = 'active only'
+    }
 } else {
     $match = $manifest.baselines | Where-Object { $_.id -eq $BaselineId }
     if (-not $match) {
@@ -72,6 +83,7 @@ if ($All) {
         exit 2
     }
     $selected = @($match)
+    $targetPolicy = 'explicit baseline'
 }
 
 Write-Host "=== IVORQ Regression Baseline Runner v1 ==="
@@ -79,6 +91,7 @@ Write-Host "Manifest : $ManifestPath"
 Write-Host "PHPUnit  : $PhpunitPath"
 Write-Host "Config   : $Configuration"
 Write-Host "Targets  : $($selected.Count) baseline(s)"
+Write-Host "Target policy: $targetPolicy"
 Write-Host ""
 
 # ------------------------------------------------------------------
