@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, and Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2). All 22 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), and Departure Operational Handover (FD-B3). All 28 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -18,6 +18,12 @@
         "FrontDeskCheckInTest",
         "FrontDeskCheckoutReadinessTest",
         "FrontDeskCheckoutReadinessWorkspaceTest",
+        "FrontDeskDepartureOperationalHandoverAuthorizationTest",
+        "FrontDeskDepartureOperationalHandoverBoundaryTest",
+        "FrontDeskDepartureOperationalHandoverImmutabilityTest",
+        "FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest",
+        "FrontDeskDepartureOperationalHandoverTest",
+        "FrontDeskDepartureOperationalHandoverWorkspaceTest",
         "FrontDeskDeparturePreparationAuthorizationTest",
         "FrontDeskDeparturePreparationBoundaryTest",
         "FrontDeskDeparturePreparationEventAuthorizationTest",
@@ -36,15 +42,15 @@
         "FrontDeskWorkspaceRoomAssignmentTest"
       ],
       "expected": {
-        "tests": 167,
-        "assertions": 736,
+        "tests": 207,
+        "assertions": 918,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-09",
-        "branch": "ivorq-enterprise-core",
-        "sha": "4861ca313a774ea9ecaebc04a8135aaafd70eea9"
+        "branch": "sprint-fd-b3-departure-operational-handover-governed",
+        "sha": "669f277d32c2829346624ec7b176a1311aaf5b5b"
       },
       "accepted_debt": [],
       "status": "active"

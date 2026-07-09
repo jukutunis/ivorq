@@ -62,7 +62,7 @@ All baselines in this registry use `selection_policy: "exact-test-classes"`. The
 
 | ID | Status | Description |
 |----|--------|-------------|
-| `frontdesk-operational-baseline` | `active` | Front Desk operational tests (FD-A1, FD-A2, FD-B1, FD-B2) |
+| `frontdesk-operational-baseline` | `active` | Front Desk operational tests (FD-A1, FD-A2, FD-B1, FD-B2, FD-B3) — 28 classes, 207 tests / 918 assertions |
 | `housekeeping-room-readiness-baseline` | `active` | Housekeeping room readiness tests (HK-B1) |
 | `engineering-availability-baseline` | `active` | Engineering room availability tests (ENG-A1) |
 | `inventory-avco-sensitive-baseline-v2-candidate` | `candidate` | Inventory / AVCO / Sensitive baseline v2 (replaces legacy 247/927) |
