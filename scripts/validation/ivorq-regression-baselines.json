@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), and Departure Checkout Eligibility (FD-B5). All 40 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), and Departure Checkout Authorization (FD-B6). All 46 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -51,18 +51,24 @@
         "FrontDeskDepartureCheckoutEligibilityBoundaryTest",
         "FrontDeskDepartureCheckoutEligibilityImmutabilityTest",
         "FrontDeskDepartureCheckoutEligibilityWorkspaceTest",
-        "FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest"
+        "FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest",
+        "FrontDeskDepartureCheckoutAuthorizationTest",
+        "FrontDeskDepartureCheckoutAuthorizationAuthorizationTest",
+        "FrontDeskDepartureCheckoutAuthorizationBoundaryTest",
+        "FrontDeskDepartureCheckoutAuthorizationImmutabilityTest",
+        "FrontDeskDepartureCheckoutAuthorizationWorkspaceTest",
+        "FrontDeskDepartureCheckoutAuthorizationIsolatedConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 288,
-        "assertions": 1233,
+        "tests": 314,
+        "assertions": 1294,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-10",
-        "branch": "sprint-fd-b5-departure-checkout-eligibility-handoff",
-        "sha": "a51db195c381a592c539fb3833f3a56e26aae046"
+        "branch": "sprint-fd-b6-departure-checkout-authorization-handoff",
+        "sha": "TBD"
       },
       "accepted_debt": [],
       "status": "active"
