@@ -39,10 +39,11 @@ Architecture:
 
 Current accepted baseline:
 
-- ivorq-enterprise-core @ f138c173f67306de6c857c7200e22d68483284b2
+- ivorq-enterprise-core @ 9a4d11690edbf5c1ad5a4ab0dc4c0aea50c79339
 - PR #3 Validation Baseline Governance merged
 - PR #4 FD-B3 Controlled Departure Operational Handover merged
-- Front Desk active baseline: 207 tests / 918 assertions / 0 failures / 0 errors
+- PR #5 FD-B4 Controlled Departure Closure Readiness merged
+- Front Desk active baseline: 258 tests / 1128 assertions / 0 failures / 0 errors
 - RegressionBaselineManifestTest: 24 tests / 484 assertions / 0 failures / 0 errors
 - Runner -All active baselines: all 4 active baselines PASS
 - Candidate Banking remains candidate
@@ -147,4 +148,3 @@ Git Tags:
 
 - v0.1-foundation-stable
 - v0.2-sprint02-complete
-- v0.3-sprint03-complete
