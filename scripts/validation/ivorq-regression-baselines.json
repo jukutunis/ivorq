@@ -74,7 +74,7 @@
       "provenance": {
         "measured_at": "2026-07-10",
         "branch": "sprint-fd-b7-departure-checkout-final-review",
-        "sha": "4edd4130333263bf7546785d477170719b259a9f",
+        "sha": "f3057ca8bc1b6068efa06dfde9eb52850404669a",
         "note": "Non-concurrency batch (44 classes): 328 tests / 1269 assertions — measured 2026-07-10. 8 concurrency classes: ~13 tests / ~100 assertions — carried from prior baseline (unchanged, require PG CREATEDB)."
       },
       "accepted_debt": [
