@@ -200,7 +200,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
 
     public function test_every_baseline_has_required_fields(): void
     {
-        $requiredFields = ['id', 'description', 'type', 'configuration', 'selection_policy', 'classes', 'expected', 'status'];
+        $requiredFields = ['id', 'description', 'type', 'configuration', 'selection_policy', 'execution_mode', 'classes', 'expected', 'status'];
 
         foreach ($this->manifest->baselines as $baseline) {
             foreach ($requiredFields as $field) {
@@ -225,6 +225,132 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             );
         }
     }
+
+    // -----------------------------------------------------------------
+    // Runner hardening integrity tests (PR #3 governance hardening)
+    // -----------------------------------------------------------------
+
+    public function test_execution_mode_valid_on_all_baselines(): void
+    {
+        $validModes = ['batch', 'individual'];
+
+        foreach ($this->manifest->baselines as $baseline) {
+            $this->assertObjectHasProperty(
+                'execution_mode',
+                $baseline,
+                "Baseline '{$baseline->id}' must have an execution_mode field."
+            );
+
+            $this->assertContains(
+                $baseline->execution_mode,
+                $validModes,
+                "Baseline '{$baseline->id}' execution_mode '{$baseline->execution_mode}' is not valid. Must be one of: " . implode(', ', $validModes) . "."
+            );
+        }
+    }
+
+    public function test_inventory_avco_sensitive_candidate_uses_individual_execution(): void
+    {
+        $candidate = $this->findBaseline('inventory-avco-sensitive-baseline-v2-candidate');
+        $this->assertNotNull($candidate, 'inventory-avco-sensitive-baseline-v2-candidate must exist.');
+
+        $this->assertEquals(
+            'individual',
+            $candidate->execution_mode,
+            'inventory-avco-sensitive-baseline-v2-candidate must use execution_mode=individual to avoid RefreshDatabase batch conflicts.'
+        );
+    }
+
+    public function test_active_baselines_have_non_null_expected_tests_and_assertions(): void
+    {
+        foreach ($this->manifest->baselines as $baseline) {
+            if ($baseline->status === 'active') {
+                $this->assertNotNull(
+                    $baseline->expected->tests ?? null,
+                    "Active baseline '{$baseline->id}' must have non-null expected.tests."
+                );
+                $this->assertNotNull(
+                    $baseline->expected->assertions ?? null,
+                    "Active baseline '{$baseline->id}' must have non-null expected.assertions."
+                );
+            }
+        }
+    }
+
+    public function test_accepted_debt_expected_errors_equals_canonical_expected_errors(): void
+    {
+        foreach ($this->manifest->baselines as $baseline) {
+            if (empty($baseline->accepted_debt)) {
+                continue;
+            }
+
+            $debtErrorSum = 0;
+            foreach ($baseline->accepted_debt as $debt) {
+                if (isset($debt->expected_errors)) {
+                    $debtErrorSum += $debt->expected_errors;
+                }
+            }
+
+            if ($debtErrorSum > 0) {
+                $this->assertEquals(
+                    $baseline->expected->errors,
+                    $debtErrorSum,
+                    "Baseline '{$baseline->id}': accepted_debt expected_errors sum ({$debtErrorSum}) must equal expected.errors ({$baseline->expected->errors}). expected.errors is the canonical total; accepted_debt is explanatory metadata only."
+                );
+            }
+        }
+    }
+
+    public function test_inventory_reversal_inherited_debt_expected_errors_exactly_2(): void
+    {
+        $debt = $this->findBaseline('inventory-reversal-inherited-debt-v1');
+        $this->assertNotNull($debt, 'inventory-reversal-inherited-debt-v1 must exist.');
+
+        $this->assertEquals(
+            2,
+            $debt->expected->errors,
+            'inventory-reversal-inherited-debt-v1 expected.errors must remain exactly 2. Do not change this value without explicit owner authorization.'
+        );
+    }
+
+    public function test_non_empty_classes_baselines_have_positive_expected_tests_when_measured(): void
+    {
+        // Baselines with non-empty classes: if expected.tests is measured (non-null),
+        // it must be > 0. A non-empty class list that produces 0 selected tests
+        // is a runner NO_TESTS_SELECTED failure.
+        // Candidate baselines may have null expected.tests (not yet measured),
+        // but the runner must still reject zero selected tests at runtime.
+        foreach ($this->manifest->baselines as $baseline) {
+            if (count($baseline->classes) > 0 && isset($baseline->expected->tests) && $baseline->expected->tests !== null) {
+                $this->assertGreaterThan(
+                    0,
+                    $baseline->expected->tests,
+                    "Baseline '{$baseline->id}' has " . count($baseline->classes) . " class(es) but expected.tests is {$baseline->expected->tests}. Non-empty classes must produce non-zero tests."
+                );
+            }
+        }
+    }
+
+    public function test_candidate_baseline_with_null_expected_still_has_non_empty_classes_for_runner_rejection(): void
+    {
+        // Candidate baselines may have null expected.tests/assertions, but they MUST
+        // still have non-empty classes so the runner can select tests. A candidate
+        // with non-empty classes and null expected counts is valid — the runner
+        // will reject zero selected tests at runtime. A candidate with empty classes
+        // and null expected counts is vacuous and should not exist.
+        foreach ($this->manifest->baselines as $baseline) {
+            if ($baseline->status === 'candidate') {
+                $this->assertNotEmpty(
+                    $baseline->classes,
+                    "Candidate baseline '{$baseline->id}' must have non-empty classes. Candidate baselines that select zero tests cannot be evaluated."
+                );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Remaining original tests
+    // -----------------------------------------------------------------
 
     public function test_no_duplicate_classes_across_baselines_within_same_domain(): void
     {

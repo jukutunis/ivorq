@@ -51,11 +51,12 @@ All baselines in this registry use `selection_policy: "exact-test-classes"`. The
 ## Baseline Manifest Policy
 
 1. Every baseline entry must list exact test classes, not broad filters.
-2. Every baseline entry must declare its status: `active`, `candidate`, `legacy-undiscoverable`, or `deferred`.
-3. Candidate baselines require owner approval before promotion to `active`.
-4. Accepted inherited debt must name exact test classes and expected error counts.
-5. Expected `failures` and `errors` must be explicitly stated; `null` means "not yet measured."
-6. The manifest file is `scripts/validation/ivorq-regression-baselines.json`.
+2. Every baseline entry must declare its `execution_mode`: `batch` (all classes in one PHPUnit invocation) or `individual` (each class separately, totals summed).
+3. Every baseline entry must declare its status: `active`, `candidate`, `legacy-undiscoverable`, or `deferred`.
+4. Candidate baselines require owner approval before promotion to `active`.
+5. Accepted inherited debt must name exact test classes and expected error counts.
+6. Expected `failures` and `errors` must be explicitly stated; `null` means "not yet measured."
+7. The manifest file is `scripts/validation/ivorq-regression-baselines.json`.
 
 ## Baseline IDs
 
@@ -83,6 +84,13 @@ Inherited debt is accepted only when:
 3. The root cause of the errors is understood and documented (not hidden).
 4. The debt is tracked in `docs/validation/IVORQ-Regression-Baseline-Debt.md`.
 5. A future package will resolve the inherited debt.
+
+### Canonical Error Count Semantics
+
+- **`expected.errors` is the canonical total.** The runner compares actual errors directly against this field. It is the single source of truth for expected error count.
+- **`accepted_debt` is explanatory metadata only.** The `accepted_debt[].expected_errors` field documents how many of the canonical errors are attributable to each debt entry. It is NOT additive — the runner does not add `accepted_debt.expected_errors` to `expected.errors`.
+- **Example:** `inventory-reversal-inherited-debt-v1` has `expected.errors = 2` and `accepted_debt[0].expected_errors = 2`. The values are equal because all 2 canonical errors are explained by that single debt entry. The runner expects exactly 2 actual errors — not 4.
+- If accepted debt is partially resolved (e.g., 1 of 2 trigger errors fixed), the owner must update BOTH `expected.errors` (to the new canonical count) AND `accepted_debt.expected_errors` (to reflect remaining debt).
 
 ## Environment Safety Rules
 
