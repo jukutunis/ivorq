@@ -19,6 +19,8 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverS
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -384,6 +386,61 @@ class FrontDeskController extends Controller
         } catch (DomainException $exception) {
             throw ValidationException::withMessages([
                 'departure_closure_readiness' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function createDepartureCheckoutEligibility(
+        Request $request,
+        string $stay,
+        FrontDeskDepartureCheckoutEligibilityService $eligibilityService
+    ) {
+        $validated = $request->validate([
+            'eligibility_status' => ['required', 'string', 'max:50'],
+            'eligibility_note' => ['nullable', 'string', 'max:2000'],
+            'idempotency_key' => ['required', 'string', 'max:120'],
+        ]);
+
+        try {
+            $result = $eligibilityService->create(
+                $request->user(),
+                $stay,
+                $validated['eligibility_status'],
+                $validated['eligibility_note'] ?? null,
+                $validated['idempotency_key']
+            );
+
+            return $request->expectsJson()
+                ? response()->json([
+                    'eligibility_id' => $result['eligibility']->id,
+                    'eligibility_status' => $result['eligibility']->eligibility_status?->value,
+                    'occurred_at' => $result['eligibility']->occurred_at?->toISOString(),
+                    'replayed' => $result['replayed'],
+                ])
+                : back()->with('success', $result['replayed']
+                    ? 'Checkout eligibility already recorded (idempotent).'
+                    : 'Departure checkout eligibility recorded.');
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'departure_checkout_eligibility' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function departureCheckoutEligibility(
+        Request $request,
+        string $stay,
+        FrontDeskDepartureCheckoutEligibilityProjectionService $projection
+    ) {
+        try {
+            $eligibility = $projection->eligibility($request->user(), $stay);
+
+            return $request->expectsJson()
+                ? response()->json($eligibility)
+                : back()->with('departureCheckoutEligibility', $eligibility);
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'departure_checkout_eligibility' => [$exception->getMessage()],
             ]);
         }
     }

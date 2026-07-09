@@ -47,6 +47,7 @@ class PermissionSeeder extends Seeder
             'frontdesk.departure-preparation.event.create',
             'frontdesk.departure-operational-handover.create',
             'frontdesk.departure-closure-readiness.create',
+            'frontdesk.departure-checkout-eligibility.create',
 
             // Engineering - Controlled Room Availability
             'engineering.room-availability.view',
