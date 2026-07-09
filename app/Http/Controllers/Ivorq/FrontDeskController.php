@@ -21,6 +21,8 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessServ
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -443,5 +445,22 @@ class FrontDeskController extends Controller
                 'departure_checkout_eligibility' => [$exception->getMessage()],
             ]);
         }
+    }
+
+    public function createDepartureCheckoutAuthorization(Request $request, string $stay, FrontDeskDepartureCheckoutAuthorizationService $service)
+    {
+        $validated = $request->validate(['authorization_status' => ['required','string','max:50'], 'authorization_note' => ['nullable','string','max:2000'], 'idempotency_key' => ['required','string','max:120']]);
+        try {
+            $result = $service->create($request->user(), $stay, $validated['authorization_status'], $validated['authorization_note'] ?? null, $validated['idempotency_key']);
+            return $request->expectsJson() ? response()->json(['authorization_id' => $result['authorization']->id, 'authorization_status' => $result['authorization']->authorization_status?->value, 'occurred_at' => $result['authorization']->occurred_at?->toISOString(), 'replayed' => $result['replayed']]) : back()->with('success', $result['replayed'] ? 'Checkout authorization already recorded (idempotent).' : 'Departure checkout authorization recorded.');
+        } catch (DomainException $e) { throw ValidationException::withMessages(['departure_checkout_authorization' => [$e->getMessage()]]); }
+    }
+
+    public function departureCheckoutAuthorization(Request $request, string $stay, FrontDeskDepartureCheckoutAuthorizationProjectionService $projection)
+    {
+        try {
+            $auth = $projection->authorization($request->user(), $stay);
+            return $request->expectsJson() ? response()->json($auth) : back()->with('departureCheckoutAuthorization', $auth);
+        } catch (DomainException $e) { throw ValidationException::withMessages(['departure_checkout_authorization' => [$e->getMessage()]]); }
     }
 }
