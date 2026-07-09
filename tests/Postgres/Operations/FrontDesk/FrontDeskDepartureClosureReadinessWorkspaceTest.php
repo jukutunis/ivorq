@@ -229,8 +229,13 @@ class FrontDeskDepartureClosureReadinessWorkspaceTest extends PostgresTestCase
         $queue = app(FrontDeskDepartureQueueProjectionService::class)
             ->queue($this->frontDeskActor);
 
-        $dueOutToday = $queue['views']['dueOutToday'] ?? [];
-        $stayRow = collect($dueOutToday)->firstWhere('stay_id', $stay->id);
+        $views = array_merge(
+            $queue['views']['dueOutToday'] ?? [],
+            $queue['views']['dueOutTomorrow'] ?? [],
+            $queue['views']['overdueDepartures'] ?? [],
+            $queue['views']['dueOutFuture'] ?? [],
+        );
+        $stayRow = collect($views)->firstWhere('stay_id', $stay->id);
 
         $this->assertNotNull($stayRow, 'Stay should appear in departure queue.');
         $this->assertNotNull($stayRow['departure_closure_readiness']);
@@ -256,8 +261,13 @@ class FrontDeskDepartureClosureReadinessWorkspaceTest extends PostgresTestCase
         $queue = app(FrontDeskDepartureQueueProjectionService::class)
             ->queue($this->frontDeskViewOnlyActor);
 
-        $dueOutToday = $queue['views']['dueOutToday'] ?? [];
-        $stayRow = collect($dueOutToday)->firstWhere('stay_id', $stay->id);
+        $views = array_merge(
+            $queue['views']['dueOutToday'] ?? [],
+            $queue['views']['dueOutTomorrow'] ?? [],
+            $queue['views']['overdueDepartures'] ?? [],
+            $queue['views']['dueOutFuture'] ?? [],
+        );
+        $stayRow = collect($views)->firstWhere('stay_id', $stay->id);
 
         $this->assertNotNull($stayRow);
         $this->assertFalse($stayRow['can_create_closure_readiness']);
