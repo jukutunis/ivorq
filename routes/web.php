@@ -49,6 +49,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('frontdesk.stays.departure-operational-handovers.store');
         Route::get('/stays/{stay}/departure-operational-handovers', [FrontDeskController::class, 'departureOperationalHandover'])
             ->name('frontdesk.stays.departure-operational-handovers.index');
+        Route::post('/stays/{stay}/departure-closure-readiness', [FrontDeskController::class, 'createDepartureClosureReadiness'])
+            ->name('frontdesk.stays.departure-closure-readiness.store');
+        Route::get('/stays/{stay}/departure-closure-readiness', [FrontDeskController::class, 'departureClosureReadiness'])
+            ->name('frontdesk.stays.departure-closure-readiness.index');
     });
 
     Route::get('/housekeeping', fn() => redirect('/housekeeping/room-board'));

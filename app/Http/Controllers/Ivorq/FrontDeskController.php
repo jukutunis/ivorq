@@ -17,6 +17,8 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventServ
 use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -327,6 +329,61 @@ class FrontDeskController extends Controller
         } catch (DomainException $exception) {
             throw ValidationException::withMessages([
                 'departure_operational_handover' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function createDepartureClosureReadiness(
+        Request $request,
+        string $stay,
+        FrontDeskDepartureClosureReadinessService $readinessService
+    ) {
+        $validated = $request->validate([
+            'readiness_status' => ['required', 'string', 'max:50'],
+            'readiness_note' => ['nullable', 'string', 'max:2000'],
+            'idempotency_key' => ['required', 'string', 'max:120'],
+        ]);
+
+        try {
+            $result = $readinessService->create(
+                $request->user(),
+                $stay,
+                $validated['readiness_status'],
+                $validated['readiness_note'] ?? null,
+                $validated['idempotency_key']
+            );
+
+            return $request->expectsJson()
+                ? response()->json([
+                    'readiness_id' => $result['readiness']->id,
+                    'readiness_status' => $result['readiness']->readiness_status?->value,
+                    'occurred_at' => $result['readiness']->occurred_at?->toISOString(),
+                    'replayed' => $result['replayed'],
+                ])
+                : back()->with('success', $result['replayed']
+                    ? 'Closure readiness already recorded (idempotent).'
+                    : 'Departure closure readiness recorded.');
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'departure_closure_readiness' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    public function departureClosureReadiness(
+        Request $request,
+        string $stay,
+        FrontDeskDepartureClosureReadinessProjectionService $projection
+    ) {
+        try {
+            $readiness = $projection->readiness($request->user(), $stay);
+
+            return $request->expectsJson()
+                ? response()->json($readiness)
+                : back()->with('departureClosureReadiness', $readiness);
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages([
+                'departure_closure_readiness' => [$exception->getMessage()],
             ]);
         }
     }
