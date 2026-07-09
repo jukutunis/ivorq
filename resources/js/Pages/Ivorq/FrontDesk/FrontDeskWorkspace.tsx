@@ -190,6 +190,36 @@ type AllowedHandoverStatus = {
   label: string;
 };
 
+type ClosureReadinessEntry = {
+  id: string;
+  readiness_status: string;
+  readiness_status_label: string;
+  readiness_note: string | null;
+  occurred_at: string;
+  created_by_name: string | null;
+  source_hash: string;
+};
+
+type ClosureReadiness = {
+  latest: ClosureReadinessEntry;
+  history: ClosureReadinessEntry[];
+  b3_handover_dependency: {
+    id: string;
+    handover_status: string;
+    handover_status_label: string;
+    handover_note: string | null;
+    occurred_at: string;
+  } | null;
+  b3_exists: boolean;
+  b3_blocked: boolean;
+  closure_readiness_warning: string | null;
+} | null;
+
+type AllowedClosureReadinessStatus = {
+  value: string;
+  label: string;
+};
+
 type DepartureRow = {
   stay_id: string;
   reservation_id: string;
@@ -212,6 +242,9 @@ type DepartureRow = {
   departure_operational_handover: DepartureOperationalHandover;
   can_create_operational_handover: boolean;
   allowed_handover_statuses: AllowedHandoverStatus[];
+  departure_closure_readiness: ClosureReadiness;
+  can_create_closure_readiness: boolean;
+  allowed_closure_readiness_statuses: AllowedClosureReadinessStatus[];
   financial_marker: string;
   evaluated_at: string;
 };
@@ -592,6 +625,12 @@ function DepartureQueue({ title, rows }: { title: string; rows: DepartureRow[] }
             {row.departure_operational_handover ? (
               <DepartureOperationalHandoverPanel handover={row.departure_operational_handover} />
             ) : null}
+            {row.can_create_closure_readiness ? (
+              <DepartureClosureReadinessForm stayId={row.stay_id} readinessStatuses={row.allowed_closure_readiness_statuses} />
+            ) : null}
+            {row.departure_closure_readiness ? (
+              <DepartureClosureReadinessPanel readiness={row.departure_closure_readiness} />
+            ) : null}
             {row.can_create_departure_preparation_event ? (
               <DepartureActionForm stayId={row.stay_id} eventTypes={row.allowed_event_types} />
             ) : null}
@@ -851,6 +890,110 @@ function DepartureBlockersPanel({ blockers, readiness }: { blockers: string[]; r
       </div>
       <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
         Financial settlement: Not evaluated in Front Desk Package B3.
+      </div>
+    </div>
+  );
+}
+
+function DepartureClosureReadinessForm({ stayId, readinessStatuses }: { stayId: string; readinessStatuses: AllowedClosureReadinessStatus[] }) {
+  const [showForm, setShowForm] = React.useState(false);
+  const [selectedStatus, setSelectedStatus] = React.useState(readinessStatuses[0]?.value ?? '');
+
+  if (readinessStatuses.length === 0) return null;
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '10px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      {!showForm ? (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)', marginRight: '4px' }}>Closure Readiness:</span>
+          {readinessStatuses.map((rs) => (
+            <Button key={rs.value} size="sm" variant="secondary" onClick={() => { setShowForm(true); setSelectedStatus(rs.value); }}>
+              <Icon name="note" /> {rs.label}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <form method="post" action={`/frontdesk/stays/${stayId}/departure-closure-readiness`} onSubmit={() => setShowForm(false)}>
+          <input type="hidden" name="readiness_status" value={selectedStatus} />
+          <input type="hidden" name="idempotency_key" value={`dcr-${stayId}-${selectedStatus}-${Date.now()}`} />
+          <div style={{ marginBottom: '8px' }}>
+            <label style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>
+              Readiness Note (Optional)
+            </label>
+            <textarea name="readiness_note" rows={2} style={{
+              width: '100%', padding: '6px 8px', fontSize: '13px',
+              border: '1px solid var(--border-subtle)', borderRadius: '4px',
+              background: 'var(--surface-input)', color: 'var(--text-primary)',
+            }} placeholder="Optional readiness note..." />
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <Button size="sm" type="submit"><Icon name="save" /> Record Readiness</Button>
+            <Button size="sm" variant="secondary" onClick={(e: React.MouseEvent) => { e.preventDefault(); setShowForm(false); }}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function DepartureClosureReadinessPanel({ readiness }: { readiness: NonNullable<ClosureReadiness> }) {
+  const statusColor = readiness.latest.readiness_status === 'CLOSURE_READY' ? 'ready-green'
+    : readiness.latest.readiness_status === 'CLOSURE_BLOCKED' ? 'warning-amber'
+    : readiness.latest.readiness_status === 'CLOSURE_REVIEWED' ? 'ready-green'
+    : 'neutral';
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '10px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>
+        Closure Readiness History ({readiness.history.length})
+      </div>
+      {readiness.closure_readiness_warning ? (
+        <div style={{
+          padding: '6px 10px', marginBottom: '8px',
+          backgroundColor: 'var(--status-pending-bg)',
+          color: 'var(--status-pending-fg)',
+          borderRadius: '4px', fontSize: '12px', fontWeight: 500,
+        }}>
+          {readiness.closure_readiness_warning}
+        </div>
+      ) : null}
+      {readiness.history.map((entry) => (
+        <div key={entry.id} style={{
+          display: 'flex', alignItems: 'baseline', gap: '12px',
+          padding: '4px 0', borderBottom: '1px solid var(--border-subtle)',
+          fontSize: '12px',
+        }}>
+          <StatusBadge status="ready" style={{
+            fontSize: '10px', padding: '1px 8px', flexShrink: 0,
+            backgroundColor: entry.readiness_status === 'CLOSURE_READY' || entry.readiness_status === 'CLOSURE_REVIEWED'
+              ? 'var(--status-ready-bg)' : 'var(--status-pending-bg)',
+            color: entry.readiness_status === 'CLOSURE_READY' || entry.readiness_status === 'CLOSURE_REVIEWED'
+              ? 'var(--status-ready-fg)' : 'var(--status-pending-fg)',
+          }}>
+            {entry.readiness_status_label}
+          </StatusBadge>
+          <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
+            {entry.readiness_note ?? '—'}
+          </span>
+          <span style={{ color: 'var(--text-dimmed)', fontSize: '11px', flexShrink: 0 }}>
+            {entry.created_by_name ?? 'System'}, {entry.occurred_at ? new Date(entry.occurred_at).toLocaleString() : ''}
+          </span>
+        </div>
+      ))}
+      <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+        Financial settlement: Not evaluated in Front Desk Package B4.
       </div>
     </div>
   );

@@ -8,9 +8,11 @@ use Modules\Foundation\User\Models\User;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
 use Modules\Operations\FrontDesk\Enums\FrontDeskDeparturePreparationEventTypeEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskDepartureClosureReadiness;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureOperationalHandover;
 use Modules\Operations\FrontDesk\Models\FrontDeskDeparturePreparationEvent;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -150,6 +152,11 @@ class FrontDeskDepartureQueueProjectionService
             'allowed_handover_statuses' => $actor->can(FrontDeskDepartureOperationalHandoverService::CREATE_PERMISSION)
                 ? $this->allowedHandoverStatusesForWorkspace()
                 : [],
+            'departure_closure_readiness' => $this->projectClosureReadiness($propertyId, $stay->id),
+            'can_create_closure_readiness' => $actor->can(FrontDeskDepartureClosureReadinessService::CREATE_PERMISSION),
+            'allowed_closure_readiness_statuses' => $actor->can(FrontDeskDepartureClosureReadinessService::CREATE_PERMISSION)
+                ? $this->allowedClosureReadinessStatusesForWorkspace()
+                : [],
             'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
             'evaluated_at' => now()->toISOString(),
         ];
@@ -249,6 +256,88 @@ class FrontDeskDepartureQueueProjectionService
             'OPERATIONAL_HANDOVER_READY' => 'Operationally Ready',
             'OPERATIONAL_HANDOVER_BLOCKED' => 'Operationally Blocked',
             'OPERATIONAL_HANDOVER_REVIEWED' => 'Reviewed',
+            default => $status ?? 'Unknown',
+        };
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function projectClosureReadiness(string $propertyId, string $stayId): ?array
+    {
+        $entries = FrontDeskDepartureClosureReadiness::withoutGlobalScopes()
+            ->with(['createdBy'])
+            ->where('property_id', $propertyId)
+            ->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->limit(10)
+            ->get()
+            ->map(fn (FrontDeskDepartureClosureReadiness $entry) => [
+                'id' => $entry->id,
+                'readiness_status' => $entry->readiness_status?->value,
+                'readiness_status_label' => $this->closureReadinessStatusLabel($entry->readiness_status?->value),
+                'readiness_note' => $entry->readiness_note,
+                'occurred_at' => $entry->occurred_at?->toISOString(),
+                'created_by_name' => $entry->createdBy?->name,
+                'source_hash' => $entry->source_hash,
+            ])
+            ->values()
+            ->all();
+
+        if (empty($entries)) {
+            return null;
+        }
+
+        // Check B3 handover dependency
+        $b3Handover = FrontDeskDepartureOperationalHandover::withoutGlobalScopes()
+            ->where('property_id', $propertyId)
+            ->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->first();
+
+        $closureReadinessWarning = null;
+        if (! $b3Handover) {
+            $closureReadinessWarning = 'No FD-B3 operational handover evidence exists. CLOSURE_READY status requires at least one handover.';
+        } elseif ($b3Handover->handover_status?->value === 'OPERATIONAL_HANDOVER_BLOCKED') {
+            $closureReadinessWarning = 'Latest FD-B3 operational handover is blocked. CLOSURE_READY requires the latest handover to not be blocked.';
+        }
+
+        return [
+            'latest' => $entries[0],
+            'history' => $entries,
+            'b3_handover_dependency' => $b3Handover ? [
+                'id' => $b3Handover->id,
+                'handover_status' => $b3Handover->handover_status?->value,
+                'handover_status_label' => $this->handoverStatusLabel($b3Handover->handover_status?->value),
+                'handover_note' => $b3Handover->handover_note,
+                'occurred_at' => $b3Handover->occurred_at?->toISOString(),
+            ] : null,
+            'b3_exists' => $b3Handover !== null,
+            'b3_blocked' => $b3Handover ? ($b3Handover->handover_status?->value === 'OPERATIONAL_HANDOVER_BLOCKED') : false,
+            'closure_readiness_warning' => $closureReadinessWarning,
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function allowedClosureReadinessStatusesForWorkspace(): array
+    {
+        return [
+            ['value' => 'CLOSURE_READY', 'label' => 'Mark Closure Ready'],
+            ['value' => 'CLOSURE_BLOCKED', 'label' => 'Mark Closure Blocked'],
+            ['value' => 'CLOSURE_REVIEWED', 'label' => 'Mark Closure Reviewed'],
+        ];
+    }
+
+    private function closureReadinessStatusLabel(?string $status): string
+    {
+        return match ($status) {
+            'CLOSURE_READY' => 'Closure Ready',
+            'CLOSURE_BLOCKED' => 'Closure Blocked',
+            'CLOSURE_REVIEWED' => 'Closure Reviewed',
             default => $status ?? 'Unknown',
         };
     }
