@@ -143,9 +143,9 @@ class FrontDeskDepartureCheckoutEligibilityService
                 );
             }
 
-            if ($latestB4Readiness['readiness_status'] === 'CLOSURE_BLOCKED') {
+            if ($latestB4Readiness['readiness_status'] !== 'CLOSURE_READY') {
                 throw new DomainException(
-                    'CHECKOUT_ELIGIBLE requires the latest FD-B4 closure readiness to not be blocked.'
+                    'CHECKOUT_ELIGIBLE requires the latest FD-B4 closure readiness to be CLOSURE_READY.'
                 );
             }
         }

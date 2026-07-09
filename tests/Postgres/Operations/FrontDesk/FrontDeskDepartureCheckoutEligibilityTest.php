@@ -116,7 +116,29 @@ class FrontDeskDepartureCheckoutEligibilityTest extends PostgresTestCase
         );
 
         $this->expectException(DomainException::class);
-        $this->expectExceptionMessage('not be blocked');
+        $this->expectExceptionMessage('CLOSURE_READY');
+
+        app(FrontDeskDepartureCheckoutEligibilityService::class)->create(
+            $this->frontDeskActor, $stay[0]->id,
+            'CHECKOUT_ELIGIBLE', 'Should reject.', 'dce-' . Str::ulid()
+        );
+    }
+
+    public function test_rejects_checkout_eligible_when_latest_b4_reviewed(): void
+    {
+        $stay = $this->checkedInStay('5110');
+
+        app(FrontDeskDepartureOperationalHandoverService::class)->create(
+            $this->frontDeskActor, $stay[0]->id,
+            'OPERATIONAL_HANDOVER_READY', null, 'doh-' . Str::ulid()
+        );
+        app(FrontDeskDepartureClosureReadinessService::class)->create(
+            $this->frontDeskActor, $stay[0]->id,
+            'CLOSURE_REVIEWED', 'B4 reviewed, not ready.', 'dcr-' . Str::ulid()
+        );
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('CLOSURE_READY');
 
         app(FrontDeskDepartureCheckoutEligibilityService::class)->create(
             $this->frontDeskActor, $stay[0]->id,

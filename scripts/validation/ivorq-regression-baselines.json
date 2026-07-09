@@ -54,8 +54,8 @@
         "FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 287,
-        "assertions": 1231,
+        "tests": 288,
+        "assertions": 1233,
         "failures": 0,
         "errors": 0
       },

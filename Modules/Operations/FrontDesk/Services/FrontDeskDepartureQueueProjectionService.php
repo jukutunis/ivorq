@@ -387,9 +387,9 @@ class FrontDeskDepartureQueueProjectionService
 
         $checkoutEligibilityWarning = null;
         if (! $b4Readiness) {
-            $checkoutEligibilityWarning = 'No FD-B4 closure readiness evidence exists. CHECKOUT_ELIGIBLE requires at least one closure readiness.';
-        } elseif ($b4Readiness->readiness_status?->value === 'CLOSURE_BLOCKED') {
-            $checkoutEligibilityWarning = 'Latest FD-B4 closure readiness is blocked. CHECKOUT_ELIGIBLE requires the latest closure readiness to not be blocked.';
+            $checkoutEligibilityWarning = 'No FD-B4 closure readiness evidence exists. CHECKOUT_ELIGIBLE requires latest FD-B4 CLOSURE_READY.';
+        } elseif ($b4Readiness->readiness_status?->value !== 'CLOSURE_READY') {
+            $checkoutEligibilityWarning = 'Latest FD-B4 closure readiness is not CLOSURE_READY. CHECKOUT_ELIGIBLE requires latest FD-B4 CLOSURE_READY.';
         }
 
         return [

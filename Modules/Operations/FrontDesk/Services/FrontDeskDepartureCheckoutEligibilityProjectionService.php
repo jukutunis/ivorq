@@ -79,9 +79,9 @@ class FrontDeskDepartureCheckoutEligibilityProjectionService
                 ['value' => 'CHECKOUT_REVIEWED', 'label' => 'Mark Checkout Reviewed'],
             ] : [],
             'checkout_eligibility_warning' => !$b4ClosureReadiness
-                ? 'No FD-B4 closure readiness evidence exists. CHECKOUT_ELIGIBLE status requires at least one closure readiness.'
-                : ($b4ClosureReadiness['readiness_status'] === 'CLOSURE_BLOCKED'
-                    ? 'Latest FD-B4 closure readiness is blocked. CHECKOUT_ELIGIBLE requires the latest closure readiness to not be blocked.'
+                ? 'No FD-B4 closure readiness evidence exists. CHECKOUT_ELIGIBLE requires latest FD-B4 CLOSURE_READY.'
+                : ($b4ClosureReadiness['readiness_status'] !== 'CLOSURE_READY'
+                    ? 'Latest FD-B4 closure readiness is not CLOSURE_READY. CHECKOUT_ELIGIBLE requires latest FD-B4 CLOSURE_READY.'
                     : null),
             'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B5.',
         ];
