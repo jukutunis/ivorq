@@ -62,7 +62,7 @@
       "provenance": {
         "measured_at": "2026-07-10",
         "branch": "sprint-fd-b5-departure-checkout-eligibility-handoff",
-        "sha": "470650942995d95b073672f25fe5e363ee7ed156"
+        "sha": "a51db195c381a592c539fb3833f3a56e26aae046"
       },
       "accepted_debt": [],
       "status": "active"
