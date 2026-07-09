@@ -97,6 +97,10 @@ The helper may load DB variables into a child PHPUnit process but must never pri
 
 If the helper or environment is unavailable, report the blocker without attempting a credential workaround.
 
+## Package execution contract
+
+For package-train tasks, read `.agents/contracts/IVORQ-Package-Execution-Contract.md`. Follow it only after the Owner explicitly requests package execution. If the contract status is `DRAFT_PENDING_OWNER_APPROVAL`, treat it as a proposal only and do not cite it as binding.
+
 ## Validation
 
 - Prefer focused validation for the current authorized slice.

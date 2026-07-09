@@ -130,6 +130,12 @@ Skills policy:
 - Read only what is relevant to the assigned slice.
 - Skill files guide behavior but do not override Owner scope or repository evidence.
 
+Package execution contract:
+
+- For package-train work, read `.agents/contracts/IVORQ-Package-Execution-Contract.md` after `GEMINI.md`, `CLAUDE.md`, and relevant skills, before selecting the next package.
+- The contract does not authorize implementation by itself; each package still requires an explicit Owner task.
+- If the contract status is `DRAFT_PENDING_OWNER_APPROVAL`, it may be reviewed but must not be treated as binding.
+
 Response and handover format:
 
 At the end of any task, report only:
