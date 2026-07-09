@@ -87,11 +87,23 @@ Never inspect, print, parse, load, or modify:
 bootstrap/cache/config.php
 ```
 
-Never expose, set, search for, or echo credentials, tokens, database passwords, API keys, or secrets.
+Never print .env or secrets.
+Never commit secrets.
+Do not manually inspect credentials.
+Do not manually parse or read .env to extract credentials.
+Do not create ad-hoc scripts to print, parse, or echo credentials.
 
-Do not use credential-loading commands, `$env:DB_*`, inline database credentials, or scripts that extract secrets from local files.
+Use already configured environment when available.
 
-When a test requires preconfigured local credentials, run the approved test command directly only when the environment is already available. If the approved test guard blocks execution, report the blocker without attempting a credential workaround.
+If a PostgreSQL validation requires local DB variables and the task explicitly authorizes full access, the approved local helper may be used:
+
+```
+C:\Users\edigd\.ivorq-local\Invoke-IvorqPgPhpunitWithEnv.ps1
+```
+
+The helper may load DB variables into a child PHPUnit process but must never print secrets.
+
+If the helper or environment is unavailable, report the blocker without attempting a credential workaround.
 
 ## Validation
 

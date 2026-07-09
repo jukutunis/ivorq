@@ -44,7 +44,7 @@ Current accepted baseline:
 - PR #4 FD-B3 Controlled Departure Operational Handover merged
 - PR #5 FD-B4 Controlled Departure Closure Readiness merged
 - Front Desk active baseline: 258 tests / 1128 assertions / 0 failures / 0 errors
-- RegressionBaselineManifestTest: 24 tests / 484 assertions / 0 failures / 0 errors
+- RegressionBaselineManifestTest: 24 tests / 502 assertions / 0 failures / 0 errors
 - Runner -All active baselines: all 4 active baselines PASS
 - Candidate Banking remains candidate
 - Candidate Inventory/AVCO/Sensitive remains candidate
