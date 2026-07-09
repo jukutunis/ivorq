@@ -1,0 +1,278 @@
+{
+  "$schema": "ivorq-regression-baselines-v1",
+  "version": "1.0",
+  "created": "2026-07-09",
+  "description": "IVORQ Regression Baseline Registry — exact test-class manifests, no broad filters",
+  "baselines": [
+    {
+      "id": "frontdesk-operational-baseline",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, and Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2). All 22 test classes pass cleanly as a single batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "FrontDeskArrivalEligibilityTest",
+        "FrontDeskArrivalWorkspaceTest",
+        "FrontDeskAssignmentIsolatedConcurrencyProofTest",
+        "FrontDeskCheckInTest",
+        "FrontDeskCheckoutReadinessTest",
+        "FrontDeskCheckoutReadinessWorkspaceTest",
+        "FrontDeskDeparturePreparationAuthorizationTest",
+        "FrontDeskDeparturePreparationBoundaryTest",
+        "FrontDeskDeparturePreparationEventAuthorizationTest",
+        "FrontDeskDeparturePreparationEventBoundaryTest",
+        "FrontDeskDeparturePreparationEventImmutabilityTest",
+        "FrontDeskDeparturePreparationEventIsolatedConcurrencyProofTest",
+        "FrontDeskDeparturePreparationEventTest",
+        "FrontDeskDeparturePreparationEventWorkspaceTest",
+        "FrontDeskDeparturePreparationWorkspaceTest",
+        "FrontDeskDepartureQueueProjectionTest",
+        "FrontDeskInHouseWorkspaceTest",
+        "FrontDeskRoomAssignmentTest",
+        "FrontDeskRoomMoveIsolatedConcurrencyProofTest",
+        "FrontDeskRoomMoveTest",
+        "FrontDeskRoomMoveWorkspaceTest",
+        "FrontDeskWorkspaceRoomAssignmentTest"
+      ],
+      "expected": {
+        "tests": 167,
+        "assertions": 736,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-09",
+        "branch": "ivorq-enterprise-core",
+        "sha": "4861ca313a774ea9ecaebc04a8135aaafd70eea9"
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
+      "id": "housekeeping-room-readiness-baseline",
+      "description": "Housekeeping room readiness operational tests covering authorization, immutability, projections, transitions, workspace, concurrency, and Front Desk dependency (HK-B1). All 7 test classes pass cleanly as a single batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "HousekeepingFrontDeskReadinessDependencyTest",
+        "HousekeepingRoomReadinessAuthorizationTest",
+        "HousekeepingRoomReadinessImmutabilityTest",
+        "HousekeepingRoomReadinessIsolatedConcurrencyProofTest",
+        "HousekeepingRoomReadinessProjectionTest",
+        "HousekeepingRoomReadinessTransitionTest",
+        "HousekeepingRoomReadinessWorkspaceTest"
+      ],
+      "expected": {
+        "tests": 63,
+        "assertions": 221,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-09",
+        "branch": "ivorq-enterprise-core",
+        "sha": "4861ca313a774ea9ecaebc04a8135aaafd70eea9"
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
+      "id": "engineering-availability-baseline",
+      "description": "Engineering room availability operational tests covering authorization, block lifecycle, Front Desk read boundary, projections, and concurrency (ENG-A1). All 5 test classes pass cleanly as a single batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "EngineeringRoomAvailabilityAuthorizationTest",
+        "EngineeringRoomAvailabilityBlockLifecycleTest",
+        "EngineeringRoomAvailabilityFrontDeskReadBoundaryTest",
+        "EngineeringRoomAvailabilityIsolatedConcurrencyProofTest",
+        "EngineeringRoomAvailabilityProjectionTest"
+      ],
+      "expected": {
+        "tests": 9,
+        "assertions": 76,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-09",
+        "branch": "ivorq-enterprise-core",
+        "sha": "4861ca313a774ea9ecaebc04a8135aaafd70eea9"
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
+      "id": "inventory-avco-sensitive-baseline-v2-candidate",
+      "description": "Inventory / AVCO / Sensitive baseline v2 candidate — replaces legacy 247/927 undiscoverable baseline. Covers Inventory operational tests, CostControl AVCO valuation tests, and Sensitive Action Confirmation governance. InventoryReversalWorkspaceTest is excluded (tracked separately as inherited debt). WARNING: Batch execution of all 51 classes produces RefreshDatabase conflicts (217+ errors from cross-class seed state interference). Must use execution_mode: individual or split into domain sub-groups. Sensitive/Foundation subgroup (3 classes: SensitiveActionConfirmationTest, FinanceApprovalConfirmationTest, FinanceFinalizationConfirmationTest) passes cleanly at 58 tests / 436 assertions.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "individual",
+      "sub_groups": [
+        {
+          "id": "inventory-avco-sensitive-inventory",
+          "description": "Inventory operational tests (26 classes)",
+          "execution_mode": "individual"
+        },
+        {
+          "id": "inventory-avco-sensitive-costcontrol",
+          "description": "CostControl AVCO valuation tests (22 classes)",
+          "execution_mode": "individual"
+        },
+        {
+          "id": "inventory-avco-sensitive-foundation",
+          "description": "Sensitive Action / Finance Approval / Finance Finalization (3 classes). Passes cleanly in batch at 58 tests / 436 assertions.",
+          "execution_mode": "batch",
+          "expected": {
+            "tests": 58,
+            "assertions": 436,
+            "failures": 0,
+            "errors": 0
+          }
+        }
+      ],
+      "classes": [
+        "BusinessDateCloseExecutionServiceTest",
+        "ControlledGoodsReceiptIsolatedConcurrencyProofTest",
+        "ControlledGoodsReceiptPostingTest",
+        "ControlledInventoryAdjustmentPostingTest",
+        "ControlledInventoryIssuePostingTest",
+        "ControlledInventoryTransferPostingTest",
+        "GoodsReceiptCommercialEvidenceTest",
+        "InventoryAvcoCostProjectionTest",
+        "InventoryMovementIsolatedConcurrencyProofTest",
+        "InventoryMovementLifecycleTest",
+        "InventoryPostingOutboxProducerTest",
+        "InventoryPostingSequenceAllocationTest",
+        "InventoryPostingValuationAuthorizationTest",
+        "InventoryReversalApprovalRequestServiceTest",
+        "InventoryReversalCandidateGuardTest",
+        "InventoryReversalExecutionServiceTest",
+        "InventoryReversalOperationalHttpBoundaryTest",
+        "InventoryReversalPostingServiceTest",
+        "InventoryStockControlledLockTest",
+        "InventoryStockMovementLedgerTest",
+        "InventoryTransactionIdempotencyTest",
+        "InventoryTransactionImmutabilityTest",
+        "InventoryTransactionReversalSchemaContractTest",
+        "InventoryTransactionSchemaTest",
+        "PropertyBaseCurrencyGovernanceTest",
+        "ReceiptEnrollmentGuardTest",
+        "ControlledAdjustmentValuationApplyCoordinatorTest",
+        "ControlledAdjustmentValuationInvocationTest",
+        "ControlledAdjustmentValuationPlannerTest",
+        "ControlledIssueValuationInvocationGLTest",
+        "ControlledIssueValuationInvocationTest",
+        "ControlledReceiptValuationInvocationTest",
+        "ControlledReversalValuationPlannerTest",
+        "ControlledTransferValuationApplyCoordinatorTest",
+        "ControlledTransferValuationInvocationTest",
+        "ControlledTransferValuationPlannerTest",
+        "ControlledValuationApplyCoordinatorTest",
+        "ControlledValuationCostLedgerAdapterTest",
+        "ControlledValuationStateTransitionPlannerTest",
+        "CostAuthorityEnrollmentBaselineSeedServiceTest",
+        "CostAuthorityEnrollmentPersistenceTest",
+        "CostAuthorityEnrollmentPreflightServiceTest",
+        "CostAvcoStatePersistenceTest",
+        "CostLedgerAppendBoundaryTest",
+        "CostLedgerPostgresSchemaContractTest",
+        "CostTransferPairResolutionPersistenceTest",
+        "PairedTransferValuationIntegrationTest",
+        "PairedTransferValuationTest",
+        "SensitiveActionConfirmationTest",
+        "FinanceApprovalConfirmationTest",
+        "FinanceFinalizationConfirmationTest"
+      ],
+      "expected": {
+        "tests": null,
+        "assertions": null,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-09",
+        "branch": "ivorq-enterprise-core",
+        "sha": "4861ca313a774ea9ecaebc04a8135aaafd70eea9",
+        "note": "Batch execution produces RefreshDatabase conflicts with 48 test classes using seed=true. Individual execution required for accurate counts. Sensitive/Foundation subgroup verified clean at 58/436."
+      },
+      "accepted_debt": [],
+      "status": "candidate"
+    },
+    {
+      "id": "inventory-reversal-inherited-debt-v1",
+      "description": "Inventory Reversal workspace inherited trigger-related test debt. Documented in ADR-080 and Sprint-FD-A3. Two trigger-related errors are accepted as inherited debt. Verified at 8 tests / 72 assertions / 0 failures / 2 errors.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "InventoryReversalWorkspaceTest"
+      ],
+      "expected": {
+        "tests": 8,
+        "assertions": 72,
+        "failures": 0,
+        "errors": 2
+      },
+      "provenance": {
+        "measured_at": "2026-07-09",
+        "branch": "ivorq-enterprise-core",
+        "sha": "4861ca313a774ea9ecaebc04a8135aaafd70eea9"
+      },
+      "accepted_debt": [
+        {
+          "test": "InventoryReversalWorkspaceTest",
+          "expected_errors": 2,
+          "reason": "Inherited trigger-related errors. Documented in ADR-080 (line 46), Sprint-FD-A3 (line 38-39), and IVORQ-Regression-Baseline-Debt.md DEBT-INVENTORY-REVERSAL-TRIGGER-ERRORS."
+        }
+      ],
+      "status": "active"
+    },
+    {
+      "id": "banking-master-baseline-v2-candidate",
+      "description": "Banking master baseline v2 candidate — replaces legacy 194 undiscoverable baseline. Includes core Banking operational tests only (9 classes). Banking migration tests are excluded. ConfirmedBankPaymentLifecycleTest is excluded due to business-date setup gap (documented in DEBT-BANKING-CONFIRMED-PAYMENT-LIFECYCLE-BUSINESS-DATE). Verified at 84 total tests when including ConfirmedBankPaymentLifecycleTest (1 error from business-date gap); clean at 83/0/0 when excluding it.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "BankExecutionContextProjectionTest",
+        "BankPaymentExecutionWebActionTest",
+        "BankReconciliationSessionWorkspaceTest",
+        "BankReconciliationWebActionTest",
+        "BankReconciliationWorkspaceTest",
+        "BankingOperationsWorkspaceTest",
+        "BankingReconciliationDomainConvergenceWorkspaceTest",
+        "BankingSourceEvidenceFoundationTest",
+        "ManualBankReconciliationTest"
+      ],
+      "expected": {
+        "tests": null,
+        "assertions": null,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-09",
+        "branch": "ivorq-enterprise-core",
+        "sha": "4861ca313a774ea9ecaebc04a8135aaafd70eea9",
+        "note": "Excluding ConfirmedBankPaymentLifecycleTest due to business-date setup gap. 9-class batch runs at 83 tests / 595 assertions / 0 failures / 0 errors (remaining clean classes)."
+      },
+      "accepted_debt": [
+        {
+          "test": "ConfirmedBankPaymentLifecycleTest",
+          "reason": "Business-date setup gap. Fails with: Posting rejected: PropertyBusinessDate not found. Documented in IVORQ-Regression-Baseline-Debt.md DEBT-BANKING-CONFIRMED-PAYMENT-LIFECYCLE-BUSINESS-DATE.",
+          "status": "excluded_from_candidate"
+        }
+      ],
+      "status": "candidate"
+    }
+  ]
+}
