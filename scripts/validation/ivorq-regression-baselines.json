@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), and Departure Checkout Authorization (FD-B6). All 46 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), and Departure Checkout Final Review (FD-B7). All 52 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -57,18 +57,24 @@
         "FrontDeskDepartureCheckoutAuthorizationBoundaryTest",
         "FrontDeskDepartureCheckoutAuthorizationImmutabilityTest",
         "FrontDeskDepartureCheckoutAuthorizationWorkspaceTest",
-        "FrontDeskDepartureCheckoutAuthorizationIsolatedConcurrencyProofTest"
+        "FrontDeskDepartureCheckoutAuthorizationIsolatedConcurrencyProofTest",
+        "FrontDeskDepartureCheckoutFinalReviewTest",
+        "FrontDeskDepartureCheckoutFinalReviewAuthorizationTest",
+        "FrontDeskDepartureCheckoutFinalReviewBoundaryTest",
+        "FrontDeskDepartureCheckoutFinalReviewImmutabilityTest",
+        "FrontDeskDepartureCheckoutFinalReviewWorkspaceTest",
+        "FrontDeskDepartureCheckoutFinalReviewIsolatedConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 314,
-        "assertions": 1294,
+        "tests": 343,
+        "assertions": 1371,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-10",
-        "branch": "sprint-fd-b6-departure-checkout-authorization-handoff",
-        "sha": "e0cef70c4c71c4aa2906e623d769a7460bb24369"
+        "branch": "sprint-fd-b7-departure-checkout-final-review",
+        "sha": "pending"
       },
       "accepted_debt": [],
       "status": "active"

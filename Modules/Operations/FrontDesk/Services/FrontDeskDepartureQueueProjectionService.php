@@ -10,12 +10,14 @@ use Modules\Operations\FrontDesk\Enums\FrontDeskDeparturePreparationEventTypeEnu
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutAuthorization;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutEligibility;
+use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureClosureReadiness;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureOperationalHandover;
 use Modules\Operations\FrontDesk\Models\FrontDeskDeparturePreparationEvent;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
@@ -170,6 +172,11 @@ class FrontDeskDepartureQueueProjectionService
             'can_create_checkout_authorization' => $actor->can(FrontDeskDepartureCheckoutAuthorizationService::CREATE_PERMISSION),
             'allowed_checkout_authorization_statuses' => $actor->can(FrontDeskDepartureCheckoutAuthorizationService::CREATE_PERMISSION)
                 ? $this->allowedCheckoutAuthorizationStatusesForWorkspace()
+                : [],
+            'departure_checkout_final_review' => $this->projectCheckoutFinalReview($propertyId, $stay->id),
+            'can_create_checkout_final_review' => $actor->can(FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION),
+            'allowed_checkout_final_review_statuses' => $actor->can(FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION)
+                ? $this->allowedCheckoutFinalReviewStatusesForWorkspace()
                 : [],
             'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
             'evaluated_at' => now()->toISOString(),
@@ -635,5 +642,41 @@ class FrontDeskDepartureQueueProjectionService
         }
 
         return (string) $value;
+    }
+
+    private function projectCheckoutFinalReview(string $propertyId, string $stayId): ?array
+    {
+        $entries = FrontDeskDepartureCheckoutFinalReview::withoutGlobalScopes()->with(['createdBy'])
+            ->where('property_id', $propertyId)->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')->orderBy('created_at', 'desc')->limit(10)->get()
+            ->map(fn(FrontDeskDepartureCheckoutFinalReview $e) => [
+                'id' => $e->id, 'final_review_status' => $e->final_review_status?->value,
+                'final_review_status_label' => $this->checkoutFinalReviewStatusLabel($e->final_review_status?->value),
+                'final_review_note' => $e->final_review_note, 'occurred_at' => $e->occurred_at?->toISOString(),
+                'created_by_name' => $e->createdBy?->name, 'source_hash' => $e->source_hash,
+            ])->values()->all();
+        if (empty($entries)) return null;
+
+        $b6 = FrontDeskDepartureCheckoutAuthorization::withoutGlobalScopes()
+            ->where('property_id', $propertyId)->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')->orderBy('created_at', 'desc')->first();
+
+        $warn = !$b6 ? 'No FD-B6 checkout authorization evidence exists. CHECKOUT_FINAL_REVIEW_READY requires latest FD-B6 CHECKOUT_AUTHORIZATION_READY.'
+            : ($b6->authorization_status?->value !== 'CHECKOUT_AUTHORIZATION_READY' ? 'Latest FD-B6 checkout authorization is not CHECKOUT_AUTHORIZATION_READY. CHECKOUT_FINAL_REVIEW_READY requires latest FD-B6 CHECKOUT_AUTHORIZATION_READY.' : null);
+
+        return ['latest' => $entries[0], 'history' => $entries,
+            'b6_checkout_authorization_dependency' => $b6 ? ['id' => $b6->id, 'authorization_status' => $b6->authorization_status?->value, 'authorization_status_label' => $this->checkoutAuthorizationStatusLabel($b6->authorization_status?->value), 'authorization_note' => $b6->authorization_note, 'occurred_at' => $b6->occurred_at?->toISOString()] : null,
+            'b6_exists' => $b6 !== null, 'b6_blocked' => $b6 ? ($b6->authorization_status?->value !== 'CHECKOUT_AUTHORIZATION_READY') : false,
+            'final_review_warning' => $warn];
+    }
+
+    private function allowedCheckoutFinalReviewStatusesForWorkspace(): array
+    {
+        return [['value' => 'CHECKOUT_FINAL_REVIEW_READY', 'label' => 'Mark Final Review Ready'], ['value' => 'CHECKOUT_FINAL_REVIEW_BLOCKED', 'label' => 'Mark Final Review Blocked'], ['value' => 'CHECKOUT_FINAL_REVIEW_REVIEWED', 'label' => 'Mark Final Review Reviewed']];
+    }
+
+    private function checkoutFinalReviewStatusLabel(?string $s): string
+    {
+        return match($s) { 'CHECKOUT_FINAL_REVIEW_READY' => 'Final Review Ready', 'CHECKOUT_FINAL_REVIEW_BLOCKED' => 'Final Review Blocked', 'CHECKOUT_FINAL_REVIEW_REVIEWED' => 'Final Review Reviewed', default => $s ?? 'Unknown' };
     }
 }

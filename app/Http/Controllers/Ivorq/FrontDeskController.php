@@ -23,6 +23,8 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityS
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -462,5 +464,22 @@ class FrontDeskController extends Controller
             $auth = $projection->authorization($request->user(), $stay);
             return $request->expectsJson() ? response()->json($auth) : back()->with('departureCheckoutAuthorization', $auth);
         } catch (DomainException $e) { throw ValidationException::withMessages(['departure_checkout_authorization' => [$e->getMessage()]]); }
+    }
+
+    public function createDepartureCheckoutFinalReview(Request $request, string $stay, FrontDeskDepartureCheckoutFinalReviewService $service)
+    {
+        $validated = $request->validate(['final_review_status' => ['required','string','max:50'], 'final_review_note' => ['nullable','string','max:2000'], 'idempotency_key' => ['required','string','max:120']]);
+        try {
+            $result = $service->create($request->user(), $stay, $validated['final_review_status'], $validated['final_review_note'] ?? null, $validated['idempotency_key']);
+            return $request->expectsJson() ? response()->json(['final_review_id' => $result['final_review']->id, 'final_review_status' => $result['final_review']->final_review_status?->value, 'occurred_at' => $result['final_review']->occurred_at?->toISOString(), 'replayed' => $result['replayed']]) : back()->with('success', $result['replayed'] ? 'Checkout final review already recorded (idempotent).' : 'Departure checkout final review recorded.');
+        } catch (DomainException $e) { throw ValidationException::withMessages(['departure_checkout_final_review' => [$e->getMessage()]]); }
+    }
+
+    public function departureCheckoutFinalReview(Request $request, string $stay, FrontDeskDepartureCheckoutFinalReviewProjectionService $projection)
+    {
+        try {
+            $review = $projection->finalReview($request->user(), $stay);
+            return $request->expectsJson() ? response()->json($review) : back()->with('departureCheckoutFinalReview', $review);
+        } catch (DomainException $e) { throw ValidationException::withMessages(['departure_checkout_final_review' => [$e->getMessage()]]); }
     }
 }
