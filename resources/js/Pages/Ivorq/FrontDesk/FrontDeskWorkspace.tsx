@@ -220,6 +220,36 @@ type AllowedClosureReadinessStatus = {
   label: string;
 };
 
+type CheckoutEligibilityEntry = {
+  id: string;
+  eligibility_status: string;
+  eligibility_status_label: string;
+  eligibility_note: string | null;
+  occurred_at: string;
+  created_by_name: string | null;
+  source_hash: string;
+};
+
+type CheckoutEligibility = {
+  latest: CheckoutEligibilityEntry;
+  history: CheckoutEligibilityEntry[];
+  b4_closure_readiness_dependency: {
+    id: string;
+    readiness_status: string;
+    readiness_status_label: string;
+    readiness_note: string | null;
+    occurred_at: string;
+  } | null;
+  b4_exists: boolean;
+  b4_blocked: boolean;
+  checkout_eligibility_warning: string | null;
+} | null;
+
+type AllowedCheckoutEligibilityStatus = {
+  value: string;
+  label: string;
+};
+
 type DepartureRow = {
   stay_id: string;
   reservation_id: string;
@@ -245,6 +275,9 @@ type DepartureRow = {
   departure_closure_readiness: ClosureReadiness;
   can_create_closure_readiness: boolean;
   allowed_closure_readiness_statuses: AllowedClosureReadinessStatus[];
+  departure_checkout_eligibility: CheckoutEligibility;
+  can_create_checkout_eligibility: boolean;
+  allowed_checkout_eligibility_statuses: AllowedCheckoutEligibilityStatus[];
   financial_marker: string;
   evaluated_at: string;
 };
@@ -631,6 +664,12 @@ function DepartureQueue({ title, rows }: { title: string; rows: DepartureRow[] }
             {row.departure_closure_readiness ? (
               <DepartureClosureReadinessPanel readiness={row.departure_closure_readiness} />
             ) : null}
+            {row.can_create_checkout_eligibility ? (
+              <CheckoutEligibilityForm stayId={row.stay_id} eligibilityStatuses={row.allowed_checkout_eligibility_statuses} />
+            ) : null}
+            {row.departure_checkout_eligibility ? (
+              <CheckoutEligibilityPanel eligibility={row.departure_checkout_eligibility} />
+            ) : null}
             {row.can_create_departure_preparation_event ? (
               <DepartureActionForm stayId={row.stay_id} eventTypes={row.allowed_event_types} />
             ) : null}
@@ -994,6 +1033,105 @@ function DepartureClosureReadinessPanel({ readiness }: { readiness: NonNullable<
       ))}
       <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
         Financial settlement: Not evaluated in Front Desk Package B4.
+      </div>
+    </div>
+  );
+}
+
+function CheckoutEligibilityForm({ stayId, eligibilityStatuses }: { stayId: string; eligibilityStatuses: AllowedCheckoutEligibilityStatus[] }) {
+  const [showForm, setShowForm] = React.useState(false);
+  const [selectedStatus, setSelectedStatus] = React.useState(eligibilityStatuses[0]?.value ?? '');
+
+  if (eligibilityStatuses.length === 0) return null;
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '10px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      {!showForm ? (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)', marginRight: '4px' }}>Checkout Eligibility:</span>
+          {eligibilityStatuses.map((es) => (
+            <Button key={es.value} size="sm" variant="secondary" onClick={() => { setShowForm(true); setSelectedStatus(es.value); }}>
+              <Icon name="note" /> {es.label}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <form method="post" action={`/frontdesk/stays/${stayId}/departure-checkout-eligibility`} onSubmit={() => setShowForm(false)}>
+          <input type="hidden" name="eligibility_status" value={selectedStatus} />
+          <input type="hidden" name="idempotency_key" value={`dce-${stayId}-${selectedStatus}-${Date.now()}`} />
+          <div style={{ marginBottom: '8px' }}>
+            <label style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>
+              Eligibility Note (Optional)
+            </label>
+            <textarea name="eligibility_note" rows={2} style={{
+              width: '100%', padding: '6px 8px', fontSize: '13px',
+              border: '1px solid var(--border-subtle)', borderRadius: '4px',
+              background: 'var(--surface-input)', color: 'var(--text-primary)',
+            }} placeholder="Optional eligibility note..." />
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <Button size="sm" type="submit"><Icon name="save" /> Record Eligibility</Button>
+            <Button size="sm" variant="secondary" onClick={(e: React.MouseEvent) => { e.preventDefault(); setShowForm(false); }}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function CheckoutEligibilityPanel({ eligibility }: { eligibility: NonNullable<CheckoutEligibility> }) {
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '10px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>
+        Checkout Eligibility History ({eligibility.history.length})
+      </div>
+      {eligibility.checkout_eligibility_warning ? (
+        <div style={{
+          padding: '6px 10px', marginBottom: '8px',
+          backgroundColor: 'var(--status-pending-bg)',
+          color: 'var(--status-pending-fg)',
+          borderRadius: '4px', fontSize: '12px', fontWeight: 500,
+        }}>
+          {eligibility.checkout_eligibility_warning}
+        </div>
+      ) : null}
+      {eligibility.history.map((entry) => (
+        <div key={entry.id} style={{
+          display: 'flex', alignItems: 'baseline', gap: '12px',
+          padding: '4px 0', borderBottom: '1px solid var(--border-subtle)',
+          fontSize: '12px',
+        }}>
+          <StatusBadge status="ready" style={{
+            fontSize: '10px', padding: '1px 8px', flexShrink: 0,
+            backgroundColor: entry.eligibility_status === 'CHECKOUT_ELIGIBLE' || entry.eligibility_status === 'CHECKOUT_REVIEWED'
+              ? 'var(--status-ready-bg)' : 'var(--status-pending-bg)',
+            color: entry.eligibility_status === 'CHECKOUT_ELIGIBLE' || entry.eligibility_status === 'CHECKOUT_REVIEWED'
+              ? 'var(--status-ready-fg)' : 'var(--status-pending-fg)',
+          }}>
+            {entry.eligibility_status_label}
+          </StatusBadge>
+          <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
+            {entry.eligibility_note ?? '—'}
+          </span>
+          <span style={{ color: 'var(--text-dimmed)', fontSize: '11px', flexShrink: 0 }}>
+            {entry.created_by_name ?? 'System'}, {entry.occurred_at ? new Date(entry.occurred_at).toLocaleString() : ''}
+          </span>
+        </div>
+      ))}
+      <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+        Financial settlement: Not evaluated in Front Desk Package B5.
       </div>
     </div>
   );

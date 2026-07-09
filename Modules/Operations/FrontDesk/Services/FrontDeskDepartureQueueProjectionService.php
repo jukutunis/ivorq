@@ -8,10 +8,12 @@ use Modules\Foundation\User\Models\User;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
 use Modules\Operations\FrontDesk\Enums\FrontDeskDeparturePreparationEventTypeEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutEligibility;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureClosureReadiness;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureOperationalHandover;
 use Modules\Operations\FrontDesk\Models\FrontDeskDeparturePreparationEvent;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
@@ -156,6 +158,11 @@ class FrontDeskDepartureQueueProjectionService
             'can_create_closure_readiness' => $actor->can(FrontDeskDepartureClosureReadinessService::CREATE_PERMISSION),
             'allowed_closure_readiness_statuses' => $actor->can(FrontDeskDepartureClosureReadinessService::CREATE_PERMISSION)
                 ? $this->allowedClosureReadinessStatusesForWorkspace()
+                : [],
+            'departure_checkout_eligibility' => $this->projectCheckoutEligibility($propertyId, $stay->id),
+            'can_create_checkout_eligibility' => $actor->can(FrontDeskDepartureCheckoutEligibilityService::CREATE_PERMISSION),
+            'allowed_checkout_eligibility_statuses' => $actor->can(FrontDeskDepartureCheckoutEligibilityService::CREATE_PERMISSION)
+                ? $this->allowedCheckoutEligibilityStatusesForWorkspace()
                 : [],
             'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
             'evaluated_at' => now()->toISOString(),
@@ -338,6 +345,87 @@ class FrontDeskDepartureQueueProjectionService
             'CLOSURE_READY' => 'Closure Ready',
             'CLOSURE_BLOCKED' => 'Closure Blocked',
             'CLOSURE_REVIEWED' => 'Closure Reviewed',
+            default => $status ?? 'Unknown',
+        };
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function projectCheckoutEligibility(string $propertyId, string $stayId): ?array
+    {
+        $entries = FrontDeskDepartureCheckoutEligibility::withoutGlobalScopes()
+            ->with(['createdBy'])
+            ->where('property_id', $propertyId)
+            ->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->limit(10)
+            ->get()
+            ->map(fn (FrontDeskDepartureCheckoutEligibility $entry) => [
+                'id' => $entry->id,
+                'eligibility_status' => $entry->eligibility_status?->value,
+                'eligibility_status_label' => $this->checkoutEligibilityStatusLabel($entry->eligibility_status?->value),
+                'eligibility_note' => $entry->eligibility_note,
+                'occurred_at' => $entry->occurred_at?->toISOString(),
+                'created_by_name' => $entry->createdBy?->name,
+                'source_hash' => $entry->source_hash,
+            ])
+            ->values()
+            ->all();
+
+        if (empty($entries)) {
+            return null;
+        }
+
+        $b4Readiness = FrontDeskDepartureClosureReadiness::withoutGlobalScopes()
+            ->where('property_id', $propertyId)
+            ->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->first();
+
+        $checkoutEligibilityWarning = null;
+        if (! $b4Readiness) {
+            $checkoutEligibilityWarning = 'No FD-B4 closure readiness evidence exists. CHECKOUT_ELIGIBLE requires at least one closure readiness.';
+        } elseif ($b4Readiness->readiness_status?->value === 'CLOSURE_BLOCKED') {
+            $checkoutEligibilityWarning = 'Latest FD-B4 closure readiness is blocked. CHECKOUT_ELIGIBLE requires the latest closure readiness to not be blocked.';
+        }
+
+        return [
+            'latest' => $entries[0],
+            'history' => $entries,
+            'b4_closure_readiness_dependency' => $b4Readiness ? [
+                'id' => $b4Readiness->id,
+                'readiness_status' => $b4Readiness->readiness_status?->value,
+                'readiness_status_label' => $this->closureReadinessStatusLabel($b4Readiness->readiness_status?->value),
+                'readiness_note' => $b4Readiness->readiness_note,
+                'occurred_at' => $b4Readiness->occurred_at?->toISOString(),
+            ] : null,
+            'b4_exists' => $b4Readiness !== null,
+            'b4_blocked' => $b4Readiness ? ($b4Readiness->readiness_status?->value === 'CLOSURE_BLOCKED') : false,
+            'checkout_eligibility_warning' => $checkoutEligibilityWarning,
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function allowedCheckoutEligibilityStatusesForWorkspace(): array
+    {
+        return [
+            ['value' => 'CHECKOUT_ELIGIBLE', 'label' => 'Mark Checkout Eligible'],
+            ['value' => 'CHECKOUT_BLOCKED', 'label' => 'Mark Checkout Blocked'],
+            ['value' => 'CHECKOUT_REVIEWED', 'label' => 'Mark Checkout Reviewed'],
+        ];
+    }
+
+    private function checkoutEligibilityStatusLabel(?string $status): string
+    {
+        return match ($status) {
+            'CHECKOUT_ELIGIBLE' => 'Checkout Eligible',
+            'CHECKOUT_BLOCKED' => 'Checkout Blocked',
+            'CHECKOUT_REVIEWED' => 'Checkout Reviewed',
             default => $status ?? 'Unknown',
         };
     }
