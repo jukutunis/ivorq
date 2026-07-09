@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), and Departure Operational Handover (FD-B3). All 28 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), and Departure Closure Readiness (FD-B4). All 34 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -39,18 +39,24 @@
         "FrontDeskRoomMoveIsolatedConcurrencyProofTest",
         "FrontDeskRoomMoveTest",
         "FrontDeskRoomMoveWorkspaceTest",
-        "FrontDeskWorkspaceRoomAssignmentTest"
+        "FrontDeskWorkspaceRoomAssignmentTest",
+        "FrontDeskDepartureClosureReadinessTest",
+        "FrontDeskDepartureClosureReadinessAuthorizationTest",
+        "FrontDeskDepartureClosureReadinessBoundaryTest",
+        "FrontDeskDepartureClosureReadinessImmutabilityTest",
+        "FrontDeskDepartureClosureReadinessWorkspaceTest",
+        "FrontDeskDepartureClosureReadinessIsolatedConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 207,
-        "assertions": 918,
+        "tests": 258,
+        "assertions": 1128,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-09",
-        "branch": "sprint-fd-b3-departure-operational-handover-governed",
-        "sha": "669f277d32c2829346624ec7b176a1311aaf5b5b"
+        "measured_at": "2026-07-10",
+        "branch": "sprint-fd-b4-departure-closure-readiness",
+        "sha": "f138c173f67306de6c857c7200e22d68483284b2"
       },
       "accepted_debt": [],
       "status": "active"
