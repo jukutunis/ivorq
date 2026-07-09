@@ -274,6 +274,30 @@ type AllowedCheckoutAuthorizationStatus = {
   label: string;
 };
 
+type CheckoutFinalReviewEntry = {
+  id: string;
+  final_review_status: string;
+  final_review_status_label: string;
+  final_review_note: string | null;
+  occurred_at: string;
+  created_by_name: string | null;
+  source_hash: string;
+};
+
+type CheckoutFinalReviewType = {
+  latest: CheckoutFinalReviewEntry;
+  history: CheckoutFinalReviewEntry[];
+  b6_checkout_authorization_dependency: { id: string; authorization_status: string; authorization_status_label: string; authorization_note: string | null; occurred_at: string } | null;
+  b6_exists: boolean;
+  b6_blocked: boolean;
+  final_review_warning: string | null;
+} | null;
+
+type AllowedCheckoutFinalReviewStatus = {
+  value: string;
+  label: string;
+};
+
 type DepartureRow = {
   stay_id: string;
   reservation_id: string;
@@ -305,6 +329,9 @@ type DepartureRow = {
   departure_checkout_authorization: CheckoutAuthorization;
   can_create_checkout_authorization: boolean;
   allowed_checkout_authorization_statuses: AllowedCheckoutAuthorizationStatus[];
+  departure_checkout_final_review: CheckoutFinalReviewType;
+  can_create_checkout_final_review: boolean;
+  allowed_checkout_final_review_statuses: AllowedCheckoutFinalReviewStatus[];
   financial_marker: string;
   evaluated_at: string;
 };
@@ -702,6 +729,12 @@ function DepartureQueue({ title, rows }: { title: string; rows: DepartureRow[] }
             ) : null}
             {row.departure_checkout_authorization ? (
               <CheckoutAuthorizationPanel authorization={row.departure_checkout_authorization} />
+            ) : null}
+            {row.can_create_checkout_final_review ? (
+              <CheckoutFinalReviewForm stayId={row.stay_id} reviewStatuses={row.allowed_checkout_final_review_statuses} />
+            ) : null}
+            {row.departure_checkout_final_review ? (
+              <CheckoutFinalReviewPanel review={row.departure_checkout_final_review} />
             ) : null}
             {row.can_create_departure_preparation_event ? (
               <DepartureActionForm stayId={row.stay_id} eventTypes={row.allowed_event_types} />
@@ -1212,6 +1245,59 @@ function CheckoutAuthorizationPanel({ authorization }: { authorization: NonNulla
         </div>
       ))}
       <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>Checkout execution: Not performed in Front Desk Package B6.</div>
+    </div>
+  );
+}
+
+function CheckoutFinalReviewForm({ stayId, reviewStatuses }: { stayId: string; reviewStatuses: AllowedCheckoutFinalReviewStatus[] }) {
+  const [showForm, setShowForm] = React.useState(false);
+  const [selectedStatus, setSelectedStatus] = React.useState(reviewStatuses[0]?.value ?? '');
+  if (reviewStatuses.length === 0) return null;
+  return (
+    <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '10px 16px', background: 'var(--surface-raised)', fontSize: '13px' }}>
+      {!showForm ? (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)', marginRight: '4px' }}>Checkout Final Review:</span>
+          {reviewStatuses.map((rs: AllowedCheckoutFinalReviewStatus) => (
+            <Button key={rs.value} size="sm" variant="secondary" onClick={() => { setShowForm(true); setSelectedStatus(rs.value); }}>
+              <Icon name="note" /> {rs.label}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <form method="post" action={`/frontdesk/stays/${stayId}/departure-checkout-final-review`} onSubmit={() => setShowForm(false)}>
+          <input type="hidden" name="final_review_status" value={selectedStatus} />
+          <input type="hidden" name="idempotency_key" value={`dcfr-${stayId}-${selectedStatus}-${Date.now()}`} />
+          <div style={{ marginBottom: '8px' }}><label style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>Final Review Note (Optional)</label>
+            <textarea name="final_review_note" rows={2} style={{ width: '100%', padding: '6px 8px', fontSize: '13px', border: '1px solid var(--border-subtle)', borderRadius: '4px', background: 'var(--surface-input)', color: 'var(--text-primary)' }} placeholder="Optional final review note..." />
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}><Button size="sm" type="submit"><Icon name="save" /> Record Final Review</Button><Button size="sm" variant="secondary" onClick={(e: React.MouseEvent) => { e.preventDefault(); setShowForm(false); }}>Cancel</Button></div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function CheckoutFinalReviewPanel({ review }: { review: NonNullable<CheckoutFinalReviewType> }) {
+  return (
+    <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '10px 16px', background: 'var(--surface-raised)', fontSize: '13px' }}>
+      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>Checkout Final Review History ({review.history.length})</div>
+      {review.final_review_warning ? (<div style={{ padding: '6px 10px', marginBottom: '8px', backgroundColor: 'var(--status-pending-bg)', color: 'var(--status-pending-fg)', borderRadius: '4px', fontSize: '12px', fontWeight: 500 }}>{review.final_review_warning}</div>) : null}
+      {review.b6_checkout_authorization_dependency ? (
+        <div style={{ padding: '4px 8px', marginBottom: '8px', backgroundColor: 'var(--surface-input)', borderRadius: '4px', fontSize: '11px', color: 'var(--text-dimmed)' }}>
+          B6 Authorization: <StatusBadge status="ready" style={{ fontSize: '10px', padding: '1px 6px', marginLeft: '6px', backgroundColor: review.b6_checkout_authorization_dependency.authorization_status === 'CHECKOUT_AUTHORIZATION_READY' ? 'var(--status-ready-bg)' : 'var(--status-pending-bg)', color: review.b6_checkout_authorization_dependency.authorization_status === 'CHECKOUT_AUTHORIZATION_READY' ? 'var(--status-ready-fg)' : 'var(--status-pending-fg)' }}>{review.b6_checkout_authorization_dependency.authorization_status_label}</StatusBadge>
+        </div>
+      ) : null}
+      {review.history.map((entry: CheckoutFinalReviewEntry) => (
+        <div key={entry.id} style={{ display: 'flex', alignItems: 'baseline', gap: '12px', padding: '4px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '12px' }}>
+          <StatusBadge status="ready" style={{ fontSize: '10px', padding: '1px 8px', flexShrink: 0, backgroundColor: entry.final_review_status === 'CHECKOUT_FINAL_REVIEW_READY' || entry.final_review_status === 'CHECKOUT_FINAL_REVIEW_REVIEWED' ? 'var(--status-ready-bg)' : 'var(--status-pending-bg)', color: entry.final_review_status === 'CHECKOUT_FINAL_REVIEW_READY' || entry.final_review_status === 'CHECKOUT_FINAL_REVIEW_REVIEWED' ? 'var(--status-ready-fg)' : 'var(--status-pending-fg)' }}>{entry.final_review_status_label}</StatusBadge>
+          <span style={{ color: 'var(--text-secondary)', flex: 1 }}>{entry.final_review_note ?? '—'}</span>
+          <span style={{ color: 'var(--text-dimmed)', fontSize: '11px', flexShrink: 0 }}>{entry.created_by_name ?? 'System'}, {entry.occurred_at ? new Date(entry.occurred_at).toLocaleString() : ''}</span>
+        </div>
+      ))}
+      <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>Checkout execution: Not performed in Front Desk Package B7.</div>
+      <div style={{ fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>Stay closure: Not performed in Front Desk Package B7.</div>
+      <div style={{ fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>Financial settlement: Not evaluated in Front Desk Package B7.</div>
     </div>
   );
 }
