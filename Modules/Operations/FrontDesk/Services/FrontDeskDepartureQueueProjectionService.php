@@ -8,11 +8,13 @@ use Modules\Foundation\User\Models\User;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
 use Modules\Operations\FrontDesk\Enums\FrontDeskDeparturePreparationEventTypeEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutAuthorization;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutEligibility;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureClosureReadiness;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureOperationalHandover;
 use Modules\Operations\FrontDesk\Models\FrontDeskDeparturePreparationEvent;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
@@ -163,6 +165,11 @@ class FrontDeskDepartureQueueProjectionService
             'can_create_checkout_eligibility' => $actor->can(FrontDeskDepartureCheckoutEligibilityService::CREATE_PERMISSION),
             'allowed_checkout_eligibility_statuses' => $actor->can(FrontDeskDepartureCheckoutEligibilityService::CREATE_PERMISSION)
                 ? $this->allowedCheckoutEligibilityStatusesForWorkspace()
+                : [],
+            'departure_checkout_authorization' => $this->projectCheckoutAuthorization($propertyId, $stay->id),
+            'can_create_checkout_authorization' => $actor->can(FrontDeskDepartureCheckoutAuthorizationService::CREATE_PERMISSION),
+            'allowed_checkout_authorization_statuses' => $actor->can(FrontDeskDepartureCheckoutAuthorizationService::CREATE_PERMISSION)
+                ? $this->allowedCheckoutAuthorizationStatusesForWorkspace()
                 : [],
             'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
             'evaluated_at' => now()->toISOString(),
@@ -428,6 +435,42 @@ class FrontDeskDepartureQueueProjectionService
             'CHECKOUT_REVIEWED' => 'Checkout Reviewed',
             default => $status ?? 'Unknown',
         };
+    }
+
+    private function projectCheckoutAuthorization(string $propertyId, string $stayId): ?array
+    {
+        $entries = FrontDeskDepartureCheckoutAuthorization::withoutGlobalScopes()->with(['createdBy'])
+            ->where('property_id', $propertyId)->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')->orderBy('created_at', 'desc')->limit(10)->get()
+            ->map(fn(FrontDeskDepartureCheckoutAuthorization $e) => [
+                'id' => $e->id, 'authorization_status' => $e->authorization_status?->value,
+                'authorization_status_label' => $this->checkoutAuthorizationStatusLabel($e->authorization_status?->value),
+                'authorization_note' => $e->authorization_note, 'occurred_at' => $e->occurred_at?->toISOString(),
+                'created_by_name' => $e->createdBy?->name, 'source_hash' => $e->source_hash,
+            ])->values()->all();
+        if (empty($entries)) return null;
+
+        $b5 = FrontDeskDepartureCheckoutEligibility::withoutGlobalScopes()
+            ->where('property_id', $propertyId)->where('front_desk_stay_id', $stayId)
+            ->orderBy('occurred_at', 'desc')->orderBy('created_at', 'desc')->first();
+
+        $warn = !$b5 ? 'No FD-B5 checkout eligibility evidence exists. CHECKOUT_AUTHORIZATION_READY requires latest FD-B5 CHECKOUT_ELIGIBLE.'
+            : ($b5->eligibility_status?->value !== 'CHECKOUT_ELIGIBLE' ? 'Latest FD-B5 checkout eligibility is not CHECKOUT_ELIGIBLE. CHECKOUT_AUTHORIZATION_READY requires latest FD-B5 CHECKOUT_ELIGIBLE.' : null);
+
+        return ['latest' => $entries[0], 'history' => $entries,
+            'b5_eligibility_dependency' => $b5 ? ['id' => $b5->id, 'eligibility_status' => $b5->eligibility_status?->value, 'eligibility_status_label' => $this->checkoutEligibilityStatusLabel($b5->eligibility_status?->value), 'eligibility_note' => $b5->eligibility_note, 'occurred_at' => $b5->occurred_at?->toISOString()] : null,
+            'b5_exists' => $b5 !== null, 'b5_blocked' => $b5 ? ($b5->eligibility_status?->value !== 'CHECKOUT_ELIGIBLE') : false,
+            'authorization_warning' => $warn];
+    }
+
+    private function allowedCheckoutAuthorizationStatusesForWorkspace(): array
+    {
+        return [['value' => 'CHECKOUT_AUTHORIZATION_READY', 'label' => 'Mark Authorization Ready'], ['value' => 'CHECKOUT_AUTHORIZATION_BLOCKED', 'label' => 'Mark Authorization Blocked'], ['value' => 'CHECKOUT_AUTHORIZATION_REVIEWED', 'label' => 'Mark Authorization Reviewed']];
+    }
+
+    private function checkoutAuthorizationStatusLabel(?string $s): string
+    {
+        return match($s) { 'CHECKOUT_AUTHORIZATION_READY' => 'Authorization Ready', 'CHECKOUT_AUTHORIZATION_BLOCKED' => 'Authorization Blocked', 'CHECKOUT_AUTHORIZATION_REVIEWED' => 'Authorization Reviewed', default => $s ?? 'Unknown' };
     }
 
     private function eventTypeLabel(?string $type): string

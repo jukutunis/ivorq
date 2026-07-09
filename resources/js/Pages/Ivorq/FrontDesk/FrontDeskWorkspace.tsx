@@ -250,6 +250,30 @@ type AllowedCheckoutEligibilityStatus = {
   label: string;
 };
 
+type CheckoutAuthorizationEntry = {
+  id: string;
+  authorization_status: string;
+  authorization_status_label: string;
+  authorization_note: string | null;
+  occurred_at: string;
+  created_by_name: string | null;
+  source_hash: string;
+};
+
+type CheckoutAuthorization = {
+  latest: CheckoutAuthorizationEntry;
+  history: CheckoutAuthorizationEntry[];
+  b5_eligibility_dependency: { id: string; eligibility_status: string; eligibility_status_label: string; eligibility_note: string | null; occurred_at: string } | null;
+  b5_exists: boolean;
+  b5_blocked: boolean;
+  authorization_warning: string | null;
+} | null;
+
+type AllowedCheckoutAuthorizationStatus = {
+  value: string;
+  label: string;
+};
+
 type DepartureRow = {
   stay_id: string;
   reservation_id: string;
@@ -278,6 +302,9 @@ type DepartureRow = {
   departure_checkout_eligibility: CheckoutEligibility;
   can_create_checkout_eligibility: boolean;
   allowed_checkout_eligibility_statuses: AllowedCheckoutEligibilityStatus[];
+  departure_checkout_authorization: CheckoutAuthorization;
+  can_create_checkout_authorization: boolean;
+  allowed_checkout_authorization_statuses: AllowedCheckoutAuthorizationStatus[];
   financial_marker: string;
   evaluated_at: string;
 };
@@ -669,6 +696,12 @@ function DepartureQueue({ title, rows }: { title: string; rows: DepartureRow[] }
             ) : null}
             {row.departure_checkout_eligibility ? (
               <CheckoutEligibilityPanel eligibility={row.departure_checkout_eligibility} />
+            ) : null}
+            {row.can_create_checkout_authorization ? (
+              <CheckoutAuthorizationForm stayId={row.stay_id} authorizationStatuses={row.allowed_checkout_authorization_statuses} />
+            ) : null}
+            {row.departure_checkout_authorization ? (
+              <CheckoutAuthorizationPanel authorization={row.departure_checkout_authorization} />
             ) : null}
             {row.can_create_departure_preparation_event ? (
               <DepartureActionForm stayId={row.stay_id} eventTypes={row.allowed_event_types} />
@@ -1133,6 +1166,52 @@ function CheckoutEligibilityPanel({ eligibility }: { eligibility: NonNullable<Ch
       <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
         Financial settlement: Not evaluated in Front Desk Package B5.
       </div>
+    </div>
+  );
+}
+
+function CheckoutAuthorizationForm({ stayId, authorizationStatuses }: { stayId: string; authorizationStatuses: AllowedCheckoutAuthorizationStatus[] }) {
+  const [showForm, setShowForm] = React.useState(false);
+  const [selectedStatus, setSelectedStatus] = React.useState(authorizationStatuses[0]?.value ?? '');
+  if (authorizationStatuses.length === 0) return null;
+  return (
+    <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '10px 16px', background: 'var(--surface-raised)', fontSize: '13px' }}>
+      {!showForm ? (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)', marginRight: '4px' }}>Checkout Authorization:</span>
+          {authorizationStatuses.map((as: AllowedCheckoutAuthorizationStatus) => (
+            <Button key={as.value} size="sm" variant="secondary" onClick={() => { setShowForm(true); setSelectedStatus(as.value); }}>
+              <Icon name="note" /> {as.label}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <form method="post" action={`/frontdesk/stays/${stayId}/departure-checkout-authorization`} onSubmit={() => setShowForm(false)}>
+          <input type="hidden" name="authorization_status" value={selectedStatus} />
+          <input type="hidden" name="idempotency_key" value={`dca-${stayId}-${selectedStatus}-${Date.now()}`} />
+          <div style={{ marginBottom: '8px' }}><label style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>Authorization Note (Optional)</label>
+            <textarea name="authorization_note" rows={2} style={{ width: '100%', padding: '6px 8px', fontSize: '13px', border: '1px solid var(--border-subtle)', borderRadius: '4px', background: 'var(--surface-input)', color: 'var(--text-primary)' }} placeholder="Optional authorization note..." />
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}><Button size="sm" type="submit"><Icon name="save" /> Record Authorization</Button><Button size="sm" variant="secondary" onClick={(e: React.MouseEvent) => { e.preventDefault(); setShowForm(false); }}>Cancel</Button></div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function CheckoutAuthorizationPanel({ authorization }: { authorization: NonNullable<CheckoutAuthorization> }) {
+  return (
+    <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '10px 16px', background: 'var(--surface-raised)', fontSize: '13px' }}>
+      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>Checkout Authorization History ({authorization.history.length})</div>
+      {authorization.authorization_warning ? (<div style={{ padding: '6px 10px', marginBottom: '8px', backgroundColor: 'var(--status-pending-bg)', color: 'var(--status-pending-fg)', borderRadius: '4px', fontSize: '12px', fontWeight: 500 }}>{authorization.authorization_warning}</div>) : null}
+      {authorization.history.map((entry: CheckoutAuthorizationEntry) => (
+        <div key={entry.id} style={{ display: 'flex', alignItems: 'baseline', gap: '12px', padding: '4px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '12px' }}>
+          <StatusBadge status="ready" style={{ fontSize: '10px', padding: '1px 8px', flexShrink: 0, backgroundColor: entry.authorization_status === 'CHECKOUT_AUTHORIZATION_READY' || entry.authorization_status === 'CHECKOUT_AUTHORIZATION_REVIEWED' ? 'var(--status-ready-bg)' : 'var(--status-pending-bg)', color: entry.authorization_status === 'CHECKOUT_AUTHORIZATION_READY' || entry.authorization_status === 'CHECKOUT_AUTHORIZATION_REVIEWED' ? 'var(--status-ready-fg)' : 'var(--status-pending-fg)' }}>{entry.authorization_status_label}</StatusBadge>
+          <span style={{ color: 'var(--text-secondary)', flex: 1 }}>{entry.authorization_note ?? '—'}</span>
+          <span style={{ color: 'var(--text-dimmed)', fontSize: '11px', flexShrink: 0 }}>{entry.created_by_name ?? 'System'}, {entry.occurred_at ? new Date(entry.occurred_at).toLocaleString() : ''}</span>
+        </div>
+      ))}
+      <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>Checkout execution: Not performed in Front Desk Package B6.</div>
     </div>
   );
 }
