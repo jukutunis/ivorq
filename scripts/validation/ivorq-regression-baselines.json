@@ -68,7 +68,7 @@
       "provenance": {
         "measured_at": "2026-07-10",
         "branch": "sprint-fd-b6-departure-checkout-authorization-handoff",
-        "sha": "TBD"
+        "sha": "e0cef70c4c71c4aa2906e623d769a7460bb24369"
       },
       "accepted_debt": [],
       "status": "active"
