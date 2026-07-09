@@ -79,14 +79,6 @@ Do not touch protected local artifacts merely because they appear in `git status
 
 ## Security and environment boundary
 
-Never inspect, print, parse, load, or modify:
-
-```text
-.env
-.env.*
-bootstrap/cache/config.php
-```
-
 Never print .env or secrets.
 Never commit secrets.
 Do not manually inspect credentials.
