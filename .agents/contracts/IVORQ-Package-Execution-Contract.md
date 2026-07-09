@@ -1,6 +1,6 @@
 # IVORQ Package Execution Contract
 
-Status: DRAFT_PENDING_OWNER_APPROVAL
+Status: APPROVED
 Version: 1.0
 Created: 2026-07-10
 Last amended: 2026-07-10
