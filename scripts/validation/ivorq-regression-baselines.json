@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 365,
-        "assertions": 3588,
+        "tests": 366,
+        "assertions": 1469,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-11",
         "branch": "sprint-fd-b8-checkout-execution-boundary",
-        "sha": "1ec243c52e77dbfc90d748f24de0c99e9b6486cd",
-        "note": "All 53 classes proven via exact-class runner at 365 tests / 3588 assertions / 0 failures / 0 errors. FD-B8 adds 22 tests to the prior 343-test baseline. Previous 375/1450 was incorrectly measured using broad --filter FrontDesk. Correction commit 1ec243c fixes stay lifecycle, REVIEW_REQUIRED semantics, queue error handling, and workspace StatusBadge contract. This commit stamps corrected provenance metadata only."
+        "sha": "ea54abb356ac96446264c5682c1d3f779ac9b5ac",
+        "note": "All 53 classes proven via exact-class runner at 366 tests / 1469 assertions / 0 failures / 0 errors. FD-B8 adds 23 tests to the prior 343-test baseline. Previous 3588-assertion count was inflated by per-route assertions; corrected to aggregate proof (1469). Commit ea54abb aligns queue/frontend blocker_messages contract, replaces per-route assertion inflation with aggregate route proof, and adds real workspace source-contract verification. This commit stamps final corrected provenance metadata only."
       },
       "accepted_debt": [],
       "status": "active"
