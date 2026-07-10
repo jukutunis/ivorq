@@ -33,6 +33,7 @@ IVORQ will implement a strict **Two-Ledger AR Architecture**. The **Guest Ledger
   - `Window 2` is settled by the guest's physical credit card.
   - `Window 1` is settled via the "Direct Bill" payment method.
 - **Ledger Impact:** The Direct Bill payment posts: `Cr Guest Ledger (clearing the folio) | Dr City Ledger (creating the AR Invoice for the Corporation)`.
+- **Accepted Transfer Boundary:** Clarified by ADR-088. PMS Guest Ledger owns the guest balance before an accepted Direct Bill / AR transfer. Accounting / AR owns the City Ledger receivable only after the transfer is accepted. A requested, pending, failed, rejected, or reversed transfer is not settlement evidence by itself.
 
 ## 9. Credit Rules
 - **Guest Credit Limits:** In-house guests have a "Floor Limit" (e.g., $500). If the Guest Ledger balance exceeds this, the POS Integration API hard-blocks any further room charges until the guest provides a mid-stay payment.

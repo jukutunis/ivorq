@@ -13,6 +13,8 @@ The existing PMS runtime contains reservation, guest, stay, room assignment, roo
 
 Front Desk Package A must therefore define a narrow Front Desk-owned operational boundary that can read canonical source evidence but must not own or mutate commercial reservation lifecycle, Housekeeping readiness, Engineering blocks, Room master data, payment, folio, revenue, tax, Accounts Receivable, General Ledger, Financial Period, Business Date, Night Audit, or final check-out settlement.
 
+ADR-088 clarifies that Front Office is the organizational and business steward for PMS operations, while Front Desk is a controlled operational domain. PMS Guest Ledger owns guest folio and settlement evidence. PMS Cashiering owns guest payment and allocation evidence. General Cashier owns cashier session and cash accountability. Accounting owns revenue recognition, tax posting, AR after accepted transfer, and GL outcomes. Finance governs and consumes financial outcomes.
+
 ## Decision
 
 ### Ownership
@@ -350,7 +352,11 @@ Front Desk does not own:
 | Housekeeping readiness | Housekeeping | Read through accepted dependency |
 | Engineering availability | Engineering | Read through accepted dependency |
 | Due-out classification | Front Desk FD-B1 | Read |
-| Folio / Payment / Revenue | Finance | None |
+| Folio / Guest Ledger settlement | PMS Guest Ledger | None |
+| Guest payment / allocation | PMS Cashiering | None |
+| Cashier session / cash accountability | General Cashier | None |
+| Revenue recognition / GL | Accounting | None |
+| Finance governance / reporting | Finance | None |
 | Housekeeping readiness mutation | Housekeeping | None |
 | Engineering availability mutation | Engineering | None |
 
@@ -488,7 +494,11 @@ Front Desk does not own:
 | Room identity | Housekeeping Room | Read |
 | Departure preparation events | Front Desk (FD-B2) | Read |
 | Due-out classification | Front Desk (FD-B1) | Read |
-| Folio / Payment / Revenue | Finance | None |
+| Folio / Guest Ledger settlement | PMS Guest Ledger | None |
+| Guest payment / allocation | PMS Cashiering | None |
+| Cashier session / cash accountability | General Cashier | None |
+| Revenue recognition / GL | Accounting | None |
+| Finance governance / reporting | Finance | None |
 | Housekeeping readiness mutation | Housekeeping | None |
 | Engineering availability mutation | Engineering | None |
 

@@ -59,6 +59,14 @@ Finance is strictly prohibited from owning operational execution. Finance **does
 * **PMS:** Front Office (Owner), Revenue Management (Contributor), Finance (Consumer).
 * **HRIS:** Human Resources (Owner), Dept Heads (Contributor), Finance (Consumer of Payroll).
 
+### Hospitality Financial Subledger Clarification
+
+Clarified by ADR-088.
+
+For PMS financial behavior, Front Office remains the organizational and business steward of PMS operations, but the operational guest-folio owner is PMS Guest Ledger. PMS Guest Ledger owns guest folio identity, folio lifecycle, folio items, guest ledger balance, settlement readiness, settlement evidence, and controlled folio closure after settlement. PMS Cashiering owns guest payment lifecycle, guest payment allocation, deposit application, guest refund, and payment void/reversal relationships.
+
+Finance governs, reviews, configures, and consumes financial outcomes; Finance is not the operational owner of guest folios. Accounting owns Accounts Receivable and General Ledger outcomes after their accepted boundaries: Accounting / AR owns City Ledger receivables only after accepted transfer, and Accounting / GL owns journal entries, revenue recognition, tax posting, and financial-period control. This operational ownership clarification does not grant Front Desk direct folio, payment, deposit, refund, settlement, AR, cashier, or accounting mutation authority.
+
 ## Financial Document Ownership
 * **Budget:** Owned by Finance (creation and lock). Consumed by Operations.
 * **Forecast:** Owned by Operations. Validated and consumed by Finance.
