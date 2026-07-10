@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), and Departure Checkout Final Review (FD-B7). All 52 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), and Departure Checkout Execution Boundary (FD-B8). All 53 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -63,19 +63,20 @@
         "FrontDeskDepartureCheckoutFinalReviewBoundaryTest",
         "FrontDeskDepartureCheckoutFinalReviewImmutabilityTest",
         "FrontDeskDepartureCheckoutFinalReviewWorkspaceTest",
-        "FrontDeskDepartureCheckoutFinalReviewIsolatedConcurrencyProofTest"
+        "FrontDeskDepartureCheckoutFinalReviewIsolatedConcurrencyProofTest",
+        "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 343,
-        "assertions": 1371,
+        "tests": 375,
+        "assertions": 1450,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-10",
-        "branch": "sprint-fd-b7-departure-checkout-final-review",
-        "sha": "b61b0ba2abbc32c3faa7c938d58a02bdad983ddc",
-        "note": "All 52 classes proven locally at 343 tests / 1371 assertions / 0 failures / 0 errors. PR #12 concurrency test-runner remediation enables all 8 concurrency proof tests (B2-B7 + A2 + RoomMove) to pass locally."
+        "measured_at": "2026-07-11",
+        "branch": "sprint-fd-b8-checkout-execution-boundary",
+        "sha": "35a2f0fee575be652d96f0e7906d806ae08e4594",
+        "note": "All 53 classes proven locally at 375 tests / 1450 assertions / 0 failures / 0 errors. FD-B8 adds 20 tests / 57 assertions for checkout execution boundary projection. Commit 35a2f0f is the measurement commit; this commit stamps provenance metadata only."
       },
       "accepted_debt": [],
       "status": "active"
