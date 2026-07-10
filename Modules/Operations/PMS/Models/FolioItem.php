@@ -13,8 +13,21 @@ class FolioItem extends Model
 {
     use HasUlid;
 
-    // FolioItem rows are immutable ledger entries.
-    // updated_at is not meaningful here; void flag is used instead of deletion.
+    /**
+     * FolioItem rows are immutable ledger entries.
+     * updated_at is not meaningful here; void flag is used instead of deletion.
+     *
+     * SERVER-OWNED (must NOT be accepted from browser input):
+     *   property_id — derived from parent Folio server-side
+     *   folio_id    — resolved server-side from the controlled folio
+     *   is_void     — managed through controlled voidItem() only
+     *   posted_at   — set server-side at posting time
+     *   posted_by   — resolved from the authenticated actor server-side
+     *   created_by  — resolved from the authenticated actor server-side
+     *
+     * BUSINESS INPUT (narrowly permitted, subject to validation):
+     *   item_type, description, quantity, amount
+     */
     protected $fillable = [
         'property_id',
         'folio_id',

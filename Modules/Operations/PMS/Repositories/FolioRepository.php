@@ -71,12 +71,29 @@ class FolioRepository
     /**
      * Return the open folio(s) for a given reservation.
      * Typically one per reservation but supports split-folio scenarios.
+     *
+     * GLF-A: Results are ordered by window_number.
      */
     public function openForReservation(string $reservationId): Collection
     {
         return Folio::where('reservation_id', $reservationId)
             ->where('status', FolioStatusEnum::Open)
             ->with(['items.postedBy'])
+            ->orderBy('window_number')
+            ->get();
+    }
+
+    /**
+     * Return ALL folios for a given reservation, ordered by window number.
+     *
+     * GLF-A: This is the authoritative query for multi-folio aggregation.
+     * Results are property-scoped via the BelongsToProperty global scope.
+     */
+    public function forReservation(string $reservationId): Collection
+    {
+        return Folio::where('reservation_id', $reservationId)
+            ->with(['items.postedBy'])
+            ->orderBy('window_number')
             ->get();
     }
 

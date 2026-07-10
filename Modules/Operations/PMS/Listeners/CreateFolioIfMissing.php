@@ -5,12 +5,20 @@ namespace Modules\Operations\PMS\Listeners;
 use Modules\Operations\PMS\Enums\FolioStatusEnum;
 use Modules\Operations\PMS\Events\GuestCheckedIn;
 use Modules\Operations\PMS\Models\Folio;
-use Modules\Operations\PMS\Repositories\FolioRepository;
+use Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService;
 
+/**
+ * System-driven default folio creation on guest check-in.
+ *
+ * GLF-A: Routes through GuestLedgerFolioAggregateService::openWindowSystem()
+ * using a deterministic source-proven idempotency key so that replay is safe.
+ * Property, guest, and currency are resolved from the check-in event context
+ * — never from browser input.
+ */
 class CreateFolioIfMissing
 {
     public function __construct(
-        private FolioRepository $folioRepository
+        private GuestLedgerFolioAggregateService $aggregate,
     ) {}
 
     public function handle(GuestCheckedIn $event): void
@@ -18,7 +26,7 @@ class CreateFolioIfMissing
         $reservation = $event->reservation;
         $stay        = $event->stay;
 
-        // Only create a folio if the reservation has no open folio yet
+        // Idempotency check: only create if no open folio exists yet.
         $hasOpenFolio = Folio::where('reservation_id', $reservation->id)
             ->where('status', FolioStatusEnum::Open)
             ->exists();
@@ -27,19 +35,19 @@ class CreateFolioIfMissing
             return;
         }
 
-        $seq          = Folio::where('property_id', $reservation->property_id)->withTrashed()->count() + 1;
-        $folioNumber  = sprintf('FOL-%05d', $seq);
+        // Resolve currency: prefer rate plan, fall back to property base currency.
+        // The aggregate service will use the property currency if not explicitly
+        // provided, but we resolve the best available source here for the
+        // system-driven path.
+        $currency = $reservation->ratePlan?->currency
+            ?? $reservation->property?->currency
+            ?? 'MYR';
 
-        $this->folioRepository->create([
-            'property_id'    => $reservation->property_id,
-            'folio_number'   => $folioNumber,
-            'reservation_id' => $reservation->id,
-            'guest_id'       => $stay->guest_id,
-            'status'         => FolioStatusEnum::Open->value,
-            'currency'       => $reservation->ratePlan?->currency ?? 'MYR',
-            'total_charges'  => 0.00,
-            'total_payments' => 0.00,
-            'balance'        => 0.00,
-        ]);
+        $this->aggregate->openWindowSystem(
+            reservationId: $reservation->id,
+            propertyId:    $reservation->property_id,
+            guestId:       $stay->guest_id,
+            currency:      $currency,
+        );
     }
 }
