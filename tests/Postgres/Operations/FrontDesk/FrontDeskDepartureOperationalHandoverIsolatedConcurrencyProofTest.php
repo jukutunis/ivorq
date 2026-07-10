@@ -3,20 +3,20 @@
 namespace Tests\Postgres\Operations\FrontDesk;
 
 use DomainException;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureOperationalHandover;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
 use Tests\Postgres\Operations\FrontDesk\Concerns\CreatesFrontDeskFdA2Data;
+use Tests\Postgres\Operations\FrontDesk\Concerns\ManagesConcurrencyDatabase;
 use Tests\PostgresTestCase;
 
 class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends PostgresTestCase
 {
     use CreatesFrontDeskFdA2Data;
+    use ManagesConcurrencyDatabase;
 
-    protected string $concurrencyDb;
     protected string $stayId;
     protected string $frontDeskActorId;
 
@@ -24,42 +24,14 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
     {
         parent::setUp();
 
-        $this->concurrencyDb = 'ivorq_concurrency_fd_b3_' . Str::lower(Str::random(8));
-        DB::statement("CREATE DATABASE \"{$this->concurrencyDb}\"");
-        DB::disconnect();
-
-        config(['database.connections.pgsql_concurrency' => [
-            'driver' => 'pgsql',
-            'host' => config('database.connections.pgsql.host'),
-            'port' => config('database.connections.pgsql.port'),
-            'database' => $this->concurrencyDb,
-            'username' => config('database.connections.pgsql.username'),
-            'password' => config('database.connections.pgsql.password'),
-        ]]);
-
-        DB::purge('pgsql_concurrency');
-
-        Carbon::setTestNow(Carbon::parse('2026-07-09 09:00:00'));
-
-        $this->artisan('migrate', [
-            '--database' => 'pgsql_concurrency',
-            '--force' => true,
-        ]);
+        $this->setUpConcurrencyDatabase('ivorq_concurrency_fd_b3_', '2026-07-09 09:00:00');
 
         $this->seedConcurrencyDatabase();
     }
 
     protected function tearDown(): void
     {
-        Carbon::setTestNow();
-        DB::disconnect('pgsql_concurrency');
-
-        DB::statement("SELECT pg_terminate_backend(pg_stat_activity.pid)
-            FROM pg_stat_activity
-            WHERE pg_stat_activity.datname = '{$this->concurrencyDb}'
-              AND pid <> pg_backend_pid()");
-
-        DB::statement("DROP DATABASE IF EXISTS \"{$this->concurrencyDb}\"");
+        $this->tearDownConcurrencyDatabase();
         parent::tearDown();
     }
 
@@ -71,8 +43,6 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
         $stayId = $this->stayId;
         $actorId = $this->frontDeskActorId;
         $concurrencyDb = $this->concurrencyDb;
-
-        $this->exposeOsAndPgPids();
 
         [$firstPid, $secondPid] = $this->simultaneousIdempotentCreates(
             $stayId, 'OPERATIONAL_HANDOVER_READY', 'Concurrent same key.', $idempotencyKey
@@ -98,8 +68,6 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
         $key1 = 'distinct-key-1-' . Str::ulid();
         $key2 = 'distinct-key-2-' . Str::ulid();
         $stayId = $this->stayId;
-
-        $this->exposeOsAndPgPids();
 
         [$firstPid, $secondPid] = $this->simultaneousDistinctCreates(
             $stayId,
@@ -142,15 +110,6 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
         DB::setDefaultConnection('pgsql');
     }
 
-    private function exposeOsAndPgPids(): void
-    {
-        fwrite(STDERR, 'OS PID: ' . getmypid() . PHP_EOL);
-
-        $pgBackend = DB::connection('pgsql_concurrency')
-            ->select('SELECT pg_backend_pid() as pid');
-        fwrite(STDERR, 'PG Backend PID: ' . $pgBackend[0]->pid . PHP_EOL);
-    }
-
     /**
      * @return array{0: int, 1: int}
      */
@@ -162,11 +121,9 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
     ): array {
         $concurrencyDb = $this->concurrencyDb;
 
-        $createHandover = function (string $worker) use ($stayId, $status, $note, $key, $concurrencyDb): int {
+        $createHandover = function () use ($stayId, $status, $note, $key, $concurrencyDb): int {
             $pgsql = DB::connection('pgsql_concurrency');
             $pid = $pgsql->select('SELECT pg_backend_pid() as pid')[0]->pid;
-
-            fwrite(STDERR, "Worker {$worker} PG PID: {$pid}" . PHP_EOL);
 
             try {
                 DB::setDefaultConnection('pgsql_concurrency');
@@ -179,10 +136,8 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
                 app(FrontDeskDepartureOperationalHandoverService::class)->create(
                     $actor, $stayId, $status, $note, $key
                 );
-            } catch (DomainException $e) {
-                fwrite(STDERR, "Worker {$worker} domain error: {$e->getMessage()}" . PHP_EOL);
-            } catch (\Throwable $e) {
-                fwrite(STDERR, "Worker {$worker} error: {$e->getMessage()}" . PHP_EOL);
+            } catch (DomainException) {
+                // expected for duplicate idempotency — one worker wins
             } finally {
                 DB::setDefaultConnection('pgsql');
                 config(['database.default' => 'pgsql']);
@@ -191,8 +146,8 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
             return (int) $pid;
         };
 
-        $firstPid = $createHandover('A');
-        $secondPid = $createHandover('B');
+        $firstPid = $createHandover();
+        $secondPid = $createHandover();
 
         return [$firstPid, $secondPid];
     }
@@ -205,14 +160,11 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
         array $first,
         array $second
     ): array {
-        $concurrencyDb = $this->concurrencyDb;
         $actorId = $this->frontDeskActorId;
 
-        $createHandover = function (string $worker, array $params) use ($stayId, $concurrencyDb, $actorId): int {
+        $createHandover = function (array $params) use ($stayId, $actorId): int {
             $pgsql = DB::connection('pgsql_concurrency');
             $pid = $pgsql->select('SELECT pg_backend_pid() as pid')[0]->pid;
-
-            fwrite(STDERR, "Worker {$worker} PG PID: {$pid}" . PHP_EOL);
 
             try {
                 DB::setDefaultConnection('pgsql_concurrency');
@@ -225,10 +177,8 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
                 app(FrontDeskDepartureOperationalHandoverService::class)->create(
                     $actor, $stayId, $params['status'], $params['note'] ?? null, $params['key']
                 );
-            } catch (DomainException $e) {
-                fwrite(STDERR, "Worker {$worker} domain error: {$e->getMessage()}" . PHP_EOL);
-            } catch (\Throwable $e) {
-                fwrite(STDERR, "Worker {$worker} error: {$e->getMessage()}" . PHP_EOL);
+            } catch (DomainException) {
+                // expected when another worker creates the same record
             } finally {
                 DB::setDefaultConnection('pgsql');
                 config(['database.default' => 'pgsql']);
@@ -237,8 +187,8 @@ class FrontDeskDepartureOperationalHandoverIsolatedConcurrencyProofTest extends 
             return (int) $pid;
         };
 
-        $firstPid = $createHandover('A', $first);
-        $secondPid = $createHandover('B', $second);
+        $firstPid = $createHandover($first);
+        $secondPid = $createHandover($second);
 
         return [$firstPid, $secondPid];
     }
