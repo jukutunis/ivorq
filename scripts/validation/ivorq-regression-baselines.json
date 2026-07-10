@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), and Departure Checkout Final Review (FD-B7). 44 non-concurrency classes pass cleanly at 328 tests / 1269 assertions. 8 concurrency classes are blocked pending CI/proven environment validation.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), and Departure Checkout Final Review (FD-B7). All 52 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -66,16 +66,16 @@
         "FrontDeskDepartureCheckoutFinalReviewIsolatedConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 328,
-        "assertions": 1269,
+        "tests": 343,
+        "assertions": 1371,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-10",
         "branch": "sprint-fd-b7-departure-checkout-final-review",
-        "sha": "cead5513a01fd93fbe41f4922058767daff3751c",
-        "note": "Non-concurrency batch (44 classes): 328 tests / 1269 assertions — measured 2026-07-10. 8 concurrency classes (B3-B7 IsolatedConcurrencyProofTest): NOT PROVEN locally — systemic PHPUnit $this->artisan('migrate') crash affects B3-B7. CREATE/DROP DB and standalone artisan migrate work. Blocked pending CI/proven environment validation."
+        "sha": "pending",
+        "note": "All 52 classes proven locally at 343 tests / 1371 assertions / 0 failures / 0 errors. PR #12 concurrency test-runner remediation enables all 8 concurrency proof tests (B2-B7 + A2 + RoomMove) to pass locally."
       },
       "accepted_debt": [],
       "status": "active"
