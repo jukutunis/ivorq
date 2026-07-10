@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 375,
-        "assertions": 1450,
+        "tests": 365,
+        "assertions": 3588,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-11",
         "branch": "sprint-fd-b8-checkout-execution-boundary",
-        "sha": "35a2f0fee575be652d96f0e7906d806ae08e4594",
-        "note": "All 53 classes proven locally at 375 tests / 1450 assertions / 0 failures / 0 errors. FD-B8 adds 20 tests / 57 assertions for checkout execution boundary projection. Commit 35a2f0f is the measurement commit; this commit stamps provenance metadata only."
+        "sha": "1ec243c52e77dbfc90d748f24de0c99e9b6486cd",
+        "note": "All 53 classes proven via exact-class runner at 365 tests / 3588 assertions / 0 failures / 0 errors. FD-B8 adds 22 tests to the prior 343-test baseline. Previous 375/1450 was incorrectly measured using broad --filter FrontDesk. Correction commit 1ec243c fixes stay lifecycle, REVIEW_REQUIRED semantics, queue error handling, and workspace StatusBadge contract. This commit stamps corrected provenance metadata only."
       },
       "accepted_debt": [],
       "status": "active"
