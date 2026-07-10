@@ -693,19 +693,15 @@ class FrontDeskDepartureQueueProjectionService
             return null;
         }
 
-        try {
-            $boundary = $this->executionBoundary->boundary($actor, $stayId);
+        $boundary = $this->executionBoundary->boundary($actor, $stayId);
 
-            // Return a minimal boundary summary for the queue — full detail via dedicated endpoint
-            return [
-                'execution_boundary_status' => $boundary['execution_boundary_status'],
-                'can_execute' => $boundary['can_execute'],
-                'blocker_codes' => $boundary['blocker_codes'],
-                'blocker_messages' => $boundary['blocker_messages'],
-                'execution_not_performed_marker' => $boundary['execution_not_performed_marker'],
-            ];
-        } catch (\Throwable) {
-            return null;
-        }
+        // Return a minimal boundary summary for the queue — full detail via dedicated endpoint
+        return [
+            'execution_boundary_status' => $boundary['execution_boundary_status'],
+            'can_execute' => $boundary['can_execute'],
+            'blocker_codes' => $boundary['blocker_codes'],
+            'review_reasons' => $boundary['review_reasons'],
+            'execution_not_performed_marker' => $boundary['execution_not_performed_marker'],
+        ];
     }
 }

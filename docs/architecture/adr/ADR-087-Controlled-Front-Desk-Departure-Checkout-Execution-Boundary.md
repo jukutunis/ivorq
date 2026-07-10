@@ -67,8 +67,28 @@ Each gate must be re-resolved independently at execution time. FD-B8 evaluates a
 FD-B8 exposes these projection statuses:
 
 - `EXECUTION_BOUNDARY_READY` — every repository-backed mandatory gate is resolved and satisfied. **Cannot be returned in FD-B8** because authoritative financial settlement, cashier, business date, and Night Audit evidence is unavailable.
-- `EXECUTION_BOUNDARY_BLOCKED` — at least one mandatory gate is not satisfied.
-- `EXECUTION_BOUNDARY_REVIEW_REQUIRED` — at least one gate requires human review before execution can proceed.
+- `EXECUTION_BOUNDARY_BLOCKED` — at least one mandatory gate is not satisfied and no review reason exists requiring explicit human review action.
+- `EXECUTION_BOUNDARY_REVIEW_REQUIRED` — at least one gate requires a specific human review decision before execution can proceed (e.g., FD-B7 CHECKOUT_FINAL_REVIEW_REVIEWED).
+
+### Stay Resolution and Non-Disclosure
+
+- **Unknown stay ID or cross-property stay**: return 404. Do not disclose whether the stay exists in another property.
+- **Same-property stay found but status is not IN_HOUSE**: return the boundary projection with `can_execute = false`, status `EXECUTION_BOUNDARY_BLOCKED`, blocker `STAY_NOT_IN_HOUSE`, and the actual server-resolved stay status. Do not fabricate B7 or other readiness evidence for non-IN_HOUSE stays.
+- **Same-property IN_HOUSE stay**: proceed to evaluate all authoritative gates.
+
+### Status Determination Precedence
+
+1. If `blocker_codes` is empty → `EXECUTION_BOUNDARY_READY`, `can_execute = true`.
+2. Else if `review_reasons` is not empty → `EXECUTION_BOUNDARY_REVIEW_REQUIRED`, `can_execute = false`.
+3. Otherwise → `EXECUTION_BOUNDARY_BLOCKED`, `can_execute = false`.
+
+Specific B7 mappings:
+- `CHECKOUT_FINAL_REVIEW_REVIEWED` → `EXECUTION_BOUNDARY_REVIEW_REQUIRED` (review_reasons populated, can_execute false).
+- `CHECKOUT_FINAL_REVIEW_BLOCKED` → `EXECUTION_BOUNDARY_BLOCKED` (can_execute false, no review_reasons).
+- No B7 evidence → `EXECUTION_BOUNDARY_BLOCKED` (can_execute false, no review_reasons).
+- `CHECKOUT_FINAL_REVIEW_READY` → does not automatically imply READY. Remaining unavailable gates keep can_execute false.
+
+In FD-B8, READY remains unreachable because mandatory financial settlement, cashier, business date, and Night Audit evidence is unavailable. The future READY contract is preserved without fabricating readiness.
 
 ### Stable Blocker Codes
 

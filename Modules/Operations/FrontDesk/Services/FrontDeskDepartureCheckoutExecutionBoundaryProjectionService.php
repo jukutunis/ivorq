@@ -4,6 +4,7 @@ namespace Modules\Operations\FrontDesk\Services;
 
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\FrontDesk\Enums\FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
@@ -13,10 +14,6 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
 {
     public const VIEW_PERMISSION = 'frontdesk.checkout-execution-boundary.view';
-
-    public const STATUS_READY = 'EXECUTION_BOUNDARY_READY';
-    public const STATUS_BLOCKED = 'EXECUTION_BOUNDARY_BLOCKED';
-    public const STATUS_REVIEW_REQUIRED = 'EXECUTION_BOUNDARY_REVIEW_REQUIRED';
 
     // Stable blocker codes
     public const BLOCKER_FINANCIAL_SETTLEMENT_UNAVAILABLE = 'FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE';
@@ -35,28 +32,41 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     {
         $propertyId = $this->authorizeView($actor);
 
+        // Resolve stay by ID + property only — do not filter by lifecycle status
         $stay = FrontDeskStay::withoutGlobalScopes()
             ->whereKey($frontDeskStayId)
             ->where('property_id', $propertyId)
-            ->where('status', FrontDeskStayStatusEnum::InHouse->value)
             ->first();
 
         if (! $stay) {
             throw new HttpException(404, 'Front Desk stay not found.');
         }
 
+        $stayIsInHouse = $stay->status === FrontDeskStayStatusEnum::InHouse;
+
         $blockerCodes = [];
         $blockerMessages = [];
         $reviewReasons = [];
         $authoritativeGates = [];
 
-        // Gate 1: Stay is IN_HOUSE (verified by the query above)
-        $authoritativeGates['stay_in_house'] = [
-            'gate' => 'Stay is IN_HOUSE',
-            'owner' => 'Front Desk',
-            'satisfied' => true,
-            'detail' => 'Stay status is IN_HOUSE.',
-        ];
+        // Gate 1: Stay is IN_HOUSE
+        if ($stayIsInHouse) {
+            $authoritativeGates['stay_in_house'] = [
+                'gate' => 'Stay is IN_HOUSE',
+                'owner' => 'Front Desk',
+                'satisfied' => true,
+                'detail' => 'Stay status is IN_HOUSE.',
+            ];
+        } else {
+            $blockerCodes[] = self::BLOCKER_STAY_NOT_IN_HOUSE;
+            $blockerMessages[] = 'Stay status is ' . ($stay->status?->value ?? 'unknown') . '. Checkout execution requires IN_HOUSE status.';
+            $authoritativeGates['stay_in_house'] = [
+                'gate' => 'Stay is IN_HOUSE',
+                'owner' => 'Front Desk',
+                'satisfied' => false,
+                'detail' => 'Stay status is ' . ($stay->status?->value ?? 'unknown') . '.',
+            ];
+        }
 
         // Gate 2: Stay belongs to current property (verified by query)
         $authoritativeGates['property_ownership'] = [
@@ -74,7 +84,6 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             ->orderBy('created_at', 'desc')
             ->first();
 
-        $b7Ready = false;
         $latestFinalReviewStatus = null;
         $latestFinalReviewId = null;
         $latestFinalReviewCreatedAt = null;
@@ -85,12 +94,21 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             $latestFinalReviewCreatedAt = $latestB7->occurred_at?->toISOString();
 
             if ($latestFinalReviewStatus === 'CHECKOUT_FINAL_REVIEW_READY') {
-                $b7Ready = true;
                 $authoritativeGates['fd_b7_final_review'] = [
                     'gate' => 'Latest FD-B7 final review is CHECKOUT_FINAL_REVIEW_READY',
                     'owner' => 'Front Desk',
                     'satisfied' => true,
                     'detail' => 'FD-B7 final review READY at ' . $latestFinalReviewCreatedAt,
+                ];
+            } elseif ($latestFinalReviewStatus === 'CHECKOUT_FINAL_REVIEW_REVIEWED') {
+                $blockerCodes[] = self::BLOCKER_FD_B7_NOT_READY;
+                $blockerMessages[] = 'Latest FD-B7 final review is CHECKOUT_FINAL_REVIEW_REVIEWED. CHECKOUT_FINAL_REVIEW_READY is required before checkout execution.';
+                $reviewReasons[] = 'FD-B7 final review was marked REVIEWED. A new CHECKOUT_FINAL_REVIEW_READY entry is required before checkout execution.';
+                $authoritativeGates['fd_b7_final_review'] = [
+                    'gate' => 'Latest FD-B7 final review is CHECKOUT_FINAL_REVIEW_READY',
+                    'owner' => 'Front Desk',
+                    'satisfied' => false,
+                    'detail' => 'Latest FD-B7 status: CHECKOUT_FINAL_REVIEW_REVIEWED.',
                 ];
             } else {
                 $blockerCodes[] = self::BLOCKER_FD_B7_NOT_READY;
@@ -101,9 +119,6 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
                     'satisfied' => false,
                     'detail' => 'Latest FD-B7 status: ' . $latestFinalReviewStatus,
                 ];
-                if ($latestFinalReviewStatus === 'CHECKOUT_FINAL_REVIEW_REVIEWED') {
-                    $reviewReasons[] = 'FD-B7 final review was marked REVIEWED. A new CHECKOUT_FINAL_REVIEW_READY entry is required before checkout execution.';
-                }
             }
         } else {
             $blockerCodes[] = self::BLOCKER_FD_B7_EVIDENCE_MISSING;
@@ -168,14 +183,14 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
 
         // Determine overall status
         $canExecute = false;
-        $overallStatus = self::STATUS_BLOCKED;
 
         if (empty($blockerCodes)) {
-            $overallStatus = self::STATUS_READY;
+            $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryReady->value;
             $canExecute = true;
-        } elseif (empty(array_diff($blockerCodes, [self::BLOCKER_CHECKOUT_NOT_IMPLEMENTED]))) {
-            // Only the future-implementation blocker exists — this is also BLOCKED
-            $overallStatus = self::STATUS_BLOCKED;
+        } elseif (! empty($reviewReasons)) {
+            $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryReviewRequired->value;
+        } else {
+            $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryBlocked->value;
         }
 
         return [

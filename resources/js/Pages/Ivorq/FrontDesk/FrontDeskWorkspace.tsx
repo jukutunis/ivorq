@@ -298,6 +298,7 @@ type CheckoutExecutionBoundarySummary = {
   can_execute: boolean;
   blocker_codes: string[];
   blocker_messages: string[];
+  review_reasons: string[];
   execution_not_performed_marker: string;
 } | null;
 
@@ -1385,9 +1386,11 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
     );
   }
 
-  const statusColor = boundary.execution_boundary_status === 'EXECUTION_BOUNDARY_READY' ? 'ready-green'
-    : boundary.execution_boundary_status === 'EXECUTION_BOUNDARY_BLOCKED' ? 'warning-amber'
-    : 'warning-amber';
+  // Map boundary status to valid BadgeStatus
+  const badgeStatus: import('../../../Components/Ivorq/primitives/StatusBadge').BadgeStatus =
+    boundary.execution_boundary_status === 'EXECUTION_BOUNDARY_READY' ? 'success'
+    : boundary.execution_boundary_status === 'EXECUTION_BOUNDARY_BLOCKED' ? 'warning'
+    : 'pending';
 
   return (
     <div style={{
@@ -1398,11 +1401,7 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
         <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Checkout Execution Boundary</span>
-        <StatusBadge status="ready" style={{
-          fontSize: '11px', padding: '2px 8px',
-          backgroundColor: statusColor === 'ready-green' ? 'var(--status-ready-bg)' : 'var(--status-pending-bg)',
-          color: statusColor === 'ready-green' ? 'var(--status-ready-fg)' : 'var(--status-pending-fg)',
-        }}>
+        <StatusBadge status={badgeStatus} style={{ fontSize: '11px', padding: '2px 8px' }}>
           {boundary.execution_boundary_status.replace(/_/g, ' ')}
         </StatusBadge>
       </div>
@@ -1413,22 +1412,40 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
         </div>
       ) : (
         <>
-          {boundary.blocker_messages.length > 0 ? (
+          {boundary.review_reasons.length > 0 ? (
+            <div style={{ marginBottom: '8px' }}>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                Review Required ({boundary.review_reasons.length}):
+              </div>
+              {boundary.review_reasons.map((reason: string, idx: number) => (
+                <div key={`review-${idx}`} style={{
+                  padding: '4px 8px', marginBottom: '3px',
+                  backgroundColor: 'var(--status-pending-bg)',
+                  color: 'var(--status-pending-fg)',
+                  borderRadius: '4px', fontSize: '12px',
+                }}>
+                  {reason}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {boundary.blocker_codes.length > 0 ? (
             <div style={{ marginBottom: '8px' }}>
               <div style={{ fontWeight: 600, color: 'var(--text-warning)', marginBottom: '4px' }}>
                 Blockers ({boundary.blocker_codes.length}):
               </div>
-              {boundary.blocker_messages.map((msg: string, idx: number) => (
-                <div key={idx} style={{
+              {boundary.blocker_codes.map((code: string, idx: number) => (
+                <div key={`blocker-${idx}`} style={{
                   padding: '4px 8px', marginBottom: '3px',
                   backgroundColor: 'var(--status-pending-bg)',
                   color: 'var(--status-pending-fg)',
                   borderRadius: '4px', fontSize: '12px',
                 }}>
                   <span style={{ fontWeight: 600, fontSize: '10px', marginRight: '6px' }}>
-                    {boundary.blocker_codes[idx]}
+                    {code}
                   </span>
-                  {msg}
+                  {boundary.blocker_messages[idx] ?? code}
                 </div>
               ))}
             </div>

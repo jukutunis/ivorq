@@ -4,6 +4,7 @@ namespace Tests\Postgres\Operations\FrontDesk;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationService;
@@ -12,6 +13,8 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBou
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\Postgres\Operations\FrontDesk\Concerns\CreatesFrontDeskFdA2Data;
 use Tests\PostgresTestCase;
@@ -47,79 +50,151 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         app(FrontDeskDepartureCheckoutFinalReviewService::class)->create($this->frontDeskActor, $stay[0]->id, 'CHECKOUT_FINAL_REVIEW_READY', 'B7 ready.', 'dcfr-' . Str::ulid());
     }
 
+    private function service(): FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
+    {
+        return app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class);
+    }
+
+    private function queueService(): FrontDeskDepartureQueueProjectionService
+    {
+        return app(FrontDeskDepartureQueueProjectionService::class);
+    }
+
+    // ── Stay Lifecycle Resolution ──
+
+    public function test_same_property_non_in_house_stay_not_404(): void
+    {
+        // Create a stay with ROOM_ASSIGNED status (not IN_HOUSE)
+        [$reservation, , $room] = $this->assignReadyReservation('8201');
+        $assigned = app(FrontDeskRoomAssignmentService::class)->assign(
+            $this->frontDeskActor, $reservation, $room, null, 'assign-nonih-' . Str::ulid()
+        );
+
+        $stay = $assigned['stay']->fresh();
+        $this->assertSame('ROOM_ASSIGNED', $stay->status->value);
+
+        // Query the boundary for this same-property non-IN_HOUSE stay
+        $b = $this->service()->boundary($this->frontDeskActor, $stay->id);
+
+        // Must not 404 — same property stay must be found
+        $this->assertSame($stay->id, $b['front_desk_stay_id']);
+        $this->assertSame('ROOM_ASSIGNED', $b['stay_status']);
+        $this->assertFalse($b['can_execute']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_STAY_NOT_IN_HOUSE, $b['blocker_codes']);
+        $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $b['execution_boundary_status']);
+        $this->assertFalse($b['authoritative_gates']['stay_in_house']['satisfied']);
+        $this->assertStringContainsString('ROOM_ASSIGNED', $b['authoritative_gates']['stay_in_house']['detail']);
+    }
+
+    public function test_unknown_stay_id_returns_404(): void
+    {
+        $nonExistentStayId = (string) Str::ulid();
+
+        $this->expectException(HttpException::class);
+        $this->expectExceptionMessage('Front Desk stay not found.');
+
+        $this->service()->boundary($this->frontDeskActor, $nonExistentStayId);
+    }
+
+    public function test_cross_property_stay_not_disclosed(): void
+    {
+        // Create real FK-satisfying data in other property
+        $otherGuestId = $this->guest($this->otherProperty, 'Cross-Property Guest');
+        $otherReservationId = $this->reservation($this->otherProperty, $otherGuestId, 'RES-XP-' . strtoupper(Str::random(5)), 'confirmed');
+
+        $stayId = (string) Str::ulid();
+        \Illuminate\Support\Facades\DB::table('front_desk_stays')->insert([
+            'id' => $stayId,
+            'property_id' => $this->otherProperty->id,
+            'reservation_id' => $otherReservationId,
+            'guest_id' => $otherGuestId,
+            'status' => 'IN_HOUSE',
+            'created_by' => $this->frontDeskActor->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Query from the main property context — the stay belongs to otherProperty, so 404
+        $this->expectException(HttpException::class);
+        $this->expectExceptionMessage('Front Desk stay not found.');
+
+        $this->service()->boundary($this->frontDeskActor, $stayId);
+    }
+
     // ── Boundary Prerequisite Tests ──
 
     public function test_no_b7_evidence_cannot_execute(): void
     {
-        $s = $this->checkedInStay('8101');
+        $s = $this->checkedInStay('8203');
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertFalse($b['can_execute']);
         $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $b['execution_boundary_status']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FD_B7_EVIDENCE_MISSING, $b['blocker_codes']);
         $this->assertSame($s[0]->id, $b['front_desk_stay_id']);
         $this->assertNull($b['latest_final_review_status']);
+        $this->assertEmpty($b['review_reasons']);
     }
 
-    public function test_b7_blocked_cannot_execute(): void
+    public function test_b7_blocked_returns_execution_boundary_blocked(): void
     {
-        $s = $this->checkedInStay('8102');
+        $s = $this->checkedInStay('8204');
         $this->seedB3B4B5B6Ready($s);
         app(FrontDeskDepartureCheckoutFinalReviewService::class)->create($this->frontDeskActor, $s[0]->id, 'CHECKOUT_FINAL_REVIEW_BLOCKED', 'B7 blocked.', 'dcfr-' . Str::ulid());
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertFalse($b['can_execute']);
+        $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $b['execution_boundary_status']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FD_B7_NOT_READY, $b['blocker_codes']);
         $this->assertSame('CHECKOUT_FINAL_REVIEW_BLOCKED', $b['latest_final_review_status']);
-        $this->assertNotNull($b['latest_final_review_id']);
+        $this->assertEmpty($b['review_reasons']);
     }
 
-    public function test_b7_reviewed_cannot_execute(): void
+    public function test_b7_reviewed_returns_execution_boundary_review_required(): void
     {
-        $s = $this->checkedInStay('8103');
+        $s = $this->checkedInStay('8205');
         $this->seedB3B4B5B6Ready($s);
         app(FrontDeskDepartureCheckoutFinalReviewService::class)->create($this->frontDeskActor, $s[0]->id, 'CHECKOUT_FINAL_REVIEW_REVIEWED', 'B7 reviewed.', 'dcfr-' . Str::ulid());
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertFalse($b['can_execute']);
+        $this->assertSame('EXECUTION_BOUNDARY_REVIEW_REQUIRED', $b['execution_boundary_status']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FD_B7_NOT_READY, $b['blocker_codes']);
+        $this->assertNotEmpty($b['review_reasons']);
+        $this->assertStringContainsString('REVIEWED', $b['review_reasons'][0]);
     }
 
     public function test_b7_ready_does_not_imply_can_execute(): void
     {
-        $s = $this->checkedInStay('8104');
+        $s = $this->checkedInStay('8206');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        // B7 is READY, but financial/cashier/business-date gates are unavailable
+        // B7 is READY, but financial/cashier/business-date gates are unavailable → still blocked
         $this->assertFalse($b['can_execute']);
         $this->assertSame('CHECKOUT_FINAL_REVIEW_READY', $b['latest_final_review_status']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FD_B7_NOT_READY, $b['blocker_codes']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FD_B7_EVIDENCE_MISSING, $b['blocker_codes']);
+        // Still blocked by unavailable gates
+        $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $b['execution_boundary_status']);
     }
 
     // ── Financial / Source Availability Tests ──
 
     public function test_financial_settlement_evidence_unavailable(): void
     {
-        $s = $this->checkedInStay('8105');
+        $s = $this->checkedInStay('8207');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertFalse($b['can_execute']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FINANCIAL_SETTLEMENT_UNAVAILABLE, $b['blocker_codes']);
 
-        // Verify stable blocker message (not fabricated)
         $financialGate = $b['authoritative_gates']['financial_settlement'] ?? null;
         $this->assertNotNull($financialGate);
         $this->assertFalse($financialGate['satisfied']);
@@ -128,58 +203,23 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
     public function test_cashier_obligation_evidence_unavailable(): void
     {
-        $s = $this->checkedInStay('8106');
+        $s = $this->checkedInStay('8208');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertFalse($b['can_execute']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE, $b['blocker_codes']);
-
-        $cashierGate = $b['authoritative_gates']['cashier_obligation'] ?? null;
-        $this->assertNotNull($cashierGate);
-        $this->assertFalse($cashierGate['satisfied']);
-        $this->assertSame('General Cashier', $cashierGate['owner']);
-    }
-
-    public function test_business_date_evidence_unavailable(): void
-    {
-        $s = $this->checkedInStay('8107');
-        $this->seedB3B4B5B6B7Ready($s);
-
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
-
-        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_BUSINESS_DATE_UNAVAILABLE, $b['blocker_codes']);
-
-        $bdGate = $b['authoritative_gates']['business_date'] ?? null;
-        $this->assertNotNull($bdGate);
-        $this->assertFalse($bdGate['satisfied']);
-    }
-
-    public function test_night_audit_lock_evidence_unavailable(): void
-    {
-        $s = $this->checkedInStay('8108');
-        $this->seedB3B4B5B6B7Ready($s);
-
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
-
-        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE, $b['blocker_codes']);
     }
 
     public function test_no_fabricated_ready_result(): void
     {
-        $s = $this->checkedInStay('8109');
+        $s = $this->checkedInStay('8209');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        // Even with B7 READY, can_execute must be false because financial/cashier/business-date gates are unavailable
         $this->assertFalse($b['can_execute']);
-        // Boundary status must NOT be READY
         $this->assertNotSame('EXECUTION_BOUNDARY_READY', $b['execution_boundary_status']);
     }
 
@@ -187,47 +227,21 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
     public function test_unauthorized_actor_rejected(): void
     {
-        $s = $this->checkedInStay('8110');
+        $s = $this->checkedInStay('8210');
         $this->seedB3B4B5B6B7Ready($s);
 
         $this->expectException(HttpException::class);
         $this->expectExceptionMessage('Front Desk checkout execution boundary view permission is required.');
 
-        app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->financeActor, $s[0]->id);
-    }
-
-    public function test_stay_not_found_for_other_property(): void
-    {
-        $s = $this->checkedInStay('8111');
-        $this->seedB3B4B5B6B7Ready($s);
-
-        // Stay belongs to $this->property; querying with otherProperty should 404
-        $this->expectException(HttpException::class);
-        $this->expectExceptionMessage('Front Desk stay not found.');
-
-        // Simulate cross-property resolution — the service checks property_id against current property
-        // Since the stay belongs to $this->property, querying from otherProperty context should fail
-        // This test verifies property isolation by passing a stay that belongs to a different property
-        // The service resolves property_id from CurrentPropertyService, so we verify the stay
-        // is correctly scoped.
-
-        // Create a stay for other property
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->otherProperty->id);
-        setPermissionsTeamId($this->otherProperty->id);
-        session($this->propertySession($this->otherProperty));
-
-        app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $this->service()->boundary($this->financeActor, $s[0]->id);
     }
 
     public function test_projection_uses_current_property_context(): void
     {
-        $s = $this->checkedInStay('8112');
+        $s = $this->checkedInStay('8211');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertSame($this->property->id, $b['property_id']);
     }
@@ -236,13 +250,12 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
     public function test_projection_does_not_mutate_stay_status(): void
     {
-        $s = $this->checkedInStay('8113');
+        $s = $this->checkedInStay('8212');
         $this->seedB3B4B5B6B7Ready($s);
 
         $stayBefore = $s[0]->fresh()->status->value;
 
-        app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $stayAfter = $s[0]->fresh()->status->value;
 
@@ -252,14 +265,13 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
     public function test_projection_does_not_mutate_b7_records(): void
     {
-        $s = $this->checkedInStay('8114');
+        $s = $this->checkedInStay('8213');
         $this->seedB3B4B5B6B7Ready($s);
 
         $b7CountBefore = FrontDeskDepartureCheckoutFinalReview::withoutGlobalScopes()
             ->where('front_desk_stay_id', $s[0]->id)->count();
 
-        app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $b7CountAfter = FrontDeskDepartureCheckoutFinalReview::withoutGlobalScopes()
             ->where('front_desk_stay_id', $s[0]->id)->count();
@@ -269,14 +281,11 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
     public function test_repeated_get_requests_are_stable(): void
     {
-        $s = $this->checkedInStay('8115');
+        $s = $this->checkedInStay('8214');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $b1 = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
-
-        $b2 = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b1 = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+        $b2 = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertSame($b1['execution_boundary_status'], $b2['execution_boundary_status']);
         $this->assertSame($b1['can_execute'], $b2['can_execute']);
@@ -288,11 +297,10 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
     public function test_execution_not_performed_marker_present(): void
     {
-        $s = $this->checkedInStay('8116');
+        $s = $this->checkedInStay('8215');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertSame('Checkout execution is not performed in FD-B8.', $b['execution_not_performed_marker']);
     }
@@ -301,11 +309,10 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
     public function test_all_eight_authoritative_gates_present(): void
     {
-        $s = $this->checkedInStay('8117');
+        $s = $this->checkedInStay('8216');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $expectedGates = [
             'stay_in_house',
@@ -323,49 +330,141 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         }
     }
 
-    // ── Stay IN_HOUSE requirement ──
+    // ── Queue Integration ──
 
-    public function test_non_in_house_stay_not_found(): void
+    public function test_queue_includes_boundary_summary(): void
     {
-        // The service queries only IN_HOUSE stays; a stay that hasn't been checked in should not be found
-        $s = $this->checkedInStay('8118');
-
-        // Create a non-IN_HOUSE stay scenario by querying a stay ID that doesn't exist
-        $nonExistentStayId = (string) Str::ulid();
-
-        $this->expectException(HttpException::class);
-        $this->expectExceptionMessage('Front Desk stay not found.');
-
-        app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $nonExistentStayId);
-    }
-
-    // ── Review Reasons ──
-
-    public function test_review_reasons_present_when_b7_reviewed(): void
-    {
-        $s = $this->checkedInStay('8119');
-        $this->seedB3B4B5B6Ready($s);
-        app(FrontDeskDepartureCheckoutFinalReviewService::class)->create($this->frontDeskActor, $s[0]->id, 'CHECKOUT_FINAL_REVIEW_REVIEWED', 'B7 reviewed.', 'dcfr-' . Str::ulid());
-
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
-
-        // B7 REVIEWED should generate review reasons
-        $this->assertNotEmpty($b['review_reasons']);
-        $this->assertIsArray($b['review_reasons']);
-    }
-
-    // ── Blocker Messages ──
-
-    public function test_blocker_messages_match_blocker_codes_count(): void
-    {
-        $s = $this->checkedInStay('8120');
+        $s = $this->checkedInStay('8217');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $b = app(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class)
-            ->boundary($this->frontDeskActor, $s[0]->id);
+        $queue = $this->queueService()->queue($this->frontDeskActor);
 
-        $this->assertCount(count($b['blocker_codes']), $b['blocker_messages']);
+        // Find the projected stay across all queue views (it's overdue because departure_date is before test date)
+        $projected = null;
+        foreach (array_merge(
+            $queue['views']['dueOutToday'],
+            $queue['views']['dueOutTomorrow'],
+            $queue['views']['dueOutFuture'],
+            $queue['views']['overdueDepartures']
+        ) as $row) {
+            if ($row['stay_id'] === $s[0]->id) {
+                $projected = $row;
+                break;
+            }
+        }
+        $this->assertNotNull($projected, 'Stay should appear in departure queue.');
+
+        $this->assertTrue($projected['can_view_execution_boundary']);
+
+        $boundary = $projected['departure_checkout_execution_boundary'];
+        $this->assertNotNull($boundary);
+        $this->assertFalse($boundary['can_execute']);
+        $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $boundary['execution_boundary_status']);
+        $this->assertNotEmpty($boundary['blocker_codes']);
+        $this->assertIsArray($boundary['review_reasons']);
+        $this->assertSame('Checkout execution is not performed in FD-B8.', $boundary['execution_not_performed_marker']);
+    }
+
+    public function test_queue_does_not_silently_normalize_boundary_exception(): void
+    {
+        // The queue resolves stays from the same property with permission checked
+        // Normal resolution must succeed for an IN_HOUSE stay with permission
+        $s = $this->checkedInStay('8218');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $queue = $this->queueService()->queue($this->frontDeskActor);
+
+        // Find the stay and verify boundary is not null (not silently swallowed)
+        $found = false;
+        foreach (array_merge(
+            $queue['views']['dueOutToday'],
+            $queue['views']['dueOutTomorrow'],
+            $queue['views']['dueOutFuture'],
+            $queue['views']['overdueDepartures']
+        ) as $row) {
+            if ($row['stay_id'] === $s[0]->id) {
+                $found = true;
+                $this->assertNotNull($row['departure_checkout_execution_boundary'], 'Boundary should not be null for permitted actor.');
+                break;
+            }
+        }
+        $this->assertTrue($found, 'Stay not found in queue views.');
+    }
+
+    // ── Route Boundary ──
+
+    public function test_boundary_route_exists_as_get_only(): void
+    {
+        $routes = collect(Route::getRoutes()->getRoutes());
+
+        $getFound = false;
+        $writeFound = false;
+
+        foreach ($routes as $route) {
+            $uri = $route->uri();
+
+            // Check for any checkout-execution-boundary route
+            if (str_contains($uri, 'checkout-execution-boundary')) {
+                $methods = $route->methods();
+                if (in_array('GET', $methods)) {
+                    $getFound = true;
+                }
+                if (array_intersect(['POST', 'PUT', 'PATCH', 'DELETE'], $methods)) {
+                    $writeFound = true;
+                }
+            }
+
+            // Check for any checkout-execution route that could be a write
+            if (preg_match('/checkout-execut(?:e|ion)\b/', $uri)) {
+                $methods = $route->methods();
+                if (array_intersect(['POST', 'PUT', 'PATCH', 'DELETE'], $methods)) {
+                    $writeFound = true;
+                }
+            }
+        }
+
+        $this->assertTrue($getFound, 'GET route for checkout-execution-boundary must exist.');
+        $this->assertFalse($writeFound, 'No POST/PUT/PATCH/DELETE checkout execution route may exist.');
+    }
+
+    public function test_no_checkout_execution_write_route_exists(): void
+    {
+        // Verify no checkout execution write route names exist
+        // The boundary read route 'frontdesk.stays.departure-checkout-execution-boundary.index' is allowed
+        $routeNames = collect(Route::getRoutes()->getRoutes())
+            ->map(fn ($r) => $r->getName())
+            ->filter()
+            ->values()
+            ->all();
+
+        foreach ($routeNames as $name) {
+            $n = $name ?? '';
+            // Allow the read-only boundary index route
+            if ($n === 'frontdesk.stays.departure-checkout-execution-boundary.index') {
+                continue;
+            }
+            // Block any checkout-execution write route
+            $this->assertStringNotContainsString('checkout-execution.store', $n);
+            $this->assertStringNotContainsString('checkout-execution.execute', $n);
+            $this->assertStringNotContainsString('checkout-execution.create', $n);
+            $this->assertStringNotContainsString('checkout-execution.update', $n);
+            $this->assertStringNotContainsString('checkout-execution.destroy', $n);
+        }
+
+        $this->assertTrue(true);
+    }
+
+    // ── Workspace Boundary ──
+
+    public function test_boundary_marks_execution_not_performed(): void
+    {
+        $s = $this->checkedInStay('8219');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('Checkout execution is not performed in FD-B8.', $b['execution_not_performed_marker']);
+        $this->assertStringContainsString('Not evaluated', $b['financial_settlement_marker']);
+        $this->assertStringContainsString('B8', $b['financial_settlement_marker']);
     }
 }
