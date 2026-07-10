@@ -93,16 +93,16 @@
         "GuestLedgerFolioAggregateConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 29,
-        "assertions": 73,
+        "tests": 33,
+        "assertions": 93,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-11",
         "branch": "sprint-glf-a-guest-ledger-folio-aggregate-hardening",
-        "sha": "f7213da2acf58c150cb68a665aec3ff0e11a7fe7",
-        "note": "All 2 classes proven via exact-class runner at 29 tests / 73 assertions / 0 failures / 0 errors. GLF-A establishes folio aggregate identity and integrity. Concurrency proof confirms same-key idempotency and different-key window allocation safety."
+        "sha": "2a4e8060524fd3e5b427ab9a2817c7b70cb0dbb9",
+        "note": "Corrected implementation: all 2 classes proven via exact-class runner at 33 tests / 93 assertions / 0 failures / 0 errors. Corrections include mass-assignment closure, system-source re-resolution, idempotency conflict semantics, property-wide concurrency-safe numbering, post-lock revalidation, decimal-safe bcmath operations, transactional void/recalculation, and positive window DB constraint."
       },
       "accepted_debt": [],
       "status": "active"
