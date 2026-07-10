@@ -3,7 +3,6 @@
 namespace Tests\Postgres\Operations\FrontDesk;
 
 use DomainException;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutEligibility;
@@ -12,13 +11,14 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityS
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
 use Tests\Postgres\Operations\FrontDesk\Concerns\CreatesFrontDeskFdA2Data;
+use Tests\Postgres\Operations\FrontDesk\Concerns\ManagesConcurrencyDatabase;
 use Tests\PostgresTestCase;
 
 class FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest extends PostgresTestCase
 {
     use CreatesFrontDeskFdA2Data;
+    use ManagesConcurrencyDatabase;
 
-    protected string $concurrencyDb;
     protected string $stayId;
     protected string $frontDeskActorId;
 
@@ -26,33 +26,14 @@ class FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest extends 
     {
         parent::setUp();
 
-        $this->concurrencyDb = 'ivorq_concurrency_fd_b5_' . Str::lower(Str::random(8));
-        DB::statement("CREATE DATABASE \"{$this->concurrencyDb}\"");
-        DB::disconnect();
+        $this->setUpConcurrencyDatabase('ivorq_concurrency_fd_b5_', '2026-07-10 10:00:00');
 
-        config(['database.connections.pgsql_concurrency' => [
-            'driver' => 'pgsql',
-            'host' => config('database.connections.pgsql.host'),
-            'port' => config('database.connections.pgsql.port'),
-            'database' => $this->concurrencyDb,
-            'username' => config('database.connections.pgsql.username'),
-            'password' => config('database.connections.pgsql.password'),
-        ]]);
-
-        DB::purge('pgsql_concurrency');
-        Carbon::setTestNow(Carbon::parse('2026-07-10 10:00:00'));
-
-        $this->artisan('migrate', ['--database' => 'pgsql_concurrency', '--force' => true]);
         $this->seedConcurrencyDatabase();
     }
 
     protected function tearDown(): void
     {
-        Carbon::setTestNow();
-        DB::disconnect('pgsql_concurrency');
-        DB::statement("SELECT pg_terminate_backend(pg_stat_activity.pid)
-            FROM pg_stat_activity WHERE pg_stat_activity.datname = '{$this->concurrencyDb}' AND pid <> pg_backend_pid()");
-        DB::statement("DROP DATABASE IF EXISTS \"{$this->concurrencyDb}\"");
+        $this->tearDownConcurrencyDatabase();
         parent::tearDown();
     }
 
@@ -60,7 +41,6 @@ class FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest extends 
     {
         $key = 'concurrent-key-' . Str::ulid();
 
-        $this->exposeOsAndPgPids();
         [$firstPid, $secondPid] = $this->simultaneousCreates($this->stayId, 'CHECKOUT_ELIGIBLE', 'Concurrent.', $key, $key);
 
         $this->assertNotNull($firstPid);
@@ -77,7 +57,6 @@ class FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest extends 
         $key1 = 'distinct-1-' . Str::ulid();
         $key2 = 'distinct-2-' . Str::ulid();
 
-        $this->exposeOsAndPgPids();
         [$firstPid, $secondPid] = $this->simultaneousDistinctCreates(
             $this->stayId,
             ['status' => 'CHECKOUT_ELIGIBLE', 'note' => 'A.', 'key' => $key1],
@@ -107,20 +86,12 @@ class FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest extends 
         DB::setDefaultConnection('pgsql');
     }
 
-    private function exposeOsAndPgPids(): void
-    {
-        fwrite(STDERR, 'OS PID: ' . getmypid() . PHP_EOL);
-        $pgBackend = DB::connection('pgsql_concurrency')->select('SELECT pg_backend_pid() as pid');
-        fwrite(STDERR, 'PG Backend PID: ' . $pgBackend[0]->pid . PHP_EOL);
-    }
-
     private function simultaneousCreates(string $stayId, string $status, string $note, string $keyA, string $keyB): array
     {
         $actorId = $this->frontDeskActorId;
-        $create = function (string $worker, string $key) use ($stayId, $status, $note, $actorId): int {
+        $create = function (string $key) use ($stayId, $status, $note, $actorId): int {
             $pgsql = DB::connection('pgsql_concurrency');
             $pid = $pgsql->select('SELECT pg_backend_pid() as pid')[0]->pid;
-            fwrite(STDERR, "Worker {$worker} PG PID: {$pid}" . PHP_EOL);
             try {
                 DB::setDefaultConnection('pgsql_concurrency');
                 config(['database.default' => 'pgsql_concurrency']);
@@ -128,25 +99,22 @@ class FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest extends 
                 app(FrontDeskDepartureCheckoutEligibilityService::class)->create(
                     $actor, $stayId, $status, $note, $key
                 );
-            } catch (DomainException $e) {
-                fwrite(STDERR, "Worker {$worker} domain error: {$e->getMessage()}" . PHP_EOL);
-            } catch (\Throwable $e) {
-                fwrite(STDERR, "Worker {$worker} error: {$e->getMessage()}" . PHP_EOL);
+            } catch (DomainException) {
+                // expected for duplicate idempotency
             } finally {
                 DB::setDefaultConnection('pgsql'); config(['database.default' => 'pgsql']);
             }
             return (int) $pid;
         };
-        return [$create('A', $keyA), $create('B', $keyB)];
+        return [$create($keyA), $create($keyB)];
     }
 
     private function simultaneousDistinctCreates(string $stayId, array $first, array $second): array
     {
         $actorId = $this->frontDeskActorId;
-        $create = function (string $worker, array $params) use ($stayId, $actorId): int {
+        $create = function (array $params) use ($stayId, $actorId): int {
             $pgsql = DB::connection('pgsql_concurrency');
             $pid = $pgsql->select('SELECT pg_backend_pid() as pid')[0]->pid;
-            fwrite(STDERR, "Worker {$worker} PG PID: {$pid}" . PHP_EOL);
             try {
                 DB::setDefaultConnection('pgsql_concurrency');
                 config(['database.default' => 'pgsql_concurrency']);
@@ -154,16 +122,14 @@ class FrontDeskDepartureCheckoutEligibilityIsolatedConcurrencyProofTest extends 
                 app(FrontDeskDepartureCheckoutEligibilityService::class)->create(
                     $actor, $stayId, $params['status'], $params['note'] ?? null, $params['key']
                 );
-            } catch (DomainException $e) {
-                fwrite(STDERR, "Worker {$worker} domain error: {$e->getMessage()}" . PHP_EOL);
-            } catch (\Throwable $e) {
-                fwrite(STDERR, "Worker {$worker} error: {$e->getMessage()}" . PHP_EOL);
+            } catch (DomainException) {
+                // expected when another worker creates the same record
             } finally {
                 DB::setDefaultConnection('pgsql'); config(['database.default' => 'pgsql']);
             }
             return (int) $pid;
         };
-        return [$create('A', $first), $create('B', $second)];
+        return [$create($first), $create($second)];
     }
 
     private function countEligibilities(string $stayId): int
