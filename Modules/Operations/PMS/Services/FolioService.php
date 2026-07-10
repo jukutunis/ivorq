@@ -2,7 +2,6 @@
 
 namespace Modules\Operations\PMS\Services;
 
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Operations\PMS\Enums\FolioStatusEnum;
 use Modules\Operations\PMS\Events\FolioItemVoided;
@@ -15,10 +14,9 @@ use Shared\Services\CurrentPropertyService;
 /**
  * PMS Folio Service — compatibility façade over GuestLedgerFolioAggregateService.
  *
- * GLF-A: Aggregate opening and item posting are delegated to
+ * GLF-A: All controlled operations (open, post, void) are delegated to
  * GuestLedgerFolioAggregateService. This class retains legacy close/void
- * operations only — those remain unexpanded and must NOT be treated as
- * settlement or checkout evidence.
+ * operations for the Folio aggregate itself.
  */
 class FolioService
 {
@@ -35,9 +33,7 @@ class FolioService
     }
 
     /**
-     * Narrow compatibility wrapper — delegates to the controlled aggregate service.
-     *
-     * @deprecated Prefer GuestLedgerFolioAggregateService::openWindow().
+     * Compatibility wrapper — delegates to the controlled aggregate service.
      */
     public function createForReservation(string $reservationId, array $data = []): Folio
     {
@@ -54,7 +50,7 @@ class FolioService
     }
 
     /**
-     * Narrow compatibility wrapper — delegates to the controlled aggregate service.
+     * Compatibility wrapper — delegates to the controlled aggregate service.
      */
     public function postItem(string $folioId, array $data): FolioItem
     {
@@ -67,39 +63,16 @@ class FolioService
     }
 
     /**
-     * Void a folio line item — transactional with lock.
-     *
-     * GLF-A: Opens transaction, locks parent Folio, re-resolves item,
-     * validates not already voided, marks void, recalculates under lock.
-     * This is legacy item void only — NOT payment reversal.
+     * Void a folio line item — delegates to the authorized aggregate boundary.
      */
     public function voidItem(string $itemId): FolioItem
     {
-        $propertyId = $this->currentProperty->resolveOrFail();
+        $actor = auth()->user();
+        if (! $actor) {
+            throw new \RuntimeException('Authenticated actor required to void a folio item.');
+        }
 
-        return DB::transaction(function () use ($itemId, $propertyId) {
-            // Lock and re-resolve the item
-            $item = $this->folioItemRepository->lockForUpdate($itemId);
-
-            if ($item->is_void) {
-                throw ValidationException::withMessages([
-                    'item' => ['This folio item has already been voided.'],
-                ]);
-            }
-
-            // Lock parent Folio (cross-property guarded by item's property_id)
-            $folio = $this->folioRepository->lockForUpdate($item->folio_id, $propertyId);
-
-            // Mark void
-            $item = $this->folioItemRepository->voidItem($itemId);
-
-            // Recalculate under same parent lock
-            $this->aggregate->recalculateTotals($folio->id, $propertyId);
-
-            event(new FolioItemVoided($item));
-
-            return $item;
-        });
+        return $this->aggregate->voidItem($actor, $itemId);
     }
 
     /**

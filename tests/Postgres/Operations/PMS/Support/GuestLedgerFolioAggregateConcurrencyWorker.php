@@ -34,21 +34,18 @@ $result = [
     'folio_id' => null,
     'folio_number' => null,
     'window_number' => null,
+    'property_id' => null,
     'error' => null,
 ];
 
-// Resolve actor, property, and reservation from fixture based on scenario
+// Resolve actor, property, and reservation based on scenario
 $actor = \Modules\Foundation\User\Models\User::findOrFail($fixture['actor_id']);
 $propertyId = $fixture['property_id'] ?? $fixture['property_id_a'] ?? null;
 $reservationId = $fixture['reservation_id'] ?? null;
 
 if ($scenario === 'cross_reservation') {
-    // Worker A → reservation_a, Worker B → reservation_b
-    $reservationId = ($workerId === 'A')
-        ? $fixture['reservation_id_a']
-        : $fixture['reservation_id_b'];
+    $reservationId = ($workerId === 'A') ? $fixture['reservation_id_a'] : $fixture['reservation_id_b'];
 } elseif ($scenario === 'cross_property') {
-    // Worker A → property_a, Worker B → property_b
     if ($workerId === 'A') {
         $propertyId = $fixture['property_id_a'];
         $reservationId = $fixture['reservation_id_a'];
@@ -89,32 +86,52 @@ try {
         $result['folio_id'] = $folio->id;
         $result['folio_number'] = $folio->folio_number;
         $result['window_number'] = $folio->window_number;
+        $result['property_id'] = $folio->property_id;
         $result['outcome'] = 'FOLIO_OPENED';
     } elseif ($scenario === 'different_key') {
         $folio = $aggregate->openWindow($actor, $fixture['reservation_id'], 'concurrency-diff-key-' . $workerId);
         $result['folio_id'] = $folio->id;
         $result['folio_number'] = $folio->folio_number;
         $result['window_number'] = $folio->window_number;
+        $result['property_id'] = $folio->property_id;
         $result['outcome'] = 'FOLIO_OPENED';
     } elseif ($scenario === 'cross_reservation') {
         $folio = $aggregate->openWindow($actor, $reservationId, 'concurrency-cross-res-' . $workerId);
         $result['folio_id'] = $folio->id;
         $result['folio_number'] = $folio->folio_number;
         $result['window_number'] = $folio->window_number;
+        $result['property_id'] = $folio->property_id;
         $result['outcome'] = 'FOLIO_OPENED';
     } elseif ($scenario === 'cross_property') {
         $folio = $aggregate->openWindow($actor, $reservationId, 'concurrency-cross-prop-' . $workerId);
         $result['folio_id'] = $folio->id;
         $result['folio_number'] = $folio->folio_number;
         $result['window_number'] = $folio->window_number;
+        $result['property_id'] = $folio->property_id;
         $result['outcome'] = 'FOLIO_OPENED';
+    } elseif ($scenario === 'post_vs_void') {
+        if ($workerId === 'A') {
+            // Worker A: post a new charge
+            $item = $aggregate->postItem($actor, $fixture['folio_id'], [
+                'item_type'   => \Modules\Operations\PMS\Enums\FolioItemTypeEnum::RoomCharge,
+                'description' => 'Concurrent charge',
+                'quantity'    => 1,
+                'amount'      => 75.00,
+            ]);
+            $result['item_id'] = $item->id;
+            $result['outcome'] = 'ITEM_POSTED';
+        } else {
+            // Worker B: void the existing charge
+            $item = $aggregate->voidItem($actor, $fixture['void_target_item_id']);
+            $result['item_id'] = $item->id;
+            $result['outcome'] = 'ITEM_VOIDED';
+        }
     }
 } catch (Throwable $e) {
     $result['outcome'] = 'CONTROLLED_FAILURE';
     $result['error'] = $e->getMessage();
 }
 
-// Signal completion
 file_put_contents($resultFile, json_encode($result, JSON_PRETTY_PRINT));
 touch($barrierDir . "/result-{$workerId}-ready");
 exit(0);

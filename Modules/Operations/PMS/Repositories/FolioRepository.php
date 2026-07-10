@@ -51,9 +51,8 @@ class FolioRepository
     /**
      * Controlled folio creation.
      *
-     * All aggregate-owned fields are server-resolved. This method uses
-     * forceFill() because the Folio model denies generic mass assignment
-     * (fillable is empty, guarded is ['*']).
+     * All aggregate-owned fields are server-resolved. Uses forceFill()
+     * because the Folio model denies generic mass assignment.
      *
      * @internal Called only by GuestLedgerFolioAggregateService.
      */

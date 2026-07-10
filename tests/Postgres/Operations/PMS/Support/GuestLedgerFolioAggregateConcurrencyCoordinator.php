@@ -296,10 +296,25 @@ try {
         'created_at' => now(), 'updated_at' => now(),
     ]);
 
+    // Create fresh reservations for cross-property (avoid reusing ones from earlier scenarios)
+    $cpGuestA = (string) \Illuminate\Support\Str::ulid();
+    $cpResA = (string) \Illuminate\Support\Str::ulid();
+    \Illuminate\Support\Facades\DB::table('guests')->insert([
+        'id' => $cpGuestA, 'property_id' => $propertyId, 'guest_code' => 'GST-CPA',
+        'full_name' => 'Cross Prop Guest A', 'guest_type' => 'individual', 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    \Illuminate\Support\Facades\DB::table('reservations')->insert([
+        'id' => $cpResA, 'property_id' => $propertyId, 'reservation_number' => 'RES-CPA',
+        'primary_guest_id' => $cpGuestA, 'adults' => 1, 'children' => 0,
+        'arrival_date' => '2026-07-10', 'departure_date' => '2026-07-12', 'nights' => 2,
+        'reservation_source' => 'direct', 'status' => 'tentative', 'reserved_room_type' => 'standard',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+
     $cpFixture = [
         'company_id' => $companyId, 'property_id_a' => $propertyId, 'property_id_b' => $propertyId2,
         'actor_id' => $actorId, 'actor_id_b' => $actorId2,
-        'reservation_id_a' => $reservationId, 'guest_id_a' => $guestId,
+        'reservation_id_a' => $cpResA, 'guest_id_a' => $cpGuestA,
         'reservation_id_b' => $resP2, 'guest_id_b' => $guestP2,
     ];
 
@@ -316,7 +331,83 @@ try {
 
     $result['cross_property_concurrency'] = $cpRun + [
         'pid_different' => ($cpRun['worker_a']['pid'] ?? 0) !== ($cpRun['worker_b']['pid'] ?? -1),
+        'pg_different' => ($cpRun['worker_a']['pg_backend_pid'] ?? 0) !== ($cpRun['worker_b']['pg_backend_pid'] ?? -1),
         'total_folios' => $cpAfter - $cpBefore,
+        'property_id_a' => $propertyId,
+        'property_id_b' => $propertyId2,
+    ];
+
+    // ── Post versus Void concurrency ───────────────────────────────────
+    $pvPropertyId = $propertyId;
+    $pvGuestId = (string) \Illuminate\Support\Str::ulid();
+    $pvResId = (string) \Illuminate\Support\Str::ulid();
+
+    \Illuminate\Support\Facades\DB::table('guests')->insert([
+        'id' => $pvGuestId, 'property_id' => $pvPropertyId, 'guest_code' => 'GST-PV',
+        'full_name' => 'PostVoid Guest', 'guest_type' => 'individual', 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    \Illuminate\Support\Facades\DB::table('reservations')->insert([
+        'id' => $pvResId, 'property_id' => $pvPropertyId, 'reservation_number' => 'RES-PV',
+        'primary_guest_id' => $pvGuestId, 'adults' => 1, 'children' => 0,
+        'arrival_date' => '2026-07-10', 'departure_date' => '2026-07-12', 'nights' => 2,
+        'reservation_source' => 'direct', 'status' => 'tentative', 'reserved_room_type' => 'standard',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    // Setup: create folio with one charge through the aggregate
+    \Illuminate\Support\Facades\Auth::login(\Modules\Foundation\User\Models\User::findOrFail($actorId));
+    app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($pvPropertyId);
+    session(['current_property_id' => $pvPropertyId]);
+
+    $pvFolio = app(\Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService::class)
+        ->openWindow(\Modules\Foundation\User\Models\User::findOrFail($actorId), $pvResId, 'pv-setup-key');
+
+    $targetItem = app(\Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService::class)
+        ->postItem(\Modules\Foundation\User\Models\User::findOrFail($actorId), $pvFolio->id, [
+            'item_type'   => \Modules\Operations\PMS\Enums\FolioItemTypeEnum::RoomCharge,
+            'description' => 'Original charge to void',
+            'quantity'    => 1,
+            'amount'      => 100.00,
+        ]);
+
+    $pvFixture = [
+        'company_id' => $companyId, 'property_id' => $pvPropertyId, 'actor_id' => $actorId,
+        'folio_id' => $pvFolio->id, 'void_target_item_id' => $targetItem->id,
+    ];
+
+    $pvRun = glfARunWorkers($workerConfig, 'post_vs_void', $pvFixture);
+
+    // Final state: count active items and recalculate fresh
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM folio_items WHERE folio_id = :fid AND is_void = false");
+    $stmt->execute(['fid' => $pvFolio->id]);
+    $activeItems = (int) $stmt->fetchColumn();
+
+    $stmt = $pdo->prepare("SELECT
+        COALESCE(SUM(CASE WHEN amount > 0 AND is_void = false THEN amount ELSE 0 END), 0) AS charges,
+        COALESCE(SUM(CASE WHEN amount < 0 AND is_void = false THEN ABS(amount) ELSE 0 END), 0) AS payments
+    FROM folio_items WHERE folio_id = :fid");
+    $stmt->execute(['fid' => $pvFolio->id]);
+    $fresh = $stmt->fetch(PDO::FETCH_ASSOC);
+    $freshCharges  = number_format((float) $fresh['charges'], 2, '.', '');
+    $freshPayments = number_format((float) $fresh['payments'], 2, '.', '');
+    $freshBalance  = number_format((float) $fresh['charges'] - (float) $fresh['payments'], 2, '.', '');
+
+    // Read cached totals from folio row
+    $stmt = $pdo->prepare("SELECT total_charges, total_payments, balance, status FROM folios WHERE id = :fid");
+    $stmt->execute(['fid' => $pvFolio->id]);
+    $folioState = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $result['post_vs_void_concurrency'] = $pvRun + [
+        'pid_different' => ($pvRun['worker_a']['pid'] ?? 0) !== ($pvRun['worker_b']['pid'] ?? -1),
+        'pg_different' => ($pvRun['worker_a']['pg_backend_pid'] ?? 0) !== ($pvRun['worker_b']['pg_backend_pid'] ?? -1),
+        'active_item_count' => $activeItems,
+        'final_charges' => $folioState['total_charges'] ?? '0.00',
+        'final_payments' => $folioState['total_payments'] ?? '0.00',
+        'final_balance' => $folioState['balance'] ?? '0.00',
+        'fresh_charges' => $freshCharges,
+        'fresh_payments' => $freshPayments,
+        'fresh_balance' => $freshBalance,
+        'folio_status' => $folioState['status'] ?? 'unknown',
     ];
 
     $pdo = null;

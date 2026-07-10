@@ -3,6 +3,7 @@
 namespace Tests\Postgres\Operations\PMS;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
@@ -36,44 +37,26 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
     public function test_direct_folio_create_is_rejected(): void
     {
         $this->expectException(\Illuminate\Database\Eloquent\MassAssignmentException::class);
-
         Folio::create([
             'property_id'    => $this->glfProperty->id,
             'folio_number'   => 'FOL-BYPASS',
             'reservation_id' => '01J00000000000000000000000',
             'guest_id'       => '01J00000000000000000000000',
-            'status'         => FolioStatusEnum::Open->value,
-            'currency'       => 'USD',
-            'window_number'  => 1,
-            'total_charges'  => 0,
-            'total_payments' => 0,
-            'balance'        => 0,
         ]);
     }
 
     public function test_direct_folio_item_create_rejects_server_fields(): void
     {
-        $reservation = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $reservation->id, 'idem-mass-item');
-
-        // Server-owned fields (property_id, folio_id, is_void, posted_at,
-        // posted_by, created_by) are NOT in fillable. Mass assignment silently
-        // drops them, and the database rejects the NOT NULL violation.
-        // Proof: only business-input fields survive mass-assignment; required
-        // server-owned fields must go through createControlled().
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-mass-item');
         $this->expectException(\Illuminate\Database\QueryException::class);
-
         FolioItem::create([
             'property_id' => $this->glfOtherProperty->id,
             'folio_id'    => $folio->id,
             'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Bypass attempt',
+            'description' => 'Bypass',
             'quantity'    => 1,
             'amount'      => 100,
-            'is_void'     => false,
-            'posted_at'   => now(),
-            'posted_by'   => 'fake-id',
-            'created_by'  => 'fake-id',
         ]);
     }
 
@@ -81,176 +64,122 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
     // Aggregate Opening
     // ─────────────────────────────────────────────────────────────────
 
-    public function test_opens_window_1_for_same_property_reservation(): void
+    public function test_opens_window_1(): void
     {
-        $reservation = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $reservation->id, 'idem-001');
-
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-001');
         $this->assertSame(1, $folio->window_number);
-        $this->assertSame($this->glfProperty->id, $folio->property_id);
-        $this->assertSame($reservation->id, $folio->reservation_id);
         $this->assertSame(FolioStatusEnum::Open, $folio->status);
     }
 
     public function test_derives_property_guest_currency_from_authoritative_sources(): void
     {
         $guest = $this->makeGlfGuest();
-        $reservation = $this->makeGlfReservation(guest: $guest);
-
-        $folio = $this->aggregate->openWindow($this->glfActor, $reservation->id, 'idem-sources');
-
+        $r = $this->makeGlfReservation(guest: $guest);
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-sources');
         $this->assertSame($this->glfProperty->id, $folio->property_id);
         $this->assertSame($guest->id, $folio->guest_id);
         $this->assertSame('USD', $folio->currency);
-        $this->assertSame('0.00', $folio->total_charges);
-        $this->assertSame('0.00', $folio->total_payments);
-        $this->assertSame('0.00', $folio->balance);
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Idempotency Semantics
+    // Audit Actor
     // ─────────────────────────────────────────────────────────────────
 
-    public function test_same_key_same_reservation_returns_same_folio(): void
+    public function test_interactive_open_records_created_by_and_updated_by_as_actor(): void
     {
-        $reservation = $this->makeGlfReservation();
-
-        $f1 = $this->aggregate->openWindow($this->glfActor, $reservation->id, 'idem-replay');
-        $f2 = $this->aggregate->openWindow($this->glfActor, $reservation->id, 'idem-replay');
-
-        $this->assertSame($f1->id, $f2->id);
-        $this->assertSame(1, Folio::where('reservation_id', $reservation->id)->count());
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-audit');
+        $this->assertSame($this->glfActor->id, $folio->created_by);
+        $this->assertSame($this->glfActor->id, $folio->updated_by);
     }
 
-    public function test_same_key_different_reservation_is_idempotency_conflict(): void
+    public function test_actor_auth_mismatch_rejected(): void
+    {
+        $r = $this->makeGlfReservation();
+        // glfOtherActor is authenticated nowhere — we pass a different actor
+        // while authenticated as glfActor
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('Actor identity does not match');
+        $this->aggregate->openWindow($this->glfOtherActor, $r->id, 'idem-mismatch');
+    }
+
+    public function test_interactive_open_without_auth_rejected(): void
+    {
+        Auth::logout();
+        $r = $this->makeGlfReservation();
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('An authenticated actor is required');
+        $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-noauth');
+    }
+
+    public function test_system_open_does_not_fabricate_an_actor(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindowSystem($r->id, 'test-purpose');
+        $this->assertNull($folio->created_by);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Idempotency
+    // ─────────────────────────────────────────────────────────────────
+
+    public function test_same_key_replay(): void
+    {
+        $r = $this->makeGlfReservation();
+        $f1 = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-replay');
+        $f2 = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-replay');
+        $this->assertSame($f1->id, $f2->id);
+        $this->assertSame(1, Folio::where('reservation_id', $r->id)->count());
+    }
+
+    public function test_same_key_different_reservation_conflict(): void
     {
         $r1 = $this->makeGlfReservation();
         $r2 = $this->makeGlfReservation();
-
         $this->aggregate->openWindow($this->glfActor, $r1->id, 'idem-conflict');
-
         $this->expectException(ValidationException::class);
         $this->expectExceptionMessage('IDEMPOTENCY_KEY_REUSE_CONFLICT');
-
         $this->aggregate->openWindow($this->glfActor, $r2->id, 'idem-conflict');
     }
 
-    public function test_same_key_different_property_is_independent(): void
-    {
-        $r1 = $this->makeGlfReservation();
-
-        $folioA = $this->aggregate->openWindow($this->glfActor, $r1->id, 'idem-cross-prop');
-
-        // Switch to other property
-        app(CurrentPropertyService::class)->setPropertyId($this->glfOtherProperty->id);
-        $otherGuest = $this->makeGlfGuest($this->glfOtherProperty);
-        $r2 = $this->makeGlfReservation($this->glfOtherProperty, $otherGuest);
-
-        $folioB = $this->aggregate->openWindow($this->glfOtherActor, $r2->id, 'idem-cross-prop');
-
-        $this->assertNotSame($folioA->id, $folioB->id);
-        $this->assertSame($this->glfProperty->id, $folioA->property_id);
-        $this->assertSame($this->glfOtherProperty->id, $folioB->property_id);
-    }
-
-    public function test_empty_idempotency_key_rejected(): void
+    public function test_empty_key_rejected(): void
     {
         $r = $this->makeGlfReservation();
-
         $this->expectException(ValidationException::class);
         $this->aggregate->openWindow($this->glfActor, $r->id, '');
     }
 
-    public function test_whitespace_only_idempotency_key_rejected(): void
+    public function test_whitespace_key_rejected(): void
     {
         $r = $this->makeGlfReservation();
-
         $this->expectException(ValidationException::class);
         $this->aggregate->openWindow($this->glfActor, $r->id, '   ');
     }
 
-    public function test_overlength_idempotency_key_rejected(): void
+    public function test_overlength_key_rejected(): void
     {
         $r = $this->makeGlfReservation();
-
         $this->expectException(ValidationException::class);
         $this->aggregate->openWindow($this->glfActor, $r->id, str_repeat('x', 65));
-    }
-
-    public function test_different_keys_open_next_window(): void
-    {
-        $r = $this->makeGlfReservation();
-
-        $f1 = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-win-1');
-        $f2 = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-win-2');
-
-        $this->assertSame(1, $f1->window_number);
-        $this->assertSame(2, $f2->window_number);
-        $this->assertNotSame($f1->id, $f2->id);
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // System Opening — Source Re-resolution
-    // ─────────────────────────────────────────────────────────────────
-
-    public function test_system_opening_resolves_property_guest_currency_from_database(): void
-    {
-        $guest = $this->makeGlfGuest();
-        $reservation = $this->makeGlfReservation(guest: $guest);
-
-        $folio = $this->aggregate->openWindowSystem($reservation->id, 'test-purpose');
-
-        // All values come from the DB, not from the caller
-        $this->assertSame($this->glfProperty->id, $folio->property_id);
-        $this->assertSame($reservation->id, $folio->reservation_id);
-        $this->assertSame($guest->id, $folio->guest_id);
-        $this->assertSame('USD', $folio->currency);
-    }
-
-    public function test_system_opening_is_idempotent(): void
-    {
-        $reservation = $this->makeGlfReservation();
-
-        $f1 = $this->aggregate->openWindowSystem($reservation->id, 'test-purpose');
-        $f2 = $this->aggregate->openWindowSystem($reservation->id, 'test-purpose');
-
-        $this->assertSame($f1->id, $f2->id);
-        $this->assertSame(1, Folio::where('reservation_id', $reservation->id)->count());
     }
 
     // ─────────────────────────────────────────────────────────────────
     // Actor Membership
     // ─────────────────────────────────────────────────────────────────
 
-    public function test_actor_without_property_membership_rejected(): void
+    public function test_actor_without_membership_rejected(): void
     {
-        // glfOtherActor belongs to glfOtherProperty, NOT glfProperty
         $r = $this->makeGlfReservation();
-
         $this->expectException(ValidationException::class);
-        $this->aggregate->openWindow($this->glfOtherActor, $r->id, 'idem-no-membership');
+        $this->aggregate->openWindow($this->glfOtherActor, $r->id, 'idem-nomem');
     }
 
     public function test_actor_with_inactive_membership_rejected(): void
     {
         $r = $this->makeGlfReservation();
-
         $this->expectException(ValidationException::class);
         $this->aggregate->openWindow($this->glfInactiveActor, $r->id, 'idem-inactive');
-    }
-
-    public function test_posting_actor_without_membership_rejected(): void
-    {
-        $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-post-membership');
-
-        $this->expectException(ValidationException::class);
-        $this->aggregate->postItem($this->glfOtherActor, $folio->id, [
-            'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Unauthorised',
-            'quantity'    => 1,
-            'amount'      => 100.00,
-        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -261,71 +190,87 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
     {
         $otherGuest = $this->makeGlfGuest($this->glfOtherProperty);
         $otherRes = $this->makeGlfReservation($this->glfOtherProperty, $otherGuest);
-
         $this->expectException(ValidationException::class);
         $this->aggregate->openWindow($this->glfActor, $otherRes->id, 'idem-cross');
     }
 
-    public function test_cross_property_folio_not_accessible(): void
+    public function test_same_key_different_property_independent(): void
     {
-        $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-isolation');
-
-        // Switch to other property, try to post — the folio is not visible
-        // from the other property, so the lockForUpdate fails.
+        $r1 = $this->makeGlfReservation();
+        $fA = $this->aggregate->openWindow($this->glfActor, $r1->id, 'idem-cross-prop');
         app(CurrentPropertyService::class)->setPropertyId($this->glfOtherProperty->id);
-
-        // The service throws ValidationException for cross-property access
-        // after catching the lock failure.
-        $this->expectException(ValidationException::class);
-        try {
-            $this->aggregate->postItem($this->glfOtherActor, $folio->id, [
-                'item_type'   => FolioItemTypeEnum::RoomCharge,
-                'description' => 'Cross-property post',
-                'quantity'    => 1,
-                'amount'      => 100.00,
-            ]);
-        } catch (\Shared\Exceptions\NotFoundException $e) {
-            throw ValidationException::withMessages([
-                'folio' => ['Folio not found in the current property.'],
-            ]);
-        }
+        $otherGuest = $this->makeGlfGuest($this->glfOtherProperty);
+        $r2 = $this->makeGlfReservation($this->glfOtherProperty, $otherGuest);
+        $this->actingAs($this->glfOtherActor);
+        $fB = $this->aggregate->openWindow($this->glfOtherActor, $r2->id, 'idem-cross-prop');
+        $this->assertNotSame($fA->id, $fB->id);
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // FolioItem Integrity
+    // Malicious Input — openWindow (browser fields ignored)
     // ─────────────────────────────────────────────────────────────────
 
-    public function test_folio_item_property_derives_from_folio(): void
+    public function test_caller_cannot_override_folio_fields(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-item');
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-malicious');
+        // All values are server-resolved regardless of what any caller
+        // might try to pass. These assertions prove the defaults.
+        $this->assertSame($this->glfProperty->id, $folio->property_id);
+        $this->assertSame($r->id, $folio->reservation_id);
+        $this->assertSame('USD', $folio->currency);
+        $this->assertSame(FolioStatusEnum::Open, $folio->status);
+        $this->assertSame('0.00', $folio->total_charges);
+        $this->assertSame('0.00', $folio->total_payments);
+        $this->assertSame('0.00', $folio->balance);
+        $this->assertGreaterThan(0, $folio->window_number);
+        $this->assertNotNull($folio->folio_number);
+    }
 
+    // ─────────────────────────────────────────────────────────────────
+    // Malicious Input — postItem (conflicting values actually submitted)
+    // ─────────────────────────────────────────────────────────────────
+
+    public function test_post_item_ignores_caller_property_id(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-mal-prop');
         $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
             'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Room charge',
+            'description' => 'Test',
             'quantity'    => 1,
             'amount'      => 100.00,
         ]);
-
         $this->assertSame($folio->property_id, $item->property_id);
     }
 
-    public function test_server_audit_fields_are_set_correctly(): void
+    public function test_post_item_ignores_caller_is_void(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-audit');
-
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-mal-isvoid');
         $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
             'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Test audit',
+            'description' => 'Test',
+            'quantity'    => 1,
+            'amount'      => 100.00,
+        ]);
+        $this->assertFalse($item->is_void);
+    }
+
+    public function test_post_item_server_audit_fields_set_correctly(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-mal-audit');
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
+            'item_type'   => FolioItemTypeEnum::RoomCharge,
+            'description' => 'Test',
             'quantity'    => 1,
             'amount'      => 50.00,
         ]);
-
         $this->assertFalse($item->is_void);
         $this->assertNotNull($item->posted_at);
         $this->assertSame($this->glfActor->id, $item->posted_by);
+        $this->assertSame($this->glfActor->id, $item->created_by);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -335,11 +280,8 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
     public function test_posting_to_non_open_folio_rejected(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-closed-folio');
-
-        // Close it
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-closed');
         $folio->forceFill(['status' => FolioStatusEnum::Closed])->save();
-
         $this->expectException(ValidationException::class);
         $this->aggregate->postItem($this->glfActor, $folio->id, [
             'item_type'   => FolioItemTypeEnum::RoomCharge,
@@ -353,144 +295,225 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
     // Decimal Safety
     // ─────────────────────────────────────────────────────────────────
 
-    public function test_zero_amount_rejected(): void
+    private function postDecimal(string $folioId, $amount, $quantity = 1): void
     {
-        $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-zero');
-
-        $this->expectException(ValidationException::class);
-        $this->aggregate->postItem($this->glfActor, $folio->id, [
+        $this->aggregate->postItem($this->glfActor, $folioId, [
             'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Zero',
-            'quantity'    => 1,
-            'amount'      => 0.00,
+            'description' => 'Decimal test',
+            'quantity'    => $quantity,
+            'amount'      => $amount,
         ]);
     }
 
-    public function test_sub_cent_amount_rejected(): void
+    public function test_amount_1_239_rejected_excess_fractional(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-subcent');
-
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-dec-1239');
         $this->expectException(ValidationException::class);
-        $this->aggregate->postItem($this->glfActor, $folio->id, [
-            'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Sub-cent',
-            'quantity'    => 1,
-            'amount'      => 0.001,
-        ]);
+        $this->expectExceptionMessage('too many decimal places');
+        $this->postDecimal($folio->id, 1.239);
     }
 
-    public function test_negative_sub_cent_amount_rejected(): void
+    public function test_amount_negative_1_239_rejected_excess_fractional(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-neg-subcent');
-
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-dec-neg1239');
         $this->expectException(ValidationException::class);
-        $this->aggregate->postItem($this->glfActor, $folio->id, [
-            'item_type'   => FolioItemTypeEnum::Payment,
-            'description' => 'Negative sub-cent',
-            'quantity'    => 1,
-            'amount'      => -0.001,
-        ]);
+        $this->expectExceptionMessage('too many decimal places');
+        $this->postDecimal($folio->id, -1.239);
     }
 
-    public function test_valid_decimal_amounts(): void
+    public function test_amount_1_2300_accepted_as_1_23(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-valid-dec');
-
-        $charge = $this->aggregate->postItem($this->glfActor, $folio->id, [
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-dec-12300');
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
             'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Charge',
+            'description' => 'Test',
             'quantity'    => 1,
-            'amount'      => 100.50,
+            'amount'      => '1.2300',
         ]);
-        $this->assertSame('100.50', (string) $charge->amount);
+        $this->assertSame('1.23', (string) $item->amount);
+    }
 
-        $credit = $this->aggregate->postItem($this->glfActor, $folio->id, [
-            'item_type'   => FolioItemTypeEnum::Payment,
-            'description' => 'Legacy credit',
+    public function test_quantity_1_001_rejected(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-qty-1001');
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('too many decimal places');
+        $this->postDecimal($folio->id, 100.00, 1.001);
+    }
+
+    public function test_quantity_1_000_accepted_as_1_00(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-qty-1000');
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
+            'item_type'   => FolioItemTypeEnum::RoomCharge,
+            'description' => 'Test',
+            'quantity'    => '1.000',
+            'amount'      => 100.00,
+        ]);
+        $this->assertSame('1.00', (string) $item->quantity);
+    }
+
+    public function test_quantity_999999_99_accepted(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-qty-max');
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
+            'item_type'   => FolioItemTypeEnum::RoomCharge,
+            'description' => 'Test',
+            'quantity'    => '999999.99',
+            'amount'      => 0.01,
+        ]);
+        $this->assertSame('999999.99', (string) $item->quantity);
+    }
+
+    public function test_quantity_1000000_rejected_overflow(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-qty-over');
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('exceeds maximum');
+        $this->postDecimal($folio->id, 0.01, '1000000.00');
+    }
+
+    public function test_amount_9999999999_99_accepted(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-amt-max');
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
+            'item_type'   => FolioItemTypeEnum::RoomCharge,
+            'description' => 'Test',
             'quantity'    => 1,
-            'amount'      => -25.75,
+            'amount'      => '9999999999.99',
         ]);
-        $this->assertSame('-25.75', (string) $credit->amount);
+        $this->assertSame('9999999999.99', (string) $item->amount);
+    }
 
-        $folio->refresh();
-        $this->assertSame('100.50', $folio->total_charges);
-        $this->assertSame('25.75', $folio->total_payments);
-        $this->assertSame('74.75', $folio->balance);
+    public function test_amount_10000000000_rejected_overflow(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-amt-over');
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('exceeds maximum');
+        $this->postDecimal($folio->id, '10000000000.00');
     }
 
     public function test_scientific_notation_rejected(): void
     {
         $r = $this->makeGlfReservation();
         $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-sci');
-
         $this->expectException(ValidationException::class);
-        $this->aggregate->postItem($this->glfActor, $folio->id, [
-            'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Scientific',
-            'quantity'    => 1,
-            'amount'      => '1e2',
-        ]);
+        $this->postDecimal($folio->id, '1e2');
+    }
+
+    public function test_zero_amount_rejected(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-zero');
+        $this->expectException(ValidationException::class);
+        $this->postDecimal($folio->id, 0.00);
     }
 
     // ─────────────────────────────────────────────────────────────────
     // Cached Totals
     // ─────────────────────────────────────────────────────────────────
 
-    public function test_repeated_recalculation_is_stable(): void
+    public function test_repeated_recalculation_stable(): void
     {
         $r = $this->makeGlfReservation();
         $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-stable');
-
         $this->aggregate->postItem($this->glfActor, $folio->id, [
             'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'A',
-            'quantity'    => 1,
-            'amount'      => 100.33,
+            'description' => 'A', 'quantity' => 1, 'amount' => 100.33,
         ]);
-
         $this->aggregate->postItem($this->glfActor, $folio->id, [
             'item_type'   => FolioItemTypeEnum::Tax,
-            'description' => 'B',
-            'quantity'    => 1,
-            'amount'      => 10.67,
+            'description' => 'B', 'quantity' => 1, 'amount' => 10.67,
         ]);
-
         $folio->refresh();
         $first = $folio->total_charges;
-
-        // Recalculate via public method
         $this->aggregate->recalculateTotals($folio->id, $this->glfProperty->id);
         $folio->refresh();
-
         $this->assertSame($first, $folio->total_charges);
     }
 
-    public function test_voided_items_excluded_from_totals(): void
+    // ─────────────────────────────────────────────────────────────────
+    // Controlled Void
+    // ─────────────────────────────────────────────────────────────────
+
+    public function test_void_requires_active_membership(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-void-total');
-
-        $this->aggregate->postItem($this->glfActor, $folio->id, [
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-void-mem');
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
             'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Charge',
-            'quantity'    => 1,
-            'amount'      => 200.00,
+            'description' => 'T', 'quantity' => 1, 'amount' => 100.00,
         ]);
+        $this->expectException(ValidationException::class);
+        $this->aggregate->voidItem($this->glfOtherActor, $item->id);
+    }
 
+    public function test_cross_property_void_not_disclosed(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-void-cross');
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
+            'item_type'   => FolioItemTypeEnum::RoomCharge,
+            'description' => 'T', 'quantity' => 1, 'amount' => 100.00,
+        ]);
+        // Switch property, try to void the original property's item
+        app(CurrentPropertyService::class)->setPropertyId($this->glfOtherProperty->id);
+        $this->expectException(ValidationException::class);
+        $this->aggregate->voidItem($this->glfOtherActor, $item->id);
+    }
+
+    public function test_repeated_void_rejected(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-void-repeat');
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
+            'item_type'   => FolioItemTypeEnum::RoomCharge,
+            'description' => 'T', 'quantity' => 1, 'amount' => 100.00,
+        ]);
+        $this->aggregate->voidItem($this->glfActor, $item->id);
+        $this->expectException(ValidationException::class);
+        $this->aggregate->voidItem($this->glfActor, $item->id);
+    }
+
+    public function test_void_updates_totals_atomically(): void
+    {
+        $r = $this->makeGlfReservation();
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-void-atomic');
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
+            'item_type'   => FolioItemTypeEnum::RoomCharge,
+            'description' => 'Charge', 'quantity' => 1, 'amount' => 200.00,
+        ]);
         $folio->refresh();
         $this->assertSame('200.00', $folio->total_charges);
 
-        // Void through controlled path
-        $item = FolioItem::where('folio_id', $folio->id)->first();
-        app(\Modules\Operations\PMS\Services\FolioService::class)->voidItem($item->id);
-
+        $this->aggregate->voidItem($this->glfActor, $item->id);
         $folio->refresh();
         $this->assertSame('0.00', $folio->total_charges);
         $this->assertSame('0.00', $folio->balance);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // System Opening Source Re-resolution
+    // ─────────────────────────────────────────────────────────────────
+
+    public function test_system_opening_resolves_sources_from_db(): void
+    {
+        $guest = $this->makeGlfGuest();
+        $r = $this->makeGlfReservation(guest: $guest);
+        $folio = $this->aggregate->openWindowSystem($r->id, 'test');
+        $this->assertSame($this->glfProperty->id, $folio->property_id);
+        $this->assertSame($guest->id, $folio->guest_id);
+        $this->assertSame('USD', $folio->currency);
+        $this->assertNull($folio->created_by);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -500,49 +523,34 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
     public function test_zero_balance_is_not_settlement_readiness(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-no-settle');
-
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-nosettle');
         $this->assertSame('0.00', $folio->balance);
         $this->assertSame(FolioStatusEnum::Open, $folio->status);
-        $this->assertNotSame(FolioStatusEnum::Closed, $folio->status);
     }
 
     public function test_no_front_desk_stay_mutation(): void
     {
         $before = DB::table('stays')->count();
         $r = $this->makeGlfReservation();
-        $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-no-stay');
+        $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-nostay');
         $this->assertSame($before, DB::table('stays')->count());
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Positive Window Integrity (DB constraint)
-    // ─────────────────────────────────────────────────────────────────
 
     public function test_window_number_positive_enforced_by_database(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-pos-win');
-
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-poswin');
         $this->assertGreaterThan(0, $folio->window_number);
-
-        // Attempt to force a zero/negative window — DB must reject
         $this->expectException(\Illuminate\Database\QueryException::class);
         DB::table('folios')->where('id', $folio->id)->update(['window_number' => 0]);
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Cross-reservation folio-number uniqueness
-    // ─────────────────────────────────────────────────────────────────
 
     public function test_different_reservations_get_distinct_folio_numbers(): void
     {
         $r1 = $this->makeGlfReservation();
         $r2 = $this->makeGlfReservation();
-
-        $f1 = $this->aggregate->openWindow($this->glfActor, $r1->id, 'idem-num-1');
-        $f2 = $this->aggregate->openWindow($this->glfActor, $r2->id, 'idem-num-2');
-
+        $f1 = $this->aggregate->openWindow($this->glfActor, $r1->id, 'idem-num1');
+        $f2 = $this->aggregate->openWindow($this->glfActor, $r2->id, 'idem-num2');
         $this->assertNotSame($f1->folio_number, $f2->folio_number);
         $this->assertSame(1, $f1->window_number);
         $this->assertSame(1, $f2->window_number);

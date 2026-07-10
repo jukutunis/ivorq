@@ -10,6 +10,7 @@ use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
 use Modules\Operations\PMS\Enums\FolioStatusEnum;
 use Modules\Operations\PMS\Events\FolioCreated;
 use Modules\Operations\PMS\Events\FolioItemPosted;
+use Modules\Operations\PMS\Events\FolioItemVoided;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Models\Reservation;
@@ -20,8 +21,8 @@ use Shared\Services\CurrentPropertyService;
 /**
  * PMS Guest Ledger — Folio Aggregate Service.
  *
- * Owns folio opening, item posting, and cached-total recalculation within
- * the PMS Guest Ledger boundary (ADR-088).
+ * Owns folio opening, item posting, item void, and cached-total
+ * recalculation within the PMS Guest Ledger boundary (ADR-088).
  *
  * GLF-A establishes aggregate identity and integrity only. It does NOT
  * implement guest payment allocation, deposit, refund, AR transfer,
@@ -30,6 +31,10 @@ use Shared\Services\CurrentPropertyService;
 class GuestLedgerFolioAggregateService
 {
     private const IDEMPOTENCY_KEY_MAX_LENGTH = 64;
+
+    // Database column precisions
+    private const AMOUNT_MAX_INTEGER_DIGITS = 10;  // decimal(12,2)
+    private const QUANTITY_MAX_INTEGER_DIGITS = 6; // decimal(8,2)
 
     public function __construct(
         private FolioRepository        $folioRepository,
@@ -44,8 +49,9 @@ class GuestLedgerFolioAggregateService
     /**
      * Open a new folio window for a reservation.
      *
-     * All aggregate-owned fields are resolved server-side. Idempotent:
-     * the same (property, idempotencyKey) returns the existing folio.
+     * The passed $actor MUST match the currently authenticated user.
+     * Audit fields (created_by, updated_by) are explicitly bound to
+     * the command actor — not to ambient auth state.
      *
      * Lock order (consistent across all paths):
      *   1. Property row
@@ -63,16 +69,19 @@ class GuestLedgerFolioAggregateService
         // 1. Resolve current property
         $propertyId = $this->currentProperty->resolveOrFail();
 
-        // 2. Guard actor — active membership required
+        // 2. Verify the passed actor matches the authenticated user
+        $this->guardActorMatchesAuth($actor);
+
+        // 3. Guard actor — active membership required
         $this->guardActiveActorProperty($actor, $propertyId);
 
-        // 3. Validate and normalise idempotency key
+        // 4. Validate and normalise idempotency key
         $idempotencyKey = $this->validateIdempotencyKey($idempotencyKey);
 
-        // 4. Resolve reservation by ID + property
+        // 5. Resolve reservation by ID + property
         $reservation = $this->resolveReservation($reservationId, $propertyId);
 
-        // 5. Resolve primary guest
+        // 6. Resolve primary guest
         $guestId = $reservation->primary_guest_id;
         if (empty($guestId)) {
             throw ValidationException::withMessages([
@@ -80,12 +89,12 @@ class GuestLedgerFolioAggregateService
             ]);
         }
 
-        // 6. Resolve currency from Property (immutable — ADR-001)
+        // 7. Resolve currency from Property (immutable — ADR-001)
         $currency = Property::findOrFail($propertyId)->currency;
 
-        // 7. Transaction with consistent lock order
+        // 8. Transaction with consistent lock order
         return DB::transaction(function () use (
-            $propertyId, $reservation, $guestId, $currency, $idempotencyKey
+            $propertyId, $reservation, $guestId, $currency, $idempotencyKey, $actor
         ) {
             // Lock Property row (serialises folio-number generation)
             Property::where('id', $propertyId)->lockForUpdate()->firstOrFail();
@@ -105,7 +114,7 @@ class GuestLedgerFolioAggregateService
             }
 
             return $this->createFolioLocked(
-                $propertyId, $reservation->id, $guestId, $currency, $idempotencyKey
+                $propertyId, $reservation->id, $guestId, $currency, $idempotencyKey, $actor
             );
         });
     }
@@ -117,21 +126,17 @@ class GuestLedgerFolioAggregateService
     /**
      * System-driven folio opening.
      *
-     * The aggregate service independently resolves property, guest, and
-     * currency from authoritative database sources. The caller must NOT
-     * supply property ID, guest ID, currency, totals, status, or window
-     * number — even a stale or inconsistent event object cannot override
-     * the authoritative sources.
-     *
-     * @param string $reservationId Reservation ULID.
-     * @param string $sourcePurpose Short label identifying the system
-     *                              caller (e.g. 'check-in-listener').
+     * No authenticated actor exists. The aggregate service independently
+     * resolves property, guest, and currency from authoritative database
+     * sources. created_by remains null — the system does not fabricate a
+     * user. The deterministic source purpose is represented by the
+     * opening idempotency contract.
      */
     public function openWindowSystem(
         string $reservationId,
         string $sourcePurpose
     ): Folio {
-        // 1. Resolve reservation (BelongsToProperty scope limits to current property)
+        // 1. Resolve reservation
         $reservation = Reservation::findOrFail($reservationId);
         $propertyId  = $reservation->property_id;
 
@@ -155,13 +160,9 @@ class GuestLedgerFolioAggregateService
         return DB::transaction(function () use (
             $propertyId, $reservation, $guestId, $property, $idempotencyKey
         ) {
-            // Lock Property row
             Property::where('id', $propertyId)->lockForUpdate()->firstOrFail();
-
-            // Lock Reservation row
             Reservation::where('id', $reservation->id)->lockForUpdate()->firstOrFail();
 
-            // Idempotency check
             $existing = Folio::withoutGlobalScope('property')
                 ->where('property_id', $propertyId)
                 ->where('opening_idempotency_key', $idempotencyKey)
@@ -173,11 +174,7 @@ class GuestLedgerFolioAggregateService
             }
 
             return $this->createFolioLocked(
-                $propertyId,
-                $reservation->id,
-                $guestId,
-                $property->currency,
-                $idempotencyKey
+                $propertyId, $reservation->id, $guestId, $property->currency, $idempotencyKey, null
             );
         });
     }
@@ -196,20 +193,18 @@ class GuestLedgerFolioAggregateService
     {
         $propertyId = $this->currentProperty->resolveOrFail();
 
-        // 1. Guard actor — active membership required
+        $this->guardActorMatchesAuth($actor);
         $this->guardActiveActorProperty($actor, $propertyId);
 
-        // 2. Validate business input (decimal-safe)
+        // Validate business input (decimal-safe, field-specific precision)
         $itemType  = $this->resolveItemType($data['item_type'] ?? null);
-        $amount    = $this->normaliseDecimal($data['amount'] ?? null, 'amount');
-        $quantity  = $this->normaliseDecimal($data['quantity'] ?? '1', 'quantity');
+        $amount    = $this->validateAmountDecimal($data['amount'] ?? null);
+        $quantity  = $this->validateQuantityDecimal($data['quantity'] ?? '1');
         $desc      = (string) ($data['description'] ?? '');
 
-        // 3. Transaction with lock + revalidation
         return DB::transaction(function () use (
             $actor, $folioId, $propertyId, $itemType, $amount, $quantity, $desc
         ) {
-            // Lock and re-resolve Folio
             $folio = $this->folioRepository->lockForUpdate($folioId, $propertyId);
 
             // Re-validate OPEN status post-lock
@@ -219,7 +214,6 @@ class GuestLedgerFolioAggregateService
                 ]);
             }
 
-            // Create item with server-resolved fields only
             $item = $this->folioItemRepository->createControlled(
                 [
                     'item_type'   => $itemType,
@@ -237,7 +231,6 @@ class GuestLedgerFolioAggregateService
                 ]
             );
 
-            // Recalculate totals under same lock
             $this->recalculateAndPersistLocked($folio);
 
             event(new FolioItemPosted($item));
@@ -247,13 +240,71 @@ class GuestLedgerFolioAggregateService
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    // Controlled Void
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Void a folio line item through the authorized aggregate boundary.
+     *
+     * Requires active actor membership. Uses one transaction with
+     * consistent lock order (parent Folio → item) and calls the private
+     * locked recalculation primitive directly — no nested transaction.
+     *
+     * This is legacy item void only — NOT payment reversal.
+     */
+    public function voidItem(User $actor, string $itemId): FolioItem
+    {
+        $propertyId = $this->currentProperty->resolveOrFail();
+
+        $this->guardActorMatchesAuth($actor);
+        $this->guardActiveActorProperty($actor, $propertyId);
+
+        return DB::transaction(function () use ($actor, $itemId, $propertyId) {
+            // Lock the target item
+            $item = $this->folioItemRepository->lockForUpdate($itemId);
+
+            // Cross-property: item's property must match current property
+            if ($item->property_id !== $propertyId) {
+                throw ValidationException::withMessages([
+                    'item' => ['Folio item not found in the current property.'],
+                ]);
+            }
+
+            // Lock parent Folio (consistent order: parent before child re-check)
+            $folio = $this->folioRepository->lockForUpdate($item->folio_id, $propertyId);
+
+            // Verify item belongs to the locked Folio
+            if ($item->folio_id !== $folio->id) {
+                throw ValidationException::withMessages([
+                    'item' => ['Item does not belong to the resolved folio.'],
+                ]);
+            }
+
+            // Already voided?
+            if ($item->is_void) {
+                throw ValidationException::withMessages([
+                    'item' => ['This folio item has already been voided.'],
+                ]);
+            }
+
+            // Mark void via controlled repository method
+            $item = $this->folioItemRepository->voidItem($itemId);
+
+            // Use the private locked recalculation — same transaction, same lock
+            $this->recalculateAndPersistLocked($folio);
+
+            event(new FolioItemVoided($item));
+
+            return $item;
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // Canonical Totals
     // ─────────────────────────────────────────────────────────────────────
 
     /**
      * Public recalculate — opens its own transaction and lock.
-     *
-     * Safe for external callers that do not already hold a folio lock.
      */
     public function recalculateTotals(string $folioId, string $propertyId): Folio
     {
@@ -268,7 +319,7 @@ class GuestLedgerFolioAggregateService
     /**
      * Locked recalculation — caller MUST hold a folio row lock.
      *
-     * Private: only postItem() and recalculateTotals() may invoke this.
+     * Private: only postItem(), voidItem(), and recalculateTotals() may invoke this.
      */
     private function recalculateAndPersistLocked(Folio $folio): void
     {
@@ -283,7 +334,6 @@ class GuestLedgerFolioAggregateService
             if (bccomp((string) $amt, '0', 2) > 0) {
                 $totalCharges = bcadd($totalCharges, (string) $amt, 2);
             } elseif (bccomp((string) $amt, '0', 2) < 0) {
-                // Legacy credit — NOT authoritative payment-allocation evidence
                 $negAbs = bcsub('0', (string) $amt, 2);
                 $totalPayments = bcadd($totalPayments, $negAbs, 2);
             }
@@ -299,15 +349,19 @@ class GuestLedgerFolioAggregateService
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Internal: creation (caller holds Property + Reservation locks)
+    // Internal: creation
     // ─────────────────────────────────────────────────────────────────────
 
+    /**
+     * @param User|null $actor Command actor (null for system opening).
+     */
     private function createFolioLocked(
         string $propertyId,
         string $reservationId,
         string $guestId,
         string $currency,
-        string $idempotencyKey
+        string $idempotencyKey,
+        ?User $actor
     ): Folio {
         $nextWindow  = $this->allocateNextWindowNumber($propertyId, $reservationId);
         $folioNumber = $this->generateFolioNumberLocked($propertyId);
@@ -326,18 +380,48 @@ class GuestLedgerFolioAggregateService
             'balance'                  => '0.00',
         ]);
 
+        // Audit identity:
+        // - Interactive: HasAuditColumns already set created_by/updated_by
+        //   from auth()->id(), which matches the command actor (verified by
+        //   guardActorMatchesAuth). No further action needed.
+        // - System: No authenticated actor should be recorded. If the
+        //   ambient auth context set audit fields, null them out explicitly.
+        if ($actor === null) {
+            if ($folio->created_by !== null) {
+                \Illuminate\Support\Facades\DB::table('folios')
+                    ->where('id', $folio->id)
+                    ->update(['created_by' => null, 'updated_by' => null]);
+            }
+        }
+
         event(new FolioCreated($folio));
 
         return $folio->fresh();
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Internal: helpers
+    // Internal: guards
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * Actor must have active membership in the current property.
+     * Verify the passed User matches the currently authenticated user.
+     * Prevents actor-identity swapping at the command boundary.
      */
+    private function guardActorMatchesAuth(User $actor): void
+    {
+        if (! auth()->check()) {
+            throw ValidationException::withMessages([
+                'actor' => ['An authenticated actor is required for this operation.'],
+            ]);
+        }
+
+        if (auth()->id() !== $actor->id) {
+            throw ValidationException::withMessages([
+                'actor' => ['Actor identity does not match the authenticated session.'],
+            ]);
+        }
+    }
+
     private function guardActiveActorProperty(User $actor, string $propertyId): void
     {
         if ($actor->isSuperAdmin()) {
@@ -356,9 +440,6 @@ class GuestLedgerFolioAggregateService
         }
     }
 
-    /**
-     * Validate and normalise the idempotency key.
-     */
     private function validateIdempotencyKey(string $key): string
     {
         $key = trim($key);
@@ -380,10 +461,6 @@ class GuestLedgerFolioAggregateService
         return $key;
     }
 
-    /**
-     * On existing idempotency key: verify it belongs to the same reservation.
-     * A key reused for a different reservation is a controlled conflict.
-     */
     private function guardIdempotencyReplay(Folio $existing, string $requestedReservationId): void
     {
         if ($existing->reservation_id !== $requestedReservationId) {
@@ -393,7 +470,6 @@ class GuestLedgerFolioAggregateService
                 ],
             ]);
         }
-        // True replay — same property, same reservation, same key → same folio
     }
 
     private function resolveReservation(string $reservationId, string $propertyId): Reservation
@@ -433,63 +509,147 @@ class GuestLedgerFolioAggregateService
         ]);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Decimal validation
+    // ─────────────────────────────────────────────────────────────────────
+
     /**
-     * Normalise a decimal value to a scale-2 string using bcmath.
-     * Rejects non-numeric, sub-cent values that would silently truncate,
-     * zero amounts, and values exceeding database precision.
+     * Validate and normalise an amount value.
+     *
+     * Accepts only canonical plain decimal form:
+     *   optional leading minus, digits, optional decimal point, 0-2 fractional digits.
+     * Trailing fractional zeros are accepted (1.2300 → 1.23).
+     * Excess non-zero fractional digits are rejected (1.239 → reject).
+     *
+     * Column: decimal(12,2). Max absolute: 9999999999.99. Non-zero required.
      */
-    private function normaliseDecimal(mixed $value, string $field): string
+    private function validateAmountDecimal(mixed $value): string
     {
+        return $this->normaliseDecimal(
+            $value, 'amount', self::AMOUNT_MAX_INTEGER_DIGITS, 2, false
+        );
+    }
+
+    /**
+     * Validate and normalise a quantity value.
+     *
+     * Same canonical form as amount, but strictly positive.
+     *
+     * Column: decimal(8,2). Max: 999999.99. Non-zero required.
+     */
+    private function validateQuantityDecimal(mixed $value): string
+    {
+        return $this->normaliseDecimal(
+            $value, 'quantity', self::QUANTITY_MAX_INTEGER_DIGITS, 2, true
+        );
+    }
+
+    /**
+     * Canonical plain-decimal validation and normalisation.
+     *
+     * @param mixed  $value          Raw input value.
+     * @param string $field          Field name for error messages.
+     * @param int    $maxIntDigits   Maximum integer digits (excluding sign).
+     * @param int    $scale          Database scale (fractional digits).
+     * @param bool   $positiveOnly   If true, rejects zero and negative.
+     */
+    private function normaliseDecimal(
+        mixed $value,
+        string $field,
+        int $maxIntDigits,
+        int $scale,
+        bool $positiveOnly
+    ): string {
         if ($value === null || $value === '') {
             throw ValidationException::withMessages([
                 $field => [ucfirst($field) . ' is required.'],
             ]);
         }
 
-        // Reject scientific notation and non-numeric strings
-        if (is_string($value) && preg_match('/[eE]/', $value)) {
+        // Convert to string for pattern matching
+        $str = (string) $value;
+
+        // Reject scientific notation, NaN, INF
+        $lower = strtolower($str);
+        if (
+            str_contains($lower, 'e') ||
+            $lower === 'nan' || $lower === '-nan' ||
+            $lower === 'inf' || $lower === '-inf' || $lower === '+inf' ||
+            $lower === 'infinity' || $lower === '-infinity' || $lower === '+infinity'
+        ) {
             throw ValidationException::withMessages([
                 $field => [ucfirst($field) . ' must be a plain decimal number.'],
             ]);
         }
 
-        if (! is_numeric($value)) {
+        // Validate canonical form: optional minus, digits, optional . and digits
+        if (! preg_match('/^-?[0-9]+(\.[0-9]+)?$/', $str)) {
             throw ValidationException::withMessages([
-                $field => [ucfirst($field) . ' must be a valid number.'],
+                $field => [ucfirst($field) . ' must be a plain decimal number.'],
             ]);
         }
 
-        // Normalise to scale-2 string
-        $normalised = bcadd((string) $value, '0', 2);
+        $isNegative = str_starts_with($str, '-');
+        $absStr = $isNegative ? substr($str, 1) : $str;
 
-        // Reject sub-cent after normalisation (e.g. "0.001" truncates to "0.00")
-        if (bccomp($normalised, '0.00', 2) === 0 && bccomp((string) $value, '0', 3) !== 0) {
+        // Split integer and fractional parts
+        $parts = explode('.', $absStr);
+        $intPart = $parts[0];
+        $fracPart = $parts[1] ?? '';
+
+        // Check integer digit count
+        if (strlen($intPart) > $maxIntDigits || ($isNegative && bccomp($absStr, '0', $scale) > 0 && strlen($intPart) > $maxIntDigits)) {
             throw ValidationException::withMessages([
-                $field => [ucfirst($field) . ' resolves to zero at scale 2. Provide a value with at most 2 decimal places.'],
+                $field => [ucfirst($field) . ' exceeds maximum supported precision.'],
             ]);
         }
 
-        // Reject zero after normalisation
-        if (bccomp($normalised, '0.00', 2) === 0) {
+        // Check fractional digits
+        if (strlen($fracPart) > $scale) {
+            // Allow only if excess digits are all zero
+            $excess = substr($fracPart, $scale);
+            if (rtrim($excess, '0') !== '') {
+                throw ValidationException::withMessages([
+                    $field => [ucfirst($field) . ' has too many decimal places. Maximum is ' . $scale . '.'],
+                ]);
+            }
+            // Truncate trailing zeros
+            $fracPart = substr($fracPart, 0, $scale);
+        }
+
+        // Pad fractional part to scale
+        $fracPart = str_pad($fracPart, $scale, '0');
+        $normalised = ($isNegative ? '-' : '') . $intPart . '.' . $fracPart;
+
+        // bccomp normalisation
+        $normalised = bcadd($normalised, '0', $scale);
+
+        // Zero check
+        if (bccomp($normalised, '0.00', $scale) === 0) {
+            if ($positiveOnly) {
+                throw ValidationException::withMessages([
+                    $field => [ucfirst($field) . ' must be a positive number.'],
+                ]);
+            }
             throw ValidationException::withMessages([
                 $field => [ucfirst($field) . ' must be non-zero.'],
             ]);
         }
 
-        // Reject negative quantity
-        if ($field === 'quantity' && bccomp($normalised, '0.00', 2) < 0) {
+        // Negative check for positive-only fields
+        if ($positiveOnly && bccomp($normalised, '0.00', $scale) < 0) {
             throw ValidationException::withMessages([
-                'quantity' => ['Quantity must be a positive number.'],
+                $field => [ucfirst($field) . ' must be a positive number.'],
             ]);
         }
 
-        // Reject overflow: database decimal(12,2) = max 10 integer digits
-        $maxValue = '9999999999.99';
-        $absValue = $normalised;
-        if (bccomp($absValue, '0', 2) < 0) {
-            $absValue = bcsub('0', $absValue, 2);
+        // Overflow check: integer part max digits + fractional part max scale
+        $maxAbs = str_repeat('9', $maxIntDigits) . '.' . str_repeat('9', $scale);
+        $absNorm = $normalised;
+        if (bccomp($absNorm, '0', $scale) < 0) {
+            $absNorm = bcsub('0', $absNorm, $scale);
         }
-        if (bccomp($absValue, $maxValue, 2) > 0) {
+        if (bccomp($absNorm, $maxAbs, $scale) > 0) {
             throw ValidationException::withMessages([
                 $field => [ucfirst($field) . ' exceeds maximum supported precision.'],
             ]);
@@ -498,10 +658,10 @@ class GuestLedgerFolioAggregateService
         return $normalised;
     }
 
-    /**
-     * Allocate the next window number for a reservation.
-     * Caller MUST hold reservation lock.
-     */
+    // ─────────────────────────────────────────────────────────────────────
+    // Internal: window and folio-number allocation
+    // ─────────────────────────────────────────────────────────────────────
+
     private function allocateNextWindowNumber(string $propertyId, string $reservationId): int
     {
         $maxWindow = Folio::withoutGlobalScope('property')
@@ -512,12 +672,6 @@ class GuestLedgerFolioAggregateService
         return ($maxWindow ?? 0) + 1;
     }
 
-    /**
-     * Generate a folio number. Caller MUST hold the Property lock.
-     *
-     * Property-wide sequential: FOL-XXXXX.
-     * The Property row lock serialises this across all reservations.
-     */
     private function generateFolioNumberLocked(string $propertyId): string
     {
         $seq = Folio::withoutGlobalScope('property')

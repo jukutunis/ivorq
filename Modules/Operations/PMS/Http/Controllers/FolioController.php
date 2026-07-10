@@ -7,7 +7,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
 use Inertia\Response;
-use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
 use Modules\Operations\PMS\Enums\FolioStatusEnum;
 use Modules\Operations\PMS\Http\Requests\CloseFolioRequest;
 use Modules\Operations\PMS\Http\Requests\PostFolioItemRequest;
@@ -17,7 +16,6 @@ use Modules\Operations\PMS\Http\Resources\FolioItemResource;
 use Modules\Operations\PMS\Http\Resources\FolioResource;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Services\FolioService;
-use Shared\Services\CurrentPropertyService;
 
 class FolioController extends Controller
 {
@@ -61,14 +59,10 @@ class FolioController extends Controller
                 ->with('success', 'An open folio already exists for this reservation.');
         }
 
-        $propertyId  = app(CurrentPropertyService::class)->getId();
-        $seq         = Folio::where('property_id', $propertyId)->withTrashed()->count() + 1;
-        $folioNumber = sprintf('FOL-%05d', $seq);
-
-        $folio = $this->folioService->createForReservation($reservation, [
-            'folio_number' => $folioNumber,
-            'currency'     => 'MYR',
-        ]);
+        // GLF-A: All aggregate-owned fields are server-resolved by the
+        // controlled service. The controller passes only the reservation
+        // identifier — no folio number, no currency, no property ID.
+        $folio = $this->folioService->createForReservation($reservation);
 
         return redirect()->route('operations.pms.folios.show', $folio->id)
             ->with('success', 'Folio created successfully.');
@@ -76,11 +70,9 @@ class FolioController extends Controller
 
     public function postItem(PostFolioItemRequest $request, string $folio): JsonResponse
     {
-        $data = array_merge($request->validated(), [
-            'property_id' => app(CurrentPropertyService::class)->getId(),
-        ]);
-
-        $item = $this->folioService->postItem($folio, $data);
+        // GLF-A: Pass only validated business input.
+        // Property is server-resolved in the aggregate service.
+        $item = $this->folioService->postItem($folio, $request->validated());
 
         return response()->json([
             'message' => 'Item posted to folio.',
