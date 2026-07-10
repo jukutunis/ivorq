@@ -82,6 +82,32 @@
       "status": "active"
     },
     {
+      "id": "guest-ledger-folio-aggregate-baseline",
+      "description": "PMS Guest Ledger folio aggregate operational tests covering aggregate opening, idempotency, property isolation, folio item integrity, cached totals, decimal safety, write boundary, and isolated concurrency proof. GLF-A establishes folio aggregate identity and integrity only. All 2 test classes pass cleanly as a single batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "GuestLedgerFolioAggregateTest",
+        "GuestLedgerFolioAggregateConcurrencyProofTest"
+      ],
+      "expected": {
+        "tests": 29,
+        "assertions": 73,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-11",
+        "branch": "sprint-glf-a-guest-ledger-folio-aggregate-hardening",
+        "sha": "f7213da2acf58c150cb68a665aec3ff0e11a7fe7",
+        "note": "All 2 classes proven via exact-class runner at 29 tests / 73 assertions / 0 failures / 0 errors. GLF-A establishes folio aggregate identity and integrity. Concurrency proof confirms same-key idempotency and different-key window allocation safety."
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
       "id": "housekeeping-room-readiness-baseline",
       "description": "Housekeeping room readiness operational tests covering authorization, immutability, projections, transitions, workspace, concurrency, and Front Desk dependency (HK-B1). All 7 test classes pass cleanly as a single batch.",
       "type": "phpunit",
