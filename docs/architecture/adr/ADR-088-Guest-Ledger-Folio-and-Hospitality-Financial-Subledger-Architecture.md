@@ -24,8 +24,8 @@ This ADR is triggered by the blocked FD-B9 investigation. It records the Owner d
 
 | Domain | Owned facts | Permitted commands | Consumed evidence | Prohibited mutation |
 |---|---|---|---|---|
-| PMS Guest Ledger | Guest folio aggregate, folio identity and lifecycle, folio items, room-charge and operational guest-charge facts, guest ledger balance, allocation of guest financial transactions to folios, settlement readiness, folio settlement evidence, folio closure after controlled settlement, checkout-relevant multi-folio aggregation | Future controlled folio posting, settlement evaluation, folio closure, settlement-readiness projection publication | PMS Reservation, FrontDeskStay identity, PMS Cashiering payment allocation, deposit/refund state, accepted AR transfer, Night Audit posting-completeness checkpoints, Accounting posting references where relevant | Front Desk stay mutation, General Cashier session mutation, cash drawer mutation, GL journal posting, AR collection lifecycle mutation |
-| PMS Cashiering | Guest payment transaction lifecycle, guest payment allocation to folios, guest payment void/reversal relationships, deposit application to folios, guest refund transaction lifecycle, payment transaction status used by settlement readiness | Future guest tender recording, guest payment allocation, deposit application, guest refund, guest payment void/reversal | PMS Guest Ledger folio identity, General Cashier cash-session accountability for cash tender, Banking evidence for bank/card settlement where relevant | Guest folio aggregate ownership, General Cashier session close, Accounting journal posting, AR invoice lifecycle |
+| PMS Guest Ledger | Guest folio aggregate, folio identity and lifecycle, folio items, room-charge and operational guest-charge facts, guest ledger balance, canonical folio balance, folio-side effect of accepted payment-allocation evidence, settlement readiness, folio settlement evidence, folio closure after controlled settlement, checkout-relevant multi-folio aggregation | Future controlled folio posting, settlement evaluation, folio closure, settlement-readiness projection publication | PMS Reservation, FrontDeskStay identity, PMS Cashiering accepted payment-allocation evidence, deposit/refund state, accepted AR transfer, Night Audit posting-completeness checkpoints, Accounting posting references where relevant | Front Desk stay mutation, General Cashier session mutation, cash drawer mutation, GL journal posting, AR collection lifecycle mutation |
+| PMS Cashiering | Guest payment-allocation command, allocation identity and lifecycle, allocation status, tender transaction, payment void/reversal relationship, deposit application command, guest refund transaction | Future guest tender recording, guest payment allocation, deposit application, guest refund, guest payment void/reversal | PMS Guest Ledger folio identity, General Cashier cash-session accountability for cash tender, Banking evidence for bank/card settlement where relevant | Guest folio aggregate ownership, canonical folio balance, General Cashier session close, Accounting journal posting, AR invoice lifecycle |
 | Front Desk | FrontDeskStay lifecycle, arrival and departure operational evidence, future controlled checkout command boundary | Future checkout command after revalidating authoritative dependencies | PMS Guest Ledger settlement readiness projection, PMS Reservation/Guest identity, Housekeeping, Engineering, Business Date/Night Audit locks, FD-B evidence | Folios, folio items, guest payments, deposits, refunds, AR transfers, cashier state, accounting records |
 | General Cashier | Cashier session, cashier identity and responsibility, drawer or till accountability, cash custody, cashier handover, cashier close and reconciliation, physical cash execution evidence where relevant | Open/close/handover cashier session, record cash count/accountability, reconcile cash custody under approved packages | PMS Cashiering cash guest-payment execution reference when cash tender is involved, Accounting/Banking evidence where relevant | Guest folio balance, guest settlement decision, room-charge posting, guest payment allocation semantics, folio closure |
 | Accounting / AR | City Ledger / Accounts Receivable after accepted transfer, transferred receivable lifecycle, client invoice and collection lifecycle, AR reconciliation | Accept/reject/reverse AR transfer, invoice, collect, reconcile, write off under approved controls | PMS Guest Ledger transfer request and accepted transfer evidence, Accounting/GL postings, payment/bank evidence | PMS guest folio before accepted transfer, Front Desk stay mutation, General Cashier drawer state |
@@ -37,16 +37,18 @@ This ADR is triggered by the blocked FD-B9 investigation. It records the Owner d
 
 ## Operational Versus Accounting Facts
 
+PMS Cashiering owns payment allocation as a transaction lifecycle. PMS Guest Ledger consumes accepted allocation evidence and owns its folio-side financial effect.
+
 PMS operational financial facts include:
 
 - room charge;
 - service charge;
 - operational tax charge;
 - adjustment;
-- guest payment allocation;
+- guest payment allocation (command lifecycle owned by PMS Cashiering; folio-side effect owned by PMS Guest Ledger);
 - deposit application;
 - refund transaction;
-- folio balance;
+- folio balance (canonical, owned by PMS Guest ledger);
 - settlement readiness;
 - folio closure.
 
@@ -108,7 +110,7 @@ Future settlement readiness statuses are:
 - no unresolved payment void or reversal exists;
 - deposits are applied, refunded, transferred, or otherwise resolved;
 - no pending guest refund exists;
-- no pending or failed AR transfer exists;
+- no unresolved or pending AR transfer exists; only an accepted transfer may satisfy the transferred amount; requested transfer is not settlement; failed or rejected transfer is not settlement; reversed transfer is not settlement; failed, rejected, or reversed attempts must be terminal and resolved, closed, or superseded before readiness can be reevaluated; a historical resolved failure does not permanently block settlement when another valid settlement method has completed;
 - currency is consistent across checkout-relevant folios and settlement facts;
 - all checkout-relevant folios are resolved;
 - no settlement hold exists;
@@ -125,17 +127,21 @@ Folio closure is a separate controlled command. Future checkout execution must r
 
 ## PMS Cashiering Versus General Cashier
 
-PMS Cashiering owns guest tender transaction lifecycle, guest payment allocation to folio, guest refund, deposit application, and payment reversal.
+PMS Cashiering owns guest payment-allocation command, allocation identity and lifecycle, allocation status, tender transaction, guest refund, deposit application command, and payment reversal.
 
 General Cashier owns cashier session ownership, cash custody, till accountability, cashier handover, and cashier close/reconciliation.
 
 A cash guest payment may require evidence from both domains: PMS Cashiering for the guest payment and folio allocation, and General Cashier for the cash-session and cash-custody evidence. Neither domain may fabricate the other's evidence.
+
+PMS Guest Ledger must not be described as owning the guest payment-allocation command or lifecycle. PMS Cashiering must not be described as owning the folio aggregate or canonical balance.
 
 ## AR Transfer Boundary
 
 PMS Guest Ledger owns the guest balance before accepted transfer. Accounting/AR owns the receivable only after an accepted transfer.
 
 An AR transfer lifecycle must include requested, accepted, failed/rejected, and reversed semantics. Settlement readiness may recognize only a completed accepted transfer. Merely creating an AR request is insufficient.
+
+Pending or unresolved transfers block settlement readiness. Only an accepted transfer satisfies the transferred amount. A requested transfer is not settlement. A failed or rejected transfer is not settlement. A reversed transfer is not settlement. Failed, rejected, or reversed attempts must be terminal and resolved, closed, or superseded before readiness can be reevaluated. A historical resolved failure does not permanently block settlement when another valid settlement method has completed.
 
 This aligns with ADR-028's Guest Ledger and City Ledger strategy: Direct Bill moves a governed guest balance to City Ledger only through an accepted transfer boundary with authorization evidence.
 

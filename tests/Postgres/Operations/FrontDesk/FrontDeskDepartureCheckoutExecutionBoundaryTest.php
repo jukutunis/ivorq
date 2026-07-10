@@ -210,6 +210,10 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $this->assertFalse($b['can_execute']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE, $b['blocker_codes']);
+
+        $cashierGate = $b['authoritative_gates']['cashier_obligation'] ?? null;
+        $this->assertFalse($cashierGate['satisfied']);
+        $this->assertSame('General Cashier', $cashierGate['owner']);
     }
 
     public function test_no_fabricated_ready_result(): void
@@ -473,8 +477,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertSame('Checkout execution is not performed in FD-B8.', $b['execution_not_performed_marker']);
-        $this->assertStringContainsString('Not evaluated', $b['financial_settlement_marker']);
-        $this->assertStringContainsString('B8', $b['financial_settlement_marker']);
+        $this->assertSame('Financial settlement: Not evaluated in Front Desk Package B8. Owned by PMS Guest Ledger.', $b['financial_settlement_marker']);
     }
 
     public function test_workspace_source_contract(): void
@@ -501,8 +504,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         // 3. Required marker strings
         $this->assertStringContainsString('Checkout execution not yet available', $source, 'Disabled affordance marker must exist.');
         $this->assertStringContainsString('Checkout execution is not performed in FD-B8.', $source, 'Not-performed marker must exist.');
-        $this->assertStringContainsString('Financial settlement: Not evaluated', $source, 'Financial exclusion marker must exist.');
-        $this->assertStringContainsString('Front Desk Package B8', $source, 'Package B8 marker must exist.');
+        $this->assertStringContainsString('Financial settlement: Not evaluated in Front Desk Package B8. Owned by PMS Guest Ledger.', $source, 'Exact workspace financial settlement marker must exist.');
 
         // 4. No enabled checkout execution action — the panel must not contain a checkout button/form
         $panelStart = strpos($source, 'function CheckoutExecutionBoundaryPanel');

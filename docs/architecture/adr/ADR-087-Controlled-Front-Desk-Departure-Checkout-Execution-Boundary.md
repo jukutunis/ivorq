@@ -15,7 +15,7 @@ The repository contains no existing ADR that defines the Front Desk checkout exe
 
 This ADR establishes the governance-backed Front Desk checkout execution boundary as a read-only projection. It identifies which authoritative sources exist, which are missing, and what must be in place before a future checkout execution package can perform any checkout mutation.
 
-Ownership clarified by ADR-088: guest folio settlement is owned by PMS Guest Ledger; guest payment allocation is owned by PMS Cashiering; cashier session and cash accountability are owned by General Cashier; AR transfer after accepted transfer is owned by Accounting / AR; revenue, tax, and GL posting are owned by Accounting; Finance governs and consumes financial outcomes.
+Ownership clarified by ADR-088: guest folio settlement and canonical folio balance are owned by PMS Guest Ledger; guest payment-allocation command and transaction lifecycle are owned by PMS Cashiering; PMS Guest Ledger consumes accepted allocation evidence and owns the folio-side financial effect; cashier session and cash accountability are owned by General Cashier; AR transfer after accepted transfer is owned by Accounting / AR; revenue, tax, and GL posting are downstream accounting outcomes owned by Accounting; Finance governs and consumes financial outcomes.
 
 ## Decision
 
@@ -61,11 +61,18 @@ Each gate must be re-resolved independently at execution time. FD-B8 evaluates a
 | Guest payment allocation terminal and resolved | PMS Cashiering | No authoritative PMS Cashiering guest payment-allocation projection exists | Blocked: FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE |
 | Cashier session/accountability obligations resolved | General Cashier | General Cashier module exists but no Front Desk-accessible cashier session/accountability projection exists | Blocked: CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE |
 | AR transfer accepted when applicable | Accounting / AR | No Front Desk-accessible accepted-transfer projection exists | Blocked: FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE |
-| Revenue, tax, and GL posting ownership | Accounting | No checkout execution dependency uses Accounting posting as folio ownership evidence | Read-only downstream accounting owner |
 | Business date permits checkout | Business Date/Night Audit | ADR-034 exists as Proposed; no implementation exists | Blocked: BUSINESS_DATE_EVIDENCE_UNAVAILABLE |
 | No active Night Audit close lock | Night Audit | ADR-034 exists as Proposed; no implementation exists | Blocked: NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE |
 | Room readiness (Housekeeping) | Housekeeping | Yes — HousekeepingRoomReadinessProjectionService | Read-only dependency available |
 | Engineering availability | Engineering | Yes — EngineeringRoomAvailabilityProjectionService | Read-only dependency available |
+
+### Downstream Accounting Ownership
+
+- Accounting owns revenue recognition, tax journal posting, GL journals, and financial-period control.
+- These are downstream accounting outcomes.
+- They are not FD-B8 checkout-readiness gates.
+- Accounting posting completion must not be inferred as a prerequisite for operational folio settlement unless a future approved ADR explicitly introduces such a gate.
+- Accounting ownership does not transfer guest-folio ownership away from PMS Guest Ledger.
 
 ### Execution Boundary Statuses
 
