@@ -429,29 +429,38 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
     public function test_no_checkout_execution_write_route_exists(): void
     {
-        // Verify no checkout execution write route names exist
-        // The boundary read route 'frontdesk.stays.departure-checkout-execution-boundary.index' is allowed
-        $routeNames = collect(Route::getRoutes()->getRoutes())
-            ->map(fn ($r) => $r->getName())
-            ->filter()
-            ->values()
-            ->all();
+        $allRoutes = collect(Route::getRoutes()->getRoutes());
 
-        foreach ($routeNames as $name) {
-            $n = $name ?? '';
-            // Allow the read-only boundary index route
-            if ($n === 'frontdesk.stays.departure-checkout-execution-boundary.index') {
+        $forbiddenWriteRoutes = [];
+        $forbiddenWriteRouteNames = [];
+
+        foreach ($allRoutes as $route) {
+            $uri = $route->uri();
+            $name = $route->getName() ?? '';
+            $methods = $route->methods();
+
+            // Allow the read-only boundary index route by name
+            if ($name === 'frontdesk.stays.departure-checkout-execution-boundary.index') {
                 continue;
             }
-            // Block any checkout-execution write route
-            $this->assertStringNotContainsString('checkout-execution.store', $n);
-            $this->assertStringNotContainsString('checkout-execution.execute', $n);
-            $this->assertStringNotContainsString('checkout-execution.create', $n);
-            $this->assertStringNotContainsString('checkout-execution.update', $n);
-            $this->assertStringNotContainsString('checkout-execution.destroy', $n);
+
+            // Collect any checkout-execution URI with a write method
+            if (str_contains($uri, 'checkout-execut')) {
+                if (array_intersect(['POST', 'PUT', 'PATCH', 'DELETE'], $methods)) {
+                    $forbiddenWriteRoutes[] = implode(',', $methods) . ' ' . $uri;
+                }
+            }
+
+            // Collect any checkout-execution write route name (store/create/execute/update/destroy)
+            foreach (['store', 'create', 'execute', 'update', 'destroy'] as $action) {
+                if (str_contains($name, 'checkout-execution.' . $action)) {
+                    $forbiddenWriteRouteNames[] = $name;
+                }
+            }
         }
 
-        $this->assertTrue(true);
+        $this->assertSame([], $forbiddenWriteRoutes, 'No POST/PUT/PATCH/DELETE checkout execution route may exist.');
+        $this->assertSame([], $forbiddenWriteRouteNames, 'No checkout execution write route name may exist.');
     }
 
     // ── Workspace Boundary ──
@@ -466,5 +475,49 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertSame('Checkout execution is not performed in FD-B8.', $b['execution_not_performed_marker']);
         $this->assertStringContainsString('Not evaluated', $b['financial_settlement_marker']);
         $this->assertStringContainsString('B8', $b['financial_settlement_marker']);
+    }
+
+    public function test_workspace_source_contract(): void
+    {
+        $workspacePath = base_path('resources/js/Pages/Ivorq/FrontDesk/FrontDeskWorkspace.tsx');
+        $this->assertFileExists($workspacePath, 'FrontDeskWorkspace.tsx must exist.');
+
+        $source = file_get_contents($workspacePath);
+        $this->assertNotEmpty($source);
+
+        // 1. Type contract: CheckoutExecutionBoundarySummary must define all required fields
+        $this->assertStringContainsString('execution_boundary_status', $source, 'Type must include execution_boundary_status.');
+        $this->assertStringContainsString('can_execute', $source, 'Type must include can_execute.');
+        $this->assertStringContainsString('blocker_codes', $source, 'Type must include blocker_codes.');
+        $this->assertStringContainsString('blocker_messages', $source, 'Type must include blocker_messages.');
+        $this->assertStringContainsString('review_reasons', $source, 'Type must include review_reasons.');
+        $this->assertStringContainsString('execution_not_performed_marker', $source, 'Type must include execution_not_performed_marker.');
+
+        // 2. Semantic badge mappings
+        $this->assertStringContainsString("'success'", $source, 'READY must map to success badge status.');
+        $this->assertStringContainsString("'warning'", $source, 'BLOCKED must map to warning badge status.');
+        $this->assertStringContainsString("'pending'", $source, 'REVIEW_REQUIRED must map to pending badge status.');
+
+        // 3. Required marker strings
+        $this->assertStringContainsString('Checkout execution not yet available', $source, 'Disabled affordance marker must exist.');
+        $this->assertStringContainsString('Checkout execution is not performed in FD-B8.', $source, 'Not-performed marker must exist.');
+        $this->assertStringContainsString('Financial settlement: Not evaluated', $source, 'Financial exclusion marker must exist.');
+        $this->assertStringContainsString('Front Desk Package B8', $source, 'Package B8 marker must exist.');
+
+        // 4. No enabled checkout execution action — the panel must not contain a checkout button/form
+        $panelStart = strpos($source, 'function CheckoutExecutionBoundaryPanel');
+        $this->assertNotFalse($panelStart, 'Boundary panel function must exist.');
+        $panelSource = substr($source, $panelStart);
+
+        // No POST form targeting checkout execution within the boundary panel
+        $this->assertStringNotContainsString('method="post"', strtolower($panelSource), 'No POST form within checkout execution boundary panel.');
+
+        // No enabled Checkout button label within the panel (only the disabled affordance)
+        // The panel contains "Checkout execution not yet available" but must not contain "Check Out" as a button
+        $this->assertStringNotContainsString('>Check Out<', $panelSource, 'No Check Out button may exist in boundary panel.');
+
+        // 5. Verify the panel renders review_reasons and blocker_messages
+        $this->assertStringContainsString('review_reasons', $panelSource, 'Panel must reference review_reasons.');
+        $this->assertStringContainsString('blocker_messages', $panelSource, 'Panel must reference blocker_messages.');
     }
 }

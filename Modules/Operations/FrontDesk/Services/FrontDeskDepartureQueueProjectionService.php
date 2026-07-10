@@ -700,6 +700,7 @@ class FrontDeskDepartureQueueProjectionService
             'execution_boundary_status' => $boundary['execution_boundary_status'],
             'can_execute' => $boundary['can_execute'],
             'blocker_codes' => $boundary['blocker_codes'],
+            'blocker_messages' => $boundary['blocker_messages'],
             'review_reasons' => $boundary['review_reasons'],
             'execution_not_performed_marker' => $boundary['execution_not_performed_marker'],
         ];
