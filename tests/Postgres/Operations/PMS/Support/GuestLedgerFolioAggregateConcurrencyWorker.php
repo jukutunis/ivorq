@@ -24,11 +24,6 @@ config(['database.connections.pgsql.database' => $dbName]);
 \Illuminate\Support\Facades\DB::purge('pgsql');
 \Illuminate\Support\Facades\DB::reconnect('pgsql');
 
-$actor = \Modules\Foundation\User\Models\User::findOrFail($fixture['actor_id']);
-\Illuminate\Support\Facades\Auth::login($actor);
-app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($fixture['property_id']);
-session(['current_property_id' => $fixture['property_id']]);
-
 $aggregate = app(\Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService::class);
 
 $result = [
@@ -41,6 +36,33 @@ $result = [
     'window_number' => null,
     'error' => null,
 ];
+
+// Resolve actor, property, and reservation from fixture based on scenario
+$actor = \Modules\Foundation\User\Models\User::findOrFail($fixture['actor_id']);
+$propertyId = $fixture['property_id'] ?? $fixture['property_id_a'] ?? null;
+$reservationId = $fixture['reservation_id'] ?? null;
+
+if ($scenario === 'cross_reservation') {
+    // Worker A → reservation_a, Worker B → reservation_b
+    $reservationId = ($workerId === 'A')
+        ? $fixture['reservation_id_a']
+        : $fixture['reservation_id_b'];
+} elseif ($scenario === 'cross_property') {
+    // Worker A → property_a, Worker B → property_b
+    if ($workerId === 'A') {
+        $propertyId = $fixture['property_id_a'];
+        $reservationId = $fixture['reservation_id_a'];
+        $actor = \Modules\Foundation\User\Models\User::findOrFail($fixture['actor_id']);
+    } else {
+        $propertyId = $fixture['property_id_b'];
+        $reservationId = $fixture['reservation_id_b'];
+        $actor = \Modules\Foundation\User\Models\User::findOrFail($fixture['actor_id_b']);
+    }
+}
+
+\Illuminate\Support\Facades\Auth::login($actor);
+app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($propertyId);
+session(['current_property_id' => $propertyId]);
 
 touch($barrierDir . "/ready-{$workerId}");
 
@@ -58,32 +80,30 @@ if (! file_exists($startFile)) {
 }
 
 try {
-    // Get PG backend PID
     $pdo = \Illuminate\Support\Facades\DB::connection('pgsql')->getPdo();
     $stmt = $pdo->query('SELECT pg_backend_pid()');
     $result['pg_backend_pid'] = (int) $stmt->fetchColumn();
 
     if ($scenario === 'same_key') {
-        // Both workers use the SAME idempotency key
-        $folio = $aggregate->openWindow(
-            $actor,
-            $fixture['reservation_id'],
-            'concurrency-same-key',
-        );
-
+        $folio = $aggregate->openWindow($actor, $fixture['reservation_id'], 'concurrency-same-key');
         $result['folio_id'] = $folio->id;
         $result['folio_number'] = $folio->folio_number;
         $result['window_number'] = $folio->window_number;
         $result['outcome'] = 'FOLIO_OPENED';
     } elseif ($scenario === 'different_key') {
-        // Each worker uses a DIFFERENT idempotency key
-        $key = 'concurrency-diff-key-' . $workerId;
-        $folio = $aggregate->openWindow(
-            $actor,
-            $fixture['reservation_id'],
-            $key,
-        );
-
+        $folio = $aggregate->openWindow($actor, $fixture['reservation_id'], 'concurrency-diff-key-' . $workerId);
+        $result['folio_id'] = $folio->id;
+        $result['folio_number'] = $folio->folio_number;
+        $result['window_number'] = $folio->window_number;
+        $result['outcome'] = 'FOLIO_OPENED';
+    } elseif ($scenario === 'cross_reservation') {
+        $folio = $aggregate->openWindow($actor, $reservationId, 'concurrency-cross-res-' . $workerId);
+        $result['folio_id'] = $folio->id;
+        $result['folio_number'] = $folio->folio_number;
+        $result['window_number'] = $folio->window_number;
+        $result['outcome'] = 'FOLIO_OPENED';
+    } elseif ($scenario === 'cross_property') {
+        $folio = $aggregate->openWindow($actor, $reservationId, 'concurrency-cross-prop-' . $workerId);
         $result['folio_id'] = $folio->id;
         $result['folio_number'] = $folio->folio_number;
         $result['window_number'] = $folio->window_number;

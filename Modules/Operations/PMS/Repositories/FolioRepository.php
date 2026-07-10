@@ -48,17 +48,39 @@ class FolioRepository
         return Folio::findOrFail($id);
     }
 
-    public function create(array $data): Folio
+    /**
+     * Controlled folio creation.
+     *
+     * All aggregate-owned fields are server-resolved. This method uses
+     * forceFill() because the Folio model denies generic mass assignment
+     * (fillable is empty, guarded is ['*']).
+     *
+     * @internal Called only by GuestLedgerFolioAggregateService.
+     */
+    public function createControlled(array $serverResolvedAttributes): Folio
     {
-        return Folio::create($data)->fresh();
-    }
-
-    public function update(string $id, array $data): Folio
-    {
-        $folio = $this->find($id);
-        $folio->update($data);
+        $folio = new Folio();
+        $folio->forceFill($serverResolvedAttributes)->save();
 
         return $folio->fresh();
+    }
+
+    /**
+     * Lock a folio row FOR UPDATE within the current property.
+     *
+     * @internal For recalculation and posting paths.
+     */
+    public function lockForUpdate(string $id, string $propertyId): Folio
+    {
+        $folio = Folio::withoutGlobalScope('property')
+            ->where('id', $id)
+            ->where('property_id', $propertyId)
+            ->lockForUpdate()
+            ->first();
+
+        throw_if(! $folio, new NotFoundException('Folio'));
+
+        return $folio;
     }
 
     public function delete(string $id): bool
@@ -69,10 +91,7 @@ class FolioRepository
     // ── Specialised queries ──────────────────────────────────────────────────
 
     /**
-     * Return the open folio(s) for a given reservation.
-     * Typically one per reservation but supports split-folio scenarios.
-     *
-     * GLF-A: Results are ordered by window_number.
+     * Return the open folio(s) for a given reservation, ordered by window_number.
      */
     public function openForReservation(string $reservationId): Collection
     {
@@ -85,9 +104,6 @@ class FolioRepository
 
     /**
      * Return ALL folios for a given reservation, ordered by window number.
-     *
-     * GLF-A: This is the authoritative query for multi-folio aggregation.
-     * Results are property-scoped via the BelongsToProperty global scope.
      */
     public function forReservation(string $reservationId): Collection
     {

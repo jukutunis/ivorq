@@ -540,7 +540,7 @@ class PmsResourceTest extends TestCase
         $reservation = $this->makePmsReservation($property, $guest);
         $folio       = $this->makePmsFolio($reservation, $guest);
 
-        FolioItem::create([
+        tap(new FolioItem())->forceFill([
             'property_id' => $property->id,
             'folio_id'    => $folio->id,
             'item_type'   => FolioItemTypeEnum::RoomCharge->value,
@@ -549,7 +549,7 @@ class PmsResourceTest extends TestCase
             'amount'      => 150.00,
             'is_void'     => false,
             'posted_at'   => now(),
-        ]);
+        ])->save();
 
         $folio = Folio::with('items')->find($folio->id);
         $data  = $this->resolve(new FolioResource($folio));
@@ -569,7 +569,7 @@ class PmsResourceTest extends TestCase
         $reservation = $this->makePmsReservation($property, $guest);
         $folio       = $this->makePmsFolio($reservation, $guest);
 
-        $item = FolioItem::create([
+        $item = tap(new FolioItem())->forceFill([
             'property_id' => $property->id,
             'folio_id'    => $folio->id,
             'item_type'   => FolioItemTypeEnum::RoomCharge->value,
@@ -579,6 +579,7 @@ class PmsResourceTest extends TestCase
             'is_void'     => false,
             'posted_at'   => now(),
         ]);
+        $item->save();
 
         $data = $this->resolve(new FolioItemResource($item));
 
@@ -599,7 +600,7 @@ class PmsResourceTest extends TestCase
         $reservation = $this->makePmsReservation($property, $guest);
         $folio       = $this->makePmsFolio($reservation, $guest);
 
-        $item = FolioItem::create([
+        $item = tap(new FolioItem())->forceFill([
             'property_id' => $property->id,
             'folio_id'    => $folio->id,
             'item_type'   => FolioItemTypeEnum::RoomCharge->value,
@@ -609,6 +610,7 @@ class PmsResourceTest extends TestCase
             'is_void'     => false,
             'posted_at'   => now(),
         ]);
+        $item->save();
 
         $data = $this->resolve(new FolioItemResource($item));
 
@@ -622,7 +624,7 @@ class PmsResourceTest extends TestCase
         $reservation = $this->makePmsReservation($property, $guest);
         $folio       = $this->makePmsFolio($reservation, $guest);
 
-        $item = FolioItem::create([
+        $item = tap(new FolioItem())->forceFill([
             'property_id' => $property->id,
             'folio_id'    => $folio->id,
             'item_type'   => FolioItemTypeEnum::RoomCharge->value,
@@ -632,6 +634,7 @@ class PmsResourceTest extends TestCase
             'is_void'     => false,
             'posted_at'   => now(),
         ]);
+        $item->save();
 
         $data = $this->resolve(new FolioItemResource($item));
 
@@ -648,7 +651,7 @@ class PmsResourceTest extends TestCase
         $reservation = $this->makePmsReservation($property, $guest);
         $folio       = $this->makePmsFolio($reservation, $guest);
 
-        $item = FolioItem::create([
+        $item = tap(new FolioItem())->forceFill([
             'property_id' => $property->id,
             'folio_id'    => $folio->id,
             'item_type'   => FolioItemTypeEnum::Payment->value,
@@ -658,6 +661,7 @@ class PmsResourceTest extends TestCase
             'is_void'     => false,
             'posted_at'   => now(),
         ]);
+        $item->save();
 
         $data = $this->resolve(new FolioItemResource($item));
 

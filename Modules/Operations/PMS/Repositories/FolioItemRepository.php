@@ -35,20 +35,44 @@ class FolioItemRepository
         return FolioItem::findOrFail($id);
     }
 
-    public function create(array $data): FolioItem
+    /**
+     * Controlled folio item creation.
+     *
+     * Business-input fields (item_type, description, quantity, amount)
+     * may use normal fill. Server-owned fields (property_id, folio_id,
+     * is_void, posted_at, posted_by, created_by) are set via forceFill.
+     *
+     * @internal Called only by GuestLedgerFolioAggregateService.
+     */
+    public function createControlled(array $businessInput, array $serverFields): FolioItem
     {
-        return FolioItem::create($data)->fresh();
+        $item = new FolioItem($businessInput);
+        $item->forceFill($serverFields)->save();
+
+        return $item->fresh();
+    }
+
+    /**
+     * Lock a folio item row FOR UPDATE.
+     */
+    public function lockForUpdate(string $id): FolioItem
+    {
+        $item = FolioItem::where('id', $id)->lockForUpdate()->first();
+
+        throw_if(! $item, new NotFoundException('FolioItem'));
+
+        return $item;
     }
 
     /**
      * Void a folio line item.
      * FolioItems are immutable — we mark is_void rather than delete.
-     * The folio balance recalculation is the responsibility of FolioService.
      */
     public function voidItem(string $id): FolioItem
     {
         $item = $this->findOrFail($id);
-        $item->update(['is_void' => true]);
+        // is_void is guarded — must use forceFill to set it
+        $item->forceFill(['is_void' => true])->save();
 
         return $item->fresh();
     }

@@ -29,6 +29,8 @@ use Shared\Services\CurrentPropertyService;
  */
 class GuestLedgerFolioAggregateService
 {
+    private const IDEMPOTENCY_KEY_MAX_LENGTH = 64;
+
     public function __construct(
         private FolioRepository        $folioRepository,
         private FolioItemRepository    $folioItemRepository,
@@ -36,40 +38,41 @@ class GuestLedgerFolioAggregateService
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────
-    // Folio Opening
+    // Folio Opening — Interactive Path
     // ─────────────────────────────────────────────────────────────────────
 
     /**
      * Open a new folio window for a reservation.
      *
-     * All aggregate-owned fields are resolved server-side. The browser
-     * must NOT supply property, guest, currency, status, totals, or
-     * window number.
+     * All aggregate-owned fields are resolved server-side. Idempotent:
+     * the same (property, idempotencyKey) returns the existing folio.
      *
-     * Idempotent: the same (property, idempotencyKey) returns the
-     * existing folio instead of creating a duplicate.
-     *
-     * @param User  $actor           Authenticated user performing the open.
-     * @param string $reservationId  Reservation ULID.
-     * @param string $idempotencyKey Caller-supplied idempotency key
-     *                               (must be property-unique).
-     * @return Folio
+     * Lock order (consistent across all paths):
+     *   1. Property row
+     *   2. Reservation row
+     *   3. Idempotency lookup
+     *   4. Window allocation
+     *   5. Folio-number allocation
+     *   6. Creation
      */
     public function openWindow(
         User $actor,
         string $reservationId,
         string $idempotencyKey
     ): Folio {
-        // 1. Resolve current property server-side
+        // 1. Resolve current property
         $propertyId = $this->currentProperty->resolveOrFail();
 
-        // 2. Confirm actor belongs to and may operate in the current property
-        $this->guardActorProperty($actor, $propertyId);
+        // 2. Guard actor — active membership required
+        $this->guardActiveActorProperty($actor, $propertyId);
 
-        // 3. Resolve Reservation by identifier + current property
+        // 3. Validate and normalise idempotency key
+        $idempotencyKey = $this->validateIdempotencyKey($idempotencyKey);
+
+        // 4. Resolve reservation by ID + property
         $reservation = $this->resolveReservation($reservationId, $propertyId);
 
-        // 4. Resolve primary guest from Reservation
+        // 5. Resolve primary guest
         $guestId = $reservation->primary_guest_id;
         if (empty($guestId)) {
             throw ValidationException::withMessages([
@@ -77,114 +80,105 @@ class GuestLedgerFolioAggregateService
             ]);
         }
 
-        // 5. Resolve currency from Property base currency (immutable — ADR-001)
+        // 6. Resolve currency from Property (immutable — ADR-001)
         $currency = Property::findOrFail($propertyId)->currency;
 
-        // 6. Begin transaction + lock reservation
+        // 7. Transaction with consistent lock order
         return DB::transaction(function () use (
             $propertyId, $reservation, $guestId, $currency, $idempotencyKey
         ) {
-            // Lock the reservation row to prevent concurrent folio creation
+            // Lock Property row (serialises folio-number generation)
+            Property::where('id', $propertyId)->lockForUpdate()->firstOrFail();
+
+            // Lock Reservation row
             Reservation::where('id', $reservation->id)->lockForUpdate()->firstOrFail();
 
-            // 7. Resolve existing folio by property + idempotency key
+            // Idempotency check
             $existing = Folio::withoutGlobalScope('property')
                 ->where('property_id', $propertyId)
                 ->where('opening_idempotency_key', $idempotencyKey)
                 ->first();
 
             if ($existing) {
+                $this->guardIdempotencyReplay($existing, $reservation->id);
                 return $existing;
             }
 
-            // 8. Allocate next window number
-            $nextWindow = $this->allocateNextWindowNumber($propertyId, $reservation->id);
-
-            // 9. Generate folio number (preserve existing convention)
-            $folioNumber = $this->generateFolioNumber($propertyId);
-
-            // 10. Create Folio with server-resolved values only
-            $folio = $this->folioRepository->create([
-                'property_id'              => $propertyId,
-                'folio_number'             => $folioNumber,
-                'reservation_id'           => $reservation->id,
-                'guest_id'                 => $guestId,
-                'status'                   => FolioStatusEnum::Open,
-                'currency'                 => $currency,
-                'window_number'            => $nextWindow,
-                'opening_idempotency_key'  => $idempotencyKey,
-                'total_charges'            => 0,
-                'total_payments'           => 0,
-                'balance'                  => 0,
-            ]);
-
-            event(new FolioCreated($folio));
-
-            return $folio->fresh();
+            return $this->createFolioLocked(
+                $propertyId, $reservation->id, $guestId, $currency, $idempotencyKey
+            );
         });
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Folio Opening — System Path (check-in listener)
+    // ─────────────────────────────────────────────────────────────────────
+
     /**
-     * System-driven folio opening (e.g. check-in listener).
+     * System-driven folio opening.
      *
-     * Uses a source-proven deterministic idempotency key derived from
-     * the reservation identity so that replay is safe.
+     * The aggregate service independently resolves property, guest, and
+     * currency from authoritative database sources. The caller must NOT
+     * supply property ID, guest ID, currency, totals, status, or window
+     * number — even a stale or inconsistent event object cannot override
+     * the authoritative sources.
      *
-     * @param string $reservationId
-     * @param string $propertyId    Already resolved (listener context).
-     * @param string $guestId       Already resolved (stay guest).
-     * @param string $currency      Already resolved (property or rate plan).
-     * @return Folio
+     * @param string $reservationId Reservation ULID.
+     * @param string $sourcePurpose Short label identifying the system
+     *                              caller (e.g. 'check-in-listener').
      */
     public function openWindowSystem(
         string $reservationId,
-        string $propertyId,
-        string $guestId,
-        string $currency
+        string $sourcePurpose
     ): Folio {
-        // System actor — use a deterministic source-proven key.
-        // The actor is the system itself, not a browser user.
-        $idempotencyKey = 'system-checkin-' . $reservationId;
+        // 1. Resolve reservation (BelongsToProperty scope limits to current property)
+        $reservation = Reservation::findOrFail($reservationId);
+        $propertyId  = $reservation->property_id;
 
+        // 2. Resolve the Property for currency
+        $property = Property::findOrFail($propertyId);
+
+        // 3. Resolve primary guest from Reservation
+        $guestId = $reservation->primary_guest_id;
+        if (empty($guestId)) {
+            throw ValidationException::withMessages([
+                'reservation' => ['Reservation has no primary guest.'],
+            ]);
+        }
+
+        // 4. Build deterministic source-proven idempotency key
+        $idempotencyKey = $this->validateIdempotencyKey(
+            'system-' . $sourcePurpose . '-' . $reservationId
+        );
+
+        // 5. Transaction with consistent lock order
         return DB::transaction(function () use (
-            $propertyId, $reservationId, $guestId, $currency, $idempotencyKey
+            $propertyId, $reservation, $guestId, $property, $idempotencyKey
         ) {
-            // Lock reservation
-            Reservation::where('id', $reservationId)->lockForUpdate()->firstOrFail();
+            // Lock Property row
+            Property::where('id', $propertyId)->lockForUpdate()->firstOrFail();
 
-            // Check idempotency
+            // Lock Reservation row
+            Reservation::where('id', $reservation->id)->lockForUpdate()->firstOrFail();
+
+            // Idempotency check
             $existing = Folio::withoutGlobalScope('property')
                 ->where('property_id', $propertyId)
                 ->where('opening_idempotency_key', $idempotencyKey)
                 ->first();
 
             if ($existing) {
+                $this->guardIdempotencyReplay($existing, $reservation->id);
                 return $existing;
             }
 
-            // Allocate next window number
-            $nextWindow = $this->allocateNextWindowNumber($propertyId, $reservationId);
-
-            // Generate folio number
-            $folioNumber = $this->generateFolioNumber($propertyId);
-
-            $folio = $this->folioRepository->create([
-                'property_id'              => $propertyId,
-                'folio_number'             => $folioNumber,
-                'reservation_id'           => $reservationId,
-                'guest_id'                 => $guestId,
-                'status'                   => FolioStatusEnum::Open,
-                'currency'                 => $currency,
-                'window_number'            => $nextWindow,
-                'opening_idempotency_key'  => $idempotencyKey,
-                'total_charges'            => 0,
-                'total_payments'           => 0,
-                'balance'                  => 0,
-            ]);
-
-            event(new FolioCreated($folio));
-
-            return $folio->fresh();
+            return $this->createFolioLocked(
+                $propertyId,
+                $reservation->id,
+                $guestId,
+                $property->currency,
+                $idempotencyKey
+            );
         });
     }
 
@@ -195,99 +189,56 @@ class GuestLedgerFolioAggregateService
     /**
      * Post a line item to an open folio.
      *
-     * Server-owned fields (property_id, folio_id, is_void, posted_at,
-     * posted_by, created_by) are resolved server-side and must NOT be
-     * accepted from browser input.
-     *
-     * Only business input (item_type, description, quantity, amount) is
-     * accepted from the caller.
-     *
-     * @param User   $actor   Authenticated user performing the post.
-     * @param string $folioId Target folio ULID.
-     * @param array  $data    Business input only:
-     *                        - item_type (FolioItemTypeEnum)
-     *                        - description (string)
-     *                        - quantity (positive numeric)
-     *                        - amount (non-zero numeric)
-     * @return FolioItem
+     * Business input only: item_type, description, quantity, amount.
+     * All server-owned fields are resolved server-side.
      */
     public function postItem(User $actor, string $folioId, array $data): FolioItem
     {
         $propertyId = $this->currentProperty->resolveOrFail();
 
-        // Resolve Folio server-side, scoped to current property
-        $folio = Folio::withoutGlobalScope('property')
-            ->where('id', $folioId)
-            ->where('property_id', $propertyId)
-            ->first();
+        // 1. Guard actor — active membership required
+        $this->guardActiveActorProperty($actor, $propertyId);
 
-        if (! $folio) {
-            throw ValidationException::withMessages([
-                'folio' => ['Folio not found in the current property.'],
-            ]);
-        }
+        // 2. Validate business input (decimal-safe)
+        $itemType  = $this->resolveItemType($data['item_type'] ?? null);
+        $amount    = $this->normaliseDecimal($data['amount'] ?? null, 'amount');
+        $quantity  = $this->normaliseDecimal($data['quantity'] ?? '1', 'quantity');
+        $desc      = (string) ($data['description'] ?? '');
 
-        // Only OPEN folios may receive items
-        if ($folio->status !== FolioStatusEnum::Open) {
-            throw ValidationException::withMessages([
-                'folio' => ['Items can only be posted to an open folio.'],
-            ]);
-        }
+        // 3. Transaction with lock + revalidation
+        return DB::transaction(function () use (
+            $actor, $folioId, $propertyId, $itemType, $amount, $quantity, $desc
+        ) {
+            // Lock and re-resolve Folio
+            $folio = $this->folioRepository->lockForUpdate($folioId, $propertyId);
 
-        // Validate and resolve business input
-        $itemType  = $data['item_type'] ?? null;
-        $amount    = $data['amount'] ?? null;
-        $quantity  = $data['quantity'] ?? 1;
-
-        // Accept both string values and enum instances
-        if ($itemType instanceof FolioItemTypeEnum) {
-            // already resolved
-        } elseif (is_string($itemType)) {
-            $itemType = FolioItemTypeEnum::tryFrom($itemType);
-            if (! $itemType) {
+            // Re-validate OPEN status post-lock
+            if ($folio->status !== FolioStatusEnum::Open) {
                 throw ValidationException::withMessages([
-                    'item_type' => ['Invalid folio item type: ' . $data['item_type']],
+                    'folio' => ['Items can only be posted to an open folio.'],
                 ]);
             }
-        } else {
-            throw ValidationException::withMessages([
-                'item_type' => ['A valid folio item type is required.'],
-            ]);
-        }
 
-        if (! is_numeric($amount) || (float) $amount == 0) {
-            throw ValidationException::withMessages([
-                'amount' => ['Amount is required and must be non-zero.'],
-            ]);
-        }
+            // Create item with server-resolved fields only
+            $item = $this->folioItemRepository->createControlled(
+                [
+                    'item_type'   => $itemType,
+                    'description' => $desc,
+                    'quantity'    => $quantity,
+                    'amount'      => $amount,
+                ],
+                [
+                    'property_id' => $folio->property_id,
+                    'folio_id'    => $folio->id,
+                    'is_void'     => false,
+                    'posted_at'   => now(),
+                    'posted_by'   => $actor->id,
+                    'created_by'  => $actor->id,
+                ]
+            );
 
-        if (! is_numeric($quantity) || (float) $quantity <= 0) {
-            throw ValidationException::withMessages([
-                'quantity' => ['Quantity must be a positive number.'],
-            ]);
-        }
-
-        return DB::transaction(function () use ($folio, $itemType, $amount, $quantity, $data, $actor) {
-            // Lock the folio row for totals update
-            Folio::where('id', $folio->id)->lockForUpdate()->firstOrFail();
-
-            // Create item with server-resolved fields only.
-            // is_void always starts false. posted_at is now.
-            // posted_by is the resolved actor.
-            $item = $this->folioItemRepository->create([
-                'property_id' => $folio->property_id,   // derived from parent Folio
-                'folio_id'    => $folio->id,
-                'item_type'   => $itemType,
-                'description' => $data['description'] ?? '',
-                'quantity'    => $quantity,
-                'amount'      => $amount,
-                'is_void'     => false,
-                'posted_at'   => now(),
-                'posted_by'   => $actor->id,
-            ]);
-
-            // Recalculate cached totals transactionally
-            $this->recalculateTotalsLocked($folio);
+            // Recalculate totals under same lock
+            $this->recalculateAndPersistLocked($folio);
 
             event(new FolioItemPosted($item));
 
@@ -300,18 +251,26 @@ class GuestLedgerFolioAggregateService
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * Recalculate cached totals from active (non-void) items.
+     * Public recalculate — opens its own transaction and lock.
      *
-     * Caller MUST hold a row lock on the folio before invoking.
-     * All calculations are property-scoped and decimal-safe.
-     *
-     * Cached totals are operational projections only — NOT settlement
-     * evidence. A zero balance does NOT indicate settlement readiness.
-     *
-     * @param Folio $folio Locked folio instance.
-     * @return void
+     * Safe for external callers that do not already hold a folio lock.
      */
-    public function recalculateTotalsLocked(Folio $folio): void
+    public function recalculateTotals(string $folioId, string $propertyId): Folio
+    {
+        return DB::transaction(function () use ($folioId, $propertyId) {
+            $folio = $this->folioRepository->lockForUpdate($folioId, $propertyId);
+            $this->recalculateAndPersistLocked($folio);
+
+            return $folio->fresh();
+        });
+    }
+
+    /**
+     * Locked recalculation — caller MUST hold a folio row lock.
+     *
+     * Private: only postItem() and recalculateTotals() may invoke this.
+     */
+    private function recalculateAndPersistLocked(Folio $folio): void
     {
         $items = $this->folioItemRepository->forFolio($folio->id, includeVoided: false);
 
@@ -320,58 +279,123 @@ class GuestLedgerFolioAggregateService
 
         foreach ($items as $item) {
             $amt = $item->amount;
+
             if (bccomp((string) $amt, '0', 2) > 0) {
                 $totalCharges = bcadd($totalCharges, (string) $amt, 2);
             } elseif (bccomp((string) $amt, '0', 2) < 0) {
-                // Legacy credit category — NOT authoritative payment-allocation evidence.
-                // Negative amounts are tracked as legacy cached credits only until GLF-B.
-                $totalPayments = bcadd($totalPayments, (string) abs($amt), 2);
+                // Legacy credit — NOT authoritative payment-allocation evidence
+                $negAbs = bcsub('0', (string) $amt, 2);
+                $totalPayments = bcadd($totalPayments, $negAbs, 2);
             }
         }
 
         $balance = bcsub($totalCharges, $totalPayments, 2);
 
-        $folio->update([
+        $folio->forceFill([
             'total_charges'  => $totalCharges,
             'total_payments' => $totalPayments,
             'balance'        => $balance,
-        ]);
+        ])->save();
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Internal helpers
+    // Internal: creation (caller holds Property + Reservation locks)
+    // ─────────────────────────────────────────────────────────────────────
+
+    private function createFolioLocked(
+        string $propertyId,
+        string $reservationId,
+        string $guestId,
+        string $currency,
+        string $idempotencyKey
+    ): Folio {
+        $nextWindow  = $this->allocateNextWindowNumber($propertyId, $reservationId);
+        $folioNumber = $this->generateFolioNumberLocked($propertyId);
+
+        $folio = $this->folioRepository->createControlled([
+            'property_id'              => $propertyId,
+            'folio_number'             => $folioNumber,
+            'reservation_id'           => $reservationId,
+            'guest_id'                 => $guestId,
+            'status'                   => FolioStatusEnum::Open,
+            'currency'                 => $currency,
+            'window_number'            => $nextWindow,
+            'opening_idempotency_key'  => $idempotencyKey,
+            'total_charges'            => '0.00',
+            'total_payments'           => '0.00',
+            'balance'                  => '0.00',
+        ]);
+
+        event(new FolioCreated($folio));
+
+        return $folio->fresh();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Internal: helpers
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * Confirm the actor belongs to the current property.
+     * Actor must have active membership in the current property.
      */
-    private function guardActorProperty(User $actor, string $propertyId): void
+    private function guardActiveActorProperty(User $actor, string $propertyId): void
     {
-        // Super-admins may operate cross-property
         if ($actor->isSuperAdmin()) {
             return;
         }
 
-        // Check default property first
-        if ($actor->defaultProperty()?->id === $propertyId) {
-            return;
-        }
-
-        // Check property memberships (actor may belong to multiple properties)
-        $belongsToProperty = $actor->properties()
+        $membership = $actor->properties()
             ->where('property_id', $propertyId)
-            ->exists();
+            ->wherePivot('status', 'active')
+            ->first();
 
-        if (! $belongsToProperty) {
+        if (! $membership) {
             throw ValidationException::withMessages([
-                'actor' => ['Actor does not belong to the current property.'],
+                'actor' => ['Actor does not have active membership in the current property.'],
             ]);
         }
     }
 
     /**
-     * Resolve a reservation by ID, scoped to the current property.
+     * Validate and normalise the idempotency key.
      */
+    private function validateIdempotencyKey(string $key): string
+    {
+        $key = trim($key);
+
+        if ($key === '') {
+            throw ValidationException::withMessages([
+                'idempotency_key' => ['Idempotency key must not be empty.'],
+            ]);
+        }
+
+        if (mb_strlen($key) > self::IDEMPOTENCY_KEY_MAX_LENGTH) {
+            throw ValidationException::withMessages([
+                'idempotency_key' => [
+                    'Idempotency key must not exceed ' . self::IDEMPOTENCY_KEY_MAX_LENGTH . ' characters.',
+                ],
+            ]);
+        }
+
+        return $key;
+    }
+
+    /**
+     * On existing idempotency key: verify it belongs to the same reservation.
+     * A key reused for a different reservation is a controlled conflict.
+     */
+    private function guardIdempotencyReplay(Folio $existing, string $requestedReservationId): void
+    {
+        if ($existing->reservation_id !== $requestedReservationId) {
+            throw ValidationException::withMessages([
+                'idempotency_key' => [
+                    'IDEMPOTENCY_KEY_REUSE_CONFLICT: This idempotency key is already used for a different reservation.',
+                ],
+            ]);
+        }
+        // True replay — same property, same reservation, same key → same folio
+    }
+
     private function resolveReservation(string $reservationId, string $propertyId): Reservation
     {
         $reservation = Reservation::withoutGlobalScope('property')
@@ -388,10 +412,95 @@ class GuestLedgerFolioAggregateService
         return $reservation;
     }
 
+    private function resolveItemType(mixed $itemType): FolioItemTypeEnum
+    {
+        if ($itemType instanceof FolioItemTypeEnum) {
+            return $itemType;
+        }
+
+        if (is_string($itemType)) {
+            $resolved = FolioItemTypeEnum::tryFrom($itemType);
+            if (! $resolved) {
+                throw ValidationException::withMessages([
+                    'item_type' => ['Invalid folio item type: ' . $itemType],
+                ]);
+            }
+            return $resolved;
+        }
+
+        throw ValidationException::withMessages([
+            'item_type' => ['A valid folio item type is required.'],
+        ]);
+    }
+
     /**
-     * Allocate the next available window number for a reservation.
-     *
-     * MUST be called inside a transaction with the reservation locked.
+     * Normalise a decimal value to a scale-2 string using bcmath.
+     * Rejects non-numeric, sub-cent values that would silently truncate,
+     * zero amounts, and values exceeding database precision.
+     */
+    private function normaliseDecimal(mixed $value, string $field): string
+    {
+        if ($value === null || $value === '') {
+            throw ValidationException::withMessages([
+                $field => [ucfirst($field) . ' is required.'],
+            ]);
+        }
+
+        // Reject scientific notation and non-numeric strings
+        if (is_string($value) && preg_match('/[eE]/', $value)) {
+            throw ValidationException::withMessages([
+                $field => [ucfirst($field) . ' must be a plain decimal number.'],
+            ]);
+        }
+
+        if (! is_numeric($value)) {
+            throw ValidationException::withMessages([
+                $field => [ucfirst($field) . ' must be a valid number.'],
+            ]);
+        }
+
+        // Normalise to scale-2 string
+        $normalised = bcadd((string) $value, '0', 2);
+
+        // Reject sub-cent after normalisation (e.g. "0.001" truncates to "0.00")
+        if (bccomp($normalised, '0.00', 2) === 0 && bccomp((string) $value, '0', 3) !== 0) {
+            throw ValidationException::withMessages([
+                $field => [ucfirst($field) . ' resolves to zero at scale 2. Provide a value with at most 2 decimal places.'],
+            ]);
+        }
+
+        // Reject zero after normalisation
+        if (bccomp($normalised, '0.00', 2) === 0) {
+            throw ValidationException::withMessages([
+                $field => [ucfirst($field) . ' must be non-zero.'],
+            ]);
+        }
+
+        // Reject negative quantity
+        if ($field === 'quantity' && bccomp($normalised, '0.00', 2) < 0) {
+            throw ValidationException::withMessages([
+                'quantity' => ['Quantity must be a positive number.'],
+            ]);
+        }
+
+        // Reject overflow: database decimal(12,2) = max 10 integer digits
+        $maxValue = '9999999999.99';
+        $absValue = $normalised;
+        if (bccomp($absValue, '0', 2) < 0) {
+            $absValue = bcsub('0', $absValue, 2);
+        }
+        if (bccomp($absValue, $maxValue, 2) > 0) {
+            throw ValidationException::withMessages([
+                $field => [ucfirst($field) . ' exceeds maximum supported precision.'],
+            ]);
+        }
+
+        return $normalised;
+    }
+
+    /**
+     * Allocate the next window number for a reservation.
+     * Caller MUST hold reservation lock.
      */
     private function allocateNextWindowNumber(string $propertyId, string $reservationId): int
     {
@@ -404,10 +513,12 @@ class GuestLedgerFolioAggregateService
     }
 
     /**
-     * Generate a folio number using the existing per-property sequential
-     * convention: FOL-XXXXX.
+     * Generate a folio number. Caller MUST hold the Property lock.
+     *
+     * Property-wide sequential: FOL-XXXXX.
+     * The Property row lock serialises this across all reservations.
      */
-    private function generateFolioNumber(string $propertyId): string
+    private function generateFolioNumberLocked(string $propertyId): string
     {
         $seq = Folio::withoutGlobalScope('property')
             ->where('property_id', $propertyId)

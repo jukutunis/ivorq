@@ -9,7 +9,7 @@ class GuestLedgerFolioAggregateConcurrencyProofTest extends PostgresTestCase
 {
     public function test_folio_opening_is_concurrency_safe_in_isolated_postgresql_processes(): void
     {
-        $runId = 'glfa' . strtolower(Str::random(6));
+        $runId = 'glfc' . strtolower(Str::random(6));
         $result = $this->runCoordinator($runId);
 
         $this->assertTrue($result['db_created'] ?? false, 'Disposable database must be created.');
@@ -17,51 +17,55 @@ class GuestLedgerFolioAggregateConcurrencyProofTest extends PostgresTestCase
         $this->assertSame('ivorq_testing', $result['protected_database'] ?? null);
         $this->assertNull($result['error'] ?? null, 'Coordinator error: ' . ($result['error'] ?? 'none'));
 
-        // ── Same-key concurrency ─────────────────────────────────────────
-        $sameKey = $result['same_key_concurrency'] ?? [];
-        $this->assertTrue($sameKey['pid_different'] ?? false, 'Same-key workers must run in different PHP processes.');
-        $this->assertTrue($sameKey['pg_different'] ?? false, 'Same-key workers must use different PG connections.');
+        // ── Same key concurrency ──────────────────────────────────────────
+        $sk = $result['same_key_concurrency'] ?? [];
+        $this->assertTrue($sk['pid_different'] ?? false);
+        $this->assertTrue($sk['pg_different'] ?? false);
+        $this->assertSame(1, $sk['folio_count'] ?? -1, 'Same-key must produce exactly one Folio.');
+        $this->assertSame(1, $sk['max_window'] ?? -1, 'Same-key must produce window 1.');
 
-        // Idempotency: same key must produce exactly ONE folio row
-        $this->assertSame(1, $sameKey['folio_count'] ?? -1,
-            'Same idempotency key must produce exactly one Folio row.');
-        $this->assertSame(1, $sameKey['max_window'] ?? -1,
-            'Same key must produce window 1 — no duplicate windows.');
+        // Both workers must report FOLIO_OPENED — no silent failures
+        $this->assertSame('FOLIO_OPENED', $sk['worker_a']['outcome'] ?? '?',
+            'Worker A must succeed with FOLIO_OPENED.');
+        $this->assertSame('FOLIO_OPENED', $sk['worker_b']['outcome'] ?? '?',
+            'Worker B must succeed with FOLIO_OPENED.');
+        $this->assertSame($sk['worker_a']['folio_id'] ?? '', $sk['worker_b']['folio_id'] ?? 'x',
+            'Same-key workers must return the same folio identity.');
 
-        $workerA = $sameKey['worker_a'] ?? [];
-        $workerB = $sameKey['worker_b'] ?? [];
+        // ── Different key concurrency (same reservation) ──────────────────
+        $dk = $result['different_key_concurrency'] ?? [];
+        $this->assertTrue($dk['pid_different'] ?? false);
+        $this->assertTrue($dk['pg_different'] ?? false);
+        $this->assertSame(2, $dk['folio_count'] ?? -1, 'Different keys must produce two Folios.');
+        $this->assertSame([1, 2], $dk['windows'] ?? [], 'Different keys must allocate windows [1, 2].');
 
-        // Both workers must return the same folio identity
-        if (($workerA['outcome'] ?? '') === 'FOLIO_OPENED' && ($workerB['outcome'] ?? '') === 'FOLIO_OPENED') {
-            $this->assertSame($workerA['folio_id'], $workerB['folio_id'],
-                'Same-key concurrent open must return the same folio.');
-        }
+        $this->assertSame('FOLIO_OPENED', $dk['worker_a']['outcome'] ?? '?');
+        $this->assertSame('FOLIO_OPENED', $dk['worker_b']['outcome'] ?? '?');
+        $this->assertNotSame($dk['worker_a']['folio_id'] ?? '', $dk['worker_b']['folio_id'] ?? '',
+            'Different keys must produce distinct folio identities.');
+        $this->assertNotSame($dk['worker_a']['folio_number'] ?? '', $dk['worker_b']['folio_number'] ?? '',
+            'Different keys must produce distinct folio numbers.');
 
-        // ── Different-key concurrency ────────────────────────────────────
-        $diffKey = $result['different_key_concurrency'] ?? [];
-        $this->assertTrue($diffKey['pid_different'] ?? false, 'Different-key workers must run in different PHP processes.');
-        $this->assertTrue($diffKey['pg_different'] ?? false, 'Different-key workers must use different PG connections.');
+        // ── Cross-reservation concurrency (same property, different reservations) ─
+        $cr = $result['cross_reservation_concurrency'] ?? [];
+        $this->assertTrue($cr['pid_different'] ?? false);
+        $this->assertTrue($cr['pg_different'] ?? false);
+        $this->assertSame(2, $cr['folio_count'] ?? -1, 'Cross-reservation must produce two Folios.');
+        $this->assertSame([1], $cr['windows_a'] ?? [], 'Each reservation gets window 1.');
+        $this->assertSame([1], $cr['windows_b'] ?? [], 'Each reservation gets window 1.');
 
-        // Different keys must produce TWO distinct folios
-        $this->assertSame(2, $diffKey['folio_count'] ?? -1,
-            'Different idempotency keys must produce two distinct Folios.');
+        $this->assertSame('FOLIO_OPENED', $cr['worker_a']['outcome'] ?? '?');
+        $this->assertSame('FOLIO_OPENED', $cr['worker_b']['outcome'] ?? '?');
+        $this->assertNotSame($cr['worker_a']['folio_number'] ?? '', $cr['worker_b']['folio_number'] ?? '',
+            'Cross-reservation concurrent openings must produce distinct folio numbers.');
 
-        // Windows must be [1, 2] — distinct and ordered
-        $windows = $diffKey['windows'] ?? [];
-        $this->assertSame([1, 2], $windows,
-            'Different keys must allocate distinct ordered window numbers.');
+        // ── Cross-property concurrency ────────────────────────────────────
+        $cp = $result['cross_property_concurrency'] ?? [];
+        $this->assertTrue($cp['pid_different'] ?? false);
+        $this->assertSame(2, $cp['total_folios'] ?? -1, 'Cross-property must produce two Folios.');
+        // Different properties = independent number namespaces
+        // Both can start from FOL-00001
 
-        $diffA = $diffKey['worker_a'] ?? [];
-        $diffB = $diffKey['worker_b'] ?? [];
-
-        if (($diffA['outcome'] ?? '') === 'FOLIO_OPENED' && ($diffB['outcome'] ?? '') === 'FOLIO_OPENED') {
-            $this->assertNotSame($diffA['folio_id'], $diffB['folio_id'],
-                'Different-key concurrent open must produce distinct folios.');
-            $this->assertNotSame($diffA['folio_number'], $diffB['folio_number'],
-                'Different-key concurrent open must produce distinct folio numbers.');
-        }
-
-        // ── Cleanup ──────────────────────────────────────────────────────
         $this->assertTrue($result['db_dropped'] ?? false,
             'Disposable database must be dropped. Drop error: ' . ($result['drop_error'] ?? 'none'));
     }

@@ -10,10 +10,11 @@ use Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService;
 /**
  * System-driven default folio creation on guest check-in.
  *
- * GLF-A: Routes through GuestLedgerFolioAggregateService::openWindowSystem()
- * using a deterministic source-proven idempotency key so that replay is safe.
- * Property, guest, and currency are resolved from the check-in event context
- * — never from browser input.
+ * GLF-A: Routes through GuestLedgerFolioAggregateService::openWindowSystem().
+ * The aggregate service independently resolves property, guest, and currency
+ * from authoritative database sources. The listener passes only the
+ * reservation identifier — no property ID, guest ID, currency, totals,
+ * status, or window number.
  */
 class CreateFolioIfMissing
 {
@@ -24,7 +25,6 @@ class CreateFolioIfMissing
     public function handle(GuestCheckedIn $event): void
     {
         $reservation = $event->reservation;
-        $stay        = $event->stay;
 
         // Idempotency check: only create if no open folio exists yet.
         $hasOpenFolio = Folio::where('reservation_id', $reservation->id)
@@ -35,19 +35,11 @@ class CreateFolioIfMissing
             return;
         }
 
-        // Resolve currency: prefer rate plan, fall back to property base currency.
-        // The aggregate service will use the property currency if not explicitly
-        // provided, but we resolve the best available source here for the
-        // system-driven path.
-        $currency = $reservation->ratePlan?->currency
-            ?? $reservation->property?->currency
-            ?? 'MYR';
-
+        // The aggregate service independently resolves property, guest,
+        // and currency. The event object is NOT trusted for these values.
         $this->aggregate->openWindowSystem(
             reservationId: $reservation->id,
-            propertyId:    $reservation->property_id,
-            guestId:       $stay->guest_id,
-            currency:      $currency,
+            sourcePurpose: 'check-in-listener',
         );
     }
 }

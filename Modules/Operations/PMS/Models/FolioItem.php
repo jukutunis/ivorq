@@ -9,32 +9,35 @@ use Modules\Foundation\User\Models\User;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
 use Shared\Traits\HasUlid;
 
+/**
+ * PMS Guest Ledger — FolioItem (immutable ledger entry).
+ *
+ * FolioItem rows are immutable. updated_at is not meaningful; void flag
+ * is used instead of deletion.
+ *
+ * GLF-A: Server-owned fields (property_id, folio_id, is_void, posted_at,
+ * posted_by, created_by) are NOT mass-assignable. Controlled creation MUST
+ * go through FolioItemRepository::createControlled(). Only business input
+ * (item_type, description, quantity, amount) may be set via fill.
+ */
 class FolioItem extends Model
 {
     use HasUlid;
 
     /**
-     * FolioItem rows are immutable ledger entries.
-     * updated_at is not meaningful here; void flag is used instead of deletion.
-     *
-     * SERVER-OWNED (must NOT be accepted from browser input):
-     *   property_id — derived from parent Folio server-side
-     *   folio_id    — resolved server-side from the controlled folio
-     *   is_void     — managed through controlled voidItem() only
-     *   posted_at   — set server-side at posting time
-     *   posted_by   — resolved from the authenticated actor server-side
-     *   created_by  — resolved from the authenticated actor server-side
-     *
-     * BUSINESS INPUT (narrowly permitted, subject to validation):
-     *   item_type, description, quantity, amount
+     * Only business-input fields are mass-assignable.
+     * Server-owned fields must go through createControlled().
      */
     protected $fillable = [
-        'property_id',
-        'folio_id',
         'item_type',
         'description',
         'quantity',
         'amount',
+    ];
+
+    protected $guarded = [
+        'property_id',
+        'folio_id',
         'is_void',
         'posted_at',
         'posted_by',
@@ -44,7 +47,7 @@ class FolioItem extends Model
     protected $casts = [
         'item_type'  => FolioItemTypeEnum::class,
         'quantity'   => 'decimal:2',
-        'amount'     => 'decimal:2',   // positive = charge; negative = credit/payment
+        'amount'     => 'decimal:2',
         'is_void'    => 'boolean',
         'posted_at'  => 'datetime',
     ];

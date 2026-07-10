@@ -145,16 +145,21 @@ trait CreatesPmsData
         static $seq = 0;
         $seq++;
 
-        return Folio::create(array_merge([
-            'property_id'    => $reservation->property_id,
-            'folio_number'   => "POL-FOL-{$seq}",
-            'reservation_id' => $reservation->id,
-            'guest_id'       => $guest->id,
-            'status'         => FolioStatusEnum::Open->value,
-            'currency'       => 'USD',
-            'total_charges'  => 0,
-            'total_payments' => 0,
-            'balance'        => 0,
-        ], $overrides));
+        $folio = new Folio();
+        $folio->forceFill(array_merge([
+            'property_id'              => $reservation->property_id,
+            'folio_number'             => "POL-FOL-{$seq}",
+            'reservation_id'           => $reservation->id,
+            'guest_id'                 => $guest->id,
+            'status'                   => FolioStatusEnum::Open->value,
+            'currency'                 => 'USD',
+            'window_number'            => $seq,
+            'opening_idempotency_key'  => 'test-legacy-pol-' . \Illuminate\Support\Str::ulid(),
+            'total_charges'            => '0.00',
+            'total_payments'           => '0.00',
+            'balance'                  => '0.00',
+        ], $overrides))->save();
+
+        return $folio->fresh();
     }
 }

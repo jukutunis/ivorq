@@ -223,6 +223,102 @@ try {
         'windows' => array_map('intval', $windows),
     ];
 
+    // ── Cross-reservation concurrency (same property, different reservations) ─
+    $guestA = (string) \Illuminate\Support\Str::ulid();
+    $guestB = (string) \Illuminate\Support\Str::ulid();
+    $resA = (string) \Illuminate\Support\Str::ulid();
+    $resB = (string) \Illuminate\Support\Str::ulid();
+
+    \Illuminate\Support\Facades\DB::table('guests')->insert([
+        ['id' => $guestA, 'property_id' => $propertyId, 'guest_code' => 'GST-CR-A', 'full_name' => 'Cross Res Guest A', 'guest_type' => 'individual', 'created_at' => now(), 'updated_at' => now()],
+        ['id' => $guestB, 'property_id' => $propertyId, 'guest_code' => 'GST-CR-B', 'full_name' => 'Cross Res Guest B', 'guest_type' => 'individual', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    \Illuminate\Support\Facades\DB::table('reservations')->insert([
+        ['id' => $resA, 'property_id' => $propertyId, 'reservation_number' => 'RES-CR-A', 'primary_guest_id' => $guestA, 'adults' => 1, 'children' => 0, 'arrival_date' => '2026-07-10', 'departure_date' => '2026-07-12', 'nights' => 2, 'reservation_source' => 'direct', 'status' => 'tentative', 'reserved_room_type' => 'standard', 'created_at' => now(), 'updated_at' => now()],
+        ['id' => $resB, 'property_id' => $propertyId, 'reservation_number' => 'RES-CR-B', 'primary_guest_id' => $guestB, 'adults' => 1, 'children' => 0, 'arrival_date' => '2026-07-10', 'departure_date' => '2026-07-12', 'nights' => 2, 'reservation_source' => 'direct', 'status' => 'tentative', 'reserved_room_type' => 'standard', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+
+    $crFixture = [
+        'company_id' => $companyId, 'property_id' => $propertyId, 'actor_id' => $actorId,
+        'guest_id_a' => $guestA, 'reservation_id_a' => $resA,
+        'guest_id_b' => $guestB, 'reservation_id_b' => $resB,
+    ];
+
+    $crRun = glfARunWorkers($workerConfig, 'cross_reservation', $crFixture);
+
+    $stmt = $pdo->prepare('SELECT COUNT(*) FROM folios WHERE reservation_id IN (:ra, :rb)');
+    $stmt->execute(['ra' => $resA, 'rb' => $resB]);
+    $crCount = (int) $stmt->fetchColumn();
+
+    $stmt = $pdo->prepare("SELECT DISTINCT window_number FROM folios WHERE reservation_id = :rid ORDER BY window_number");
+    $stmt->execute(['rid' => $resA]);
+    $winA = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    $stmt->execute(['rid' => $resB]);
+    $winB = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+    $result['cross_reservation_concurrency'] = $crRun + [
+        'pid_different' => ($crRun['worker_a']['pid'] ?? 0) !== ($crRun['worker_b']['pid'] ?? -1),
+        'pg_different' => ($crRun['worker_a']['pg_backend_pid'] ?? 0) !== ($crRun['worker_b']['pg_backend_pid'] ?? -1),
+        'folio_count' => $crCount,
+        'windows_a' => $winA,
+        'windows_b' => $winB,
+    ];
+
+    // ── Cross-property concurrency ────────────────────────────────────────
+    $propertyId2 = (string) \Illuminate\Support\Str::ulid();
+    $actorId2 = (string) \Illuminate\Support\Str::ulid();
+    $guestP2 = (string) \Illuminate\Support\Str::ulid();
+    $resP2 = (string) \Illuminate\Support\Str::ulid();
+
+    \Illuminate\Support\Facades\DB::table('properties')->insert([
+        'id' => $propertyId2, 'company_id' => $companyId, 'name' => 'GLF-A Property 2',
+        'slug' => 'glf-a-conc-prop2-' . \Illuminate\Support\Str::random(6), 'code' => 'GB' . \Illuminate\Support\Str::random(2),
+        'timezone' => 'UTC', 'currency' => 'EUR', 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    \Illuminate\Support\Facades\DB::table('users')->insert([
+        'id' => $actorId2, 'name' => 'GLF-A Actor P2',
+        'email' => 'glf-a-conc-p2-' . \Illuminate\Support\Str::random(6) . '@example.test',
+        'password' => bcrypt('password'), 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    \Illuminate\Support\Facades\DB::table('property_user')->insert([
+        ['user_id' => $actorId, 'property_id' => $propertyId2, 'is_default' => false, 'status' => 'active', 'joined_at' => now(), 'created_at' => now(), 'updated_at' => now()],
+        ['user_id' => $actorId2, 'property_id' => $propertyId2, 'is_default' => true, 'status' => 'active', 'joined_at' => now(), 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    \Illuminate\Support\Facades\DB::table('guests')->insert([
+        'id' => $guestP2, 'property_id' => $propertyId2, 'guest_code' => 'GST-CP',
+        'full_name' => 'Cross Property Guest', 'guest_type' => 'individual', 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    \Illuminate\Support\Facades\DB::table('reservations')->insert([
+        'id' => $resP2, 'property_id' => $propertyId2, 'reservation_number' => 'RES-CP',
+        'primary_guest_id' => $guestP2, 'adults' => 1, 'children' => 0,
+        'arrival_date' => '2026-07-10', 'departure_date' => '2026-07-12', 'nights' => 2,
+        'reservation_source' => 'direct', 'status' => 'tentative', 'reserved_room_type' => 'standard',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    $cpFixture = [
+        'company_id' => $companyId, 'property_id_a' => $propertyId, 'property_id_b' => $propertyId2,
+        'actor_id' => $actorId, 'actor_id_b' => $actorId2,
+        'reservation_id_a' => $reservationId, 'guest_id_a' => $guestId,
+        'reservation_id_b' => $resP2, 'guest_id_b' => $guestP2,
+    ];
+
+    // Count folios before this scenario
+    $stmt = $pdo->prepare('SELECT COUNT(*) FROM folios');
+    $stmt->execute();
+    $cpBefore = (int) $stmt->fetchColumn();
+
+    $cpRun = glfARunWorkers($workerConfig, 'cross_property', $cpFixture);
+
+    $stmt = $pdo->prepare('SELECT COUNT(*) FROM folios');
+    $stmt->execute();
+    $cpAfter = (int) $stmt->fetchColumn();
+
+    $result['cross_property_concurrency'] = $cpRun + [
+        'pid_different' => ($cpRun['worker_a']['pid'] ?? 0) !== ($cpRun['worker_b']['pid'] ?? -1),
+        'total_folios' => $cpAfter - $cpBefore,
+    ];
+
     $pdo = null;
 
 } catch (Throwable $exception) {

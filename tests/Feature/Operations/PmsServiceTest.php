@@ -916,16 +916,21 @@ class PmsServiceTest extends TestCase
         $guest       = $this->makeGuest($property);
         $reservation = $this->makeReservation($property, $guest);
 
-        $folio = Folio::create([
-            'property_id'    => $property->id,
-            'folio_number'   => 'FOL-CLOSED',
-            'reservation_id' => $reservation->id,
-            'guest_id'       => $guest->id,
-            'status'         => FolioStatusEnum::Closed->value,
-            'total_charges'  => 0,
-            'total_payments' => 0,
-            'balance'        => 0,
-        ]);
+        $folio = new Folio();
+        $folio->forceFill([
+            'property_id'              => $property->id,
+            'folio_number'             => 'FOL-CLOSED',
+            'reservation_id'           => $reservation->id,
+            'guest_id'                 => $guest->id,
+            'status'                   => FolioStatusEnum::Closed->value,
+            'currency'                 => 'USD',
+            'window_number'            => 1,
+            'opening_idempotency_key'  => 'test-closed-' . \Illuminate\Support\Str::ulid(),
+            'total_charges'            => '0.00',
+            'total_payments'           => '0.00',
+            'balance'                  => '0.00',
+        ])->save();
+        $folio = $folio->fresh();
 
         $this->expectException(ValidationException::class);
         $service->postItem($folio->id, [

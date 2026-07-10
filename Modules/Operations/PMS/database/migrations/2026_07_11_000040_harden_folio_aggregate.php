@@ -106,6 +106,9 @@ return new class extends Migration
             $table->string('opening_idempotency_key', 64)->nullable(false)->change();
         });
 
+        // ── 9a. Positive window integrity check constraint ──────────────────
+        DB::statement('ALTER TABLE folios ADD CONSTRAINT folios_window_number_positive_check CHECK (window_number > 0)');
+
         // ── 10. Add unique constraints ───────────────────────────────────────
         Schema::table('folios', function (Blueprint $table) {
             $table->unique(
@@ -148,6 +151,11 @@ return new class extends Migration
             $table->dropUnique('folios_property_idempotency_key_unique');
             $table->dropIndex('folios_reservation_window_index');
             $table->dropUnique('folios_property_id_id_unique');
+        });
+
+        DB::statement('ALTER TABLE folios DROP CONSTRAINT IF EXISTS folios_window_number_positive_check');
+
+        Schema::table('folios', function (Blueprint $table) {
             $table->dropColumn('window_number');
             $table->dropColumn('opening_idempotency_key');
         });

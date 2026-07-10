@@ -620,7 +620,7 @@ class PmsControllerTest extends TestCase
         $reservation = $this->makePmsReservation($property, $guest);
         $folio       = $this->makePmsFolio($reservation, $guest);
 
-        $item = FolioItem::create([
+        $item = tap(new FolioItem())->forceFill([
             'property_id' => $property->id,
             'folio_id'    => $folio->id,
             'item_type'   => FolioItemTypeEnum::RoomCharge->value,
@@ -630,6 +630,7 @@ class PmsControllerTest extends TestCase
             'is_void'     => false,
             'posted_at'   => now(),
         ]);
+        $item->save();
 
         $this->post("/operations/pms/folio-items/{$item->id}/void")
             ->assertOk()
