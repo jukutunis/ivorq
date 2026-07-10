@@ -74,7 +74,7 @@
       "provenance": {
         "measured_at": "2026-07-10",
         "branch": "sprint-fd-b7-departure-checkout-final-review",
-        "sha": "pending",
+        "sha": "b61b0ba2abbc32c3faa7c938d58a02bdad983ddc",
         "note": "All 52 classes proven locally at 343 tests / 1371 assertions / 0 failures / 0 errors. PR #12 concurrency test-runner remediation enables all 8 concurrency proof tests (B2-B7 + A2 + RoomMove) to pass locally."
       },
       "accepted_debt": [],
