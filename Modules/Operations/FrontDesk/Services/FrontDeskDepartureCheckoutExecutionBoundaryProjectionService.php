@@ -131,24 +131,24 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             ];
         }
 
-        // Gate 4: Financial settlement evidence (MISSING — Finance-owned, no Front Desk projection)
+        // Gate 4: Financial settlement evidence (MISSING - PMS Guest Ledger-owned, no Front Desk projection)
         $blockerCodes[] = self::BLOCKER_FINANCIAL_SETTLEMENT_UNAVAILABLE;
-        $blockerMessages[] = 'Authoritative financial settlement evidence is not available to Front Desk. Folio balance, payment settlement, and deposit application are owned by Finance/PMS. No Front Desk-accessible settlement projection exists.';
+        $blockerMessages[] = 'Authoritative Guest Ledger settlement projection is not yet implemented. Front Desk cannot infer readiness from current folio totals, so financial settlement remains unavailable.';
         $authoritativeGates['financial_settlement'] = [
             'gate' => 'Folio balance is settled or transferred through an approved authoritative process',
-            'owner' => 'Finance / PMS',
+            'owner' => 'PMS Guest Ledger',
             'satisfied' => false,
-            'detail' => 'Authoritative financial settlement source is unavailable. Finance/PMS owns folio, payment, deposit, and settlement evidence.',
+            'detail' => 'Authoritative PMS Guest Ledger settlement projection is unavailable. Current folio totals cannot prove checkout settlement readiness.',
         ];
 
-        // Gate 5: Cashier obligation evidence (MISSING — General Cashier-owned, no Front Desk projection)
+        // Gate 5: Cashier obligation evidence (MISSING - General Cashier-owned, no Front Desk projection)
         $blockerCodes[] = self::BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE;
-        $blockerMessages[] = 'Authoritative cashier obligation evidence is not available to Front Desk. Cashier session, payment instrument, and cash accountability are owned by General Cashier. No Front Desk-accessible cashier obligation projection exists.';
+        $blockerMessages[] = 'Authoritative cashier obligation evidence is not available to Front Desk. Cashier session, cashier responsibility, cash accountability, and cashier close/handover evidence are owned by General Cashier. No Front Desk-accessible cashier accountability projection exists.';
         $authoritativeGates['cashier_obligation'] = [
-            'gate' => 'No unresolved payment/cashier obligation',
+            'gate' => 'No unresolved cashier accountability obligation',
             'owner' => 'General Cashier',
             'satisfied' => false,
-            'detail' => 'Authoritative cashier obligation source is unavailable. General Cashier owns cashier session and payment instrument evidence.',
+            'detail' => 'Authoritative cashier obligation source is unavailable. General Cashier owns cashier session, cashier responsibility, cash accountability, and cashier close/handover evidence.',
         ];
 
         // Gate 6: Business date evidence (MISSING — ADR-034 Proposed, no implementation)
@@ -207,7 +207,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'review_reasons' => $reviewReasons,
             'authoritative_gates' => $authoritativeGates,
             'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B8.',
-            'financial_settlement_marker' => 'Financial settlement: Not evaluated in Front Desk Package B8. Owned by Finance/PMS.',
+            'financial_settlement_marker' => 'Financial settlement: Not evaluated in Front Desk Package B8. Owned by PMS Guest Ledger.',
             'evaluated_at' => now()->toISOString(),
         ];
     }

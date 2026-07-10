@@ -1472,7 +1472,7 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
         {boundary.execution_not_performed_marker}
       </div>
       <div style={{ fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
-        Financial settlement: Not evaluated in Front Desk Package B8. Owned by Finance/PMS.
+        Financial settlement: Not evaluated in Front Desk Package B8. Owned by PMS Guest Ledger.
       </div>
     </div>
   );

@@ -198,7 +198,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $financialGate = $b['authoritative_gates']['financial_settlement'] ?? null;
         $this->assertNotNull($financialGate);
         $this->assertFalse($financialGate['satisfied']);
-        $this->assertSame('Finance / PMS', $financialGate['owner']);
+        $this->assertSame('PMS Guest Ledger', $financialGate['owner']);
     }
 
     public function test_cashier_obligation_evidence_unavailable(): void
