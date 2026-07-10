@@ -293,6 +293,14 @@ type CheckoutFinalReviewType = {
   final_review_warning: string | null;
 } | null;
 
+type CheckoutExecutionBoundarySummary = {
+  execution_boundary_status: string;
+  can_execute: boolean;
+  blocker_codes: string[];
+  blocker_messages: string[];
+  execution_not_performed_marker: string;
+} | null;
+
 type AllowedCheckoutFinalReviewStatus = {
   value: string;
   label: string;
@@ -332,6 +340,8 @@ type DepartureRow = {
   departure_checkout_final_review: CheckoutFinalReviewType;
   can_create_checkout_final_review: boolean;
   allowed_checkout_final_review_statuses: AllowedCheckoutFinalReviewStatus[];
+  departure_checkout_execution_boundary: CheckoutExecutionBoundarySummary;
+  can_view_execution_boundary: boolean;
   financial_marker: string;
   evaluated_at: string;
 };
@@ -735,6 +745,9 @@ function DepartureQueue({ title, rows }: { title: string; rows: DepartureRow[] }
             ) : null}
             {row.departure_checkout_final_review ? (
               <CheckoutFinalReviewPanel review={row.departure_checkout_final_review} />
+            ) : null}
+            {row.can_view_execution_boundary ? (
+              <CheckoutExecutionBoundaryPanel boundary={row.departure_checkout_execution_boundary} stayId={row.stay_id} />
             ) : null}
             {row.can_create_departure_preparation_event ? (
               <DepartureActionForm stayId={row.stay_id} eventTypes={row.allowed_event_types} />
@@ -1345,6 +1358,104 @@ function CheckoutReadinessPanel({ readiness }: { readiness: CheckoutReadiness })
 
       <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
         {readiness.financial_marker}
+      </div>
+    </div>
+  );
+}
+
+function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: CheckoutExecutionBoundarySummary; stayId: string }) {
+  if (!boundary) {
+    return (
+      <div style={{
+        borderTop: '1px solid var(--border-subtle)',
+        padding: '12px 16px',
+        background: 'var(--surface-raised)',
+        fontSize: '13px',
+      }}>
+        <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
+          Checkout Execution Boundary
+        </div>
+        <div style={{ color: 'var(--text-dimmed)', fontSize: '12px' }}>
+          Execution boundary evidence could not be resolved for this stay.
+        </div>
+        <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+          Checkout execution is not performed in FD-B8.
+        </div>
+      </div>
+    );
+  }
+
+  const statusColor = boundary.execution_boundary_status === 'EXECUTION_BOUNDARY_READY' ? 'ready-green'
+    : boundary.execution_boundary_status === 'EXECUTION_BOUNDARY_BLOCKED' ? 'warning-amber'
+    : 'warning-amber';
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-subtle)',
+      padding: '12px 16px',
+      background: 'var(--surface-raised)',
+      fontSize: '13px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Checkout Execution Boundary</span>
+        <StatusBadge status="ready" style={{
+          fontSize: '11px', padding: '2px 8px',
+          backgroundColor: statusColor === 'ready-green' ? 'var(--status-ready-bg)' : 'var(--status-pending-bg)',
+          color: statusColor === 'ready-green' ? 'var(--status-ready-fg)' : 'var(--status-pending-fg)',
+        }}>
+          {boundary.execution_boundary_status.replace(/_/g, ' ')}
+        </StatusBadge>
+      </div>
+
+      {boundary.can_execute ? (
+        <div style={{ marginBottom: '6px', color: 'var(--text-success)', fontWeight: 500 }}>
+          All authoritative gates are satisfied. Checkout execution may proceed in a future package.
+        </div>
+      ) : (
+        <>
+          {boundary.blocker_messages.length > 0 ? (
+            <div style={{ marginBottom: '8px' }}>
+              <div style={{ fontWeight: 600, color: 'var(--text-warning)', marginBottom: '4px' }}>
+                Blockers ({boundary.blocker_codes.length}):
+              </div>
+              {boundary.blocker_messages.map((msg: string, idx: number) => (
+                <div key={idx} style={{
+                  padding: '4px 8px', marginBottom: '3px',
+                  backgroundColor: 'var(--status-pending-bg)',
+                  color: 'var(--status-pending-fg)',
+                  borderRadius: '4px', fontSize: '12px',
+                }}>
+                  <span style={{ fontWeight: 600, fontSize: '10px', marginRight: '6px' }}>
+                    {boundary.blocker_codes[idx]}
+                  </span>
+                  {msg}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </>
+      )}
+
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}>
+        <div style={{
+          padding: '4px 10px',
+          backgroundColor: 'var(--surface-disabled)',
+          color: 'var(--text-dimmed)',
+          borderRadius: '4px',
+          fontSize: '11px',
+          fontStyle: 'italic',
+          cursor: 'not-allowed',
+          userSelect: 'none',
+        }}>
+          Checkout execution not yet available
+        </div>
+      </div>
+
+      <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+        {boundary.execution_not_performed_marker}
+      </div>
+      <div style={{ fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+        Financial settlement: Not evaluated in Front Desk Package B8. Owned by Finance/PMS.
       </div>
     </div>
   );

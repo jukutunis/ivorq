@@ -22,6 +22,7 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizatio
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBoundaryProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
@@ -81,6 +82,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskDepartureCheckoutEligibilityService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutAuthorizationService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION,
+            FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
         ]);
 
         $this->frontDeskViewOnlyActor->givePermissionTo([
@@ -290,6 +292,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskDepartureCheckoutEligibilityService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutAuthorizationService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION,
+            FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
         ];
     }
 

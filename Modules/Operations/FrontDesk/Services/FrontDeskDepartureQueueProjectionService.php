@@ -19,6 +19,7 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizatio
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBoundaryProjectionService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -41,6 +42,7 @@ class FrontDeskDepartureQueueProjectionService
         private readonly EngineeringAvailabilityDependencyService $engineeringAvailability,
         private readonly HousekeepingReadinessDependencyService $housekeepingReadiness,
         private readonly FrontDeskCheckoutReadinessProjectionService $checkoutReadiness,
+        private readonly FrontDeskDepartureCheckoutExecutionBoundaryProjectionService $executionBoundary,
     ) {}
 
     /**
@@ -178,6 +180,8 @@ class FrontDeskDepartureQueueProjectionService
             'allowed_checkout_final_review_statuses' => $actor->can(FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION)
                 ? $this->allowedCheckoutFinalReviewStatusesForWorkspace()
                 : [],
+            'departure_checkout_execution_boundary' => $this->projectExecutionBoundaryOrNull($actor, $stay->id),
+            'can_view_execution_boundary' => $actor->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION),
             'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
             'evaluated_at' => now()->toISOString(),
         ];
@@ -678,5 +682,30 @@ class FrontDeskDepartureQueueProjectionService
     private function checkoutFinalReviewStatusLabel(?string $s): string
     {
         return match($s) { 'CHECKOUT_FINAL_REVIEW_READY' => 'Final Review Ready', 'CHECKOUT_FINAL_REVIEW_BLOCKED' => 'Final Review Blocked', 'CHECKOUT_FINAL_REVIEW_REVIEWED' => 'Final Review Reviewed', default => $s ?? 'Unknown' };
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function projectExecutionBoundaryOrNull(User $actor, string $stayId): ?array
+    {
+        if (! $actor->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION)) {
+            return null;
+        }
+
+        try {
+            $boundary = $this->executionBoundary->boundary($actor, $stayId);
+
+            // Return a minimal boundary summary for the queue — full detail via dedicated endpoint
+            return [
+                'execution_boundary_status' => $boundary['execution_boundary_status'],
+                'can_execute' => $boundary['can_execute'],
+                'blocker_codes' => $boundary['blocker_codes'],
+                'blocker_messages' => $boundary['blocker_messages'],
+                'execution_not_performed_marker' => $boundary['execution_not_performed_marker'],
+            ];
+        } catch (\Throwable) {
+            return null;
+        }
     }
 }

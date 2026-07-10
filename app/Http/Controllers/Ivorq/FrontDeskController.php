@@ -25,6 +25,7 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizatio
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBoundaryProjectionService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
 
 class FrontDeskController extends Controller
@@ -481,5 +482,13 @@ class FrontDeskController extends Controller
             $review = $projection->finalReview($request->user(), $stay);
             return $request->expectsJson() ? response()->json($review) : back()->with('departureCheckoutFinalReview', $review);
         } catch (DomainException $e) { throw ValidationException::withMessages(['departure_checkout_final_review' => [$e->getMessage()]]); }
+    }
+
+    public function departureCheckoutExecutionBoundary(Request $request, string $stay, FrontDeskDepartureCheckoutExecutionBoundaryProjectionService $projection)
+    {
+        try {
+            $boundary = $projection->boundary($request->user(), $stay);
+            return $request->expectsJson() ? response()->json($boundary) : back()->with('departureCheckoutExecutionBoundary', $boundary);
+        } catch (DomainException $e) { throw ValidationException::withMessages(['departure_checkout_execution_boundary' => [$e->getMessage()]]); }
     }
 }
