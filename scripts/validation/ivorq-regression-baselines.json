@@ -93,16 +93,16 @@
         "GuestLedgerFolioAggregateConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 33,
-        "assertions": 93,
+        "tests": 44,
+        "assertions": 124,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-11",
         "branch": "sprint-glf-a-guest-ledger-folio-aggregate-hardening",
-        "sha": "2a4e8060524fd3e5b427ab9a2817c7b70cb0dbb9",
-        "note": "Corrected implementation: all 2 classes proven via exact-class runner at 33 tests / 93 assertions / 0 failures / 0 errors. Corrections include mass-assignment closure, system-source re-resolution, idempotency conflict semantics, property-wide concurrency-safe numbering, post-lock revalidation, decimal-safe bcmath operations, transactional void/recalculation, and positive window DB constraint."
+        "sha": "12f45e03552efaeaa865778a4fd4734746b70ecf",
+        "note": "Final integrity and audit correction: 2 classes / 44 tests / 124 assertions / 0 failures / 0 errors. Decimal contract: strict plain-decimal validation, field-specific precision, excess fractional rejection, trailing-zero normalisation. Audit actor: verified against auth guard, system opening nulls audit fields. Controlled void: authorized aggregate boundary with active membership and one-transaction recalculation. Post-vs-void concurrency proven. Controller count/MYR/property injection removed."
       },
       "accepted_debt": [],
       "status": "active"
