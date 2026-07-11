@@ -364,15 +364,16 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $expectedActiveIds = [
             'frontdesk-operational-baseline',
             'guest-ledger-folio-aggregate-baseline',
+            'pms-cashiering-guest-payment-baseline',
             'housekeeping-room-readiness-baseline',
             'engineering-availability-baseline',
             'inventory-reversal-inherited-debt-v1',
         ];
 
         $this->assertCount(
-            5,
+            6,
             $activeIds,
-            "Must have exactly 5 active baselines. Found: " . implode(', ', $activeIds)
+            "Must have exactly 6 active baselines. Found: " . implode(', ', $activeIds)
         );
 
         foreach ($expectedActiveIds as $id) {
@@ -473,7 +474,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
     {
         $ids = array_map(fn($b) => $b->id, $this->manifest->baselines);
 
-        $expectedCount = 7;
+        $expectedCount = 8;
         $this->assertCount(
             $expectedCount,
             $ids,
