@@ -2,109 +2,115 @@
 
 namespace Tests\Postgres\Operations\PMS;
 
-use Illuminate\Database\QueryException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
-use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
-use Tests\Postgres\Operations\PMS\Concerns\CreatesGuestLedgerFolioData;
-use Tests\PostgresTestCase;
+use Illuminate\Support\Str;
+use Tests\TestCase;
 
-class GuestPaymentMigrationProofTest extends PostgresTestCase
+class GuestPaymentMigrationProofTest extends TestCase
 {
-    use CreatesGuestLedgerFolioData;
-    use RefreshDatabase;
-
-    protected function setUp(): void
+    public function test_glf_b_migrations_up_down_reapply_and_legacy_blocker_on_disposable_databases(): void
     {
-        parent::setUp();
-        $this->setUpGuestLedgerFolioFixture();
-        $this->actingAs($this->glfActor);
-    }
+        $runId = 'glfbm' . strtolower(Str::random(6));
+        $scriptPath = __DIR__ . '/Support/GuestPaymentMigrationProofRunner.php';
+        $configFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'ivorq-glfb-mig-config-' . $runId . '.json';
+        $resultFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'ivorq-glfb-mig-result-' . $runId . '.json';
 
-    public function test_guest_payment_tables_columns_constraints_and_indexes_exist(): void
-    {
-        foreach (['guest_payment_transactions', 'guest_payment_allocations', 'guest_payment_reversals'] as $table) {
-            $this->assertTrue(Schema::hasTable($table), "{$table} must exist.");
+        $pgsql = config('database.connections.pgsql');
+        file_put_contents($configFile, json_encode([
+            'run_id' => $runId,
+            'base_path' => base_path(),
+            'db_host' => $pgsql['host'] ?? '127.0.0.1',
+            'db_port' => (string) ($pgsql['port'] ?? '5432'),
+            'db_user' => $pgsql['username'],
+            'db_pass' => $pgsql['password'],
+            'result_file' => $resultFile,
+        ], JSON_PRETTY_PRINT));
+
+        $process = proc_open(
+            PHP_BINARY . ' ' . escapeshellarg($scriptPath) . ' ' . escapeshellarg($configFile),
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w']],
+            $pipes,
+            base_path()
+        );
+
+        if (!is_resource($process)) {
+            $this->fail('FAILED_TO_START_GLF_B_MIGRATION_PROOF_RUNNER');
+        }
+        fclose($pipes[0]);
+        fclose($pipes[1]);
+
+        $end = time() + 360;
+        while (time() < $end) {
+            $status = proc_get_status($process);
+            if (!$status['running'] && file_exists($resultFile)) {
+                break;
+            }
+            if (file_exists($resultFile)) {
+                usleep(500000);
+                break;
+            }
+            usleep(100000);
         }
 
+        $result = file_exists($resultFile)
+            ? (json_decode(file_get_contents($resultFile), true) ?: ['error' => 'PARSE_ERROR'])
+            : ['error' => 'TIMEOUT_NO_RESULT'];
+        @proc_close($process);
+
+        foreach ([$configFile, $resultFile] as $file) {
+            if (file_exists($file)) {
+                @unlink($file);
+            }
+        }
+
+        $this->assertNull($result['error'] ?? null, 'Runner error: ' . ($result['error'] ?? 'none'));
+        $this->assertTrue($result['proof_db_created'] ?? false);
+        $this->assertTrue($result['pre_glf_b_ok'] ?? false);
+        $this->assertSame(1, $result['pre_folio_count'] ?? 0);
+        $this->assertSame(2, $result['pre_folio_item_count'] ?? 0);
+
+        $this->assertTrue($result['up_ok'] ?? false);
         foreach ([
-            'source_domain',
-            'source_type',
-            'source_id',
-            'reverses_folio_item_id',
-        ] as $column) {
-            $this->assertTrue(Schema::hasColumn('folio_items', $column), "folio_items.{$column} must exist.");
+            'up_guest_tables_exist',
+            'up_folio_source_columns_exist',
+            'up_constraints_exist',
+            'up_indexes_exist',
+            'up_typed_source_trigger_exists',
+            'up_same_property_fk_enforced',
+            'up_typed_source_fk_enforced',
+        ] as $key) {
+            $this->assertTrue($result[$key] ?? false, "{$key} must be true.");
         }
 
+        $this->assertTrue($result['down_ok'] ?? false);
         foreach ([
-            'guest_payments_amount_positive_check',
-            'guest_payments_tender_check',
-            'guest_payments_status_check',
-            'guest_allocations_amount_positive_check',
-            'guest_reversals_amount_positive_check',
-            'guest_reversals_type_check',
-            'guest_reversals_reference_check',
-            'folio_items_source_all_or_none_check',
-            'folio_items_guest_payment_source_check',
-            'folio_items_payment_reversal_link_check',
-        ] as $constraint) {
-            $this->assertTrue($this->constraintExists($constraint), "{$constraint} must exist.");
+            'down_guest_tables_removed',
+            'down_folio_source_columns_removed',
+            'down_parent_composite_keys_removed',
+            'down_legacy_folio_preserved',
+            'down_legacy_items_preserved',
+        ] as $key) {
+            $this->assertTrue($result[$key] ?? false, "{$key} must be true.");
         }
 
+        $this->assertTrue($result['reup_ok'] ?? false);
         foreach ([
-            'guest_payments_property_number_unique',
-            'guest_payments_property_idem_unique',
-            'guest_allocations_property_idem_unique',
-            'guest_reversals_property_idem_unique',
-            'guest_reversals_one_void_per_payment_unique',
-            'guest_reversals_one_reversal_per_allocation_unique',
-            'folio_items_property_source_unique',
-        ] as $index) {
-            $this->assertTrue($this->indexExists($index), "{$index} must exist.");
+            'reup_guest_tables_exist',
+            'reup_folio_source_columns_exist',
+            'reup_constraints_exist',
+            'reup_indexes_exist',
+            'reup_typed_source_trigger_exists',
+            'reup_legacy_folio_preserved',
+            'reup_legacy_items_preserved',
+        ] as $key) {
+            $this->assertTrue($result[$key] ?? false, "{$key} must be true.");
         }
-    }
 
-    public function test_constraints_reject_invalid_guest_payment_and_source_identity_shapes(): void
-    {
-        $reservation = $this->makeGlfReservation();
-        $folio = $this->makeGlfFolio($reservation, $reservation->primaryGuest);
-        $now = now();
-
-        $this->expectException(QueryException::class);
-
-        DB::table('folio_items')->insert([
-            'id' => (string) \Illuminate\Support\Str::ulid(),
-            'property_id' => $this->glfProperty->id,
-            'folio_id' => $folio->id,
-            'item_type' => FolioItemTypeEnum::Payment->value,
-            'description' => 'Broken source shape',
-            'quantity' => '1.00',
-            'amount' => '-10.00',
-            'is_void' => false,
-            'posted_at' => $now,
-            'posted_by' => $this->glfActor->id,
-            'created_by' => $this->glfActor->id,
-            'source_domain' => 'pms_cashiering',
-            'source_type' => 'guest_payment_allocation',
-            'source_id' => null,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
-    }
-
-    public function test_pre_existing_ambiguous_payment_and_deposit_items_are_absent_after_migration(): void
-    {
-        $this->assertSame(0, DB::table('folio_items')->whereIn('item_type', ['payment', 'deposit'])->whereNull('source_id')->count());
-    }
-
-    private function constraintExists(string $name): bool
-    {
-        return DB::table('pg_constraint')->where('conname', $name)->exists();
-    }
-
-    private function indexExists(string $name): bool
-    {
-        return DB::table('pg_indexes')->where('indexname', $name)->exists();
+        $this->assertTrue($result['ambiguous_db_created'] ?? false);
+        $this->assertTrue($result['ambiguous_blocked'] ?? false);
+        $this->assertStringContainsString('GLF_B_BLOCKED_LEGACY_PAYMENT_ITEMS', $result['ambiguous_error'] ?? '');
+        $this->assertTrue($result['ambiguous_no_partial_columns'] ?? false);
+        $this->assertTrue($result['ambiguous_legacy_rows_preserved'] ?? false);
+        $this->assertTrue($result['proof_db_dropped'] ?? false);
+        $this->assertTrue($result['ambiguous_db_dropped'] ?? false);
     }
 }

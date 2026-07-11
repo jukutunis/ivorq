@@ -45,6 +45,8 @@ class FolioItem extends Model
         'source_domain',
         'source_type',
         'source_id',
+        'guest_payment_allocation_id',
+        'guest_payment_reversal_id',
         'reverses_folio_item_id',
     ];
 
@@ -76,5 +78,15 @@ class FolioItem extends Model
     public function reversesFolioItem(): BelongsTo
     {
         return $this->belongsTo(self::class, 'reverses_folio_item_id');
+    }
+
+    public function guestPaymentAllocation(): BelongsTo
+    {
+        return $this->belongsTo(GuestPaymentAllocation::class, 'guest_payment_allocation_id');
+    }
+
+    public function guestPaymentReversal(): BelongsTo
+    {
+        return $this->belongsTo(GuestPaymentReversal::class, 'guest_payment_reversal_id');
     }
 }

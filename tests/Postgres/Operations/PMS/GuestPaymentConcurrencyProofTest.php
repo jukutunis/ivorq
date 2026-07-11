@@ -2,175 +2,180 @@
 
 namespace Tests\Postgres\Operations\PMS;
 
-use DomainException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
-use Modules\Foundation\Authorization\Models\Permission;
-use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
-use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
-use Modules\Operations\GeneralCashier\Models\CashierSession;
-use Modules\Operations\PMS\Enums\GuestPaymentLifecycleStatusEnum;
-use Modules\Operations\PMS\Models\FolioItem;
-use Modules\Operations\PMS\Models\GuestPaymentAllocation;
-use Modules\Operations\PMS\Models\GuestPaymentReversal;
-use Modules\Operations\PMS\Services\GuestLedgerPaymentAllocationEffectService;
-use Modules\Operations\PMS\Services\GuestPaymentLifecycleService;
-use Shared\Services\CurrentPropertyService;
-use Spatie\Permission\PermissionRegistrar;
-use Tests\Postgres\Operations\PMS\Concerns\CreatesGuestLedgerFolioData;
-use Tests\PostgresTestCase;
+use Illuminate\Support\Str;
+use Tests\TestCase;
 
-class GuestPaymentConcurrencyProofTest extends PostgresTestCase
+class GuestPaymentConcurrencyProofTest extends TestCase
 {
-    use CreatesGuestLedgerFolioData;
-    use RefreshDatabase;
-
-    private GuestPaymentLifecycleService $payments;
-
-    protected function setUp(): void
+    public function test_guest_payment_lifecycle_is_concurrency_safe_in_isolated_postgresql_workers(): void
     {
-        parent::setUp();
-        $this->setUpGuestLedgerFolioFixture();
-        $this->actingAs($this->glfActor)
-            ->withSession([
-                'active_property_id' => $this->glfProperty->id,
-                'current_property_id' => $this->glfProperty->id,
-                'active_company_id' => $this->glfCompany->id,
-            ]);
-        app(CurrentPropertyService::class)->setPropertyId($this->glfProperty->id);
+        $runId = 'glfb' . strtolower(Str::random(6));
+        $result = $this->runCoordinator($runId);
 
-        foreach ([
-            GuestPaymentLifecycleService::RECORD_PERMISSION,
-            GuestPaymentLifecycleService::ALLOCATE_PERMISSION,
-            GuestPaymentLifecycleService::VOID_PERMISSION,
-            GuestPaymentLifecycleService::REVERSAL_PERMISSION,
-        ] as $permission) {
-            Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
-        }
+        $this->assertTrue($result['db_created'] ?? false, 'Disposable database must be created.');
+        $this->assertTrue($result['migrations_ok'] ?? false, 'Disposable database migrations must succeed.');
+        $this->assertSame('ivorq_testing', $result['protected_database'] ?? null);
+        $this->assertNull($result['error'] ?? null, 'Coordinator error: ' . ($result['error'] ?? 'none'));
 
-        app(PermissionRegistrar::class)->forgetCachedPermissions();
-        $this->glfActor->givePermissionTo([
-            GuestPaymentLifecycleService::RECORD_PERMISSION,
-            GuestPaymentLifecycleService::ALLOCATE_PERMISSION,
-            GuestPaymentLifecycleService::VOID_PERMISSION,
-            GuestPaymentLifecycleService::REVERSAL_PERMISSION,
-        ]);
+        $this->assertRecordingReplay($result['recording_replay'] ?? []);
+        $this->assertPaymentNumberSafety($result['payment_number_safety'] ?? []);
+        $this->assertAllocationReplay($result['allocation_replay'] ?? []);
+        $this->assertOverAllocationRace($result['over_allocation_race'] ?? []);
+        $this->assertValidSplitRace($result['valid_split_race'] ?? []);
+        $this->assertDoubleReversalRace($result['double_reversal_race'] ?? []);
+        $this->assertAllocationVersusReversalRace($result['allocation_versus_reversal_race'] ?? []);
 
-        $this->payments = app(GuestPaymentLifecycleService::class);
+        $this->assertTrue($result['db_dropped'] ?? false, 'Disposable database must be dropped. Drop error: ' . ($result['drop_error'] ?? 'none'));
     }
 
-    public function test_recording_and_allocation_replay_have_single_source_effect(): void
+    private function assertWorkerProof(array $scenario): void
     {
-        $pid = getmypid();
-        $backendPid = (int) DB::selectOne('select pg_backend_pid() as pid')->pid;
-        $this->assertGreaterThan(0, $pid);
-        $this->assertGreaterThan(0, $backendPid);
-
-        [$payment, $folio] = $this->paymentAndFolio('75.00');
-        $again = $this->payments->recordCashPayment($this->glfActor, $payment->reservation_id, $payment->cashier_session_id, '75.00', 'record-' . $payment->reservation_id . '-75.00');
-        $this->assertSame($payment->id, $again->id);
-
-        $a1 = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '75.00', 'alloc-replay');
-        $a2 = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '75.00', 'alloc-replay');
-
-        $this->assertSame($a1->id, $a2->id);
-        $this->assertSame(1, GuestPaymentAllocation::count());
-        $this->assertSame(1, FolioItem::where('source_type', GuestLedgerPaymentAllocationEffectService::SOURCE_ALLOCATION)->count());
-        $this->assertSame('75.00', $folio->fresh()->total_payments);
-        $this->assertSame(GuestPaymentLifecycleStatusEnum::FullyAllocated, $payment->fresh()->lifecycle_status);
+        $this->assertTrue($scenario['pid_different'] ?? false, 'Workers must have distinct PHP PIDs: ' . json_encode($scenario));
+        $this->assertTrue($scenario['pg_different'] ?? false, 'Workers must have distinct PostgreSQL backend PIDs: ' . json_encode($scenario));
+        $this->assertNull($scenario['worker_a']['hidden_error'] ?? null, 'Worker A hidden error: ' . json_encode($scenario['worker_a'] ?? []));
+        $this->assertNull($scenario['worker_b']['hidden_error'] ?? null, 'Worker B hidden error: ' . json_encode($scenario['worker_b'] ?? []));
     }
 
-    public function test_over_allocation_and_valid_split_allocation_have_bounded_final_totals(): void
+    private function assertRecordingReplay(array $scenario): void
     {
-        [$payment, $folio] = $this->paymentAndFolio('100.00');
-        $secondFolio = $this->makeGlfFolio($payment->reservation, $payment->reservation->primaryGuest);
+        $this->assertWorkerProof($scenario);
+        $this->assertSame(['PAYMENT_RECORDED', 'PAYMENT_RECORDED'], $scenario['outcomes'] ?? []);
+        $this->assertSame(1, $scenario['payment_count'] ?? -1);
+        $this->assertSame(1, $scenario['payment_number_count'] ?? -1);
+        $this->assertSame($scenario['worker_a']['payment_id'] ?? 'a', $scenario['worker_b']['payment_id'] ?? 'b');
+    }
 
-        $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '60.00', 'alloc-split-a');
+    private function assertPaymentNumberSafety(array $scenario): void
+    {
+        $this->assertWorkerProof($scenario);
+        $this->assertSame(['PAYMENT_RECORDED', 'PAYMENT_RECORDED'], $scenario['outcomes'] ?? []);
+        $this->assertSame(2, $scenario['payment_count'] ?? -1);
+        $this->assertSame(2, $scenario['payment_number_count'] ?? -1);
+        $this->assertNotSame($scenario['worker_a']['payment_number'] ?? 'x', $scenario['worker_b']['payment_number'] ?? 'x');
+    }
+
+    private function assertAllocationReplay(array $scenario): void
+    {
+        $this->assertWorkerProof($scenario);
+        $this->assertSame(['PAYMENT_ALLOCATED', 'PAYMENT_ALLOCATED'], $scenario['outcomes'] ?? []);
+        $this->assertSame(1, $scenario['allocation_count'] ?? -1);
+        $this->assertSame(1, $scenario['payment_item_count'] ?? -1);
+        $this->assertSame($scenario['worker_a']['allocation_id'] ?? 'a', $scenario['worker_b']['allocation_id'] ?? 'b');
+        $this->assertSame('50.00', $scenario['folio_total_payments'] ?? null);
+        $this->assertSame('-50.00', $scenario['folio_balance'] ?? null);
+    }
+
+    private function assertOverAllocationRace(array $scenario): void
+    {
+        $this->assertWorkerProof($scenario);
+        $outcomes = $scenario['outcomes'] ?? [];
+        sort($outcomes);
+        $this->assertSame(['OVER_ALLOCATION', 'PAYMENT_ALLOCATED'], $outcomes);
+        $this->assertSame(1, $scenario['allocation_count'] ?? -1);
+        $this->assertSame(1, $scenario['payment_item_count'] ?? -1);
+        $this->assertSame('60.00', $scenario['active_allocation_total'] ?? null);
+    }
+
+    private function assertValidSplitRace(array $scenario): void
+    {
+        $this->assertWorkerProof($scenario);
+        $this->assertSame(['PAYMENT_ALLOCATED', 'PAYMENT_ALLOCATED'], $scenario['outcomes'] ?? []);
+        $this->assertSame(2, $scenario['allocation_count'] ?? -1);
+        $this->assertSame(2, $scenario['payment_item_count'] ?? -1);
+        $this->assertSame('100.00', $scenario['active_allocation_total'] ?? null);
+        $this->assertSame('FULLY_ALLOCATED', $scenario['payment_status'] ?? null);
+        $this->assertSame('60.00', $scenario['folio_a_total_payments'] ?? null);
+        $this->assertSame('40.00', $scenario['folio_b_total_payments'] ?? null);
+    }
+
+    private function assertDoubleReversalRace(array $scenario): void
+    {
+        $this->assertWorkerProof($scenario);
+        $this->assertSame(['ALLOCATION_REVERSED', 'ALLOCATION_REVERSED'], $scenario['outcomes'] ?? []);
+        $this->assertSame(1, $scenario['reversal_count'] ?? -1);
+        $this->assertSame(1, $scenario['reversal_item_count'] ?? -1);
+        $this->assertSame($scenario['worker_a']['reversal_id'] ?? 'a', $scenario['worker_b']['reversal_id'] ?? 'b');
+        $this->assertSame('RECORDED', $scenario['payment_status'] ?? null);
+        $this->assertSame('0.00', $scenario['folio_total_payments'] ?? null);
+    }
+
+    private function assertAllocationVersusReversalRace(array $scenario): void
+    {
+        $this->assertWorkerProof($scenario);
+        $outcomes = $scenario['outcomes'] ?? [];
+        sort($outcomes);
+        $this->assertSame(['ALLOCATION_REVERSED', 'PAYMENT_ALLOCATED'], $outcomes);
+        $this->assertSame(2, $scenario['allocation_count'] ?? -1);
+        $this->assertSame(1, $scenario['reversal_count'] ?? -1);
+        $this->assertSame('30.00', $scenario['active_allocation_total'] ?? null);
+        $this->assertSame('PARTIALLY_ALLOCATED', $scenario['payment_status'] ?? null);
+        $this->assertSame($scenario['fresh_total_payments'] ?? 'x', $scenario['cached_total_payments'] ?? 'y');
+        $this->assertSame($scenario['fresh_balance'] ?? 'x', $scenario['cached_balance'] ?? 'y');
+    }
+
+    private function runCoordinator(string $runId): array
+    {
+        $dbName = 'ivorq_concurrency_glf_b_' . $runId . '_' . strtolower(Str::random(4));
+        $barrierDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'ivorq-glfb-conc-' . $runId . '-' . Str::random(4);
+        @mkdir($barrierDir, 0700, true);
 
         try {
-            $this->payments->allocatePayment($this->glfActor, $payment->id, $secondFolio->id, '50.00', 'alloc-over');
-            $this->fail('Over-allocation must fail controlled.');
-        } catch (DomainException $exception) {
-            $this->assertStringContainsString('GUEST_PAYMENT_OVER_ALLOCATION', $exception->getMessage());
-        }
+            $coordinatorScript = __DIR__ . '/Support/GuestPaymentConcurrencyCoordinator.php';
+            $configFile = $barrierDir . DIRECTORY_SEPARATOR . 'coordinator-config.json';
+            $resultFile = $barrierDir . DIRECTORY_SEPARATOR . 'coordinator-result.json';
 
-        $this->payments->allocatePayment($this->glfActor, $payment->id, $secondFolio->id, '40.00', 'alloc-split-b');
+            $pgsql = config('database.connections.pgsql');
+            file_put_contents($configFile, json_encode([
+                'db_name' => $dbName,
+                'barrier_dir' => $barrierDir,
+                'base_path' => base_path(),
+                'db_host' => $pgsql['host'] ?? '127.0.0.1',
+                'db_port' => (string) ($pgsql['port'] ?? '5432'),
+                'db_user' => $pgsql['username'],
+                'db_pass' => $pgsql['password'],
+                'result_file' => $resultFile,
+            ], JSON_PRETTY_PRINT));
 
-        $this->assertSame('100.00', $this->activeAllocationTotal($payment->id));
-        $this->assertSame(2, GuestPaymentAllocation::count());
-        $this->assertSame(2, FolioItem::where('source_type', GuestLedgerPaymentAllocationEffectService::SOURCE_ALLOCATION)->count());
-        $this->assertSame(GuestPaymentLifecycleStatusEnum::FullyAllocated, $payment->fresh()->lifecycle_status);
-    }
+            $process = proc_open(
+                PHP_BINARY . ' ' . escapeshellarg($coordinatorScript) . ' ' . escapeshellarg($configFile),
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w']],
+                $pipes,
+                base_path()
+            );
 
-    public function test_double_reversal_and_reallocation_consistency(): void
-    {
-        [$payment, $folio] = $this->paymentAndFolio('90.00');
-        $allocation = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '90.00', 'alloc-race');
-
-        $this->confirm(GuestPaymentLifecycleService::REVERSAL_CONFIRMATION_INTENT);
-        $r1 = $this->payments->reverseAllocation($this->glfActor, $allocation->id, 'RACE_REPLAY', 'reverse-race');
-        $r2 = $this->payments->reverseAllocation($this->glfActor, $allocation->id, 'RACE_REPLAY', 'reverse-race');
-
-        $this->assertSame($r1->id, $r2->id);
-        $this->assertSame(1, GuestPaymentReversal::count());
-        $this->assertSame(1, FolioItem::where('source_type', GuestLedgerPaymentAllocationEffectService::SOURCE_ALLOCATION_REVERSAL)->count());
-        $this->assertSame('0.00', $this->activeAllocationTotal($payment->id));
-        $this->assertSame(GuestPaymentLifecycleStatusEnum::Recorded, $payment->fresh()->lifecycle_status);
-
-        $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '90.00', 'alloc-after-race');
-        $this->assertSame('90.00', $this->activeAllocationTotal($payment->id));
-        $this->assertSame(GuestPaymentLifecycleStatusEnum::FullyAllocated, $payment->fresh()->lifecycle_status);
-    }
-
-    private function paymentAndFolio(string $amount): array
-    {
-        $reservation = $this->makeGlfReservation();
-        $folio = $this->makeGlfFolio($reservation, $reservation->primaryGuest);
-        $payment = $this->payments->recordCashPayment(
-            $this->glfActor,
-            $reservation->id,
-            $this->openCashierSession()->id,
-            $amount,
-            'record-' . $reservation->id . '-' . $amount
-        );
-
-        return [$payment, $folio];
-    }
-
-    private function openCashierSession(): CashierSession
-    {
-        $session = new CashierSession();
-        $session->forceFill([
-            'property_id' => $this->glfProperty->id,
-            'cashier_user_id' => $this->glfActor->id,
-            'status' => CashierSessionStatusEnum::OPEN->value,
-            'opened_at' => now(),
-            'opened_by' => $this->glfActor->id,
-        ])->save();
-
-        return $session->fresh();
-    }
-
-    private function confirm(string $intent): void
-    {
-        app(SensitiveActionConfirmationService::class)->confirm(
-            $this->glfActor,
-            $intent,
-            'password',
-            $this->glfCompany->id,
-            $this->glfProperty->id
-        );
-    }
-
-    private function activeAllocationTotal(string $paymentId): string
-    {
-        $total = '0.00';
-        foreach (GuestPaymentAllocation::where('guest_payment_transaction_id', $paymentId)->get() as $allocation) {
-            if (!GuestPaymentReversal::where('guest_payment_allocation_id', $allocation->id)->exists()) {
-                $total = bcadd($total, (string) $allocation->amount, 2);
+            if (!is_resource($process)) {
+                return ['error' => 'FAILED_TO_START_COORDINATOR'];
             }
-        }
 
-        return $total;
+            fclose($pipes[0]);
+            fclose($pipes[1]);
+
+            $end = time() + 360;
+            while (time() < $end) {
+                $status = proc_get_status($process);
+                if (!$status['running'] && file_exists($resultFile)) {
+                    break;
+                }
+                if (file_exists($resultFile)) {
+                    usleep(500000);
+                    break;
+                }
+                usleep(100000);
+            }
+
+            $result = file_exists($resultFile)
+                ? (json_decode(file_get_contents($resultFile), true) ?: ['error' => 'PARSE_ERROR'])
+                : ['error' => 'TIMEOUT_NO_RESULT'];
+            @proc_close($process);
+
+            return $result;
+        } finally {
+            foreach ((@glob($barrierDir . DIRECTORY_SEPARATOR . '*') ?: []) as $file) {
+                if (is_file($file)) {
+                    @unlink($file);
+                }
+            }
+            @rmdir($barrierDir);
+        }
     }
 }

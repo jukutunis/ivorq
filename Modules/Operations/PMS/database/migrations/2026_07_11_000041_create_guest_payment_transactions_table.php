@@ -9,6 +9,18 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::table('reservations', function (Blueprint $table) {
+            $table->unique(['property_id', 'id'], 'reservations_property_id_unique');
+        });
+
+        Schema::table('guests', function (Blueprint $table) {
+            $table->unique(['property_id', 'id'], 'guests_property_id_unique');
+        });
+
+        Schema::table('cashier_sessions', function (Blueprint $table) {
+            $table->unique(['property_id', 'id'], 'cashier_sessions_property_id_unique');
+        });
+
         Schema::create('guest_payment_transactions', function (Blueprint $table) {
             $table->char('id', 26)->primary();
             $table->char('property_id', 26);
@@ -29,9 +41,12 @@ return new class extends Migration
             $table->char('updated_by', 26)->nullable();
 
             $table->foreign('property_id')->references('id')->on('properties')->restrictOnDelete();
-            $table->foreign('reservation_id')->references('id')->on('reservations')->restrictOnDelete();
-            $table->foreign('guest_id')->references('id')->on('guests')->restrictOnDelete();
-            $table->foreign('cashier_session_id')->references('id')->on('cashier_sessions')->restrictOnDelete();
+            $table->foreign(['property_id', 'reservation_id'], 'guest_payments_property_reservation_foreign')
+                ->references(['property_id', 'id'])->on('reservations')->restrictOnDelete();
+            $table->foreign(['property_id', 'guest_id'], 'guest_payments_property_guest_foreign')
+                ->references(['property_id', 'id'])->on('guests')->restrictOnDelete();
+            $table->foreign(['property_id', 'cashier_session_id'], 'guest_payments_property_session_foreign')
+                ->references(['property_id', 'id'])->on('cashier_sessions')->restrictOnDelete();
             $table->foreign('recorded_by')->references('id')->on('users')->restrictOnDelete();
             $table->foreign('created_by')->references('id')->on('users')->restrictOnDelete();
             $table->foreign('updated_by')->references('id')->on('users')->nullOnDelete();
@@ -51,5 +66,17 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('guest_payment_transactions');
+
+        Schema::table('cashier_sessions', function (Blueprint $table) {
+            $table->dropUnique('cashier_sessions_property_id_unique');
+        });
+
+        Schema::table('guests', function (Blueprint $table) {
+            $table->dropUnique('guests_property_id_unique');
+        });
+
+        Schema::table('reservations', function (Blueprint $table) {
+            $table->dropUnique('reservations_property_id_unique');
+        });
     }
 };

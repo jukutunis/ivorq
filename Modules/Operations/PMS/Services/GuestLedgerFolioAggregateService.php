@@ -241,7 +241,7 @@ class GuestLedgerFolioAggregateService
                 ]
             );
 
-            $this->recalculateAndPersistLocked($folio);
+            $this->recalculateLocked($folio);
 
             event(new FolioItemPosted($item));
 
@@ -313,7 +313,7 @@ class GuestLedgerFolioAggregateService
             $item = $this->folioItemRepository->voidLocked($item);
 
             // Recalculate using the private locked primitive
-            $this->recalculateAndPersistLocked($folio);
+            $this->recalculateLocked($folio);
 
             event(new FolioItemVoided($item));
 
@@ -332,7 +332,7 @@ class GuestLedgerFolioAggregateService
     {
         return DB::transaction(function () use ($folioId, $propertyId) {
             $folio = $this->folioRepository->lockForUpdate($folioId, $propertyId);
-            $this->recalculateAndPersistLocked($folio);
+            $this->recalculateLocked($folio);
 
             return $folio->fresh();
         });
@@ -341,9 +341,9 @@ class GuestLedgerFolioAggregateService
     /**
      * Locked recalculation — caller MUST hold a folio row lock.
      *
-     * Private: only postItem(), voidItem(), and recalculateTotals() may invoke this.
+     * Intended for callers that already hold the Folio lock.
      */
-    private function recalculateAndPersistLocked(Folio $folio): void
+    public function recalculateLocked(Folio $folio): void
     {
         $items = $this->folioItemRepository->forFolio($folio->id, includeVoided: false);
 

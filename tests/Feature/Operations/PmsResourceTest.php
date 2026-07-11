@@ -654,10 +654,10 @@ class PmsResourceTest extends TestCase
         $item = tap(new FolioItem())->forceFill([
             'property_id' => $property->id,
             'folio_id'    => $folio->id,
-            'item_type'   => FolioItemTypeEnum::Payment->value,
-            'description' => 'Cash payment',
+            'item_type'   => FolioItemTypeEnum::RoomCharge->value,
+            'description' => 'Room charge',
             'quantity'    => 1,
-            'amount'      => -100.00,
+            'amount'      => 100.00,
             'is_void'     => false,
             'posted_at'   => now(),
         ]);
@@ -666,7 +666,7 @@ class PmsResourceTest extends TestCase
         $data = $this->resolve(new FolioItemResource($item));
 
         $this->assertIsArray($data['item_type']);
-        $this->assertSame(FolioItemTypeEnum::Payment->value, $data['item_type']['value']);
+        $this->assertSame(FolioItemTypeEnum::RoomCharge->value, $data['item_type']['value']);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

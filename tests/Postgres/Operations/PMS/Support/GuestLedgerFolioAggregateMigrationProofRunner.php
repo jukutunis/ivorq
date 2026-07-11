@@ -77,6 +77,12 @@ function glfAColumnExists(PDO $pdo, string $table, string $columnName): bool
 }
 
 $glfAMigrationPath = 'Modules/Operations/PMS/database/migrations/2026_07_11_000040_harden_folio_aggregate.php';
+$glfBMigrationPaths = [
+    'Modules/Operations/PMS/database/migrations/2026_07_11_000044_extend_folio_items_for_guest_payment_sources.php',
+    'Modules/Operations/PMS/database/migrations/2026_07_11_000043_create_guest_payment_reversals_table.php',
+    'Modules/Operations/PMS/database/migrations/2026_07_11_000042_create_guest_payment_allocations_table.php',
+    'Modules/Operations/PMS/database/migrations/2026_07_11_000041_create_guest_payment_transactions_table.php',
+];
 
 $result = [
     'db_name' => $dbName,
@@ -147,8 +153,14 @@ try {
     \Illuminate\Support\Facades\DB::purge('pgsql');
     \Illuminate\Support\Facades\DB::reconnect('pgsql');
 
-    // ── 2. Run ALL migrations, then rollback only GLF-A → pre-GLF-A state ──
+    // ── 2. Run ALL migrations, then rollback dependent GLF-B and GLF-A ──
     \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
+    foreach ($glfBMigrationPaths as $glfBMigrationPath) {
+        \Illuminate\Support\Facades\Artisan::call('migrate:rollback', [
+            '--path' => $glfBMigrationPath,
+            '--force' => true,
+        ]);
+    }
     \Illuminate\Support\Facades\Artisan::call('migrate:rollback', [
         '--path' => $glfAMigrationPath,
         '--force' => true,

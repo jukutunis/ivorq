@@ -15,6 +15,10 @@ use Modules\Operations\PMS\Enums\FolioStatusEnum;
 use Modules\Operations\PMS\Enums\GuestPaymentLifecycleStatusEnum;
 use Modules\Operations\PMS\Enums\GuestPaymentReversalTypeEnum;
 use Modules\Operations\PMS\Enums\GuestPaymentTenderTypeEnum;
+use Modules\Operations\PMS\Events\GuestPaymentAllocated;
+use Modules\Operations\PMS\Events\GuestPaymentAllocationReversed;
+use Modules\Operations\PMS\Events\GuestPaymentRecorded;
+use Modules\Operations\PMS\Events\GuestPaymentVoided;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Models\GuestPaymentAllocation;
@@ -113,6 +117,8 @@ class GuestPaymentLifecycleService
                 'updated_by' => $actor->id,
             ])->save();
 
+            DB::afterCommit(fn () => event(new GuestPaymentRecorded($payment->fresh())));
+
             return $payment->fresh();
         });
     }
@@ -179,8 +185,10 @@ class GuestPaymentLifecycleService
                 'created_at' => now(),
             ])->save();
 
-            $this->effectService->applyAcceptedAllocation($allocation->id);
+            $this->effectService->createAllocationItemLocked($allocation, $payment, $folio);
             $this->refreshPaymentStatus($payment);
+
+            DB::afterCommit(fn () => event(new GuestPaymentAllocated($allocation->fresh())));
 
             return $allocation->fresh();
         });
@@ -248,6 +256,8 @@ class GuestPaymentLifecycleService
                 'updated_by' => $actor->id,
             ])->save();
 
+            DB::afterCommit(fn () => event(new GuestPaymentVoided($reversal->fresh())));
+
             return $reversal->fresh();
         });
     }
@@ -274,7 +284,7 @@ class GuestPaymentLifecycleService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            Folio::withoutGlobalScope('property')
+            $folio = Folio::withoutGlobalScope('property')
                 ->whereKey($identity->folio_id)
                 ->where('property_id', $propertyId)
                 ->lockForUpdate()
@@ -323,8 +333,10 @@ class GuestPaymentLifecycleService
                 'created_at' => now(),
             ])->save();
 
-            $this->effectService->applyAcceptedReversal($reversal->id);
+            $this->effectService->createReversalItemLocked($reversal, $allocation, $payment, $folio);
             $this->refreshPaymentStatus($payment);
+
+            DB::afterCommit(fn () => event(new GuestPaymentAllocationReversed($reversal->fresh())));
 
             return $reversal->fresh();
         });
@@ -553,6 +565,6 @@ class GuestPaymentLifecycleService
 
     private function amountString(mixed $amount): string
     {
-        return number_format((float) $amount, 2, '.', '');
+        return $this->normalisePositiveAmount((string) $amount, 'amount');
     }
 }
