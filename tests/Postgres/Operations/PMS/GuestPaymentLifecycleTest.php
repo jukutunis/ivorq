@@ -945,7 +945,176 @@ class GuestPaymentLifecycleTest extends PostgresTestCase
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // 4F. Atomic rollback
+    // 4F. Payment deletion immutability
+    // ─────────────────────────────────────────────────────────────────────
+
+    public function test_eloquent_delete_model_guard_blocks_deletion_with_domain_exception(): void
+    {
+        [$payment] = $this->paymentAndFolio('50.00');
+        $paymentId = $payment->id;
+        $paymentNumber = $payment->payment_number;
+        $idemKey = $payment->recording_idempotency_key;
+        $snapshot = $payment->source_snapshot;
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('immutable and cannot be deleted');
+        $payment->delete();
+    }
+
+    public function test_payment_row_remains_after_failed_eloquent_deletion(): void
+    {
+        [$payment] = $this->paymentAndFolio('50.00');
+        $paymentId = $payment->id;
+        $paymentNumber = $payment->payment_number;
+        $idemKey = $payment->recording_idempotency_key;
+        $snapshot = $payment->source_snapshot;
+
+        try {
+            $payment->delete();
+        } catch (DomainException) {
+            // Expected — model guard prevents deletion.
+        }
+
+        $this->assertDatabaseHas('guest_payment_transactions', [
+            'id' => $paymentId,
+            'payment_number' => $paymentNumber,
+            'recording_idempotency_key' => $idemKey,
+        ]);
+
+        $row = GuestPaymentTransaction::find($paymentId);
+        $this->assertNotNull($row, 'Payment row must remain after failed Eloquent delete.');
+        $this->assertSame($paymentNumber, $row->payment_number);
+        $this->assertSame($idemKey, $row->recording_idempotency_key);
+        $this->assertSame($snapshot, $row->source_snapshot);
+    }
+
+    public function test_direct_sql_delete_is_rejected_with_immutable_trigger_error(): void
+    {
+        [$payment] = $this->paymentAndFolio('50.00');
+        $paymentId = $payment->id;
+
+        // The immutability trigger blocks DELETE and raises a stable error code.
+        // Use expectException because the PostgreSQL-trigger QueryException aborts
+        // the test transaction, making post-exception DB assertions impossible.
+        // Row-remains proof is provided by the migration proof runner and by
+        // the idempotency-continuity test below (Eloquent guard does not abort TX).
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE');
+        DB::table('guest_payment_transactions')->where('id', $paymentId)->delete();
+    }
+
+    public function test_deletion_is_blocked_when_payment_is_recorded(): void
+    {
+        [$payment] = $this->paymentAndFolio('40.00');
+        $this->assertSame(GuestPaymentLifecycleStatusEnum::Recorded, $payment->lifecycle_status);
+
+        try {
+            $payment->delete();
+            $this->fail('Deletion of RECORDED payment must be blocked.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('immutable', $exception->getMessage());
+        }
+
+        $this->assertDatabaseHas('guest_payment_transactions', ['id' => $payment->id]);
+    }
+
+    public function test_deletion_is_blocked_when_payment_is_partially_allocated(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('40.00');
+        $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '10.00', 'del-partial-alloc');
+        $payment->refresh();
+        $this->assertSame(GuestPaymentLifecycleStatusEnum::PartiallyAllocated, $payment->lifecycle_status);
+
+        try {
+            $payment->delete();
+            $this->fail('Deletion of PARTIALLY_ALLOCATED payment must be blocked.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('immutable', $exception->getMessage());
+        }
+
+        $this->assertDatabaseHas('guest_payment_transactions', ['id' => $payment->id]);
+    }
+
+    public function test_deletion_is_blocked_when_payment_is_voided(): void
+    {
+        [$payment] = $this->paymentAndFolio('40.00');
+        $this->confirm(GuestPaymentLifecycleService::VOID_CONFIRMATION_INTENT);
+        $this->payments->voidPayment($this->glfActor, $payment->id, 'VOID_DEL_TEST', 'del-void');
+        $payment->refresh();
+        $this->assertSame(GuestPaymentLifecycleStatusEnum::Voided, $payment->lifecycle_status);
+
+        try {
+            $payment->delete();
+            $this->fail('Deletion of VOIDED payment must be blocked.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('immutable', $exception->getMessage());
+        }
+
+        $this->assertDatabaseHas('guest_payment_transactions', ['id' => $payment->id]);
+    }
+
+    public function test_recording_replay_after_failed_deletion_returns_original_payment(): void
+    {
+        [$payment, , $reservation] = $this->paymentAndFolio('50.00');
+        $originalId = $payment->id;
+        $idemKey = $payment->recording_idempotency_key;
+        $paymentNumber = $payment->payment_number;
+        $sessionId = $payment->cashier_session_id;
+
+        // Attempt Eloquent deletion — must fail (model guard throws DomainException,
+        // which does NOT abort the PostgreSQL transaction).
+        try {
+            $payment->delete();
+        } catch (DomainException) {
+        }
+
+        // Row must still exist after failed Eloquent delete.
+        $this->assertDatabaseHas('guest_payment_transactions', ['id' => $originalId]);
+
+        // Replay with original idempotency key must return the original payment.
+        $replay = $this->payments->recordCashPayment(
+            $this->glfActor,
+            $reservation->id,
+            $sessionId,
+            '50.00',
+            $idemKey
+        );
+
+        $this->assertSame($originalId, $replay->id, 'Recording replay must return the original payment.');
+        $this->assertSame($paymentNumber, $replay->payment_number);
+        $this->assertSame(1, GuestPaymentTransaction::count());
+    }
+
+    public function test_distinct_payment_after_failed_deletion_produces_valid_new_payment_number(): void
+    {
+        [$payment, , $reservation] = $this->paymentAndFolio('50.00');
+        $originalNumber = $payment->payment_number;
+        // Reuse the existing cashier session to avoid unique-constraint conflict.
+        $sessionId = $payment->cashier_session_id;
+
+        // Attempt deletion — must fail.
+        try {
+            $payment->delete();
+        } catch (DomainException) {
+        }
+
+        // Record a distinct payment — must produce a valid non-colliding number.
+        $newPayment = $this->payments->recordCashPayment(
+            $this->glfActor,
+            $reservation->id,
+            $sessionId,
+            '30.00',
+            'distinct-after-failed-del-' . $reservation->id
+        );
+
+        $this->assertNotSame($originalNumber, $newPayment->payment_number, 'New payment must have a distinct number.');
+        $this->assertSame(2, GuestPaymentTransaction::count(), 'Both payments must exist — original was NOT deleted.');
+        $this->assertDatabaseHas('guest_payment_transactions', ['id' => $payment->id]);
+        $this->assertDatabaseHas('guest_payment_transactions', ['id' => $newPayment->id]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4G. Atomic rollback
     // ─────────────────────────────────────────────────────────────────────
 
     public function test_allocation_rolls_back_when_effect_creation_fails(): void

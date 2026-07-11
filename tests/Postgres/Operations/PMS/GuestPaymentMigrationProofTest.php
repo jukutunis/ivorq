@@ -86,6 +86,9 @@ class GuestPaymentMigrationProofTest extends TestCase
             'up_immutable_payment_amount_blocked',
             'up_reversal_source_amount_void_blocked',
             'up_reversal_source_amount_alloc_blocked',
+            'up_payment_deletion_blocked',
+            'up_payment_row_remains_after_failed_deletion',
+            'up_lifecycle_update_allowed',
             'up_same_property_fk_enforced',
             'up_typed_source_fk_enforced',
         ] as $key) {
@@ -99,6 +102,7 @@ class GuestPaymentMigrationProofTest extends TestCase
             'down_parent_composite_keys_removed',
             'down_legacy_folio_preserved',
             'down_legacy_items_preserved',
+            'down_immutability_trigger_removed',
         ] as $key) {
             $this->assertTrue($result[$key] ?? false, "{$key} must be true.");
         }
@@ -112,6 +116,9 @@ class GuestPaymentMigrationProofTest extends TestCase
             'reup_typed_source_trigger_exists',
             'reup_immutability_trigger_exists',
             'reup_reversal_source_trigger_exists',
+            'reup_payment_deletion_blocked',
+            'reup_immutable_update_blocked',
+            'reup_lifecycle_update_allowed',
             'reup_legacy_folio_preserved',
             'reup_legacy_items_preserved',
         ] as $key) {

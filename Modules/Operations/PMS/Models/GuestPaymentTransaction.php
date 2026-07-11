@@ -2,6 +2,7 @@
 
 namespace Modules\Operations\PMS\Models;
 
+use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -61,5 +62,14 @@ class GuestPaymentTransaction extends Model
     public function reversals(): HasMany
     {
         return $this->hasMany(GuestPaymentReversal::class);
+    }
+
+    protected static function booted(): void
+    {
+        static::deleting(function (self $model) {
+            throw new DomainException(
+                'Guest payment transactions are immutable and cannot be deleted.'
+            );
+        });
     }
 }

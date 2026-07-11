@@ -407,6 +407,21 @@ try {
     $sqlImmutable = "UPDATE guest_payment_transactions SET amount = '999.99' WHERE id = '" . $d['payment_a'] . "'";
     $result['up_immutable_payment_amount_blocked'] = glfBMigAssertFkFails($pdo, $sqlImmutable, 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE');
 
+    // Prove: Payment deletion is blocked for an unallocated payment (no dependent Allocation or Reversal)
+    // Create a clean payment with no allocations to isolate deletion from FK constraints.
+    $cleanPaymentId = glfBMigUlid();
+    $pdo->exec("INSERT INTO guest_payment_transactions (id, property_id, payment_number, reservation_id, guest_id, currency, amount, tender_type, cashier_session_id, lifecycle_status, recording_idempotency_key, recorded_at, recorded_by, source_snapshot, created_at, updated_at, created_by) VALUES ('" . $cleanPaymentId . "', '" . $d['prop_a'] . "', 'GPM-DEL-PROOF', '" . $d['res_a'] . "', '" . $d['guest_a'] . "', 'USD', 10.00, 'CASH', '" . $d['session_a'] . "', 'RECORDED', 'del-proof-" . \Illuminate\Support\Str::random(8) . "', now(), '" . $d['actor_id'] . "', '{}', now(), now(), '" . $d['actor_id'] . "')");
+    $sqlDelete = "DELETE FROM guest_payment_transactions WHERE id = '" . $cleanPaymentId . "'";
+    $result['up_payment_deletion_blocked'] = glfBMigAssertFkFails($pdo, $sqlDelete, 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE');
+    // Row must remain after failed deletion
+    $delCount = (int) $pdo->query("SELECT COUNT(*) FROM guest_payment_transactions WHERE id = '" . $cleanPaymentId . "'")->fetchColumn();
+    $result['up_payment_row_remains_after_failed_deletion'] = $delCount === 1;
+
+    // Prove: Lifecycle update remains allowed
+    $pdo->exec("UPDATE guest_payment_transactions SET lifecycle_status = 'VOIDED', updated_by = '" . $d['actor_id'] . "' WHERE id = '" . $cleanPaymentId . "'");
+    $newStatus = $pdo->query("SELECT lifecycle_status FROM guest_payment_transactions WHERE id = '" . $cleanPaymentId . "'")->fetchColumn();
+    $result['up_lifecycle_update_allowed'] = $newStatus === 'VOIDED';
+
     // Prove: Reversal source amount trigger blocks void with wrong amount
     $sqlVoidAmount = "INSERT INTO guest_payment_reversals (id, property_id, guest_payment_transaction_id, guest_payment_allocation_id, reversal_type, amount, reason_code, reversal_idempotency_key, reversed_at, reversed_by, source_snapshot) VALUES ('" . glfBMigUlid() . "', '" . $d['prop_a'] . "', '" . $d['payment_a'] . "', NULL, 'PAYMENT_VOID', 99.99, 'WRONG_AMOUNT', 'fk-void-amount-" . \Illuminate\Support\Str::random(8) . "', now(), '" . $d['actor_id'] . "', '{}')";
     $result['up_reversal_source_amount_void_blocked'] = glfBMigAssertFkFails($pdo, $sqlVoidAmount, 'GLF_B_REVERSAL_SOURCE_AMOUNT_MISMATCH');
@@ -447,6 +462,8 @@ try {
         && !glfBMigConstraintExists($pdo, 'cashier_sessions_property_id_unique');
     $result['down_legacy_folio_preserved'] = (int) $pdo->query('SELECT COUNT(*) FROM folios')->fetchColumn() === 1;
     $result['down_legacy_items_preserved'] = (int) $pdo->query('SELECT COUNT(*) FROM folio_items')->fetchColumn() === 2;
+    $result['down_immutability_trigger_removed'] = !glfBMigTriggerExists($pdo, 'guest_payment_transactions_immutable_trigger')
+        && !glfBMigConstraintExists($pdo, 'guest_payment_transactions_immutable_trigger');
 
     glfBMigApplyGlfB();
     $result['reup_ok'] = true;
@@ -465,6 +482,31 @@ try {
     $result['reup_reversal_source_trigger_exists'] = glfBMigTriggerExists($pdo, 'glf_b_reversal_source_amount_trigger');
     $result['reup_legacy_folio_preserved'] = (int) $pdo->query('SELECT COUNT(*) FROM folios')->fetchColumn() === 1;
     $result['reup_legacy_items_preserved'] = (int) $pdo->query('SELECT COUNT(*) FROM folio_items')->fetchColumn() === 2;
+
+    // Reapply deletion proof: create a new clean payment and prove deletion still blocked.
+    $reupCleanPayment = glfBMigUlid();
+    $legacyPropId = $pdo->query("SELECT property_id FROM folios LIMIT 1")->fetchColumn();
+    $legacyResId = $pdo->query("SELECT reservation_id FROM folios LIMIT 1")->fetchColumn();
+    $legacyGuestId = $pdo->query("SELECT guest_id FROM folios LIMIT 1")->fetchColumn();
+    $legacyActorId = $pdo->query("SELECT id FROM users LIMIT 1")->fetchColumn();
+    // Create a minimal cashier session for FK compliance
+    $reupSession = glfBMigUlid();
+    $pdo->exec("INSERT INTO cashier_sessions (id, property_id, cashier_user_id, status, opened_at, opened_by) VALUES ('" . $reupSession . "', '" . $legacyPropId . "', '" . $legacyActorId . "', 'OPEN', now(), '" . $legacyActorId . "')");
+    $pdo->exec("INSERT INTO guest_payment_transactions (id, property_id, payment_number, reservation_id, guest_id, currency, amount, tender_type, cashier_session_id, lifecycle_status, recording_idempotency_key, recorded_at, recorded_by, source_snapshot, created_at, updated_at, created_by) VALUES ('" . $reupCleanPayment . "', '" . $legacyPropId . "', 'GPM-REUP-DEL', '" . $legacyResId . "', '" . $legacyGuestId . "', 'USD', 5.00, 'CASH', '" . $reupSession . "', 'RECORDED', 'reup-del-proof-" . \Illuminate\Support\Str::random(8) . "', now(), '" . $legacyActorId . "', '{}', now(), now(), '" . $legacyActorId . "')");
+    $sqlReupDelete = "DELETE FROM guest_payment_transactions WHERE id = '" . $reupCleanPayment . "'";
+    $result['reup_payment_deletion_blocked'] = glfBMigAssertFkFails($pdo, $sqlReupDelete, 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE');
+    // Immutable update still blocked
+    $sqlReupImmutable = "UPDATE guest_payment_transactions SET amount = '888.88' WHERE id = '" . $reupCleanPayment . "'";
+    $result['reup_immutable_update_blocked'] = glfBMigAssertFkFails($pdo, $sqlReupImmutable, 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE');
+    // Lifecycle update still allowed
+    $pdo->exec("UPDATE guest_payment_transactions SET lifecycle_status = 'VOIDED', updated_by = '" . $legacyActorId . "' WHERE id = '" . $reupCleanPayment . "'");
+    $reupStatus = $pdo->query("SELECT lifecycle_status FROM guest_payment_transactions WHERE id = '" . $reupCleanPayment . "'")->fetchColumn();
+    $result['reup_lifecycle_update_allowed'] = $reupStatus === 'VOIDED';
+    // Clean up the reapply test payment (bypass trigger)
+    $pdo->exec("SET session_replication_role = 'replica'");
+    $pdo->exec("DELETE FROM guest_payment_transactions WHERE id = '" . $reupCleanPayment . "'");
+    $pdo->exec("DELETE FROM cashier_sessions WHERE id = '" . $reupSession . "'");
+    $pdo->exec("SET session_replication_role = 'origin'");
 
     glfBMigCreateDb($ambiguousDb, $dbHost, $dbPort, $dbUser, $dbPass);
     $result['ambiguous_db_created'] = true;

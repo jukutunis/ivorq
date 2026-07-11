@@ -66,6 +66,10 @@ return new class extends Migration
 CREATE OR REPLACE FUNCTION block_guest_payment_transaction_mutation()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+
     IF OLD.property_id IS DISTINCT FROM NEW.property_id THEN
         RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
     END IF;
@@ -113,7 +117,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 SQL);
-        DB::statement('CREATE TRIGGER guest_payment_transactions_immutable_trigger BEFORE UPDATE ON guest_payment_transactions FOR EACH ROW EXECUTE FUNCTION block_guest_payment_transaction_mutation()');
+        DB::statement('CREATE TRIGGER guest_payment_transactions_immutable_trigger BEFORE UPDATE OR DELETE ON guest_payment_transactions FOR EACH ROW EXECUTE FUNCTION block_guest_payment_transaction_mutation()');
     }
 
     public function down(): void
