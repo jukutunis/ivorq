@@ -177,8 +177,8 @@
         "GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 42,
-        "assertions": 80,
+        "tests": 46,
+        "assertions": 90,
         "failures": 0,
         "errors": 0
       },
@@ -186,7 +186,7 @@
         "measured_at": "2026-07-12",
         "branch": "sprint-glf-d-checkout-settlement-readiness-projection",
         "sha": "0797337341e1da4e5b7ca65884ccba1ad7b9a0c0",
-        "note": "GLF-D Commit 1 measurement: 3 exact classes / 42 tests / 80 assertions / 0 failures / 0 errors. Status precedence proven (EVIDENCE_UNAVAILABLE > REVIEW_REQUIRED > BLOCKED > READY). Multi-folio evaluation with independent zero-balance requirement. Fresh vs cached source-derived totals with mismatch detection. Payment/deposit/refund/AR transfer source-proven resolution. Three external evidence ports with unavailable adapters (posting-completeness, settlement-hold, completed-settlement-conflict). Zero-write proof with row-count assertions. BCMath scale-2 throughout. REPEATABLE READ READ ONLY transaction isolation. GLF-A (43/186), GLF-B (53/287), GLF-C (30/326) all preserved."
+        "note": "GLF-D Commit 1 measurement: 3 exact classes / 46 tests / 90 assertions / 0 failures / 0 errors. Status precedence proven. Multi-folio evaluation with independent zero-balance requirement. Fresh vs cached source-derived totals with mismatch detection. Payment/deposit/refund/AR transfer source-proven resolution. Zero-write proof. BCMath scale-2 throughout. REPEATABLE READ READ ONLY snapshot consistency. Snapshot-vs-mutation coherence proof. Cross-property non-disclosure. GLF-A (43/186), GLF-B (53/287), GLF-C (30/326) all preserved."
       },
       "accepted_debt": [],
       "status": "active"
