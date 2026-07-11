@@ -137,7 +137,7 @@
     },
     {
       "id": "guest-deposit-refund-ar-transfer-baseline",
-      "description": "GLF-C PostgreSQL tests covering source-proven CASH guest deposits, partial/full/split application, immutable application reversal and unused-deposit void, Payment/Deposit-bounded cash refunds, PMS Guest Ledger AR-transfer requests, Accounting/AR accept/reject/reverse decisions, typed source-linked Folio effects, canonical Deposit/AR totals, authorization, confirmations, property isolation, idempotency, exact decimals, database integrity, twelve real worker concurrency races, and disposable migration UP/DOWN/REAPPLY plus ambiguous legacy Deposit blocking. All 5 exact classes pass cleanly as one batch.",
+      "description": "GLF-C PostgreSQL tests covering source-proven CASH guest deposits, partial/full/split application, immutable application reversal and unused-deposit void, Payment/Deposit-bounded cash refunds, PMS Guest Ledger AR-transfer requests, Accounting/AR accept/reject/reverse decisions, typed source-linked Folio effects, canonical Deposit/AR totals, database partial unique source indexes on folio_items (deposit_application, deposit_reversal, ar_decision), source-uniqueness SQLSTATE 23505/P0001 proof, duplicate-source-effect worker concurrency proof, full confirmation-failure matrix (deposit void, deposit reversal, cash refund, AR accept, AR reject, AR reverse), 12 cross-property non-disclosure sub-cases, accepted lock order (Deposit → Folio → Application → Reversal), thirteen real worker concurrency races, and disposable migration UP/DOWN/REAPPLY plus ambiguous legacy Deposit blocking. All 5 exact classes pass cleanly as one batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -150,16 +150,16 @@
         "GuestDepositRefundArTransferMigrationProofTest"
       ],
       "expected": {
-        "tests": 20,
-        "assertions": 227,
+        "tests": 30,
+        "assertions": 326,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-11",
+        "measured_at": "2026-07-12",
         "branch": "sprint-glf-c-deposit-refund-ar-transfer-lifecycle",
-        "sha": "dfdab6dbc60fd29725c835e58d665f0afcf477a3",
-        "note": "Commit 1 measurement: 5 exact GLF-C classes / 20 tests / 227 assertions / 0 failures / 0 errors. Includes distinct PHP and PostgreSQL worker PID proof for all twelve required races, disposable UP/DOWN/REAPPLY proof, GLF-A/GLF-B identity preservation, exact legacy Deposit blocker, and no accepted debt."
+        "sha": "8eca2e7bac4b9e15a0ed93a50f29f43c90a6622e",
+        "note": "Commit 3 measurement: 5 exact GLF-C classes / 30 tests / 326 assertions / 0 failures / 0 errors. Database source uniqueness indexes (deposit_app, deposit_reversal, ar_decision) with item_type-scoped WHERE predicates. Duplicate-source worker concurrency proof with distinct PHP/PG PIDs. Full confirmation-failure matrix proven. 12 cross-property non-disclosure sub-cases proven with ModelNotFoundException parity. UP/DOWN/REAPPLY migration proof extended with index verification. GLF-A (43/186), GLF-B (53/287), Sensitive/Finance (58/436) all preserved. No accepted debt."
       },
       "accepted_debt": [],
       "status": "active"

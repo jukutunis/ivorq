@@ -211,12 +211,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'GuestDepositRefundArTransferConcurrencyProofTest',
             'GuestDepositRefundArTransferMigrationProofTest',
         ], $baseline->classes);
-        $this->assertEquals(20, $baseline->expected->tests ?? null);
-        $this->assertEquals(227, $baseline->expected->assertions ?? null);
+        $this->assertEquals(30, $baseline->expected->tests ?? null);
+        $this->assertEquals(326, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('dfdab6dbc60fd29725c835e58d665f0afcf477a3', $baseline->provenance->sha ?? null);
+        $this->assertEquals('8eca2e7bac4b9e15a0ed93a50f29f43c90a6622e', $baseline->provenance->sha ?? null);
         $this->assertEquals('active', $baseline->status ?? null);
     }
 
