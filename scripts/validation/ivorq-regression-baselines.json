@@ -110,7 +110,7 @@
     },
     {
       "id": "pms-cashiering-guest-payment-baseline",
-      "description": "PMS Cashiering guest payment operational tests covering cash payment intake, allocation, immutable void and allocation reversal evidence, typed source-linked folio effects, authorization, property isolation, idempotency, real worker PostgreSQL concurrency, migration UP/DOWN/REAPPLY proof, and ambiguous legacy payment/deposit blocking. GLF-B establishes guest payment allocation and immutable reversal foundation only. All 3 test classes pass cleanly as a single batch.",
+      "description": "PMS Cashiering guest payment operational tests covering cash payment intake, allocation, immutable void and allocation reversal evidence, typed source-linked folio effects, authorization, property isolation, idempotency, real worker PostgreSQL concurrency, migration UP/DOWN/REAPPLY proof, ambiguous legacy payment/deposit blocking, source-field immutability trigger, exact source-amount integrity, controlled generic void rejection, composite FK enforcement, and atomic rollback. GLF-B establishes guest payment allocation and immutable reversal foundation only. All 3 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -121,16 +121,16 @@
         "GuestPaymentMigrationProofTest"
       ],
       "expected": {
-        "tests": 21,
-        "assertions": 192,
+        "tests": 45,
+        "assertions": 254,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-11",
         "branch": "sprint-glf-b-guest-payment-allocation-reversal",
-        "sha": "1124fa12a893bc153cab4f273e11ccc104295ef8",
-        "note": "GLF-B corrected exact-class measurement: 3 classes / 21 tests / 192 assertions / 0 failures / 0 errors. GuestPaymentConcurrencyProofTest now uses isolated PHP worker processes, distinct PostgreSQL backend PIDs, synchronization barriers, and disposable database cleanup for recording replay, payment-number safety, allocation replay, over-allocation, split allocation, double reversal, and allocation-versus-reversal races. GuestPaymentMigrationProofTest now proves disposable UP/DOWN/REAPPLY and ambiguous legacy payment/deposit blocking. GuestPaymentLifecycleTest proves strict decimal handling, typed FolioItem source integrity, immutable allocation/source evidence, authorization, idempotency conflicts, and no General Cashier or downstream financial mutation."
+        "sha": "e93a2d4a89a0a7dcfd9ff3a8b1ee1a2975e5fbb2",
+        "note": "GLF-B final integrity closure measurement: 3 classes / 45 tests / 254 assertions / 0 failures / 0 errors. Real worker concurrency; UP/DOWN/REAPPLY migration proof; exact source amount integrity (GLF_B_PAYMENT_EFFECT_AMOUNT_MISMATCH, GLF_B_REVERSAL_EFFECT_AMOUNT_MISMATCH, GLF_B_REVERSAL_SOURCE_AMOUNT_MISMATCH); controlled generic void rejection; transaction immutability trigger; atomic rollback evidence for allocation and reversal."
       },
       "accepted_debt": [],
       "status": "active"

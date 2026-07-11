@@ -188,13 +188,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
     {
         $baseline = $this->findBaseline('pms-cashiering-guest-payment-baseline');
         $this->assertNotNull($baseline, 'pms-cashiering-guest-payment-baseline must exist.');
-        $this->assertEquals(21, $baseline->expected->tests ?? null);
-        $this->assertEquals(192, $baseline->expected->assertions ?? null);
+        $this->assertEquals(45, $baseline->expected->tests ?? null);
+        $this->assertEquals(254, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '1124fa12a893bc153cab4f273e11ccc104295ef8',
+            'e93a2d4a89a0a7dcfd9ff3a8b1ee1a2975e5fbb2',
             $baseline->provenance->sha ?? null
         );
     }
