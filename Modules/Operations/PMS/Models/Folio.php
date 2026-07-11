@@ -43,6 +43,8 @@ class Folio extends Model
         'window_number'  => 'integer',
         'total_charges'  => 'decimal:2',
         'total_payments' => 'decimal:2',
+        'total_deposits' => 'decimal:2',
+        'total_ar_transfers' => 'decimal:2',
         'balance'        => 'decimal:2',
     ];
 

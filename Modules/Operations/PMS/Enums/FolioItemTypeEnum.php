@@ -10,6 +10,9 @@ enum FolioItemTypeEnum: string
     case Adjustment    = 'adjustment';
     case Payment       = 'payment';
     case Deposit       = 'deposit';
+    case DepositReversal = 'deposit_reversal';
+    case ArTransfer = 'ar_transfer';
+    case ArTransferReversal = 'ar_transfer_reversal';
     case PaymentReversal = 'payment_reversal';
     case Other         = 'other';
 
@@ -22,6 +25,9 @@ enum FolioItemTypeEnum: string
             self::Adjustment    => 'Adjustment',
             self::Payment       => 'Payment',
             self::Deposit       => 'Deposit',
+            self::DepositReversal => 'Deposit Reversal',
+            self::ArTransfer => 'AR Transfer',
+            self::ArTransferReversal => 'AR Transfer Reversal',
             self::PaymentReversal => 'Payment Reversal',
             self::Other         => 'Other',
         };

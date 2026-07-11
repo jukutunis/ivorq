@@ -24,6 +24,7 @@ use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Models\GuestPaymentAllocation;
 use Modules\Operations\PMS\Models\GuestPaymentReversal;
 use Modules\Operations\PMS\Models\GuestPaymentTransaction;
+use Modules\Operations\PMS\Models\GuestRefundTransaction;
 use Modules\Operations\PMS\Models\Reservation;
 use Shared\Services\CurrentPropertyService;
 use Throwable;
@@ -160,7 +161,8 @@ class GuestPaymentLifecycleService
             }
 
             $activeTotal = $this->activeAllocatedAmount($payment);
-            if (bccomp(bcadd($activeTotal, $amount, 2), $this->amountString($payment->amount), 2) > 0) {
+            $refundedTotal = $this->completedRefundAmount($payment);
+            if (bccomp(bcadd(bcadd($activeTotal, $refundedTotal, 2), $amount, 2), $this->amountString($payment->amount), 2) > 0) {
                 throw new DomainException('GUEST_PAYMENT_OVER_ALLOCATION');
             }
 
@@ -394,6 +396,18 @@ class GuestPaymentLifecycleService
         };
 
         $payment->forceFill(['lifecycle_status' => $status])->save();
+    }
+
+    private function completedRefundAmount(GuestPaymentTransaction $payment): string
+    {
+        $total = '0.00';
+        foreach (GuestRefundTransaction::where('property_id', $payment->property_id)
+            ->where('guest_payment_transaction_id', $payment->id)
+            ->get() as $refund) {
+            $total = bcadd($total, $this->amountString($refund->amount), 2);
+        }
+
+        return $total;
     }
 
     private function assertCashierSessionUsable(CashierSession $session, User $actor): void

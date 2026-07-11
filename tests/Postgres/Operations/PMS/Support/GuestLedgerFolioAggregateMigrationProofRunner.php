@@ -78,6 +78,9 @@ function glfAColumnExists(PDO $pdo, string $table, string $columnName): bool
 
 $glfAMigrationPath = 'Modules/Operations/PMS/database/migrations/2026_07_11_000040_harden_folio_aggregate.php';
 $glfBMigrationPaths = [
+    'Modules/Operations/PMS/database/migrations/2026_07_11_000047_extend_folios_for_deposit_and_ar_sources.php',
+    'Modules/Operations/PMS/database/migrations/2026_07_11_000046_create_guest_ar_transfer_lifecycle.php',
+    'Modules/Operations/PMS/database/migrations/2026_07_11_000045_create_guest_deposit_and_refund_lifecycle.php',
     'Modules/Operations/PMS/database/migrations/2026_07_11_000044_extend_folio_items_for_guest_payment_sources.php',
     'Modules/Operations/PMS/database/migrations/2026_07_11_000043_create_guest_payment_reversals_table.php',
     'Modules/Operations/PMS/database/migrations/2026_07_11_000042_create_guest_payment_allocations_table.php',

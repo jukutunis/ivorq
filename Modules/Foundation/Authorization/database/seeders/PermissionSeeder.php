@@ -56,6 +56,15 @@ class PermissionSeeder extends Seeder
             'pms.cashiering.guest-payment.allocate',
             'pms.cashiering.guest-payment.void',
             'pms.cashiering.guest-payment.reverse',
+            'pms.cashiering.guest-deposit.record',
+            'pms.cashiering.guest-deposit.apply',
+            'pms.cashiering.guest-deposit.void',
+            'pms.cashiering.guest-deposit.reverse-application',
+            'pms.cashiering.guest-refund.record',
+            'pms.guest-ledger.ar-transfer.request',
+            'accounting.ar.guest-transfer.accept',
+            'accounting.ar.guest-transfer.reject',
+            'accounting.ar.guest-transfer.reverse',
 
             // Engineering - Controlled Room Availability
             'engineering.room-availability.view',

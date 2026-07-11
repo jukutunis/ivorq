@@ -100,6 +100,14 @@ function glfBMigTriggerExists(PDO $pdo, string $trigger): bool
 
 function glfBMigRollbackGlfB(): void
 {
+    foreach (array_reverse([
+        'Modules/Operations/PMS/database/migrations/2026_07_11_000045_create_guest_deposit_and_refund_lifecycle.php',
+        'Modules/Operations/PMS/database/migrations/2026_07_11_000046_create_guest_ar_transfer_lifecycle.php',
+        'Modules/Operations/PMS/database/migrations/2026_07_11_000047_extend_folios_for_deposit_and_ar_sources.php',
+    ]) as $path) {
+        \Illuminate\Support\Facades\Artisan::call('migrate:rollback', ['--path' => $path, '--force' => true]);
+    }
+
     foreach (array_reverse(glfBMigPaths()) as $path) {
         \Illuminate\Support\Facades\Artisan::call('migrate:rollback', ['--path' => $path, '--force' => true]);
     }

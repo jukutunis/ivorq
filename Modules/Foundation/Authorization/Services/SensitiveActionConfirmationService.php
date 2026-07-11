@@ -31,6 +31,12 @@ class SensitiveActionConfirmationService
             'housekeeping-room-release-ready',
             'pms-guest-payment-void',
             'pms-guest-payment-reversal',
+            'guest-deposit-void',
+            'guest-deposit-application-reversal',
+            'guest-cash-refund',
+            'guest-ar-transfer-accept',
+            'guest-ar-transfer-reject',
+            'guest-ar-transfer-reverse',
         ];
 
     private const SESSION_KEY = 'sensitive_action_confirmation';

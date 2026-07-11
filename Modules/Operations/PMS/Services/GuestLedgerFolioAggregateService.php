@@ -203,6 +203,9 @@ class GuestLedgerFolioAggregateService
             FolioItemTypeEnum::Payment,
             FolioItemTypeEnum::Deposit,
             FolioItemTypeEnum::PaymentReversal,
+            FolioItemTypeEnum::DepositReversal,
+            FolioItemTypeEnum::ArTransfer,
+            FolioItemTypeEnum::ArTransferReversal,
         ], true)) {
             throw ValidationException::withMessages([
                 'item_type' => ['Payment-owned FolioItem categories must be created through PMS Cashiering evidence.'],
@@ -348,7 +351,7 @@ class GuestLedgerFolioAggregateService
     /**
      * Locked recalculation — caller MUST hold a folio row lock.
      *
-     * @internal Public only for co-located GLF-B effect service. External
+     * @internal Public only for co-located source-effect services (GLF-B/GLF-C). External
      *           callers MUST wrap this in an active transaction and hold
      *           the Folio row lock before invoking.
      *
@@ -367,6 +370,8 @@ class GuestLedgerFolioAggregateService
 
         $totalCharges  = '0';
         $totalPayments = '0';
+        $totalDeposits = '0';
+        $totalArTransfers = '0';
 
         foreach ($items as $item) {
             $amt = (string) $item->amount;
@@ -381,14 +386,48 @@ class GuestLedgerFolioAggregateService
                 continue;
             }
 
-            $totalCharges = bcadd($totalCharges, $amt, 2);
+            if ($item->item_type === FolioItemTypeEnum::Deposit && bccomp($amt, '0.00', 2) < 0) {
+                $totalDeposits = bcadd($totalDeposits, bcsub('0.00', $amt, 2), 2);
+                continue;
+            }
+
+            if ($item->item_type === FolioItemTypeEnum::DepositReversal && bccomp($amt, '0.00', 2) > 0) {
+                $totalDeposits = bcsub($totalDeposits, $amt, 2);
+                continue;
+            }
+
+            if ($item->item_type === FolioItemTypeEnum::ArTransfer && bccomp($amt, '0.00', 2) < 0) {
+                $totalArTransfers = bcadd($totalArTransfers, bcsub('0.00', $amt, 2), 2);
+                continue;
+            }
+
+            if ($item->item_type === FolioItemTypeEnum::ArTransferReversal && bccomp($amt, '0.00', 2) > 0) {
+                $totalArTransfers = bcsub($totalArTransfers, $amt, 2);
+                continue;
+            }
+
+            if (in_array($item->item_type, [
+                FolioItemTypeEnum::RoomCharge,
+                FolioItemTypeEnum::Tax,
+                FolioItemTypeEnum::ServiceCharge,
+                FolioItemTypeEnum::Adjustment,
+                FolioItemTypeEnum::Other,
+            ], true)) {
+                $totalCharges = bcadd($totalCharges, $amt, 2);
+            }
         }
 
-        $balance = bcsub($totalCharges, $totalPayments, 2);
+        $balance = bcsub(
+            bcsub(bcsub($totalCharges, $totalPayments, 2), $totalDeposits, 2),
+            $totalArTransfers,
+            2
+        );
 
         $folio->forceFill([
             'total_charges'  => $totalCharges,
             'total_payments' => $totalPayments,
+            'total_deposits' => $totalDeposits,
+            'total_ar_transfers' => $totalArTransfers,
             'balance'        => $balance,
         ])->save();
     }
@@ -422,6 +461,8 @@ class GuestLedgerFolioAggregateService
             'opening_idempotency_key'  => $idempotencyKey,
             'total_charges'            => '0.00',
             'total_payments'           => '0.00',
+            'total_deposits'           => '0.00',
+            'total_ar_transfers'       => '0.00',
             'balance'                  => '0.00',
         ]);
 
@@ -502,7 +543,16 @@ class GuestLedgerFolioAggregateService
             $item->guest_payment_allocation_id !== null ||
             $item->guest_payment_reversal_id !== null ||
             $item->item_type === FolioItemTypeEnum::Payment ||
-            $item->item_type === FolioItemTypeEnum::PaymentReversal
+            $item->item_type === FolioItemTypeEnum::PaymentReversal ||
+            $item->guest_deposit_application_id !== null ||
+            $item->guest_deposit_reversal_id !== null ||
+            $item->guest_ar_transfer_decision_id !== null ||
+            in_array($item->item_type, [
+                FolioItemTypeEnum::Deposit,
+                FolioItemTypeEnum::DepositReversal,
+                FolioItemTypeEnum::ArTransfer,
+                FolioItemTypeEnum::ArTransferReversal,
+            ], true)
         ) {
             throw ValidationException::withMessages([
                 'item' => ['PMS Cashiering payment evidence is immutable. Use the guest payment allocation reversal workflow.'],

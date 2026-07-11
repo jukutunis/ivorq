@@ -47,6 +47,9 @@ class FolioItem extends Model
         'source_id',
         'guest_payment_allocation_id',
         'guest_payment_reversal_id',
+        'guest_deposit_application_id',
+        'guest_deposit_reversal_id',
+        'guest_ar_transfer_decision_id',
         'reverses_folio_item_id',
     ];
 
@@ -88,5 +91,20 @@ class FolioItem extends Model
     public function guestPaymentReversal(): BelongsTo
     {
         return $this->belongsTo(GuestPaymentReversal::class, 'guest_payment_reversal_id');
+    }
+
+    public function guestDepositApplication(): BelongsTo
+    {
+        return $this->belongsTo(GuestDepositApplication::class, 'guest_deposit_application_id');
+    }
+
+    public function guestDepositReversal(): BelongsTo
+    {
+        return $this->belongsTo(GuestDepositReversal::class, 'guest_deposit_reversal_id');
+    }
+
+    public function guestArTransferDecision(): BelongsTo
+    {
+        return $this->belongsTo(\Modules\Finance\AccountsReceivable\Models\GuestArTransferDecision::class, 'guest_ar_transfer_decision_id');
     }
 }

@@ -1,0 +1,6 @@
+<?php
+namespace Modules\Operations\PMS\Events;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+use Modules\Operations\PMS\Models\GuestArTransferRequest;
+class GuestArTransferRequested { use Dispatchable, SerializesModels; public function __construct(public GuestArTransferRequest $request) {} }
