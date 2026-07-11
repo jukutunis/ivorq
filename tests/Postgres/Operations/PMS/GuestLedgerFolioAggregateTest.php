@@ -13,6 +13,7 @@ use Modules\Operations\PMS\Events\FolioCreated;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService;
+use Shared\Exceptions\NotFoundException;
 use Shared\Services\CurrentPropertyService;
 use Tests\Postgres\Operations\PMS\Concerns\CreatesGuestLedgerFolioData;
 use Tests\PostgresTestCase;
@@ -485,18 +486,83 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
         $this->aggregate->voidItem($this->glfOtherActor, $item->id);
     }
 
-    public function test_cross_property_void_not_disclosed(): void
+    /**
+     * Non-disclosure proof: cross-property and unknown item IDs produce
+     * identical NotFoundException. Must not lock or mutate sibling-property
+     * rows before rejection (findIdentityForProperty is lock-free).
+     */
+    public function test_cross_property_and_unknown_item_produce_identical_non_disclosing_outcome(): void
     {
+        // ── Setup: create item in Property A while authenticated as Actor A ──
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-void-cross');
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-void-cross-proof');
         $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
             'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'T', 'quantity' => 1, 'amount' => 100.00,
+            'description' => 'Cross-property disclosure test',
+            'quantity'    => 1,
+            'amount'      => 100.00,
         ]);
-        // Switch property, try to void the original property's item
+
+        // Capture pre-attempt state
+        $folio->refresh();
+        $totalsBefore = [
+            'charges'  => $folio->total_charges,
+            'payments' => $folio->total_payments,
+            'balance'  => $folio->balance,
+        ];
+        $this->assertFalse($item->fresh()->is_void, 'Item must be active before attempts.');
+
+        // ── Switch to Property B, authenticate as Actor B ──
         app(CurrentPropertyService::class)->setPropertyId($this->glfOtherProperty->id);
-        $this->expectException(ValidationException::class);
-        $this->aggregate->voidItem($this->glfOtherActor, $item->id);
+        Auth::login($this->glfOtherActor);
+
+        // ── Attempt 1: real cross-property ID ──
+        $crossException = null;
+        try {
+            $this->aggregate->voidItem($this->glfOtherActor, $item->id);
+        } catch (\Throwable $e) {
+            $crossException = $e;
+        }
+
+        // ── Attempt 2: random unknown ULID ──
+        $unknownException = null;
+        try {
+            $this->aggregate->voidItem($this->glfOtherActor, '01J00000000000000000000000');
+        } catch (\Throwable $e) {
+            $unknownException = $e;
+        }
+
+        // ── Assertions ──
+
+        // Both must throw
+        $this->assertNotNull($crossException, 'Cross-property void must throw.');
+        $this->assertNotNull($unknownException, 'Unknown-ID void must throw.');
+
+        // Identical exception type (NotFoundException)
+        $this->assertInstanceOf(NotFoundException::class, $crossException,
+            'Cross-property must produce NotFoundException.');
+        $this->assertInstanceOf(NotFoundException::class, $unknownException,
+            'Unknown ID must produce NotFoundException.');
+
+        // Equivalent outward behavior — same class
+        $this->assertSame(
+            get_class($crossException),
+            get_class($unknownException),
+            'Cross-property and unknown-ID must produce the same exception class.'
+        );
+
+        // ── Sibling-property item unchanged ──
+        $item->refresh();
+        $this->assertFalse($item->is_void, 'Property-A item must not be voided.');
+
+        // ── Sibling-property totals unchanged ──
+        $folio->refresh();
+        $this->assertSame($totalsBefore['charges'], $folio->total_charges,
+            'Property-A total_charges must be unchanged.');
+        $this->assertSame($totalsBefore['payments'], $folio->total_payments,
+            'Property-A total_payments must be unchanged.');
+        $this->assertSame($totalsBefore['balance'], $folio->balance,
+            'Property-A balance must be unchanged.');
     }
 
     public function test_repeated_void_rejected(): void

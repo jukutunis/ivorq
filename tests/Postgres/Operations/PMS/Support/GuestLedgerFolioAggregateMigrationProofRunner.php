@@ -40,6 +40,42 @@ function glfADbPdo(string $host, string $port, string $dbName, string $user, str
     ]);
 }
 
+/**
+ * Check if a named constraint exists on a table.
+ */
+function glfAConstraintExists(PDO $pdo, string $table, string $constraintName): bool
+{
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM pg_constraint WHERE conname = :cn AND conrelid = :tbl::regclass"
+    );
+    $stmt->execute(['cn' => $constraintName, 'tbl' => $table]);
+    return (int) $stmt->fetchColumn() > 0;
+}
+
+/**
+ * Check if a named index exists on a table using pg_indexes catalog.
+ */
+function glfAIndexExists(PDO $pdo, string $table, string $indexName): bool
+{
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM pg_indexes WHERE indexname = :idx AND tablename = :tbl"
+    );
+    $stmt->execute(['idx' => $indexName, 'tbl' => $table]);
+    return (int) $stmt->fetchColumn() > 0;
+}
+
+/**
+ * Check if a column exists in a table.
+ */
+function glfAColumnExists(PDO $pdo, string $table, string $columnName): bool
+{
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = :tbl AND column_name = :col"
+    );
+    $stmt->execute(['tbl' => $table, 'col' => $columnName]);
+    return (int) $stmt->fetchColumn() > 0;
+}
+
 $glfAMigrationPath = 'Modules/Operations/PMS/database/migrations/2026_07_11_000040_harden_folio_aggregate.php';
 
 $result = [
@@ -49,24 +85,48 @@ $result = [
     'pre_migration_ok' => false,
     'legacy_folios_inserted' => 0,
     'legacy_items_inserted' => 0,
+    // UP verification
     'migrate_up_ok' => false,
-    'window_backfill_ok' => false,
-    'idempotency_backfill_ok' => false,
-    'positive_window_check_ok' => false,
-    'window_unique_ok' => false,
-    'idempotency_unique_ok' => false,
-    'composite_fk_ok' => false,
+    'up_window_backfill_ok' => false,
+    'up_idempotency_backfill_ok' => false,
+    'up_positive_window_check_ok' => false,
+    'up_window_unique_ok' => false,
+    'up_idempotency_unique_ok' => false,
+    'up_property_id_id_unique_exists' => false,
+    'up_reservation_window_index_exists' => false,
+    'up_composite_fk_exists' => false,
+    'up_composite_fk_enforced' => false,
     'folio_count_after_up' => 0,
     'item_count_after_up' => 0,
+    // DOWN verification
     'migrate_down_ok' => false,
-    'columns_removed_ok' => false,
-    'constraints_removed_ok' => false,
-    'folio_count_after_down' => 0,
-    'item_count_after_down' => 0,
+    'down_window_number_removed' => false,
+    'down_idempotency_key_removed' => false,
+    'down_positive_check_removed' => false,
+    'down_window_unique_removed' => false,
+    'down_idempotency_unique_removed' => false,
+    'down_property_id_id_unique_removed' => false,
+    'down_composite_fk_removed' => false,
+    'down_reservation_window_index_removed' => false,
+    'down_legacy_folio_ids_preserved' => false,
+    'down_legacy_item_ids_preserved' => false,
+    'down_folio_count_preserved' => false,
+    'down_item_count_preserved' => false,
+    // REAPPLY verification
     'migrate_reup_ok' => false,
-    'reup_backfill_ok' => false,
-    'folio_count_after_reup' => 0,
-    'item_count_after_reup' => 0,
+    'reup_window_backfill_ok' => false,
+    'reup_idempotency_backfill_ok' => false,
+    'reup_positive_window_check_ok' => false,
+    'reup_window_unique_ok' => false,
+    'reup_idempotency_unique_ok' => false,
+    'reup_property_id_id_unique_exists' => false,
+    'reup_reservation_window_index_exists' => false,
+    'reup_composite_fk_exists' => false,
+    'reup_composite_fk_enforced' => false,
+    'reup_legacy_folio_ids_preserved' => false,
+    'reup_legacy_item_ids_preserved' => false,
+    'reup_folio_count_preserved' => false,
+    'reup_item_count_preserved' => false,
     'error' => null,
     'drop_error' => null,
 ];
@@ -95,7 +155,7 @@ try {
     ]);
     $result['pre_migration_ok'] = true;
 
-    // ── 3. Insert deterministic legacy Folio and FolioItem evidence ────────
+    // ── 3. Insert deterministic legacy evidence ────────────────────────────
     $companyId = (string) \Illuminate\Support\Str::ulid();
     $propertyId = (string) \Illuminate\Support\Str::ulid();
     $userId = (string) \Illuminate\Support\Str::ulid();
@@ -133,7 +193,6 @@ try {
         'created_at' => now(), 'updated_at' => now(),
     ]);
 
-    // Insert 2 legacy folios (pre-GLF-A — no window_number, idempotency_key)
     $folio1Id = (string) \Illuminate\Support\Str::ulid();
     $folio2Id = (string) \Illuminate\Support\Str::ulid();
 
@@ -153,7 +212,6 @@ try {
     ]);
     $result['legacy_folios_inserted'] = 2;
 
-    // Insert 2 legacy folio items
     $item1Id = (string) \Illuminate\Support\Str::ulid();
     $item2Id = (string) \Illuminate\Support\Str::ulid();
 
@@ -176,7 +234,7 @@ try {
     $legacyFolioIds = [$folio1Id, $folio2Id];
     $legacyItemIds = [$item1Id, $item2Id];
 
-    // ── 4. Apply GLF-A migration ───────────────────────────────────────────
+    // ── 4. Apply GLF-A migration (UP) ──────────────────────────────────────
     \Illuminate\Support\Facades\Artisan::call('migrate', [
         '--path' => $glfAMigrationPath,
         '--force' => true,
@@ -185,157 +243,214 @@ try {
 
     $pdo = glfADbPdo($dbHost, $dbPort, $dbName, $dbUser, $dbPass);
 
-    // Verify window backfill
+    // UP: window backfill
     $stmt = $pdo->prepare('SELECT id, window_number FROM folios ORDER BY id');
     $stmt->execute();
     $folioMap = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $f) {
         $folioMap[$f['id']] = (int) $f['window_number'];
     }
-    $result['window_backfill_ok'] = ($folioMap[$folio1Id] ?? 0) === 1
+    $result['up_window_backfill_ok'] = ($folioMap[$folio1Id] ?? 0) === 1
         && ($folioMap[$folio2Id] ?? 0) === 2;
 
-    // Verify idempotency backfill
+    // UP: idempotency backfill
     $stmt = $pdo->prepare('SELECT id, opening_idempotency_key FROM folios ORDER BY id');
     $stmt->execute();
     $idemMap = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $f) {
         $idemMap[$f['id']] = $f['opening_idempotency_key'];
     }
-    $result['idempotency_backfill_ok'] = ($idemMap[$folio1Id] ?? '') === ('legacy-' . $folio1Id)
+    $result['up_idempotency_backfill_ok'] = ($idemMap[$folio1Id] ?? '') === ('legacy-' . $folio1Id)
         && ($idemMap[$folio2Id] ?? '') === ('legacy-' . $folio2Id);
 
-    // Verify positive window check
+    // UP: positive window check
     try {
         $pdo->exec("UPDATE folios SET window_number = 0 WHERE id = '{$folio2Id}'");
-        $result['positive_window_check_ok'] = false;
+        $result['up_positive_window_check_ok'] = false;
     } catch (PDOException $e) {
-        $result['positive_window_check_ok'] = str_contains($e->getMessage(), 'window_number_positive_check');
+        $result['up_positive_window_check_ok'] = str_contains($e->getMessage(), 'window_number_positive_check');
     }
 
-    // Verify window uniqueness
+    // UP: window uniqueness
     try {
         $pdo->exec("UPDATE folios SET window_number = 1 WHERE id = '{$folio2Id}'");
-        $result['window_unique_ok'] = false;
+        $result['up_window_unique_ok'] = false;
     } catch (PDOException $e) {
-        $result['window_unique_ok'] = str_contains($e->getMessage(), 'folios_property_reservation_window_unique');
+        $result['up_window_unique_ok'] = str_contains($e->getMessage(), 'folios_property_reservation_window_unique');
     }
 
-    // Verify idempotency uniqueness
+    // UP: idempotency uniqueness
     try {
         $pdo->exec("UPDATE folios SET opening_idempotency_key = 'legacy-{$folio1Id}' WHERE id = '{$folio2Id}'");
-        $result['idempotency_unique_ok'] = false;
+        $result['up_idempotency_unique_ok'] = false;
     } catch (PDOException $e) {
-        $result['idempotency_unique_ok'] = str_contains($e->getMessage(), 'folios_property_idempotency_key_unique');
+        $result['up_idempotency_unique_ok'] = str_contains($e->getMessage(), 'folios_property_idempotency_key_unique');
     }
 
-    // Verify composite FK exists in schema
-    $fkExists = (int) $pdo->query(
-        "SELECT COUNT(*) FROM pg_constraint WHERE conname = 'folio_items_property_folio_foreign'"
-    )->fetchColumn();
-    $result['composite_fk_schema_exists'] = $fkExists > 0;
+    // UP: property_id_id_unique exists (constraint)
+    $result['up_property_id_id_unique_exists'] = glfAConstraintExists($pdo, 'folios', 'folios_property_id_id_unique');
 
-    // Verify composite FK enforcement
+    // UP: reservation_window_index exists (index — use pg_indexes, not pg_constraint)
+    $result['up_reservation_window_index_exists'] = glfAIndexExists($pdo, 'folios', 'folios_reservation_window_index');
+
+    // UP: composite FK exists
+    $result['up_composite_fk_exists'] = glfAConstraintExists($pdo, 'folio_items', 'folio_items_property_folio_foreign');
+
+    // UP: composite FK enforced
     $otherPropId = (string) \Illuminate\Support\Str::ulid();
     try {
         $pdo->exec("INSERT INTO folio_items (id, property_id, folio_id, item_type, description, quantity, amount, posted_at, created_at, updated_at) VALUES ('" . (string) \Illuminate\Support\Str::ulid() . "', '{$otherPropId}', '{$folio1Id}', 'room_charge', 'FK test', 1, 10, now(), now(), now())");
-        $result['composite_fk_ok'] = false;
-        $result['composite_fk_error'] = 'INSERT succeeded unexpectedly';
+        $result['up_composite_fk_enforced'] = false;
     } catch (PDOException $e) {
-        $result['composite_fk_ok'] = str_contains($e->getMessage(), 'folio_items_property_folio_foreign')
+        $result['up_composite_fk_enforced'] = str_contains($e->getMessage(), 'folio_items_property_folio_foreign')
             || str_contains($e->getMessage(), 'violates foreign key');
-        $result['composite_fk_error'] = substr($e->getMessage(), 0, 200);
     }
 
     $result['folio_count_after_up'] = (int) $pdo->query('SELECT COUNT(*) FROM folios')->fetchColumn();
     $result['item_count_after_up'] = (int) $pdo->query('SELECT COUNT(*) FROM folio_items')->fetchColumn();
 
-    // ── 5. Roll back only GLF-A ────────────────────────────────────────────
+    // ── 5. Roll back only GLF-A (DOWN) ─────────────────────────────────────
     \Illuminate\Support\Facades\Artisan::call('migrate:rollback', [
         '--path' => $glfAMigrationPath,
         '--force' => true,
     ]);
     $result['migrate_down_ok'] = true;
 
-    // Verify columns removed
-    $folioCols = [];
-    foreach ($pdo->query("SELECT column_name FROM information_schema.columns WHERE table_name = 'folios' ORDER BY ordinal_position") as $row) {
-        $folioCols[] = $row['column_name'];
-    }
-    $result['columns_removed_ok'] = ! in_array('window_number', $folioCols)
-        && ! in_array('opening_idempotency_key', $folioCols);
+    // DOWN: window_number removed
+    $result['down_window_number_removed'] = ! glfAColumnExists($pdo, 'folios', 'window_number');
 
-    // Verify constraints removed
-    $constraints = $pdo->query("SELECT conname FROM pg_constraint WHERE conrelid = 'folios'::regclass")->fetchAll(PDO::FETCH_COLUMN);
-    $glfAConstraintNames = ['folios_property_id_id_unique', 'folios_window_number_positive_check',
-        'folios_property_reservation_window_unique', 'folios_property_idempotency_key_unique',
-        'folios_reservation_window_index'];
-    $constraintsRemoved = true;
-    foreach ($glfAConstraintNames as $cn) {
-        if (in_array($cn, $constraints)) {
-            $constraintsRemoved = false;
-            break;
-        }
-    }
-    $itemConstraints = $pdo->query("SELECT conname FROM pg_constraint WHERE conrelid = 'folio_items'::regclass")->fetchAll(PDO::FETCH_COLUMN);
-    if (in_array('folio_items_property_folio_foreign', $itemConstraints)) {
-        $constraintsRemoved = false;
-    }
-    $result['constraints_removed_ok'] = $constraintsRemoved;
+    // DOWN: opening_idempotency_key removed
+    $result['down_idempotency_key_removed'] = ! glfAColumnExists($pdo, 'folios', 'opening_idempotency_key');
 
-    // Verify data preserved
-    $result['folio_count_after_down'] = (int) $pdo->query('SELECT COUNT(*) FROM folios')->fetchColumn();
-    $result['item_count_after_down'] = (int) $pdo->query('SELECT COUNT(*) FROM folio_items')->fetchColumn();
+    // DOWN: positive check removed
+    $result['down_positive_check_removed'] = ! glfAConstraintExists($pdo, 'folios', 'folios_window_number_positive_check');
 
+    // DOWN: window unique constraint removed
+    $result['down_window_unique_removed'] = ! glfAConstraintExists($pdo, 'folios', 'folios_property_reservation_window_unique');
+
+    // DOWN: idempotency unique constraint removed
+    $result['down_idempotency_unique_removed'] = ! glfAConstraintExists($pdo, 'folios', 'folios_property_idempotency_key_unique');
+
+    // DOWN: property_id_id_unique removed
+    $result['down_property_id_id_unique_removed'] = ! glfAConstraintExists($pdo, 'folios', 'folios_property_id_id_unique');
+
+    // DOWN: composite FK removed
+    $result['down_composite_fk_removed'] = ! glfAConstraintExists($pdo, 'folio_items', 'folio_items_property_folio_foreign');
+
+    // DOWN: reservation_window_index removed (use pg_indexes)
+    $result['down_reservation_window_index_removed'] = ! glfAIndexExists($pdo, 'folios', 'folios_reservation_window_index');
+
+    // DOWN: row counts preserved
+    $result['down_folio_count_preserved'] = (int) $pdo->query('SELECT COUNT(*) FROM folios')->fetchColumn() === 2;
+    $result['down_item_count_preserved'] = (int) $pdo->query('SELECT COUNT(*) FROM folio_items')->fetchColumn() === 2;
+
+    // DOWN: legacy IDs preserved
+    $allFoliosOk = true;
     foreach ($legacyFolioIds as $lid) {
         $stmt = $pdo->prepare('SELECT COUNT(*) FROM folios WHERE id = :id');
         $stmt->execute(['id' => $lid]);
-        if ((int) $stmt->fetchColumn() !== 1) {
-            throw new \RuntimeException("Legacy folio {$lid} missing after DOWN");
-        }
+        if ((int) $stmt->fetchColumn() !== 1) { $allFoliosOk = false; }
     }
+    $result['down_legacy_folio_ids_preserved'] = $allFoliosOk;
+
+    $allItemsOk = true;
     foreach ($legacyItemIds as $lid) {
         $stmt = $pdo->prepare('SELECT COUNT(*) FROM folio_items WHERE id = :id');
         $stmt->execute(['id' => $lid]);
-        if ((int) $stmt->fetchColumn() !== 1) {
-            throw new \RuntimeException("Legacy item {$lid} missing after DOWN");
-        }
+        if ((int) $stmt->fetchColumn() !== 1) { $allItemsOk = false; }
     }
+    $result['down_legacy_item_ids_preserved'] = $allItemsOk;
 
-    // ── 6. Reapply GLF-A ───────────────────────────────────────────────────
+    // ── 6. Reapply GLF-A (REUP) ────────────────────────────────────────────
     \Illuminate\Support\Facades\Artisan::call('migrate', [
         '--path' => $glfAMigrationPath,
         '--force' => true,
     ]);
     $result['migrate_reup_ok'] = true;
 
-    // Verify backfill again
+    // REUP: window backfill
     $stmt = $pdo->prepare('SELECT id, window_number FROM folios ORDER BY id');
     $stmt->execute();
     $reupMap = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $f) {
         $reupMap[$f['id']] = (int) $f['window_number'];
     }
-    $result['reup_backfill_ok'] = ($reupMap[$folio1Id] ?? 0) === 1
+    $result['reup_window_backfill_ok'] = ($reupMap[$folio1Id] ?? 0) === 1
         && ($reupMap[$folio2Id] ?? 0) === 2;
 
+    // REUP: idempotency backfill
+    $stmt = $pdo->prepare('SELECT id, opening_idempotency_key FROM folios ORDER BY id');
+    $stmt->execute();
+    $reupIdemMap = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $f) {
+        $reupIdemMap[$f['id']] = $f['opening_idempotency_key'];
+    }
+    $result['reup_idempotency_backfill_ok'] = ($reupIdemMap[$folio1Id] ?? '') === ('legacy-' . $folio1Id)
+        && ($reupIdemMap[$folio2Id] ?? '') === ('legacy-' . $folio2Id);
+
+    // REUP: positive window check
+    try {
+        $pdo->exec("UPDATE folios SET window_number = 0 WHERE id = '{$folio2Id}'");
+        $result['reup_positive_window_check_ok'] = false;
+    } catch (PDOException $e) {
+        $result['reup_positive_window_check_ok'] = str_contains($e->getMessage(), 'window_number_positive_check');
+    }
+
+    // REUP: window uniqueness
+    try {
+        $pdo->exec("UPDATE folios SET window_number = 1 WHERE id = '{$folio2Id}'");
+        $result['reup_window_unique_ok'] = false;
+    } catch (PDOException $e) {
+        $result['reup_window_unique_ok'] = str_contains($e->getMessage(), 'folios_property_reservation_window_unique');
+    }
+
+    // REUP: idempotency uniqueness
+    try {
+        $pdo->exec("UPDATE folios SET opening_idempotency_key = 'legacy-{$folio1Id}' WHERE id = '{$folio2Id}'");
+        $result['reup_idempotency_unique_ok'] = false;
+    } catch (PDOException $e) {
+        $result['reup_idempotency_unique_ok'] = str_contains($e->getMessage(), 'folios_property_idempotency_key_unique');
+    }
+
+    // REUP: property_id_id_unique exists
+    $result['reup_property_id_id_unique_exists'] = glfAConstraintExists($pdo, 'folios', 'folios_property_id_id_unique');
+
+    // REUP: reservation_window_index exists (pg_indexes)
+    $result['reup_reservation_window_index_exists'] = glfAIndexExists($pdo, 'folios', 'folios_reservation_window_index');
+
+    // REUP: composite FK exists
+    $result['reup_composite_fk_exists'] = glfAConstraintExists($pdo, 'folio_items', 'folio_items_property_folio_foreign');
+
+    // REUP: composite FK enforced
+    $otherPropId2 = (string) \Illuminate\Support\Str::ulid();
+    try {
+        $pdo->exec("INSERT INTO folio_items (id, property_id, folio_id, item_type, description, quantity, amount, posted_at, created_at, updated_at) VALUES ('" . (string) \Illuminate\Support\Str::ulid() . "', '{$otherPropId2}', '{$folio1Id}', 'room_charge', 'FK test reup', 1, 10, now(), now(), now())");
+        $result['reup_composite_fk_enforced'] = false;
+    } catch (PDOException $e) {
+        $result['reup_composite_fk_enforced'] = str_contains($e->getMessage(), 'folio_items_property_folio_foreign')
+            || str_contains($e->getMessage(), 'violates foreign key');
+    }
+
+    // REUP: row counts preserved
+    $result['reup_folio_count_preserved'] = (int) $pdo->query('SELECT COUNT(*) FROM folios')->fetchColumn() === 2;
+    $result['reup_item_count_preserved'] = (int) $pdo->query('SELECT COUNT(*) FROM folio_items')->fetchColumn() === 2;
+
+    // REUP: legacy IDs preserved
+    $allFoliosOk = true;
     foreach ($legacyFolioIds as $lid) {
         $stmt = $pdo->prepare('SELECT COUNT(*) FROM folios WHERE id = :id');
         $stmt->execute(['id' => $lid]);
-        if ((int) $stmt->fetchColumn() !== 1) {
-            throw new \RuntimeException("Legacy folio {$lid} missing after REUP");
-        }
+        if ((int) $stmt->fetchColumn() !== 1) { $allFoliosOk = false; }
     }
+    $result['reup_legacy_folio_ids_preserved'] = $allFoliosOk;
+
+    $allItemsOk = true;
     foreach ($legacyItemIds as $lid) {
         $stmt = $pdo->prepare('SELECT COUNT(*) FROM folio_items WHERE id = :id');
         $stmt->execute(['id' => $lid]);
-        if ((int) $stmt->fetchColumn() !== 1) {
-            throw new \RuntimeException("Legacy item {$lid} missing after REUP");
-        }
+        if ((int) $stmt->fetchColumn() !== 1) { $allItemsOk = false; }
     }
-
-    $result['folio_count_after_reup'] = (int) $pdo->query('SELECT COUNT(*) FROM folios')->fetchColumn();
-    $result['item_count_after_reup'] = (int) $pdo->query('SELECT COUNT(*) FROM folio_items')->fetchColumn();
+    $result['reup_legacy_item_ids_preserved'] = $allItemsOk;
 
     $pdo = null;
 

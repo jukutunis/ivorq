@@ -53,31 +53,6 @@ class FolioItemRepository
     }
 
     /**
-     * Lock a folio item row FOR UPDATE.
-     */
-    public function lockForUpdate(string $id): FolioItem
-    {
-        $item = FolioItem::where('id', $id)->lockForUpdate()->first();
-
-        throw_if(! $item, new NotFoundException('FolioItem'));
-
-        return $item;
-    }
-
-    /**
-     * Void a folio line item.
-     * FolioItems are immutable — we mark is_void rather than delete.
-     */
-    public function voidItem(string $id): FolioItem
-    {
-        $item = $this->findOrFail($id);
-        // is_void is guarded — must use forceFill to set it
-        $item->forceFill(['is_void' => true])->save();
-
-        return $item->fresh();
-    }
-
-    /**
      * Resolve the minimum parent identity for a folio item without locking.
      *
      * Returns (item_id, folio_id, property_id) scoped to the current

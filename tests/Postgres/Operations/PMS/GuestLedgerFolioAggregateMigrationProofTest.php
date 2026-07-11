@@ -8,16 +8,12 @@ use Tests\TestCase;
 /**
  * GLF-A Migration up/down/up proof on a disposable PostgreSQL database.
  *
- * Proves:
- *  - window_number backfill is correct
- *  - opening_idempotency_key backfill is deterministic
- *  - positive-window check constraint is enforced
- *  - window uniqueness is enforced
- *  - idempotency uniqueness is enforced
- *  - composite FK is enforced
- *  - legacy IDs and row counts are preserved through rollback
- *  - GLF-A columns and constraints are cleanly removed on rollback
- *  - data survives rollback and reapply intact
+ * Proves every migration item individually:
+ *  - UP: window/idempotency backfill, positive check, uniqueness, composite FK,
+ *    index, property_id_id_unique, data preservation
+ *  - DOWN: columns, constraints, composite FK, index (via pg_indexes),
+ *    property_id_id_unique — removed; legacy data preserved
+ *  - REAPPLY: all UP items re-verified after reapply
  */
 class GuestLedgerFolioAggregateMigrationProofTest extends TestCase
 {
@@ -72,7 +68,6 @@ class GuestLedgerFolioAggregateMigrationProofTest extends TestCase
             : ['error' => 'TIMEOUT_NO_RESULT'];
         @proc_close($process);
 
-        // Cleanup temp files
         foreach ([$configFile, $resultFile] as $f) {
             if (file_exists($f)) {
                 @unlink($f);
@@ -81,45 +76,60 @@ class GuestLedgerFolioAggregateMigrationProofTest extends TestCase
 
         $this->assertNull($result['error'] ?? null, 'Runner error: ' . ($result['error'] ?? 'none'));
 
-        // ── Pre-GLF-A state ────────────────────────────────────────────────
+        // ── Pre-GLF-A ─────────────────────────────────────────────────────
         $this->assertTrue($result['pre_migration_ok'] ?? false, 'Pre-GLF-A migration must succeed.');
         $this->assertSame(2, $result['legacy_folios_inserted'] ?? 0, 'Must insert 2 legacy folios.');
         $this->assertSame(2, $result['legacy_items_inserted'] ?? 0, 'Must insert 2 legacy items.');
 
-        // ── Migration UP ──────────────────────────────────────────────────
+        // ── UP ────────────────────────────────────────────────────────────
         $this->assertTrue($result['migrate_up_ok'] ?? false, 'GLF-A migration UP must succeed.');
 
-        // Constraint verification
-        $this->assertTrue($result['window_backfill_ok'] ?? false, 'Window backfill must be correct.');
-        $this->assertTrue($result['idempotency_backfill_ok'] ?? false, 'Idempotency backfill must be correct.');
-        $this->assertTrue($result['positive_window_check_ok'] ?? false, 'Positive window check must reject zero/negative.');
-        $this->assertTrue($result['window_unique_ok'] ?? false, 'Window uniqueness must be enforced.');
-        $this->assertTrue($result['idempotency_unique_ok'] ?? false, 'Idempotency uniqueness must be enforced.');
-        $this->assertTrue($result['composite_fk_schema_exists'] ?? false,
-            'Composite FK must exist in schema: ' . ($result['composite_fk_error'] ?? 'no diagnostic'));
-        $this->assertTrue($result['composite_fk_ok'] ?? false,
-            'Composite FK must be enforced: ' . ($result['composite_fk_error'] ?? 'no diagnostic'));
-        $this->assertSame(2, $result['folio_count_after_up'] ?? 0, 'Folio count must be preserved after UP.');
-        $this->assertSame(2, $result['item_count_after_up'] ?? 0, 'Item count must be preserved after UP.');
+        $this->assertTrue($result['up_window_backfill_ok'] ?? false, 'UP: window backfill must be deterministic.');
+        $this->assertTrue($result['up_idempotency_backfill_ok'] ?? false, 'UP: idempotency backfill must be deterministic.');
+        $this->assertTrue($result['up_positive_window_check_ok'] ?? false, 'UP: positive window check must reject zero.');
+        $this->assertTrue($result['up_window_unique_ok'] ?? false, 'UP: window uniqueness must be enforced.');
+        $this->assertTrue($result['up_idempotency_unique_ok'] ?? false, 'UP: idempotency uniqueness must be enforced.');
+        $this->assertTrue($result['up_property_id_id_unique_exists'] ?? false, 'UP: property_id_id_unique must exist.');
+        $this->assertTrue($result['up_reservation_window_index_exists'] ?? false, 'UP: reservation_window_index must exist.');
+        $this->assertTrue($result['up_composite_fk_exists'] ?? false, 'UP: composite FK must exist in schema.');
+        $this->assertTrue($result['up_composite_fk_enforced'] ?? false, 'UP: composite FK must be enforced.');
+        $this->assertSame(2, $result['folio_count_after_up'] ?? 0, 'UP: folio count must be preserved.');
+        $this->assertSame(2, $result['item_count_after_up'] ?? 0, 'UP: item count must be preserved.');
 
-        // ── Rollback ──────────────────────────────────────────────────────
+        // ── DOWN ──────────────────────────────────────────────────────────
         $this->assertTrue($result['migrate_down_ok'] ?? false, 'GLF-A migration DOWN must succeed.');
 
-        // Columns and constraints removed
-        $this->assertTrue($result['columns_removed_ok'] ?? false, 'GLF-A columns must be removed after DOWN.');
-        $this->assertTrue($result['constraints_removed_ok'] ?? false, 'GLF-A constraints must be removed after DOWN.');
+        $this->assertTrue($result['down_window_number_removed'] ?? false, 'DOWN: window_number must be removed.');
+        $this->assertTrue($result['down_idempotency_key_removed'] ?? false, 'DOWN: opening_idempotency_key must be removed.');
+        $this->assertTrue($result['down_positive_check_removed'] ?? false, 'DOWN: positive window check must be removed.');
+        $this->assertTrue($result['down_window_unique_removed'] ?? false, 'DOWN: window unique constraint must be removed.');
+        $this->assertTrue($result['down_idempotency_unique_removed'] ?? false, 'DOWN: idempotency unique constraint must be removed.');
+        $this->assertTrue($result['down_property_id_id_unique_removed'] ?? false, 'DOWN: property_id_id_unique must be removed.');
+        $this->assertTrue($result['down_composite_fk_removed'] ?? false, 'DOWN: composite FK must be removed.');
+        $this->assertTrue($result['down_reservation_window_index_removed'] ?? false, 'DOWN: reservation_window_index must be removed (pg_indexes).');
 
-        // Data preserved
-        $this->assertSame(2, $result['folio_count_after_down'] ?? 0, 'Folio count must be preserved after DOWN.');
-        $this->assertSame(2, $result['item_count_after_down'] ?? 0, 'Item count must be preserved after DOWN.');
+        $this->assertTrue($result['down_legacy_folio_ids_preserved'] ?? false, 'DOWN: legacy folio IDs must be preserved.');
+        $this->assertTrue($result['down_legacy_item_ids_preserved'] ?? false, 'DOWN: legacy item IDs must be preserved.');
+        $this->assertTrue($result['down_folio_count_preserved'] ?? false, 'DOWN: folio count must be preserved.');
+        $this->assertTrue($result['down_item_count_preserved'] ?? false, 'DOWN: item count must be preserved.');
 
-        // ── Reapply ───────────────────────────────────────────────────────
+        // ── REAPPLY ───────────────────────────────────────────────────────
         $this->assertTrue($result['migrate_reup_ok'] ?? false, 'GLF-A migration reapply must succeed.');
 
-        // Constraints re-verified
-        $this->assertTrue($result['reup_backfill_ok'] ?? false, 'Reapply backfill must be correct.');
-        $this->assertSame(2, $result['folio_count_after_reup'] ?? 0, 'Folio count must be preserved after reapply.');
-        $this->assertSame(2, $result['item_count_after_reup'] ?? 0, 'Item count must be preserved after reapply.');
+        $this->assertTrue($result['reup_window_backfill_ok'] ?? false, 'REUP: window backfill must be deterministic.');
+        $this->assertTrue($result['reup_idempotency_backfill_ok'] ?? false, 'REUP: idempotency backfill must be deterministic.');
+        $this->assertTrue($result['reup_positive_window_check_ok'] ?? false, 'REUP: positive window check must reject zero.');
+        $this->assertTrue($result['reup_window_unique_ok'] ?? false, 'REUP: window uniqueness must be enforced.');
+        $this->assertTrue($result['reup_idempotency_unique_ok'] ?? false, 'REUP: idempotency uniqueness must be enforced.');
+        $this->assertTrue($result['reup_property_id_id_unique_exists'] ?? false, 'REUP: property_id_id_unique must exist.');
+        $this->assertTrue($result['reup_reservation_window_index_exists'] ?? false, 'REUP: reservation_window_index must exist (pg_indexes).');
+        $this->assertTrue($result['reup_composite_fk_exists'] ?? false, 'REUP: composite FK must exist in schema.');
+        $this->assertTrue($result['reup_composite_fk_enforced'] ?? false, 'REUP: composite FK must be enforced.');
+
+        $this->assertTrue($result['reup_legacy_folio_ids_preserved'] ?? false, 'REUP: legacy folio IDs must be preserved.');
+        $this->assertTrue($result['reup_legacy_item_ids_preserved'] ?? false, 'REUP: legacy item IDs must be preserved.');
+        $this->assertTrue($result['reup_folio_count_preserved'] ?? false, 'REUP: folio count must be preserved.');
+        $this->assertTrue($result['reup_item_count_preserved'] ?? false, 'REUP: item count must be preserved.');
 
         // ── Cleanup ───────────────────────────────────────────────────────
         $this->assertTrue($result['db_dropped'] ?? false,
