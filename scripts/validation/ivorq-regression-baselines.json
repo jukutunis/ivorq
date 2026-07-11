@@ -93,16 +93,16 @@
         "GuestLedgerFolioAggregateConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 44,
-        "assertions": 124,
+        "tests": 42,
+        "assertions": 133,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-11",
         "branch": "sprint-glf-a-guest-ledger-folio-aggregate-hardening",
-        "sha": "12f45e03552efaeaa865778a4fd4734746b70ecf",
-        "note": "Final integrity and audit correction: 2 classes / 44 tests / 124 assertions / 0 failures / 0 errors. Decimal contract: strict plain-decimal validation, field-specific precision, excess fractional rejection, trailing-zero normalisation. Audit actor: verified against auth guard, system opening nulls audit fields. Controlled void: authorized aggregate boundary with active membership and one-transaction recalculation. Post-vs-void concurrency proven. Controller count/MYR/property injection removed."
+        "sha": "d085a683412efb408e8f152c7a54530bd48f530b",
+        "note": "DeepSeek final correction measurement: 2 exact classes / 42 tests / 133 assertions / 0 failures / 0 errors. Controlled void lock order corrected (folio-first, property-scoped, no unscoped re-query). Non-disclosing cross-property void via findIdentityForProperty. System-opening audit event model refreshed before dispatch. Real malicious-input proof with all server-owned fields actually submitted. Post-vs-void concurrency with exact PostgreSQL numeric proof. Migration up/down/up proven on disposable database. Controller PostFolioItemRequest prohibits property_id, created_by, and posted_at. Metadata-only stamp."
       },
       "accepted_debt": [],
       "status": "active"
