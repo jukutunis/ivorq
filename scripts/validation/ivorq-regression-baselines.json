@@ -121,16 +121,16 @@
         "GuestPaymentMigrationProofTest"
       ],
       "expected": {
-        "tests": 45,
-        "assertions": 254,
+        "tests": 53,
+        "assertions": 287,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-11",
         "branch": "sprint-glf-b-guest-payment-allocation-reversal",
-        "sha": "e93a2d4a89a0a7dcfd9ff3a8b1ee1a2975e5fbb2",
-        "note": "GLF-B final integrity closure measurement: 3 classes / 45 tests / 254 assertions / 0 failures / 0 errors. Real worker concurrency; UP/DOWN/REAPPLY migration proof; exact source amount integrity (GLF_B_PAYMENT_EFFECT_AMOUNT_MISMATCH, GLF_B_REVERSAL_EFFECT_AMOUNT_MISMATCH, GLF_B_REVERSAL_SOURCE_AMOUNT_MISMATCH); controlled generic void rejection; transaction immutability trigger; atomic rollback evidence for allocation and reversal."
+        "sha": "137ff01f01268541af05f4e6ef3b330294cf2781",
+        "note": "GLF-B deletion closure measurement: 3 classes / 53 tests / 287 assertions / 0 failures / 0 errors. Real worker concurrency; UP/DOWN/REAPPLY migration proof; exact source amount integrity; controlled generic void rejection; transaction immutability and deletion immutability trigger; atomic rollback evidence; model-level deletion guard; lifecycle-independent deletion blocking; idempotency and payment-number continuity after failed deletion."
       },
       "accepted_debt": [],
       "status": "active"
