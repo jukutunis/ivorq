@@ -8,9 +8,11 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
+use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
@@ -21,6 +23,7 @@ use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Models\GuestPaymentAllocation;
 use Modules\Operations\PMS\Models\GuestPaymentReversal;
+use Modules\Operations\PMS\Models\GuestPaymentTransaction;
 use Modules\Operations\PMS\Services\GuestLedgerPaymentAllocationEffectService;
 use Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService;
 use Modules\Operations\PMS\Services\GuestPaymentLifecycleService;
@@ -458,6 +461,586 @@ class GuestPaymentLifecycleTest extends PostgresTestCase
         if ($journalBefore !== null) {
             $this->assertSame($journalBefore, DB::table('journal_entries')->count());
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4A. Exact source-amount database rejection
+    // ─────────────────────────────────────────────────────────────────────
+
+    public function test_payment_folio_item_amount_differs_from_allocation_amount_is_rejected(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('60.00');
+        $allocation = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '60.00', 'exact-amount-1');
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('GLF_B_PAYMENT_EFFECT_AMOUNT_MISMATCH');
+        DB::table('folio_items')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->glfProperty->id,
+            'folio_id' => $folio->id,
+            'item_type' => FolioItemTypeEnum::Payment->value,
+            'description' => 'Wrong amount',
+            'quantity' => '1.00',
+            'amount' => '-59.99',
+            'is_void' => false,
+            'posted_at' => now(),
+            'posted_by' => $this->glfActor->id,
+            'created_by' => $this->glfActor->id,
+            'source_domain' => 'pms_cashiering',
+            'source_type' => 'guest_payment_allocation',
+            'source_id' => $allocation->id,
+            'guest_payment_allocation_id' => $allocation->id,
+            'guest_payment_reversal_id' => null,
+            'reverses_folio_item_id' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    public function test_payment_reversal_folio_item_amount_differs_from_reversal_amount_is_rejected(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('50.00');
+        $allocation = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '50.00', 'exact-rev-1');
+        $originalItem = FolioItem::where('guest_payment_allocation_id', $allocation->id)->firstOrFail();
+
+        $this->confirm(GuestPaymentLifecycleService::REVERSAL_CONFIRMATION_INTENT);
+        $reversal = $this->payments->reverseAllocation($this->glfActor, $allocation->id, 'TEST_REV', 'exact-rev-1');
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('GLF_B_REVERSAL_EFFECT_AMOUNT_MISMATCH');
+        DB::table('folio_items')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->glfProperty->id,
+            'folio_id' => $folio->id,
+            'item_type' => FolioItemTypeEnum::PaymentReversal->value,
+            'description' => 'Wrong reversal amount',
+            'quantity' => '1.00',
+            'amount' => '49.99',
+            'is_void' => false,
+            'posted_at' => now(),
+            'posted_by' => $this->glfActor->id,
+            'created_by' => $this->glfActor->id,
+            'source_domain' => 'pms_cashiering',
+            'source_type' => 'guest_payment_allocation_reversal',
+            'source_id' => $reversal->id,
+            'guest_payment_allocation_id' => $allocation->id,
+            'guest_payment_reversal_id' => $reversal->id,
+            'reverses_folio_item_id' => $originalItem->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    public function test_allocation_reversal_amount_differs_from_allocation_amount_is_rejected(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('40.00');
+        $allocation = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '40.00', 'exact-rev-src-1');
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('GLF_B_REVERSAL_SOURCE_AMOUNT_MISMATCH');
+        DB::table('guest_payment_reversals')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->glfProperty->id,
+            'guest_payment_transaction_id' => $payment->id,
+            'guest_payment_allocation_id' => $allocation->id,
+            'reversal_type' => GuestPaymentReversalTypeEnum::AllocationReversal->value,
+            'amount' => '39.99',
+            'reason_code' => 'WRONG_AMOUNT',
+            'reversal_idempotency_key' => 'wrong-rev-amount-' . Str::ulid(),
+            'reversed_at' => now(),
+            'reversed_by' => $this->glfActor->id,
+            'source_snapshot' => '{}',
+        ]);
+    }
+
+    public function test_payment_void_amount_differs_from_payment_amount_is_rejected(): void
+    {
+        [$payment] = $this->paymentAndFolio('80.00');
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('GLF_B_REVERSAL_SOURCE_AMOUNT_MISMATCH');
+        DB::table('guest_payment_reversals')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->glfProperty->id,
+            'guest_payment_transaction_id' => $payment->id,
+            'guest_payment_allocation_id' => null,
+            'reversal_type' => GuestPaymentReversalTypeEnum::PaymentVoid->value,
+            'amount' => '79.99',
+            'reason_code' => 'WRONG_VOID_AMOUNT',
+            'reversal_idempotency_key' => 'wrong-void-amount-' . Str::ulid(),
+            'reversed_at' => now(),
+            'reversed_by' => $this->glfActor->id,
+            'source_snapshot' => '{}',
+        ]);
+    }
+
+    public function test_mutation_of_payment_amount_after_recording_is_rejected(): void
+    {
+        [$payment] = $this->paymentAndFolio('30.00');
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE');
+        DB::table('guest_payment_transactions')->where('id', $payment->id)->update(['amount' => '99.99']);
+    }
+
+    public function test_mutation_of_payment_currency_after_recording_is_rejected(): void
+    {
+        [$payment] = $this->paymentAndFolio('30.00');
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE');
+        DB::table('guest_payment_transactions')->where('id', $payment->id)->update(['currency' => 'EUR']);
+    }
+
+    public function test_valid_lifecycle_status_update_is_allowed(): void
+    {
+        [$payment] = $this->paymentAndFolio('30.00');
+
+        DB::table('guest_payment_transactions')->where('id', $payment->id)->update([
+            'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Voided->value,
+            'updated_by' => $this->glfActor->id,
+        ]);
+
+        $payment->refresh();
+        $this->assertSame(GuestPaymentLifecycleStatusEnum::Voided, $payment->lifecycle_status);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4B. Controlled generic void rejection
+    // ─────────────────────────────────────────────────────────────────────
+
+    public function test_generic_void_rejects_payment_folio_item_with_controlled_exception(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('50.00');
+        $allocation = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '50.00', 'void-reject-pmt');
+        $item = FolioItem::where('guest_payment_allocation_id', $allocation->id)->firstOrFail();
+
+        $folioBefore = $folio->fresh()->only(['total_charges', 'total_payments', 'balance']);
+
+        try {
+            $this->folios->voidItem($this->glfActor, $item->id);
+            $this->fail('Generic void of payment folio item must be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('immutable', $exception->getMessage());
+        }
+
+        $item->refresh();
+        $this->assertFalse($item->is_void, 'Payment FolioItem must remain non-void.');
+        $this->assertSame($folioBefore, $folio->fresh()->only(['total_charges', 'total_payments', 'balance']));
+        $this->assertSame('pms_cashiering', $item->source_domain);
+    }
+
+    public function test_generic_void_rejects_payment_reversal_folio_item_with_controlled_exception(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('50.00');
+        $allocation = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '50.00', 'void-reject-rev');
+        $this->confirm(GuestPaymentLifecycleService::REVERSAL_CONFIRMATION_INTENT);
+        $reversal = $this->payments->reverseAllocation($this->glfActor, $allocation->id, 'TEST', 'void-reject-rev');
+        $reversalItem = FolioItem::where('guest_payment_reversal_id', $reversal->id)->firstOrFail();
+
+        $folioBefore = $folio->fresh()->only(['total_charges', 'total_payments', 'balance']);
+
+        try {
+            $this->folios->voidItem($this->glfActor, $reversalItem->id);
+            $this->fail('Generic void of payment reversal folio item must be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('immutable', $exception->getMessage());
+        }
+
+        $reversalItem->refresh();
+        $this->assertFalse($reversalItem->is_void, 'PaymentReversal FolioItem must remain non-void.');
+        $this->assertSame($folioBefore, $folio->fresh()->only(['total_charges', 'total_payments', 'balance']));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4C. Permission matrix
+    // ─────────────────────────────────────────────────────────────────────
+
+    public function test_record_cash_payment_fails_without_permission(): void
+    {
+        $this->glfActor->revokePermissionTo(GuestPaymentLifecycleService::RECORD_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $reservation = $this->makeGlfReservation();
+        $session = $this->openCashierSession();
+
+        $beforeCount = GuestPaymentTransaction::count();
+
+        $this->expectException(AuthorizationException::class);
+        $this->payments->recordCashPayment($this->glfActor, $reservation->id, $session->id, '10.00', 'no-record-perm');
+
+        $this->assertSame($beforeCount, GuestPaymentTransaction::count());
+    }
+
+    public function test_allocate_payment_fails_without_permission(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('30.00');
+
+        $this->glfActor->revokePermissionTo(GuestPaymentLifecycleService::ALLOCATE_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $beforeCount = GuestPaymentAllocation::count();
+
+        $this->expectException(AuthorizationException::class);
+        $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '10.00', 'no-alloc-perm');
+
+        $this->assertSame($beforeCount, GuestPaymentAllocation::count());
+    }
+
+    public function test_void_payment_fails_without_permission(): void
+    {
+        [$payment] = $this->paymentAndFolio('30.00');
+
+        $this->glfActor->revokePermissionTo(GuestPaymentLifecycleService::VOID_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $beforeCount = GuestPaymentReversal::count();
+
+        $this->expectException(AuthorizationException::class);
+        $this->payments->voidPayment($this->glfActor, $payment->id, 'NO_PERM', 'no-void-perm');
+
+        $this->assertSame($beforeCount, GuestPaymentReversal::count());
+    }
+
+    public function test_reverse_allocation_fails_without_permission(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('30.00');
+        $allocation = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '30.00', 'reverse-perm-check');
+
+        $this->glfActor->revokePermissionTo(GuestPaymentLifecycleService::REVERSAL_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $beforeCount = GuestPaymentReversal::count();
+
+        $this->expectException(AuthorizationException::class);
+        $this->payments->reverseAllocation($this->glfActor, $allocation->id, 'NO_PERM', 'no-reverse-perm');
+
+        $this->assertSame($beforeCount, GuestPaymentReversal::count());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4D. Actor and membership boundary
+    // ─────────────────────────────────────────────────────────────────────
+
+    public function test_passed_actor_does_not_match_auth_user_is_rejected(): void
+    {
+        $reservation = $this->makeGlfReservation();
+        $session = $this->openCashierSession();
+
+        $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage('match');
+        $this->payments->recordCashPayment($this->glfOtherActor, $reservation->id, $session->id, '10.00', 'actor-mismatch');
+    }
+
+    public function test_authenticated_actor_is_inactive_is_rejected(): void
+    {
+        $reservation = $this->makeGlfReservation();
+        $session = $this->openCashierSession();
+
+        // Make the current actor inactive
+        $this->glfActor->forceFill(['is_active' => false])->save();
+
+        $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage('active actor');
+        $this->payments->recordCashPayment($this->glfActor, $reservation->id, $session->id, '10.00', 'actor-inactive');
+    }
+
+    public function test_property_membership_is_inactive_is_rejected(): void
+    {
+        $reservation = $this->makeGlfReservation();
+        $session = $this->openCashierSession();
+
+        $this->actingAs($this->glfInactiveActor)
+            ->withSession([
+                'active_property_id' => $this->glfProperty->id,
+                'current_property_id' => $this->glfProperty->id,
+                'active_company_id' => $this->glfCompany->id,
+            ]);
+
+        $payments = app(GuestPaymentLifecycleService::class);
+
+        $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage('active property access');
+        $payments->recordCashPayment($this->glfInactiveActor, $reservation->id, $session->id, '10.00', 'member-inactive');
+    }
+
+    public function test_property_membership_is_absent_is_rejected(): void
+    {
+        $reservation = $this->makeGlfReservation();
+        $session = $this->openCashierSession();
+
+        // glfOtherActor belongs to the OTHER property only, NOT the current one
+        // but we need the actor to match auth, so use a new user with no property membership
+        $noMemberActor = User::create([
+            'name' => 'No Membership Actor',
+            'email' => 'no-member-' . Str::lower(Str::random(6)) . '@example.test',
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'is_active' => true,
+        ]);
+        $noMemberActor->givePermissionTo(GuestPaymentLifecycleService::RECORD_PERMISSION);
+
+        $this->actingAs($noMemberActor)
+            ->withSession([
+                'active_property_id' => $this->glfProperty->id,
+                'current_property_id' => $this->glfProperty->id,
+                'active_company_id' => $this->glfCompany->id,
+            ]);
+
+        $payments = app(GuestPaymentLifecycleService::class);
+
+        $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage('active property access');
+        $payments->recordCashPayment($noMemberActor, $reservation->id, $session->id, '10.00', 'member-absent');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4E. Cross-property non-disclosure
+    // ─────────────────────────────────────────────────────────────────────
+
+    public function test_cross_property_cashier_session_is_non_disclosing(): void
+    {
+        // Create a session in Property B but context is Property A
+        $sessionB = new CashierSession();
+        $sessionB->forceFill([
+            'property_id' => $this->glfOtherProperty->id,
+            'cashier_user_id' => $this->glfActor->id,
+            'status' => CashierSessionStatusEnum::OPEN->value,
+            'opened_at' => now(),
+            'opened_by' => $this->glfActor->id,
+        ])->save();
+
+        $reservation = $this->makeGlfReservation();
+
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->payments->recordCashPayment($this->glfActor, $reservation->id, $sessionB->id, '10.00', 'cross-session');
+    }
+
+    public function test_cross_property_payment_id_during_allocate_is_non_disclosing(): void
+    {
+        // Create payment in Property B, allocate from Property A context
+        $guestB = $this->makeGlfGuest($this->glfOtherProperty);
+        $reservationB = $this->makeGlfReservation($this->glfOtherProperty, $guestB);
+
+        // Create a valid cashier session in Property B
+        $sessionB = new CashierSession();
+        $sessionB->forceFill([
+            'property_id' => $this->glfOtherProperty->id,
+            'cashier_user_id' => $this->glfActor->id,
+            'status' => CashierSessionStatusEnum::OPEN->value,
+            'opened_at' => now(),
+            'opened_by' => $this->glfActor->id,
+        ])->save();
+
+        $paymentB = new GuestPaymentTransaction();
+        $paymentB->forceFill([
+            'property_id' => $this->glfOtherProperty->id,
+            'payment_number' => 'GPM-CROSS-1',
+            'reservation_id' => $reservationB->id,
+            'guest_id' => $guestB->id,
+            'currency' => 'EUR',
+            'amount' => '100.00',
+            'tender_type' => GuestPaymentTenderTypeEnum::Cash,
+            'cashier_session_id' => $sessionB->id,
+            'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Recorded,
+            'recording_idempotency_key' => 'cross-prop-pmt-' . Str::ulid(),
+            'recorded_at' => now(),
+            'recorded_by' => $this->glfActor->id,
+            'source_snapshot' => '{}',
+            'created_by' => $this->glfActor->id,
+            'updated_by' => $this->glfActor->id,
+        ])->save();
+
+        $reservationA = $this->makeGlfReservation();
+        $folioA = $this->makeGlfFolio($reservationA, $reservationA->primaryGuest);
+
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->payments->allocatePayment($this->glfActor, $paymentB->id, $folioA->id, '50.00', 'cross-payment');
+    }
+
+    public function test_cross_property_folio_during_allocate_is_non_disclosing(): void
+    {
+        [$payment] = $this->paymentAndFolio('50.00');
+
+        $guestB = $this->makeGlfGuest($this->glfOtherProperty);
+        $reservationB = $this->makeGlfReservation($this->glfOtherProperty, $guestB);
+        $folioB = $this->makeGlfFolio($reservationB, $guestB, [
+            'currency' => 'EUR',
+            'folio_number' => 'CROSS-FOL',
+            'opening_idempotency_key' => 'cross-fol-open-' . Str::ulid(),
+        ]);
+
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->payments->allocatePayment($this->glfActor, $payment->id, $folioB->id, '10.00', 'cross-folio');
+    }
+
+    public function test_cross_property_allocation_during_reverse_is_non_disclosing(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('50.00');
+        $allocation = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '50.00', 'cross-rev-alloc');
+
+        // Create a different allocation in Property B
+        $guestB = $this->makeGlfGuest($this->glfOtherProperty);
+        $reservationB = $this->makeGlfReservation($this->glfOtherProperty, $guestB);
+        $folioB = $this->makeGlfFolio($reservationB, $guestB, [
+            'currency' => 'EUR',
+            'folio_number' => 'CROSS-FOL2',
+            'opening_idempotency_key' => 'cross-fol2-open-' . Str::ulid(),
+        ]);
+
+        $sessionB2 = new CashierSession();
+        $sessionB2->forceFill([
+            'property_id' => $this->glfOtherProperty->id,
+            'cashier_user_id' => $this->glfActor->id,
+            'status' => CashierSessionStatusEnum::OPEN->value,
+            'opened_at' => now(),
+            'opened_by' => $this->glfActor->id,
+        ])->save();
+
+        $paymentB = new GuestPaymentTransaction();
+        $paymentB->forceFill([
+            'property_id' => $this->glfOtherProperty->id,
+            'payment_number' => 'GPM-CROSS-2',
+            'reservation_id' => $reservationB->id,
+            'guest_id' => $guestB->id,
+            'currency' => 'EUR',
+            'amount' => '200.00',
+            'tender_type' => GuestPaymentTenderTypeEnum::Cash,
+            'cashier_session_id' => $sessionB2->id,
+            'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Recorded,
+            'recording_idempotency_key' => 'cross-prop-pmt2-' . Str::ulid(),
+            'recorded_at' => now(),
+            'recorded_by' => $this->glfActor->id,
+            'source_snapshot' => '{}',
+            'created_by' => $this->glfActor->id,
+            'updated_by' => $this->glfActor->id,
+        ])->save();
+
+        $allocationB = new GuestPaymentAllocation();
+        $allocationB->forceFill([
+            'property_id' => $this->glfOtherProperty->id,
+            'guest_payment_transaction_id' => $paymentB->id,
+            'folio_id' => $folioB->id,
+            'amount' => '100.00',
+            'allocation_idempotency_key' => 'cross-alloc-' . Str::ulid(),
+            'allocated_at' => now(),
+            'allocated_by' => $this->glfActor->id,
+            'source_snapshot' => '{}',
+        ])->save();
+
+        // Provide confirmation so we pass that gate and hit the non-disclosing identity lookup
+        $this->confirm(GuestPaymentLifecycleService::REVERSAL_CONFIRMATION_INTENT);
+
+        // Now try to reverse the cross-property allocation from Property A context
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->payments->reverseAllocation($this->glfActor, $allocationB->id, 'CROSS', 'cross-rev');
+    }
+
+    public function test_random_unknown_payment_id_is_non_disclosing(): void
+    {
+        $reservationA = $this->makeGlfReservation();
+        $folioA = $this->makeGlfFolio($reservationA, $reservationA->primaryGuest);
+
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->payments->allocatePayment($this->glfActor, (string) Str::ulid(), $folioA->id, '10.00', 'random-pmt');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4F. Atomic rollback
+    // ─────────────────────────────────────────────────────────────────────
+
+    public function test_allocation_rolls_back_when_effect_creation_fails(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('100.00');
+
+        $folioBefore = $folio->fresh()->only(['total_charges', 'total_payments', 'balance']);
+
+        // Use a broken effect service that fails after allocation creation
+        $brokenEffect = new class($this->app->make(\Modules\Operations\PMS\Repositories\FolioItemRepository::class), $this->folios) extends GuestLedgerPaymentAllocationEffectService {
+            public function createAllocationItemLocked(
+                \Modules\Operations\PMS\Models\GuestPaymentAllocation $allocation,
+                \Modules\Operations\PMS\Models\GuestPaymentTransaction $payment,
+                \Modules\Operations\PMS\Models\Folio $folio
+            ): \Modules\Operations\PMS\Models\FolioItem {
+                throw new \RuntimeException('Forced effect failure for atomicity proof');
+            }
+        };
+
+        // Swap the effect service
+        $lifecycle = new GuestPaymentLifecycleService(
+            $this->app->make(CurrentPropertyService::class),
+            $brokenEffect,
+            $this->app->make(SensitiveActionConfirmationService::class),
+        );
+
+        try {
+            $lifecycle->allocatePayment($this->glfActor, $payment->id, $folio->id, '50.00', 'atomic-alloc');
+            $this->fail('Allocation with broken effect should have thrown.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('Forced effect failure', $exception->getMessage());
+        }
+
+        // Allocation row must not exist
+        $this->assertSame(0, GuestPaymentAllocation::count(), 'Allocation row must roll back.');
+        // Payment lifecycle must remain unchanged
+        $payment->refresh();
+        $this->assertSame(GuestPaymentLifecycleStatusEnum::Recorded, $payment->lifecycle_status);
+        // Folio totals unchanged
+        $this->assertSame($folioBefore, $folio->fresh()->only(['total_charges', 'total_payments', 'balance']));
+        // No folio items created
+        $this->assertSame(0, FolioItem::count());
+    }
+
+    public function test_reversal_rolls_back_when_effect_creation_fails(): void
+    {
+        [$payment, $folio] = $this->paymentAndFolio('100.00');
+        $allocation = $this->payments->allocatePayment($this->glfActor, $payment->id, $folio->id, '60.00', 'atomic-rev-alloc');
+        $originalItem = FolioItem::where('guest_payment_allocation_id', $allocation->id)->firstOrFail();
+
+        $this->confirm(GuestPaymentLifecycleService::REVERSAL_CONFIRMATION_INTENT);
+
+        $folioAfterAlloc = $folio->fresh()->only(['total_charges', 'total_payments', 'balance']);
+        $reversalCountBefore = GuestPaymentReversal::count();
+
+        // Broken effect that fails for reversal
+        $brokenEffect = new class($this->app->make(\Modules\Operations\PMS\Repositories\FolioItemRepository::class), $this->folios) extends GuestLedgerPaymentAllocationEffectService {
+            public bool $reversalCalled = false;
+
+            public function createReversalItemLocked(
+                \Modules\Operations\PMS\Models\GuestPaymentReversal $reversal,
+                \Modules\Operations\PMS\Models\GuestPaymentAllocation $allocation,
+                \Modules\Operations\PMS\Models\GuestPaymentTransaction $payment,
+                \Modules\Operations\PMS\Models\Folio $folio
+            ): \Modules\Operations\PMS\Models\FolioItem {
+                $this->reversalCalled = true;
+                throw new \RuntimeException('Forced reversal effect failure for atomicity proof');
+            }
+        };
+
+        $lifecycle = new GuestPaymentLifecycleService(
+            $this->app->make(CurrentPropertyService::class),
+            $brokenEffect,
+            $this->app->make(SensitiveActionConfirmationService::class),
+        );
+
+        try {
+            $lifecycle->reverseAllocation($this->glfActor, $allocation->id, 'ATOMIC', 'atomic-rev');
+            $this->fail('Reversal with broken effect should have thrown.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('Forced reversal effect failure', $exception->getMessage());
+        }
+
+        // Reversal row must roll back
+        $this->assertSame($reversalCountBefore, GuestPaymentReversal::count(), 'Reversal row must roll back.');
+        // No compensating folio item
+        $this->assertSame(1, FolioItem::count(), 'No new compensating FolioItem should exist.');
+        // Original payment folio item unchanged
+        $originalItem->refresh();
+        $this->assertFalse($originalItem->is_void);
+        // Payment lifecycle unchanged
+        $payment->refresh();
+        $this->assertSame(GuestPaymentLifecycleStatusEnum::PartiallyAllocated, $payment->lifecycle_status);
+        // Folio totals unchanged
+        $this->assertSame($folioAfterAlloc, $folio->fresh()->only(['total_charges', 'total_payments', 'balance']));
     }
 
     private function paymentAndFolio(string $amount): array

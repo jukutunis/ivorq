@@ -83,9 +83,10 @@ DECLARE
     original_item RECORD;
     allocation_row RECORD;
     reversal_row RECORD;
+    expected_amount NUMERIC(12,2);
 BEGIN
     IF NEW.item_type = 'payment' THEN
-        SELECT property_id, id, folio_id
+        SELECT property_id, id, folio_id, amount
           INTO allocation_row
           FROM guest_payment_allocations
          WHERE property_id = NEW.property_id
@@ -95,8 +96,14 @@ BEGIN
         IF NOT FOUND THEN
             RAISE EXCEPTION 'GLF_B_INVALID_PAYMENT_SOURCE';
         END IF;
+
+        expected_amount := 0.00 - allocation_row.amount;
+        IF NEW.amount <> expected_amount THEN
+            RAISE EXCEPTION 'GLF_B_PAYMENT_EFFECT_AMOUNT_MISMATCH';
+        END IF;
+
     ELSIF NEW.item_type = 'payment_reversal' THEN
-        SELECT property_id, id, guest_payment_allocation_id
+        SELECT property_id, id, guest_payment_allocation_id, amount
           INTO reversal_row
           FROM guest_payment_reversals
          WHERE property_id = NEW.property_id
@@ -108,7 +115,15 @@ BEGIN
             RAISE EXCEPTION 'GLF_B_INVALID_REVERSAL_SOURCE';
         END IF;
 
-        SELECT property_id, id, folio_id, guest_payment_allocation_id, item_type
+        SELECT a.amount AS allocation_amount
+          INTO allocation_row
+          FROM guest_payment_allocations a
+         WHERE a.property_id = NEW.property_id
+           AND a.id = NEW.guest_payment_allocation_id;
+
+        expected_amount := 0.00 - allocation_row.allocation_amount;
+
+        SELECT property_id, id, folio_id, guest_payment_allocation_id, item_type, amount
           INTO original_item
           FROM folio_items
          WHERE property_id = NEW.property_id
@@ -119,6 +134,18 @@ BEGIN
 
         IF NOT FOUND THEN
             RAISE EXCEPTION 'GLF_B_INVALID_REVERSAL_TARGET';
+        END IF;
+
+        IF original_item.amount <> expected_amount THEN
+            RAISE EXCEPTION 'GLF_B_PAYMENT_EFFECT_AMOUNT_MISMATCH';
+        END IF;
+
+        IF NEW.amount <> reversal_row.amount THEN
+            RAISE EXCEPTION 'GLF_B_REVERSAL_EFFECT_AMOUNT_MISMATCH';
+        END IF;
+
+        IF reversal_row.amount <> allocation_row.allocation_amount THEN
+            RAISE EXCEPTION 'GLF_B_REVERSAL_SOURCE_AMOUNT_MISMATCH';
         END IF;
     END IF;
 

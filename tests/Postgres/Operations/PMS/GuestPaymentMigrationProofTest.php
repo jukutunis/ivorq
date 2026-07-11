@@ -75,6 +75,17 @@ class GuestPaymentMigrationProofTest extends TestCase
             'up_constraints_exist',
             'up_indexes_exist',
             'up_typed_source_trigger_exists',
+            'up_immutability_trigger_exists',
+            'up_reversal_source_trigger_exists',
+            'up_fk_payment_prop_a_reservation_prop_b',
+            'up_fk_payment_prop_a_guest_prop_b',
+            'up_fk_payment_prop_a_session_prop_b',
+            'up_fk_allocation_prop_a_folio_prop_b',
+            'up_fk_reversal_payment_a_alloc_b',
+            'up_fk_folio_item_prop_a_alloc_prop_b',
+            'up_immutable_payment_amount_blocked',
+            'up_reversal_source_amount_void_blocked',
+            'up_reversal_source_amount_alloc_blocked',
             'up_same_property_fk_enforced',
             'up_typed_source_fk_enforced',
         ] as $key) {
@@ -99,6 +110,8 @@ class GuestPaymentMigrationProofTest extends TestCase
             'reup_constraints_exist',
             'reup_indexes_exist',
             'reup_typed_source_trigger_exists',
+            'reup_immutability_trigger_exists',
+            'reup_reversal_source_trigger_exists',
             'reup_legacy_folio_preserved',
             'reup_legacy_items_preserved',
         ] as $key) {
@@ -110,6 +123,7 @@ class GuestPaymentMigrationProofTest extends TestCase
         $this->assertStringContainsString('GLF_B_BLOCKED_LEGACY_PAYMENT_ITEMS', $result['ambiguous_error'] ?? '');
         $this->assertTrue($result['ambiguous_no_partial_columns'] ?? false);
         $this->assertTrue($result['ambiguous_legacy_rows_preserved'] ?? false);
+        $this->assertTrue($result['ambiguous_pre_glfb_reversal_items_impossible'] ?? false);
         $this->assertTrue($result['proof_db_dropped'] ?? false);
         $this->assertTrue($result['ambiguous_db_dropped'] ?? false);
     }

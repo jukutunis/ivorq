@@ -61,10 +61,66 @@ return new class extends Migration
         DB::statement("ALTER TABLE guest_payment_transactions ADD CONSTRAINT guest_payments_amount_positive_check CHECK (amount > 0)");
         DB::statement("ALTER TABLE guest_payment_transactions ADD CONSTRAINT guest_payments_tender_check CHECK (tender_type IN ('CASH'))");
         DB::statement("ALTER TABLE guest_payment_transactions ADD CONSTRAINT guest_payments_status_check CHECK (lifecycle_status IN ('RECORDED','PARTIALLY_ALLOCATED','FULLY_ALLOCATED','VOIDED'))");
+
+        DB::statement(<<<'SQL'
+CREATE OR REPLACE FUNCTION block_guest_payment_transaction_mutation()
+RETURNS trigger AS $$
+BEGIN
+    IF OLD.property_id IS DISTINCT FROM NEW.property_id THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.payment_number IS DISTINCT FROM NEW.payment_number THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.reservation_id IS DISTINCT FROM NEW.reservation_id THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.guest_id IS DISTINCT FROM NEW.guest_id THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.currency IS DISTINCT FROM NEW.currency THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.amount IS DISTINCT FROM NEW.amount THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.tender_type IS DISTINCT FROM NEW.tender_type THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.cashier_session_id IS DISTINCT FROM NEW.cashier_session_id THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.recording_idempotency_key IS DISTINCT FROM NEW.recording_idempotency_key THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.recorded_at IS DISTINCT FROM NEW.recorded_at THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.recorded_by IS DISTINCT FROM NEW.recorded_by THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.source_snapshot::text IS DISTINCT FROM NEW.source_snapshot::text THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.created_at IS DISTINCT FROM NEW.created_at THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+    IF OLD.created_by IS DISTINCT FROM NEW.created_by THEN
+        RAISE EXCEPTION 'GLF_B_GUEST_PAYMENT_TRANSACTIONS_IMMUTABLE';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+SQL);
+        DB::statement('CREATE TRIGGER guest_payment_transactions_immutable_trigger BEFORE UPDATE ON guest_payment_transactions FOR EACH ROW EXECUTE FUNCTION block_guest_payment_transaction_mutation()');
     }
 
     public function down(): void
     {
+        DB::statement('DROP TRIGGER IF EXISTS guest_payment_transactions_immutable_trigger ON guest_payment_transactions');
+        DB::statement('DROP FUNCTION IF EXISTS block_guest_payment_transaction_mutation()');
+
         Schema::dropIfExists('guest_payment_transactions');
 
         Schema::table('cashier_sessions', function (Blueprint $table) {

@@ -8,6 +8,7 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
 use Modules\Operations\PMS\Enums\FolioStatusEnum;
+use RuntimeException;
 use Modules\Operations\PMS\Events\FolioCreated;
 use Modules\Operations\PMS\Events\FolioItemPosted;
 use Modules\Operations\PMS\Events\FolioItemVoided;
@@ -264,11 +265,13 @@ class GuestLedgerFolioAggregateService
      *      a. Lock parent Folio first (folio ID + property).
      *      b. Lock target FolioItem second (item ID + folio ID + property).
      *   4. Revalidate property, folio membership, and void status post-lock.
-     *   5. Mark the already-locked item void — no unscoped re-query.
-     *   6. Recalculate using the private locked primitive.
-     *   7. Dispatch event and commit atomically.
+     *   5. Reject PMS Cashiering payment evidence items before mutating.
+     *   6. Mark the already-locked item void — no unscoped re-query.
+     *   7. Recalculate using the private locked primitive.
+     *   8. Dispatch event and commit atomically.
      *
-     * This is legacy item void only — NOT payment reversal.
+     * PMS Cashiering payment evidence is immutable. Use the guest payment
+     * allocation reversal workflow for payment/payment_reversal items.
      */
     public function voidItem(User $actor, string $itemId): FolioItem
     {
@@ -309,6 +312,10 @@ class GuestLedgerFolioAggregateService
                 ]);
             }
 
+            // Reject PMS Cashiering payment evidence — must use guest payment
+            // allocation reversal workflow instead of generic void.
+            $this->guardNotPmsCashieringPaymentEvidence($item);
+
             // Mark void on the already-locked item — no unscoped re-query
             $item = $this->folioItemRepository->voidLocked($item);
 
@@ -341,10 +348,21 @@ class GuestLedgerFolioAggregateService
     /**
      * Locked recalculation — caller MUST hold a folio row lock.
      *
+     * @internal Public only for co-located GLF-B effect service. External
+     *           callers MUST wrap this in an active transaction and hold
+     *           the Folio row lock before invoking.
+     *
+     *           Fails closed when called outside an active transaction.
+     *
      * Intended for callers that already hold the Folio lock.
      */
     public function recalculateLocked(Folio $folio): void
     {
+        if (DB::transactionLevel() <= 0) {
+            throw new RuntimeException(
+                'GuestLedgerFolioAggregateService::recalculateLocked() must be called inside an active transaction.'
+            );
+        }
         $items = $this->folioItemRepository->forFolio($folio->id, includeVoided: false);
 
         $totalCharges  = '0';
@@ -466,6 +484,28 @@ class GuestLedgerFolioAggregateService
         if (! $membership) {
             throw ValidationException::withMessages([
                 'actor' => ['Actor does not have active membership in the current property.'],
+            ]);
+        }
+    }
+
+    /**
+     * Reject generic void of PMS Cashiering payment evidence items.
+     *
+     * Payment and PaymentReversal FolioItems linked to PMS Cashiering source
+     * evidence are immutable through the generic void path. The caller must
+     * use the guest payment allocation reversal workflow instead.
+     */
+    private function guardNotPmsCashieringPaymentEvidence(FolioItem $item): void
+    {
+        if (
+            $item->source_domain === 'pms_cashiering' ||
+            $item->guest_payment_allocation_id !== null ||
+            $item->guest_payment_reversal_id !== null ||
+            $item->item_type === FolioItemTypeEnum::Payment ||
+            $item->item_type === FolioItemTypeEnum::PaymentReversal
+        ) {
+            throw ValidationException::withMessages([
+                'item' => ['PMS Cashiering payment evidence is immutable. Use the guest payment allocation reversal workflow.'],
             ]);
         }
     }
