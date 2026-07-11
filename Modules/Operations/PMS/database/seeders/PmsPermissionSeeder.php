@@ -33,6 +33,10 @@ class PmsPermissionSeeder extends Seeder
             // Folio
             'pms.folio.view',
             'pms.folio.manage',
+            'pms.cashiering.guest-payment.record',
+            'pms.cashiering.guest-payment.allocate',
+            'pms.cashiering.guest-payment.void',
+            'pms.cashiering.guest-payment.reverse',
 
             // Rate Plan
             'pms.rate-plan.view',

@@ -198,6 +198,16 @@ class GuestLedgerFolioAggregateService
 
         // Validate business input (decimal-safe, field-specific precision)
         $itemType  = $this->resolveItemType($data['item_type'] ?? null);
+        if (in_array($itemType, [
+            FolioItemTypeEnum::Payment,
+            FolioItemTypeEnum::Deposit,
+            FolioItemTypeEnum::PaymentReversal,
+        ], true)) {
+            throw ValidationException::withMessages([
+                'item_type' => ['Payment-owned FolioItem categories must be created through PMS Cashiering evidence.'],
+            ]);
+        }
+
         $amount    = $this->validateAmountDecimal($data['amount'] ?? null);
         $quantity  = $this->validateQuantityDecimal($data['quantity'] ?? '1');
         $desc      = (string) ($data['description'] ?? '');
@@ -341,14 +351,19 @@ class GuestLedgerFolioAggregateService
         $totalPayments = '0';
 
         foreach ($items as $item) {
-            $amt = $item->amount;
+            $amt = (string) $item->amount;
 
-            if (bccomp((string) $amt, '0', 2) > 0) {
-                $totalCharges = bcadd($totalCharges, (string) $amt, 2);
-            } elseif (bccomp((string) $amt, '0', 2) < 0) {
-                $negAbs = bcsub('0', (string) $amt, 2);
-                $totalPayments = bcadd($totalPayments, $negAbs, 2);
+            if ($item->item_type === FolioItemTypeEnum::Payment && bccomp($amt, '0.00', 2) < 0) {
+                $totalPayments = bcadd($totalPayments, bcsub('0.00', $amt, 2), 2);
+                continue;
             }
+
+            if ($item->item_type === FolioItemTypeEnum::PaymentReversal && bccomp($amt, '0.00', 2) > 0) {
+                $totalPayments = bcsub($totalPayments, $amt, 2);
+                continue;
+            }
+
+            $totalCharges = bcadd($totalCharges, $amt, 2);
         }
 
         $balance = bcsub($totalCharges, $totalPayments, 2);

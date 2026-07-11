@@ -10,6 +10,7 @@ enum FolioItemTypeEnum: string
     case Adjustment    = 'adjustment';
     case Payment       = 'payment';
     case Deposit       = 'deposit';
+    case PaymentReversal = 'payment_reversal';
     case Other         = 'other';
 
     public function label(): string
@@ -21,6 +22,7 @@ enum FolioItemTypeEnum: string
             self::Adjustment    => 'Adjustment',
             self::Payment       => 'Payment',
             self::Deposit       => 'Deposit',
+            self::PaymentReversal => 'Payment Reversal',
             self::Other         => 'Other',
         };
     }

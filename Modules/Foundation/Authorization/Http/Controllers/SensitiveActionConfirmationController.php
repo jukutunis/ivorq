@@ -137,6 +137,8 @@ class SensitiveActionConfirmationController extends Controller
             'engineering-room-availability-release' => 'Engineering Room Availability Release',
             'frontdesk-check-in' => 'Front Desk Check-In',
             'frontdesk-room-move' => 'Front Desk Room Move',
+            'pms-guest-payment-void' => 'Guest Payment Void',
+            'pms-guest-payment-reversal' => 'Guest Payment Reversal',
         ];
 
         return $labels[$intent] ?? $intent;

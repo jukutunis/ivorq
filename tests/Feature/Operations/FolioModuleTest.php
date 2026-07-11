@@ -109,24 +109,42 @@ class FolioModuleTest extends TestCase
         ]);
         $item2 = $service->postItem($folio->id, [
             'property_id' => $property->id, 
-            'item_type' => \Modules\Operations\PMS\Enums\FolioItemTypeEnum::Payment->value,
-            'amount' => -50.00, 
-            'description' => 'Payment', 
-            'transaction_code' => 'P1'
+            'item_type' => \Modules\Operations\PMS\Enums\FolioItemTypeEnum::ServiceCharge->value,
+            'amount' => 50.00,
+            'description' => 'Service Charge',
+            'transaction_code' => 'SC1'
         ]);
         
         $folio = $folio->fresh();
         
-        $this->assertEquals(100.00, $folio->total_charges);
-        $this->assertEquals(50.00, $folio->total_payments);
-        $this->assertEquals(50.00, $folio->balance);
+        $this->assertEquals(150.00, $folio->total_charges);
+        $this->assertEquals(0.00, $folio->total_payments);
+        $this->assertEquals(150.00, $folio->balance);
 
         $service->voidItem($item1->id);
         $folio = $folio->fresh();
 
-        $this->assertEquals(0.00, $folio->total_charges);
-        $this->assertEquals(50.00, $folio->total_payments);
-        $this->assertEquals(-50.00, $folio->balance);
+        $this->assertEquals(50.00, $folio->total_charges);
+        $this->assertEquals(0.00, $folio->total_payments);
+        $this->assertEquals(50.00, $folio->balance);
+    }
+
+    public function test_generic_payment_item_posting_is_rejected(): void
+    {
+        ['property' => $property] = $this->boot();
+        $guest = $this->makePmsGuest($property);
+        $reservation = $this->makePmsReservation($property, $guest);
+        $folio = $this->makePmsFolio($reservation, $guest);
+
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+
+        app(FolioService::class)->postItem($folio->id, [
+            'property_id' => $property->id,
+            'item_type' => \Modules\Operations\PMS\Enums\FolioItemTypeEnum::Payment->value,
+            'amount' => -50.00,
+            'description' => 'Generic Payment',
+            'transaction_code' => 'P1',
+        ]);
     }
 
     public function test_close_folio(): void

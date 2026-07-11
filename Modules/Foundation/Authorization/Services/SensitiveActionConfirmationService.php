@@ -29,6 +29,8 @@ class SensitiveActionConfirmationService
             'frontdesk-check-in',
             'frontdesk-room-move',
             'housekeeping-room-release-ready',
+            'pms-guest-payment-void',
+            'pms-guest-payment-reversal',
         ];
 
     private const SESSION_KEY = 'sensitive_action_confirmation';

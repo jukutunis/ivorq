@@ -40,7 +40,8 @@ class FolioItemRepository
      *
      * Business-input fields (item_type, description, quantity, amount)
      * may use normal fill. Server-owned fields (property_id, folio_id,
-     * is_void, posted_at, posted_by, created_by) are set via forceFill.
+     * is_void, posted_at, posted_by, created_by, source identity) are set
+     * via forceFill.
      *
      * @internal Called only by GuestLedgerFolioAggregateService.
      */

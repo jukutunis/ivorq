@@ -51,6 +51,12 @@ class PermissionSeeder extends Seeder
             'frontdesk.departure-checkout-authorization.create',
             'frontdesk.checkout-execution-boundary.view',
 
+            // PMS Cashiering - Guest Payment Lifecycle
+            'pms.cashiering.guest-payment.record',
+            'pms.cashiering.guest-payment.allocate',
+            'pms.cashiering.guest-payment.void',
+            'pms.cashiering.guest-payment.reverse',
+
             // Engineering - Controlled Room Availability
             'engineering.room-availability.view',
             'engineering.room-availability.block',

@@ -42,6 +42,10 @@ class FolioItem extends Model
         'posted_at',
         'posted_by',
         'created_by',
+        'source_domain',
+        'source_type',
+        'source_id',
+        'reverses_folio_item_id',
     ];
 
     protected $casts = [
@@ -67,5 +71,10 @@ class FolioItem extends Model
     public function postedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'posted_by');
+    }
+
+    public function reversesFolioItem(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'reverses_folio_item_id');
     }
 }
