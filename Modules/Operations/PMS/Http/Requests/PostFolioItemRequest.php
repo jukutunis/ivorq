@@ -23,12 +23,14 @@ class PostFolioItemRequest extends FormRequest
             'description' => ['required', 'string', 'max:255'],
             'quantity'    => ['nullable', 'numeric', 'min:0.01'],
             'amount'      => ['required', 'numeric'],
-            'posted_at'   => ['nullable', 'date'],
 
-            // Server-managed — not accepted from client
-            'folio_id'   => ['prohibited'],
-            'is_void'    => ['prohibited'],
-            'posted_by'  => ['prohibited'],
+            // Server-managed — strictly prohibited from client
+            'folio_id'    => ['prohibited'],
+            'is_void'     => ['prohibited'],
+            'posted_by'   => ['prohibited'],
+            'posted_at'   => ['prohibited'],
+            'property_id' => ['prohibited'],
+            'created_by'  => ['prohibited'],
         ];
     }
 }

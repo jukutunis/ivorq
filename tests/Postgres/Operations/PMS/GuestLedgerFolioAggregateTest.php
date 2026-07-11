@@ -5,9 +5,11 @@ namespace Tests\Postgres\Operations\PMS;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Validation\ValidationException;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
 use Modules\Operations\PMS\Enums\FolioStatusEnum;
+use Modules\Operations\PMS\Events\FolioCreated;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService;
@@ -88,10 +90,20 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
 
     public function test_interactive_open_records_created_by_and_updated_by_as_actor(): void
     {
+        Event::fake([FolioCreated::class]);
+
         $r = $this->makeGlfReservation();
         $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-audit');
+
+        // Database audit fields
         $this->assertSame($this->glfActor->id, $folio->created_by);
         $this->assertSame($this->glfActor->id, $folio->updated_by);
+
+        // Event model audit fields
+        Event::assertDispatched(FolioCreated::class, function (FolioCreated $event) {
+            return $event->folio->created_by === $this->glfActor->id
+                && $event->folio->updated_by === $this->glfActor->id;
+        });
     }
 
     public function test_actor_auth_mismatch_rejected(): void
@@ -115,9 +127,20 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
 
     public function test_system_open_does_not_fabricate_an_actor(): void
     {
+        Event::fake([FolioCreated::class]);
+
         $r = $this->makeGlfReservation();
         $folio = $this->aggregate->openWindowSystem($r->id, 'test-purpose');
+
+        // Database audit fields
         $this->assertNull($folio->created_by);
+        $this->assertNull($folio->updated_by);
+
+        // Event model audit fields must also be null
+        Event::assertDispatched(FolioCreated::class, function (FolioCreated $event) {
+            return $event->folio->created_by === null
+                && $event->folio->updated_by === null;
+        });
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -231,46 +254,51 @@ class GuestLedgerFolioAggregateTest extends PostgresTestCase
     // Malicious Input — postItem (conflicting values actually submitted)
     // ─────────────────────────────────────────────────────────────────
 
-    public function test_post_item_ignores_caller_property_id(): void
+    /**
+     * Prove that every server-owned field submitted with a conflicting
+     * caller-chosen value is ignored. The persisted output must derive
+     * from locked server-side sources only.
+     */
+    public function test_post_item_server_fields_cannot_be_overridden(): void
     {
         $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-mal-prop');
-        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
-            'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Test',
-            'quantity'    => 1,
-            'amount'      => 100.00,
-        ]);
-        $this->assertSame($folio->property_id, $item->property_id);
-    }
+        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-mal-agg');
 
-    public function test_post_item_ignores_caller_is_void(): void
-    {
-        $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-mal-isvoid');
-        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
+        // Submit a data array that contains EVERY server-owned field with a
+        // malicious value — property from another property, folio from another
+        // folio, actor from another user, caller-chosen timestamp, and is_void.
+        $maliciousData = [
             'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Test',
-            'quantity'    => 1,
-            'amount'      => 100.00,
-        ]);
-        $this->assertFalse($item->is_void);
-    }
+            'description' => 'Malicious input test',
+            'quantity'    => 2,
+            'amount'      => 150.00,
+            // Server-owned fields injected by caller:
+            'property_id' => $this->glfOtherProperty->id,
+            'folio_id'    => '01J00000000000000000000000',
+            'posted_by'   => $this->glfOtherActor->id,
+            'created_by'  => $this->glfOtherActor->id,
+            'posted_at'   => '2020-01-01 00:00:00',
+            'is_void'     => true,
+        ];
 
-    public function test_post_item_server_audit_fields_set_correctly(): void
-    {
-        $r = $this->makeGlfReservation();
-        $folio = $this->aggregate->openWindow($this->glfActor, $r->id, 'idem-mal-audit');
-        $item = $this->aggregate->postItem($this->glfActor, $folio->id, [
-            'item_type'   => FolioItemTypeEnum::RoomCharge,
-            'description' => 'Test',
-            'quantity'    => 1,
-            'amount'      => 50.00,
-        ]);
-        $this->assertFalse($item->is_void);
-        $this->assertNotNull($item->posted_at);
-        $this->assertSame($this->glfActor->id, $item->posted_by);
-        $this->assertSame($this->glfActor->id, $item->created_by);
+        $item = $this->aggregate->postItem($this->glfActor, $folio->id, $maliciousData);
+
+        // Every persisted value must come from the server, not the caller
+        $this->assertSame($folio->property_id, $item->property_id,
+            'property_id must be the locked folio property, not caller input');
+        $this->assertSame($folio->id, $item->folio_id,
+            'folio_id must be the target folio, not caller input');
+        $this->assertSame($this->glfActor->id, $item->posted_by,
+            'posted_by must be the authenticated actor, not caller input');
+        $this->assertSame($this->glfActor->id, $item->created_by,
+            'created_by must be the authenticated actor, not caller input');
+        $this->assertFalse($item->is_void,
+            'is_void must be false for a new post, not caller input');
+        $this->assertNotNull($item->posted_at,
+            'posted_at must be a server timestamp, not caller input');
+        // posted_at should be recent, not the caller-chosen 2020 timestamp
+        $this->assertNotEquals('2020-01-01 00:00:00', (string) $item->posted_at,
+            'posted_at must ignore caller-supplied timestamp');
     }
 
     // ─────────────────────────────────────────────────────────────────

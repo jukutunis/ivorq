@@ -76,4 +76,61 @@ class FolioItemRepository
 
         return $item->fresh();
     }
+
+    /**
+     * Resolve the minimum parent identity for a folio item without locking.
+     *
+     * Returns (item_id, folio_id, property_id) scoped to the current
+     * property. Unknown and cross-property identifiers produce the same
+     * non-disclosing NotFoundException.
+     *
+     * @return object{id: string, folio_id: string, property_id: string}
+     *
+     * @internal Called only by GuestLedgerFolioAggregateService::voidItem.
+     */
+    public function findIdentityForProperty(string $itemId, string $propertyId): object
+    {
+        $identity = FolioItem::withoutGlobalScope('property')
+            ->where('id', $itemId)
+            ->where('property_id', $propertyId)
+            ->select('id', 'folio_id', 'property_id')
+            ->first();
+
+        throw_if(! $identity, new NotFoundException('FolioItem'));
+
+        return (object) $identity->only('id', 'folio_id', 'property_id');
+    }
+
+    /**
+     * Lock a folio item row FOR UPDATE scoped by property and parent folio.
+     *
+     * @internal Called only by GuestLedgerFolioAggregateService::voidItem.
+     */
+    public function lockForUpdateInFolio(string $itemId, string $folioId, string $propertyId): FolioItem
+    {
+        $item = FolioItem::withoutGlobalScope('property')
+            ->where('id', $itemId)
+            ->where('folio_id', $folioId)
+            ->where('property_id', $propertyId)
+            ->lockForUpdate()
+            ->first();
+
+        throw_if(! $item, new NotFoundException('FolioItem'));
+
+        return $item;
+    }
+
+    /**
+     * Mark an already-locked FolioItem as void without re-querying.
+     *
+     * The caller MUST hold a row lock on the passed instance.
+     *
+     * @internal Called only by GuestLedgerFolioAggregateService::voidItem.
+     */
+    public function voidLocked(FolioItem $item): FolioItem
+    {
+        $item->forceFill(['is_void' => true])->save();
+
+        return $item->fresh();
+    }
 }

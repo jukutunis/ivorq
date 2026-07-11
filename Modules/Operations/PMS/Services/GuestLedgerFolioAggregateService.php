@@ -246,9 +246,17 @@ class GuestLedgerFolioAggregateService
     /**
      * Void a folio line item through the authorized aggregate boundary.
      *
-     * Requires active actor membership. Uses one transaction with
-     * consistent lock order (parent Folio → item) and calls the private
-     * locked recalculation primitive directly — no nested transaction.
+     * Non-disclosing property scope:
+     *   1. Resolve current property server-side.
+     *   2. Resolve item's minimum parent identity scoped to current property.
+     *      Unknown and cross-property IDs produce the same exception type.
+     *   3. Begin one transaction with consistent lock order:
+     *      a. Lock parent Folio first (folio ID + property).
+     *      b. Lock target FolioItem second (item ID + folio ID + property).
+     *   4. Revalidate property, folio membership, and void status post-lock.
+     *   5. Mark the already-locked item void — no unscoped re-query.
+     *   6. Recalculate using the private locked primitive.
+     *   7. Dispatch event and commit atomically.
      *
      * This is legacy item void only — NOT payment reversal.
      */
@@ -259,38 +267,42 @@ class GuestLedgerFolioAggregateService
         $this->guardActorMatchesAuth($actor);
         $this->guardActiveActorProperty($actor, $propertyId);
 
-        return DB::transaction(function () use ($actor, $itemId, $propertyId) {
-            // Lock the target item
-            $item = $this->folioItemRepository->lockForUpdate($itemId);
+        // Resolve parent identity WITHOUT locking — non-disclosing scope.
+        // Unknown and cross-property identifiers produce identical NotFoundException.
+        $identity = $this->folioItemRepository->findIdentityForProperty($itemId, $propertyId);
 
-            // Cross-property: item's property must match current property
+        return DB::transaction(function () use ($actor, $itemId, $propertyId, $identity) {
+            // Lock parent Folio FIRST (consistent lock order)
+            $folio = $this->folioRepository->lockForUpdate($identity->folio_id, $propertyId);
+
+            // Lock target item SECOND — scoped by property AND parent folio
+            $item = $this->folioItemRepository->lockForUpdateInFolio(
+                $itemId, $folio->id, $propertyId
+            );
+
+            // Revalidate post-lock
             if ($item->property_id !== $propertyId) {
                 throw ValidationException::withMessages([
                     'item' => ['Folio item not found in the current property.'],
                 ]);
             }
 
-            // Lock parent Folio (consistent order: parent before child re-check)
-            $folio = $this->folioRepository->lockForUpdate($item->folio_id, $propertyId);
-
-            // Verify item belongs to the locked Folio
             if ($item->folio_id !== $folio->id) {
                 throw ValidationException::withMessages([
                     'item' => ['Item does not belong to the resolved folio.'],
                 ]);
             }
 
-            // Already voided?
             if ($item->is_void) {
                 throw ValidationException::withMessages([
                     'item' => ['This folio item has already been voided.'],
                 ]);
             }
 
-            // Mark void via controlled repository method
-            $item = $this->folioItemRepository->voidItem($itemId);
+            // Mark void on the already-locked item — no unscoped re-query
+            $item = $this->folioItemRepository->voidLocked($item);
 
-            // Use the private locked recalculation — same transaction, same lock
+            // Recalculate using the private locked primitive
             $this->recalculateAndPersistLocked($folio);
 
             event(new FolioItemVoided($item));
@@ -381,22 +393,25 @@ class GuestLedgerFolioAggregateService
         ]);
 
         // Audit identity:
-        // - Interactive: HasAuditColumns already set created_by/updated_by
-        //   from auth()->id(), which matches the command actor (verified by
+        // - Interactive: HasAuditColumns set created_by/updated_by from
+        //   auth()->id(), which matches the command actor (verified by
         //   guardActorMatchesAuth). No further action needed.
-        // - System: No authenticated actor should be recorded. If the
-        //   ambient auth context set audit fields, null them out explicitly.
+        // - System: No authenticated actor should be recorded. Nullify
+        //   database columns, then refresh the in-memory model so the
+        //   event and return value carry null audit fields.
         if ($actor === null) {
-            if ($folio->created_by !== null) {
-                \Illuminate\Support\Facades\DB::table('folios')
-                    ->where('id', $folio->id)
-                    ->update(['created_by' => null, 'updated_by' => null]);
-            }
+            \Illuminate\Support\Facades\DB::table('folios')
+                ->where('id', $folio->id)
+                ->update(['created_by' => null, 'updated_by' => null]);
+
+            // Refresh the model so created_by/updated_by are null on the
+            // instance passed to FolioCreated and returned to the caller.
+            $folio = $folio->fresh();
         }
 
         event(new FolioCreated($folio));
 
-        return $folio->fresh();
+        return $folio;
     }
 
     // ─────────────────────────────────────────────────────────────────────

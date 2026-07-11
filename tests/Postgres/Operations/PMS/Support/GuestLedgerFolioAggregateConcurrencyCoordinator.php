@@ -377,20 +377,39 @@ try {
 
     $pvRun = glfARunWorkers($workerConfig, 'post_vs_void', $pvFixture);
 
-    // Final state: count active items and recalculate fresh
+    // Final state: count active items, check individual item void state
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM folio_items WHERE folio_id = :fid AND is_void = false");
     $stmt->execute(['fid' => $pvFolio->id]);
     $activeItems = (int) $stmt->fetchColumn();
 
+    // Verify original target item is void
+    $stmt = $pdo->prepare("SELECT is_void FROM folio_items WHERE id = :iid");
+    $stmt->execute(['iid' => $targetItem->id]);
+    $originalIsVoid = (bool) $stmt->fetchColumn();
+
+    // Verify new item (from worker A) is active
+    $newItemId = $pvRun['worker_a']['item_id'] ?? null;
+    $newItemActive = null;
+    $newItemExists = null;
+    if ($newItemId) {
+        $stmt = $pdo->prepare("SELECT is_void FROM folio_items WHERE id = :iid");
+        $stmt->execute(['iid' => $newItemId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $newItemExists = $row !== false;
+        $newItemActive = $newItemExists && ! ((bool) $row['is_void']);
+    }
+
     $stmt = $pdo->prepare("SELECT
-        COALESCE(SUM(CASE WHEN amount > 0 AND is_void = false THEN amount ELSE 0 END), 0) AS charges,
-        COALESCE(SUM(CASE WHEN amount < 0 AND is_void = false THEN ABS(amount) ELSE 0 END), 0) AS payments
+        COALESCE(SUM(CASE WHEN amount > 0 AND is_void = false THEN amount ELSE 0 END), 0)::numeric(12,2)::text AS charges,
+        COALESCE(SUM(CASE WHEN amount < 0 AND is_void = false THEN ABS(amount) ELSE 0 END), 0)::numeric(12,2)::text AS payments,
+        (COALESCE(SUM(CASE WHEN amount > 0 AND is_void = false THEN amount ELSE 0 END), 0)
+         - COALESCE(SUM(CASE WHEN amount < 0 AND is_void = false THEN ABS(amount) ELSE 0 END), 0))::numeric(12,2)::text AS balance
     FROM folio_items WHERE folio_id = :fid");
     $stmt->execute(['fid' => $pvFolio->id]);
     $fresh = $stmt->fetch(PDO::FETCH_ASSOC);
-    $freshCharges  = number_format((float) $fresh['charges'], 2, '.', '');
-    $freshPayments = number_format((float) $fresh['payments'], 2, '.', '');
-    $freshBalance  = number_format((float) $fresh['charges'] - (float) $fresh['payments'], 2, '.', '');
+    $freshCharges  = $fresh['charges'];
+    $freshPayments = $fresh['payments'];
+    $freshBalance  = $fresh['balance'];
 
     // Read cached totals from folio row
     $stmt = $pdo->prepare("SELECT total_charges, total_payments, balance, status FROM folios WHERE id = :fid");
@@ -401,6 +420,9 @@ try {
         'pid_different' => ($pvRun['worker_a']['pid'] ?? 0) !== ($pvRun['worker_b']['pid'] ?? -1),
         'pg_different' => ($pvRun['worker_a']['pg_backend_pid'] ?? 0) !== ($pvRun['worker_b']['pg_backend_pid'] ?? -1),
         'active_item_count' => $activeItems,
+        'original_item_is_void' => $originalIsVoid,
+        'new_item_exists' => $newItemExists,
+        'new_item_is_active' => $newItemActive,
         'final_charges' => $folioState['total_charges'] ?? '0.00',
         'final_payments' => $folioState['total_payments'] ?? '0.00',
         'final_balance' => $folioState['balance'] ?? '0.00',

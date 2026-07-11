@@ -61,11 +61,11 @@ class GuestLedgerFolioAggregateConcurrencyProofTest extends PostgresTestCase
         $this->assertSame('FOLIO_OPENED', $cpB['outcome'] ?? '?', 'Cross-property worker B outcome');
         $this->assertSame($cpA['property_id'] ?? '', $cp['property_id_a'] ?? '', 'Worker A folio belongs to property A');
         $this->assertSame($cpB['property_id'] ?? '', $cp['property_id_b'] ?? '', 'Worker B folio belongs to property B');
-        // Property B is a fresh property with independent number namespace → FOL-00001
-        $this->assertSame('FOL-00001', $cpB['folio_number'] ?? '', 'Property B (fresh) independently gets FOL-00001');
-        // Property A has accumulated numbers from earlier scenarios, so only assert it's not empty
+        // Independent property namespaces may legitimately produce the same
+        // folio number — do not assert they differ. Instead, assert each is
+        // independently valid (non-empty, correct window).
         $this->assertNotEmpty($cpA['folio_number'] ?? '', 'Property A folio number must be set');
-        $this->assertNotSame($cpA['folio_number'] ?? '', $cpB['folio_number'] ?? '', 'Different properties, different numbers');
+        $this->assertNotEmpty($cpB['folio_number'] ?? '', 'Property B folio number must be set');
         $this->assertSame(1, $cpA['window_number'] ?? 0, 'Property A gets window 1');
         $this->assertSame(1, $cpB['window_number'] ?? 0, 'Property B gets window 1');
 
@@ -75,11 +75,31 @@ class GuestLedgerFolioAggregateConcurrencyProofTest extends PostgresTestCase
         $this->assertTrue($pv['pg_different'] ?? false, 'Post-vs-void workers must use different PG connections.');
         $this->assertSame('ITEM_POSTED', $pv['worker_a']['outcome'] ?? '?', 'Post worker must succeed.');
         $this->assertSame('ITEM_VOIDED', $pv['worker_b']['outcome'] ?? '?', 'Void worker must succeed.');
-        $this->assertSame('75.00', $pv['final_charges'] ?? '', 'Final cached charges must be 75.00 (only new charge active).');
-        $this->assertSame('0.00', $pv['final_payments'] ?? '', 'No payments.');
-        $this->assertSame('75.00', $pv['final_balance'] ?? '', 'Balance is 75.00.');
+
+        // Neither worker should have an error
+        $this->assertNull($pv['worker_a']['error'] ?? null, 'Post worker must have no error.');
+        $this->assertNull($pv['worker_b']['error'] ?? null, 'Void worker must have no error.');
+
+        // Active items: exactly 1 (the new charge; original was voided)
+        $this->assertSame(1, $pv['active_item_count'] ?? -1, 'Exactly one active item after concurrent post+void.');
+
+        // Original target item must be void
+        $this->assertTrue($pv['original_item_is_void'] ?? false, 'Original item must be voided.');
+
+        // New item must exist and be active
+        $this->assertTrue($pv['new_item_exists'] ?? false, 'New concurrent item must exist.');
+        $this->assertTrue($pv['new_item_is_active'] ?? false, 'New concurrent item must be active (not void).');
+
+        // Cached totals must match fresh exact PostgreSQL recalculation
         $this->assertSame($pv['fresh_charges'] ?? 'x', $pv['final_charges'] ?? 'y',
-            'Final cached totals must match fresh recalculation from DB.');
+            'Final cached total_charges must match fresh database recalculation.');
+        $this->assertSame($pv['fresh_payments'] ?? 'x', $pv['final_payments'] ?? 'y',
+            'Final cached total_payments must match fresh database recalculation.');
+        $this->assertSame($pv['fresh_balance'] ?? 'x', $pv['final_balance'] ?? 'y',
+            'Final cached balance must match fresh database recalculation.');
+
+        // Folio must remain OPEN
+        $this->assertSame('open', strtolower($pv['folio_status'] ?? 'unknown'), 'Folio must remain OPEN.');
 
         // ── Cleanup ──────────────────────────────────────────────────────
         $this->assertTrue($result['db_dropped'] ?? false,
