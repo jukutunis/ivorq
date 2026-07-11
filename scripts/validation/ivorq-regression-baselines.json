@@ -136,6 +136,35 @@
       "status": "active"
     },
     {
+      "id": "guest-deposit-refund-ar-transfer-baseline",
+      "description": "GLF-C PostgreSQL tests covering source-proven CASH guest deposits, partial/full/split application, immutable application reversal and unused-deposit void, Payment/Deposit-bounded cash refunds, PMS Guest Ledger AR-transfer requests, Accounting/AR accept/reject/reverse decisions, typed source-linked Folio effects, canonical Deposit/AR totals, authorization, confirmations, property isolation, idempotency, exact decimals, database integrity, twelve real worker concurrency races, and disposable migration UP/DOWN/REAPPLY plus ambiguous legacy Deposit blocking. All 5 exact classes pass cleanly as one batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "GuestDepositLifecycleTest",
+        "GuestRefundLifecycleTest",
+        "GuestArTransferLifecycleTest",
+        "GuestDepositRefundArTransferConcurrencyProofTest",
+        "GuestDepositRefundArTransferMigrationProofTest"
+      ],
+      "expected": {
+        "tests": 20,
+        "assertions": 227,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-11",
+        "branch": "sprint-glf-c-deposit-refund-ar-transfer-lifecycle",
+        "sha": "dfdab6dbc60fd29725c835e58d665f0afcf477a3",
+        "note": "Commit 1 measurement: 5 exact GLF-C classes / 20 tests / 227 assertions / 0 failures / 0 errors. Includes distinct PHP and PostgreSQL worker PID proof for all twelve required races, disposable UP/DOWN/REAPPLY proof, GLF-A/GLF-B identity preservation, exact legacy Deposit blocker, and no accepted debt."
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
       "id": "housekeeping-room-readiness-baseline",
       "description": "Housekeeping room readiness operational tests covering authorization, immutability, projections, transitions, workspace, concurrency, and Front Desk dependency (HK-B1). All 7 test classes pass cleanly as a single batch.",
       "type": "phpunit",
