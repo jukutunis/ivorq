@@ -4,10 +4,13 @@ namespace Tests\Postgres\Operations\PMS;
 
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
+use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
 use Modules\Operations\PMS\Enums\GuestDepositLifecycleStatusEnum;
 use Modules\Operations\PMS\Enums\GuestDepositReversalTypeEnum;
@@ -15,6 +18,7 @@ use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Models\GuestDepositApplication;
 use Modules\Operations\PMS\Models\GuestDepositReversal;
 use Modules\Operations\PMS\Models\GuestDepositTransaction;
+use Modules\Operations\PMS\Models\Reservation;
 use Modules\Operations\PMS\Services\GuestDepositLifecycleService;
 use Modules\Operations\PMS\Services\GuestLedgerDepositEffectService;
 use Spatie\Permission\PermissionRegistrar;
@@ -91,5 +95,64 @@ class GuestDepositLifecycleTest extends PostgresTestCase
         try{$deposit->delete();$this->fail('Delete accepted.');}catch(DomainException){$this->assertTrue(true);}
         foreach([FolioItemTypeEnum::Deposit,FolioItemTypeEnum::DepositReversal,FolioItemTypeEnum::ArTransfer,FolioItemTypeEnum::ArTransferReversal] as $type){try{$this->folioService->postItem($this->glfActor,$folio->id,['item_type'=>$type->value,'description'=>'bypass','quantity'=>'1.00','amount'=>'1.00']);$this->fail('Generic source category accepted.');}catch(\Illuminate\Validation\ValidationException){$this->assertTrue(true);}}
         $sourceItem=FolioItem::where('guest_deposit_application_id',$application->id)->firstOrFail();$this->expectException(\Illuminate\Validation\ValidationException::class);$this->folioService->voidItem($this->glfActor,$sourceItem->id);
+    }
+
+    public function test_deposit_application_reversal_requires_confirmation():void
+    {
+        [$deposit,$folio]=$this->glfCDepositAndFolio('50.00');$application=$this->depositService->applyDeposit($this->glfActor,$deposit->id,$folio->id,'50.00','conf-rev-setup');
+        $reversalCount=GuestDepositReversal::count();$itemCount=FolioItem::count();$status=$deposit->fresh()->lifecycle_status;$totals=$folio->fresh()->total_deposits;
+        try{$this->depositService->reverseDepositApplication($this->glfActor,$application->id,'TEST','conf-rev-1');$this->fail('Confirmation missing.');}catch(DomainException $e){$this->assertStringContainsString('confirmation',$e->getMessage());}
+        $this->assertSame($reversalCount,GuestDepositReversal::count());$this->assertSame($itemCount,FolioItem::count());$this->assertSame($status,$deposit->fresh()->lifecycle_status);$this->assertSame($totals,$folio->fresh()->total_deposits);
+    }
+
+    public function test_duplicate_deposit_application_folio_item_rejected_by_database():void
+    {
+        [$deposit,$folio]=$this->glfCDepositAndFolio('30.00');$application=$this->depositService->applyDeposit($this->glfActor,$deposit->id,$folio->id,'30.00','dup-app-setup');
+        $idx=DB::selectOne("SELECT pg_get_indexdef(i.indexrelid) as def FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE c.relname='folio_items_deposit_app_source_unique'");
+        $this->assertNotNull($idx,'partial unique index folio_items_deposit_app_source_unique missing');$this->assertStringContainsString('guest_deposit_application_id',$idx->def);$this->assertStringContainsString('UNIQUE',strtoupper($idx->def));$this->assertStringContainsString('IS NOT NULL',strtoupper($idx->def));
+        $this->assertSame(1,FolioItem::where('guest_deposit_application_id',$application->id)->count());
+        $dupId=(string)Str::ulid();try{DB::transaction(fn()=>DB::table('folio_items')->insert(['id'=>$dupId,'property_id'=>$folio->property_id,'folio_id'=>$folio->id,'item_type'=>'deposit','description'=>'duplicate','quantity'=>'1.00','amount'=>'-30.00','is_void'=>false,'posted_at'=>now(),'posted_by'=>$this->glfActor->id,'created_by'=>$this->glfActor->id,'source_domain'=>'pms_cashiering','source_type'=>'guest_deposit_application','source_id'=>$application->id,'guest_deposit_application_id'=>$application->id,'guest_deposit_reversal_id'=>null,'guest_ar_transfer_decision_id'=>null,'guest_payment_allocation_id'=>null,'guest_payment_reversal_id'=>null,'reverses_folio_item_id'=>null,'created_at'=>now(),'updated_at'=>now()]));$this->fail('Duplicate insert accepted.');}catch(QueryException $e){$code=(string)$e->getCode();$this->assertTrue(str_contains($code,'23505')||str_contains($code,'P0001'),"Expected 23505 or P0001, got: {$code}");}
+        $this->assertSame(1,FolioItem::where('guest_deposit_application_id',$application->id)->count());$this->assertSame('30.00',(string)$application->fresh()->amount);$this->assertNotNull(FolioItem::where('guest_deposit_application_id',$application->id)->first());
+    }
+
+    public function test_duplicate_deposit_reversal_folio_item_rejected_by_database():void
+    {
+        [$deposit,$folio]=$this->glfCDepositAndFolio('30.00');$application=$this->depositService->applyDeposit($this->glfActor,$deposit->id,$folio->id,'30.00','dup-rev-setup');
+        $this->confirmGlfC(GuestDepositLifecycleService::REVERSE_INTENT);$reversal=$this->depositService->reverseDepositApplication($this->glfActor,$application->id,'TEST','dup-rev-reverse');
+        $idx=DB::selectOne("SELECT pg_get_indexdef(i.indexrelid) as def FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE c.relname='folio_items_deposit_reversal_source_unique'");
+        $this->assertNotNull($idx,'partial unique index folio_items_deposit_reversal_source_unique missing');$this->assertStringContainsString('guest_deposit_reversal_id',$idx->def);$this->assertStringContainsString('UNIQUE',strtoupper($idx->def));$this->assertStringContainsString('IS NOT NULL',strtoupper($idx->def));
+        $this->assertSame(1,FolioItem::where('guest_deposit_reversal_id',$reversal->id)->count());$firstRev=FolioItem::where('guest_deposit_reversal_id',$reversal->id)->first();
+        $dupId=(string)Str::ulid();try{DB::transaction(fn()=>DB::table('folio_items')->insert(['id'=>$dupId,'property_id'=>$folio->property_id,'folio_id'=>$folio->id,'item_type'=>'deposit_reversal','description'=>'duplicate-rev','quantity'=>'1.00','amount'=>'30.00','is_void'=>false,'posted_at'=>now(),'posted_by'=>$this->glfActor->id,'created_by'=>$this->glfActor->id,'source_domain'=>'pms_cashiering','source_type'=>'guest_deposit_application_reversal','source_id'=>$reversal->id,'guest_deposit_application_id'=>$application->id,'guest_deposit_reversal_id'=>$reversal->id,'guest_ar_transfer_decision_id'=>null,'guest_payment_allocation_id'=>null,'guest_payment_reversal_id'=>null,'reverses_folio_item_id'=>$firstRev->reverses_folio_item_id,'created_at'=>now(),'updated_at'=>now()]));$this->fail('Duplicate reversal insert accepted.');}catch(QueryException $e){$code=(string)$e->getCode();$this->assertTrue(str_contains($code,'23505')||str_contains($code,'P0001'),"Expected 23505 or P0001, got: {$code}");}
+        $this->assertSame(1,FolioItem::where('guest_deposit_reversal_id',$reversal->id)->count());$this->assertSame('30.00',(string)$reversal->fresh()->amount);
+    }
+
+    public function test_cross_property_deposit_access_is_non_disclosing():void
+    {
+        $unknownId=(string)Str::ulid();$reservation=$this->makeGlfReservation();$session=$this->glfCCashierSession();
+        $guestB=$this->makeGlfGuest($this->glfOtherProperty);$reservationB=$this->makeGlfReservation($this->glfOtherProperty,$guestB);$folioB=$this->makeGlfFolio($reservationB,$guestB,['currency'=>'EUR','folio_number'=>'CPB-FOL']);
+        $sessionB=new CashierSession();$sessionB->forceFill(['property_id'=>$this->glfOtherProperty->id,'cashier_user_id'=>$this->glfActor->id,'status'=>'OPEN','opened_at'=>now(),'opened_by'=>$this->glfActor->id])->save();
+        [$deposit,$folio]=$this->glfCDepositAndFolio();$sessionA=$this->glfCCashierSession();$application=$this->depositService->applyDeposit($this->glfActor,$deposit->id,$folio->id,'40.00','cp-dep-setup');
+        // 1. Property-B CashierSession during recording
+        try{$this->depositService->recordCashDeposit($this->glfActor,$reservation->id,$sessionB->id,'10.00','cp-session');$this->fail('Cross-property session accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        try{$this->depositService->recordCashDeposit($this->glfActor,$reservation->id,$unknownId,'10.00','cp-unknown-1');$this->fail('Unknown session accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        $this->assertSame(0,GuestDepositTransaction::where('recording_idempotency_key','like','cp-%')->count());
+        // 2. Property-B Deposit during application
+        $depositB=new GuestDepositTransaction();$depositB->forceFill(['property_id'=>$this->glfOtherProperty->id,'deposit_number'=>'CPB-DEP','reservation_id'=>$reservationB->id,'guest_id'=>$guestB->id,'currency'=>'EUR','amount'=>'50.00','tender_type'=>'CASH','cashier_session_id'=>$sessionB->id,'lifecycle_status'=>'RECORDED','recording_idempotency_key'=>'cp-dep-b','recorded_at'=>now(),'recorded_by'=>$this->glfActor->id,'source_snapshot'=>json_encode([]),'created_by'=>$this->glfActor->id,'updated_by'=>$this->glfActor->id])->save();
+        try{$this->depositService->applyDeposit($this->glfActor,$depositB->id,$folio->id,'10.00','cp-dep-app');$this->fail('Cross-property deposit accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        try{$this->depositService->applyDeposit($this->glfActor,$unknownId,$folio->id,'10.00','cp-unknown-2');$this->fail('Unknown deposit accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        // 3. Property-B Folio during application
+        try{$this->depositService->applyDeposit($this->glfActor,$deposit->id,$folioB->id,'10.00','cp-folio-app');$this->fail('Cross-property folio accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        try{$this->depositService->applyDeposit($this->glfActor,$deposit->id,$unknownId,'10.00','cp-unknown-3');$this->fail('Unknown folio accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        $this->assertSame(1,GuestDepositApplication::count());
+        // 4. Property-B DepositApplication during reversal
+        $appBId=(string)Str::ulid();DB::table('guest_deposit_applications')->insert(['id'=>$appBId,'property_id'=>$this->glfOtherProperty->id,'guest_deposit_transaction_id'=>$depositB->id,'folio_id'=>$folioB->id,'amount'=>'10.00','application_idempotency_key'=>'cp-app-b','applied_at'=>now(),'applied_by'=>$this->glfActor->id,'source_snapshot'=>'{}','created_at'=>now()]);
+        app(\Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService::class)->confirm($this->glfActor,GuestDepositLifecycleService::REVERSE_INTENT,'password',$this->glfCompany->id,$this->glfProperty->id);
+        try{$this->depositService->reverseDepositApplication($this->glfActor,$appBId,'TEST','cp-app-rev');$this->fail('Cross-property application accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        try{$this->depositService->reverseDepositApplication($this->glfActor,$unknownId,'TEST','cp-unknown-4');$this->fail('Unknown application accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        // 5. Property-B Deposit during applyDeposit (no confirmation gate) — cross-property deposit is non-disclosing
+        try{$this->depositService->applyDeposit($this->glfActor,$depositB->id,$folio->id,'10.00','cp-dep-app-b');$this->fail('Cross-property deposit application accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        try{$this->depositService->applyDeposit($this->glfActor,$unknownId,$folio->id,'10.00','cp-dep-unknown-b');$this->fail('Unknown deposit application accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        // Verify no mutation in either property
+        $this->assertSame(1,GuestDepositTransaction::where('property_id',$this->glfProperty->id)->count());$this->assertNotNull($depositB->fresh());$this->assertNotNull($folioB->fresh());$this->assertNotNull(GuestDepositApplication::find($application->id));
     }
 }

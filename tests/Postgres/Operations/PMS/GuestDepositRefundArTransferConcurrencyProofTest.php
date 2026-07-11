@@ -12,7 +12,7 @@ class GuestDepositRefundArTransferConcurrencyProofTest extends TestCase
         $result=$this->runCoordinator('glfc'.strtolower(Str::random(6)));
         $this->assertTrue($result['db_created']??false);$this->assertTrue($result['migrations_ok']??false);$this->assertSame('ivorq_testing',$result['protected_database']??null);
         $this->assertNull($result['error']??null,'Coordinator error: '.($result['error']??'none'));
-        foreach(['deposit_recording_replay','deposit_number_safety','deposit_application_replay','deposit_over_application','deposit_split','deposit_double_reversal','deposit_application_vs_refund','payment_allocation_vs_refund','ar_accept_reject','ar_double_accept','ar_accept_vs_deposit','ar_double_reversal']as$name)$this->assertWorkers($result[$name]??[],$name);
+        foreach(['deposit_recording_replay','deposit_number_safety','deposit_application_replay','deposit_over_application','deposit_split','deposit_double_reversal','deposit_application_vs_refund','payment_allocation_vs_refund','ar_accept_reject','ar_double_accept','ar_accept_vs_deposit','ar_double_reversal','duplicate_source_effect']as$name)$this->assertWorkers($result[$name]??[],$name);
         $this->assertSame(['DEPOSIT_RECORDED','DEPOSIT_RECORDED'],$result['deposit_recording_replay']['outcomes']);$this->assertSame(1,$result['deposit_recording_replay']['rows']);$this->assertSame($result['deposit_recording_replay']['worker_a']['id'],$result['deposit_recording_replay']['worker_b']['id']);
         $this->assertSame(2,$result['deposit_number_safety']['rows']);$this->assertSame(2,$result['deposit_number_safety']['numbers']);
         $this->assertSame(1,$result['deposit_application_replay']['applications']);$this->assertSame(1,$result['deposit_application_replay']['items']);
@@ -23,6 +23,7 @@ class GuestDepositRefundArTransferConcurrencyProofTest extends TestCase
         $this->assertSame(1,$result['ar_accept_reject']['terminal']);$this->assertContains($result['ar_accept_reject']['items'],[0,1]);
         $this->assertSame(1,$result['ar_double_accept']['terminal']);$this->assertSame(1,$result['ar_double_accept']['items']);
         $this->assertContains('DEPOSIT_APPLIED',$result['ar_accept_vs_deposit']['outcomes']);$this->assertSame(1,$result['ar_double_reversal']['reversals']);$this->assertSame(1,$result['ar_double_reversal']['items']);
+        $this->assertWorkers($result['duplicate_source_effect']??[],'duplicate_source_effect');$se=$result['duplicate_source_effect'];$this->assertContains('FOLIO_ITEM_INSERTED',$se['outcomes']);$this->assertContains('DUPLICATE_KEY_VIOLATION',$se['outcomes']);$this->assertSame(1,$se['items']);$this->assertSame(1,$se['request_ok']);$this->assertSame(1,$se['decision_ok']);
         $this->assertTrue($result['db_dropped']??false,'Disposable database cleanup failed: '.($result['drop_error']??'none'));
     }
     private function assertWorkers(array $s,string $name):void{$this->assertTrue($s['pid_different']??false,"{$name}: PHP PIDs must differ");$this->assertTrue($s['pg_different']??false,"{$name}: PG PIDs must differ");$this->assertNull($s['worker_a']['hidden_error']??null,"{$name} A: ".json_encode($s));$this->assertNull($s['worker_b']['hidden_error']??null,"{$name} B: ".json_encode($s));}

@@ -4,11 +4,16 @@ namespace Tests\Postgres\Operations\PMS;
 
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\PMS\Enums\GuestRefundSourceTypeEnum;
 use Modules\Operations\PMS\Models\FolioItem;
+use Modules\Operations\PMS\Models\GuestDepositTransaction;
+use Modules\Operations\PMS\Models\GuestPaymentTransaction;
 use Modules\Operations\PMS\Models\GuestRefundTransaction;
 use Modules\Operations\PMS\Services\GuestPaymentLifecycleService;
 use Modules\Operations\PMS\Services\GuestRefundLifecycleService;
@@ -66,5 +71,24 @@ class GuestRefundLifecycleTest extends PostgresTestCase
         try{$refund->delete();$this->fail('Refund deletion accepted.');}catch(DomainException){$this->assertTrue(true);}
         try{DB::transaction(fn()=>DB::table('guest_refund_transactions')->insert(['id'=>(string)\Illuminate\Support\Str::ulid(),'property_id'=>$this->glfProperty->id,'refund_number'=>'BAD-XOR','reservation_id'=>$payment->reservation_id,'guest_id'=>$payment->guest_id,'currency'=>'USD','amount'=>'1.00','tender_type'=>'CASH','cashier_session_id'=>$session->id,'refund_source_type'=>'GUEST_PAYMENT','guest_payment_transaction_id'=>$payment->id,'guest_deposit_transaction_id'=>$payment->id,'reason_code'=>'BAD','refund_idempotency_key'=>'bad-xor','refunded_at'=>now(),'refunded_by'=>$this->glfActor->id,'source_snapshot'=>'{}','created_at'=>now(),'created_by'=>$this->glfActor->id]));$this->fail('XOR bypass accepted.');}catch(QueryException){$this->assertTrue(true);}
         $this->assertSame(1,GuestRefundTransaction::count());
+    }
+
+    public function test_cross_property_refund_access_is_non_disclosing():void
+    {
+        $unknownId=(string)Str::ulid();[$payment]=$this->glfCPayment('100.00');$session=$this->glfCCashierSession();$this->confirmGlfC(GuestRefundLifecycleService::CONFIRMATION_INTENT);
+        $guestB=$this->makeGlfGuest($this->glfOtherProperty);$reservationB=$this->makeGlfReservation($this->glfOtherProperty,$guestB);
+        $sBId=(string)Str::ulid();DB::table('cashier_sessions')->insert(['id'=>$sBId,'property_id'=>$this->glfOtherProperty->id,'cashier_user_id'=>$this->glfActor->id,'status'=>'OPEN','opened_at'=>now(),'opened_by'=>$this->glfActor->id,'created_at'=>now(),'updated_at'=>now()]);
+        $pBId=(string)Str::ulid();DB::table('guest_payment_transactions')->insert(['id'=>$pBId,'property_id'=>$this->glfOtherProperty->id,'payment_number'=>'CPB-PAY','reservation_id'=>$reservationB->id,'guest_id'=>$guestB->id,'currency'=>'EUR','amount'=>'50.00','tender_type'=>'CASH','cashier_session_id'=>$sBId,'lifecycle_status'=>'RECORDED','recording_idempotency_key'=>'cp-ref-pay-b','recorded_at'=>now(),'recorded_by'=>$this->glfActor->id,'source_snapshot'=>'{}','created_by'=>$this->glfActor->id,'updated_by'=>$this->glfActor->id,'created_at'=>now(),'updated_at'=>now()]);
+        $dBId=(string)Str::ulid();DB::table('guest_deposit_transactions')->insert(['id'=>$dBId,'property_id'=>$this->glfOtherProperty->id,'deposit_number'=>'CPB-DEP-REF','reservation_id'=>$reservationB->id,'guest_id'=>$guestB->id,'currency'=>'EUR','amount'=>'50.00','tender_type'=>'CASH','cashier_session_id'=>$sBId,'lifecycle_status'=>'RECORDED','recording_idempotency_key'=>'cp-ref-dep-b','recorded_at'=>now(),'recorded_by'=>$this->glfActor->id,'source_snapshot'=>'{}','created_by'=>$this->glfActor->id,'updated_by'=>$this->glfActor->id,'created_at'=>now(),'updated_at'=>now()]);
+        // 1. Property-B GuestPayment source
+        try{$this->refundService->recordCashRefund($this->glfActor,'GUEST_PAYMENT',$pBId,$session->id,'10.00','TEST','cp-ref-1');$this->fail('Cross-property payment accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        try{$this->refundService->recordCashRefund($this->glfActor,'GUEST_PAYMENT',$unknownId,$session->id,'10.00','TEST','cp-ref-unknown-1');$this->fail('Unknown payment accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        // 2. Property-B GuestDeposit source
+        try{$this->refundService->recordCashRefund($this->glfActor,'GUEST_DEPOSIT',$dBId,$session->id,'10.00','TEST','cp-ref-2');$this->fail('Cross-property deposit accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        try{$this->refundService->recordCashRefund($this->glfActor,'GUEST_DEPOSIT',$unknownId,$session->id,'10.00','TEST','cp-ref-unknown-2');$this->fail('Unknown deposit accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        // 3. Property-B CashierSession
+        try{$this->refundService->recordCashRefund($this->glfActor,'GUEST_PAYMENT',$payment->id,$sBId,'10.00','TEST','cp-ref-3');$this->fail('Cross-property session accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        try{$this->refundService->recordCashRefund($this->glfActor,'GUEST_PAYMENT',$payment->id,$unknownId,'10.00','TEST','cp-ref-unknown-3');$this->fail('Unknown session accepted.');}catch(ModelNotFoundException $e){$this->assertNotNull($e);}
+        $this->assertSame(0,GuestRefundTransaction::where('refund_idempotency_key','like','cp-ref-%')->count());$this->assertNotNull(DB::table('guest_payment_transactions')->where('id',$pBId)->first());$this->assertNotNull(DB::table('guest_deposit_transactions')->where('id',$dBId)->first());
     }
 }
