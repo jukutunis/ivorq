@@ -83,26 +83,27 @@
     },
     {
       "id": "guest-ledger-folio-aggregate-baseline",
-      "description": "PMS Guest Ledger folio aggregate operational tests covering aggregate opening, idempotency, property isolation, folio item integrity, cached totals, decimal safety, write boundary, and isolated concurrency proof. GLF-A establishes folio aggregate identity and integrity only. All 2 test classes pass cleanly as a single batch.",
+      "description": "PMS Guest Ledger folio aggregate operational tests covering aggregate opening, idempotency, property isolation, folio item integrity, cached totals, decimal safety, write boundary, non-disclosing scoped void, and isolated concurrency proof plus migration up/down/up proof on a disposable database. GLF-A establishes folio aggregate identity and integrity only. All 3 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
       "execution_mode": "batch",
       "classes": [
         "GuestLedgerFolioAggregateTest",
-        "GuestLedgerFolioAggregateConcurrencyProofTest"
+        "GuestLedgerFolioAggregateConcurrencyProofTest",
+        "GuestLedgerFolioAggregateMigrationProofTest"
       ],
       "expected": {
-        "tests": 42,
-        "assertions": 133,
+        "tests": 43,
+        "assertions": 186,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-11",
         "branch": "sprint-glf-a-guest-ledger-folio-aggregate-hardening",
-        "sha": "d085a683412efb408e8f152c7a54530bd48f530b",
-        "note": "DeepSeek final correction measurement: 2 exact classes / 42 tests / 133 assertions / 0 failures / 0 errors. Controlled void lock order corrected (folio-first, property-scoped, no unscoped re-query). Non-disclosing cross-property void via findIdentityForProperty. System-opening audit event model refreshed before dispatch. Real malicious-input proof with all server-owned fields actually submitted. Post-vs-void concurrency with exact PostgreSQL numeric proof. Migration up/down/up proven on disposable database. Controller PostFolioItemRequest prohibits property_id, created_by, and posted_at. Metadata-only stamp."
+        "sha": "d06f92af41bc2c6730e42fdf44a828fdcd0b6d58",
+        "note": "DeepSeek governance closure measurement: 3 exact classes / 43 tests / 186 assertions / 0 failures / 0 errors. Repository bypass methods (unscoped lockForUpdate, voidItem) removed. Real NotFound-vs-NotFound non-disclosure proof. Migration up/down/up with per-item DOWN (columns, constraints, FK, index via pg_indexes) and per-item REAPPLY verification. Metadata-only stamp."
       },
       "accepted_debt": [],
       "status": "active"
