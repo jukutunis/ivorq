@@ -62,6 +62,7 @@ class PermissionSeeder extends Seeder
             'pms.cashiering.guest-deposit.reverse-application',
             'pms.cashiering.guest-refund.record',
             'pms.guest-ledger.ar-transfer.request',
+            'pms.guest-ledger.settlement-readiness.view',
             'accounting.ar.guest-transfer.accept',
             'accounting.ar.guest-transfer.reject',
             'accounting.ar.guest-transfer.reverse',

@@ -165,6 +165,33 @@
       "status": "active"
     },
     {
+      "id": "guest-ledger-settlement-readiness-baseline",
+      "description": "PMS Guest Ledger settlement readiness projection tests covering output contract, status precedence, multi-folio evaluation, fresh-vs-cached totals, payment/deposit/refund/AR transfer resolution, external evidence ports, authorization, property isolation, zero-write proof, BCMath precision, and real worker concurrency proof. GLF-D provides a read-only authoritative checkout settlement readiness projection per ADR-088. All 3 test classes pass cleanly as a single batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "GuestLedgerCheckoutSettlementReadinessProjectionTest",
+        "GuestLedgerCheckoutSettlementReadinessSourceIntegrityTest",
+        "GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest"
+      ],
+      "expected": {
+        "tests": 42,
+        "assertions": 80,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-12",
+        "branch": "sprint-glf-d-checkout-settlement-readiness-projection",
+        "sha": "0797337341e1da4e5b7ca65884ccba1ad7b9a0c0",
+        "note": "GLF-D Commit 1 measurement: 3 exact classes / 42 tests / 80 assertions / 0 failures / 0 errors. Status precedence proven (EVIDENCE_UNAVAILABLE > REVIEW_REQUIRED > BLOCKED > READY). Multi-folio evaluation with independent zero-balance requirement. Fresh vs cached source-derived totals with mismatch detection. Payment/deposit/refund/AR transfer source-proven resolution. Three external evidence ports with unavailable adapters (posting-completeness, settlement-hold, completed-settlement-conflict). Zero-write proof with row-count assertions. BCMath scale-2 throughout. REPEATABLE READ READ ONLY transaction isolation. GLF-A (43/186), GLF-B (53/287), GLF-C (30/326) all preserved."
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
       "id": "housekeeping-room-readiness-baseline",
       "description": "Housekeeping room readiness operational tests covering authorization, immutability, projections, transitions, workspace, concurrency, and Front Desk dependency (HK-B1). All 7 test classes pass cleanly as a single batch.",
       "type": "phpunit",

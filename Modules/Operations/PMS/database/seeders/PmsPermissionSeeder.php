@@ -43,6 +43,7 @@ class PmsPermissionSeeder extends Seeder
             'pms.cashiering.guest-deposit.reverse-application',
             'pms.cashiering.guest-refund.record',
             'pms.guest-ledger.ar-transfer.request',
+            'pms.guest-ledger.settlement-readiness.view',
 
             // Rate Plan
             'pms.rate-plan.view',
