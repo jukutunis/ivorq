@@ -110,7 +110,7 @@
     },
     {
       "id": "pms-cashiering-guest-payment-baseline",
-      "description": "PMS Cashiering guest payment operational tests covering cash payment intake, allocation, immutable void and allocation reversal evidence, source-linked folio effects, authorization, property isolation, idempotency, migration source-proof, and concurrency evidence. GLF-B establishes guest payment allocation and immutable reversal foundation only. All 3 test classes pass cleanly as a single batch.",
+      "description": "PMS Cashiering guest payment operational tests covering cash payment intake, allocation, immutable void and allocation reversal evidence, typed source-linked folio effects, authorization, property isolation, idempotency, real worker PostgreSQL concurrency, migration UP/DOWN/REAPPLY proof, and ambiguous legacy payment/deposit blocking. GLF-B establishes guest payment allocation and immutable reversal foundation only. All 3 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -121,16 +121,16 @@
         "GuestPaymentMigrationProofTest"
       ],
       "expected": {
-        "tests": 16,
-        "assertions": 109,
+        "tests": 21,
+        "assertions": 192,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-11",
         "branch": "sprint-glf-b-guest-payment-allocation-reversal",
-        "sha": "534b99a8b95e56617cce449f72bbc2c662cfad4f",
-        "note": "GLF-B exact-class measurement: 3 classes / 16 tests / 109 assertions / 0 failures / 0 errors. GuestPaymentLifecycleTest, GuestPaymentConcurrencyProofTest, and GuestPaymentMigrationProofTest prove guest payment intake, allocation, immutable void/reversal evidence, source-linked folio effects, migration source-proof, property isolation, idempotency, and bounded concurrency evidence."
+        "sha": "1124fa12a893bc153cab4f273e11ccc104295ef8",
+        "note": "GLF-B corrected exact-class measurement: 3 classes / 21 tests / 192 assertions / 0 failures / 0 errors. GuestPaymentConcurrencyProofTest now uses isolated PHP worker processes, distinct PostgreSQL backend PIDs, synchronization barriers, and disposable database cleanup for recording replay, payment-number safety, allocation replay, over-allocation, split allocation, double reversal, and allocation-versus-reversal races. GuestPaymentMigrationProofTest now proves disposable UP/DOWN/REAPPLY and ambiguous legacy payment/deposit blocking. GuestPaymentLifecycleTest proves strict decimal handling, typed FolioItem source integrity, immutable allocation/source evidence, authorization, idempotency conflicts, and no General Cashier or downstream financial mutation."
       },
       "accepted_debt": [],
       "status": "active"

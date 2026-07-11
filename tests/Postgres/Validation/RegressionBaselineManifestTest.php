@@ -184,6 +184,21 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
+    public function test_pms_cashiering_guest_payment_baseline_counts_are_corrected(): void
+    {
+        $baseline = $this->findBaseline('pms-cashiering-guest-payment-baseline');
+        $this->assertNotNull($baseline, 'pms-cashiering-guest-payment-baseline must exist.');
+        $this->assertEquals(21, $baseline->expected->tests ?? null);
+        $this->assertEquals(192, $baseline->expected->assertions ?? null);
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertSame([], $baseline->accepted_debt ?? null);
+        $this->assertEquals(
+            '1124fa12a893bc153cab4f273e11ccc104295ef8',
+            $baseline->provenance->sha ?? null
+        );
+    }
+
     public function test_banking_master_candidate_excludes_migration_tests(): void
     {
         $candidate = $this->findBaseline('banking-master-baseline-v2-candidate');
