@@ -588,6 +588,109 @@ class GuestLedgerCheckoutSettlementReadinessSourceIntegrityTest extends Postgres
         $this->assertMatchesRegularExpression('/^-?[0-9]+\.[0-9]{2}$/', $balance);
     }
 
+    // ── Fingerprint mutation tests ───────────────────────────────────────────
+
+    public function test_fingerprint_changes_when_payment_lifecycle_changes(): void
+    {
+        $payment = new GuestPaymentTransaction();
+        $payment->forceFill([
+            'property_id' => $this->property->id, 'payment_number' => 'GPM-FP-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '100.00',
+            'cashier_session_id' => $this->cashierSession->id,
+            'tender_type' => 'CASH', 'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'fp-test-' . uniqid(),
+            'recorded_at' => now(), 'recorded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+        ])->save();
+
+        $fp1 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        $payment->forceFill(['lifecycle_status' => GuestPaymentLifecycleStatusEnum::FullyAllocated->value])->save();
+        $fp2 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        $this->assertNotEquals($fp1, $fp2, 'Fingerprint must change when payment lifecycle changes.');
+    }
+
+    public function test_fingerprint_changes_when_folio_item_source_linkage_changes(): void
+    {
+        $item = new FolioItem();
+        $item->forceFill([
+            'property_id' => $this->property->id, 'folio_id' => $this->folio->id,
+            'item_type' => FolioItemTypeEnum::RoomCharge, 'description' => 'Room',
+            'quantity' => '1.00', 'amount' => '100.00', 'is_void' => false,
+            'posted_at' => now(), 'posted_by' => $this->actor->id, 'created_by' => $this->actor->id,
+        ])->save();
+        $this->folio->forceFill(['total_charges' => '100.00', 'balance' => '100.00'])->save();
+
+        $fp1 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        // Change the item amount
+        $item->forceFill(['amount' => '200.00'])->save();
+        $this->folio->forceFill(['total_charges' => '200.00', 'balance' => '200.00'])->save();
+
+        $fp2 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        $this->assertNotEquals($fp1, $fp2, 'Fingerprint must change when FolioItem amount changes.');
+    }
+
+    public function test_fingerprint_changes_when_deposit_lifecycle_changes(): void
+    {
+        $deposit = new GuestDepositTransaction();
+        $deposit->forceFill([
+            'property_id' => $this->property->id, 'deposit_number' => 'GDP-FP-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '200.00',
+            'cashier_session_id' => $this->cashierSession->id,
+            'tender_type' => 'CASH', 'lifecycle_status' => GuestDepositLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'fp-dep-' . uniqid(),
+            'recorded_at' => now(), 'recorded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+        ])->save();
+
+        $fp1 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        $deposit->forceFill(['lifecycle_status' => GuestDepositLifecycleStatusEnum::Resolved->value])->save();
+        $fp2 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        $this->assertNotEquals($fp1, $fp2, 'Fingerprint must change when deposit lifecycle changes.');
+    }
+
+    public function test_fingerprint_changes_when_ar_decision_changes(): void
+    {
+        $ar = new GuestArTransferRequest();
+        $ar->forceFill([
+            'property_id' => $this->property->id, 'transfer_number' => 'GAR-FP-' . uniqid(),
+            'folio_id' => $this->folio->id, 'reservation_id' => $this->reservation->id,
+            'guest_id' => $this->guest->id, 'currency' => 'USD', 'amount' => '50.00',
+            'lifecycle_status' => GuestArTransferStatusEnum::Requested->value,
+            'request_reason_code' => 'TEST', 'request_idempotency_key' => 'fp-ar-' . uniqid(),
+            'requested_at' => now(), 'requested_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+        ])->save();
+
+        $fp1 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        $ar->forceFill(['lifecycle_status' => GuestArTransferStatusEnum::Rejected->value])->save();
+        $fp2 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        $this->assertNotEquals($fp1, $fp2, 'Fingerprint must change when AR decision changes.');
+    }
+
+    public function test_evaluated_at_does_not_affect_fingerprint(): void
+    {
+        $r1 = $this->service->project($this->actor, $this->stay->id);
+        usleep(100000);
+        $r2 = $this->service->project($this->actor, $this->stay->id);
+
+        // Fingerprint must be STABLE for unchanged source facts — evaluated_at is not a fingerprint input
+        $this->assertEquals($r1->source_fingerprint, $r2->source_fingerprint,
+            'Fingerprint must be stable for unchanged source facts — evaluated_at must not affect it.');
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private function bindClearPorts(): void
