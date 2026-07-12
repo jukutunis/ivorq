@@ -178,15 +178,15 @@
       ],
       "expected": {
         "tests": 60,
-        "assertions": 164,
+        "assertions": 253,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-13",
         "branch": "sprint-glf-d-checkout-settlement-readiness-projection",
-        "sha": "c17701ab8160af76ab52a52abc9e82b969cfcf0e",
-        "note": "GLF-D final closure: 3 exact classes / 60 tests / 164 assertions / 0 failures / 0 errors. Real worker concurrency proof with credential-safe proc_open env (DB creds never in command-line JSON). Five spawnWorkers scenarios (parallel projection, payment race, deposit race, AR race, cross-property) with distinct PHP/PG PIDs. Complete fingerprint mutation matrix (payment alloc amount, refund amount, refund source FK/type, external port status, port stable source identifier). Worker binds SensitiveActionConfirmationService pass-through and CLEAR test ports. GLF-A/B/C and all active baselines preserved."
+        "sha": "7ebe5eb7063e2ca04ee7c36ad583ea9496c97c37",
+        "note": "GLF-D deterministic snapshot closure: 3 exact classes / 60 tests / 253 assertions / 0 failures / 0 errors. Deterministic two-phase barrier replaces usleep: blocking PostingCompleteness port writes snapshot-established inside REPEATABLE READ transaction after all financial-source reads; mutator waits, executes, writes mutation-committed. Pre/post projection oracles for every race prove worker projection equals exact pre-mutation result and rejects mixed-source evidence. Zero-write proof over 12 source tables. Worker exit-code integrity. Five spawnWorkers scenarios with distinct PHP/PG PIDs. Credential-safe proc_open env. All active baselines preserved."
       },
       "accepted_debt": [],
       "status": "active"
