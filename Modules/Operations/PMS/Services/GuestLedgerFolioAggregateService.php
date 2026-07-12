@@ -38,9 +38,10 @@ class GuestLedgerFolioAggregateService
     private const QUANTITY_MAX_INTEGER_DIGITS = 6; // decimal(8,2)
 
     public function __construct(
-        private FolioRepository        $folioRepository,
-        private FolioItemRepository    $folioItemRepository,
-        private CurrentPropertyService $currentProperty,
+        private FolioRepository             $folioRepository,
+        private FolioItemRepository         $folioItemRepository,
+        private CurrentPropertyService      $currentProperty,
+        private GuestLedgerFolioTotalsCalculator $calculator,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────
@@ -368,67 +369,14 @@ class GuestLedgerFolioAggregateService
         }
         $items = $this->folioItemRepository->forFolio($folio->id, includeVoided: false);
 
-        $totalCharges  = '0';
-        $totalPayments = '0';
-        $totalDeposits = '0';
-        $totalArTransfers = '0';
-
-        foreach ($items as $item) {
-            $amt = (string) $item->amount;
-
-            if ($item->item_type === FolioItemTypeEnum::Payment && bccomp($amt, '0.00', 2) < 0) {
-                $totalPayments = bcadd($totalPayments, bcsub('0.00', $amt, 2), 2);
-                continue;
-            }
-
-            if ($item->item_type === FolioItemTypeEnum::PaymentReversal && bccomp($amt, '0.00', 2) > 0) {
-                $totalPayments = bcsub($totalPayments, $amt, 2);
-                continue;
-            }
-
-            if ($item->item_type === FolioItemTypeEnum::Deposit && bccomp($amt, '0.00', 2) < 0) {
-                $totalDeposits = bcadd($totalDeposits, bcsub('0.00', $amt, 2), 2);
-                continue;
-            }
-
-            if ($item->item_type === FolioItemTypeEnum::DepositReversal && bccomp($amt, '0.00', 2) > 0) {
-                $totalDeposits = bcsub($totalDeposits, $amt, 2);
-                continue;
-            }
-
-            if ($item->item_type === FolioItemTypeEnum::ArTransfer && bccomp($amt, '0.00', 2) < 0) {
-                $totalArTransfers = bcadd($totalArTransfers, bcsub('0.00', $amt, 2), 2);
-                continue;
-            }
-
-            if ($item->item_type === FolioItemTypeEnum::ArTransferReversal && bccomp($amt, '0.00', 2) > 0) {
-                $totalArTransfers = bcsub($totalArTransfers, $amt, 2);
-                continue;
-            }
-
-            if (in_array($item->item_type, [
-                FolioItemTypeEnum::RoomCharge,
-                FolioItemTypeEnum::Tax,
-                FolioItemTypeEnum::ServiceCharge,
-                FolioItemTypeEnum::Adjustment,
-                FolioItemTypeEnum::Other,
-            ], true)) {
-                $totalCharges = bcadd($totalCharges, $amt, 2);
-            }
-        }
-
-        $balance = bcsub(
-            bcsub(bcsub($totalCharges, $totalPayments, 2), $totalDeposits, 2),
-            $totalArTransfers,
-            2
-        );
+        $totals = $this->calculator->calculate($items);
 
         $folio->forceFill([
-            'total_charges'  => $totalCharges,
-            'total_payments' => $totalPayments,
-            'total_deposits' => $totalDeposits,
-            'total_ar_transfers' => $totalArTransfers,
-            'balance'        => $balance,
+            'total_charges'      => $totals['total_charges'],
+            'total_payments'     => $totals['total_payments'],
+            'total_deposits'     => $totals['total_deposits'],
+            'total_ar_transfers' => $totals['total_ar_transfers'],
+            'balance'            => $totals['balance'],
         ])->save();
     }
 

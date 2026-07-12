@@ -2,7 +2,7 @@
 
 namespace Tests\Postgres\Operations\PMS;
 
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
@@ -44,7 +44,7 @@ use Tests\PostgresTestCase;
 
 class GuestLedgerCheckoutSettlementReadinessSourceIntegrityTest extends PostgresTestCase
 {
-    use RefreshDatabase;
+    use DatabaseMigrations;
     use CreatesGuestLedgerFolioData;
 
     private GuestLedgerCheckoutSettlementReadinessProjectionService $service;

@@ -36,110 +36,76 @@ use Shared\Exceptions\NotFoundException;
 use Shared\Services\CurrentPropertyService;
 use Throwable;
 
-/**
- * PMS Guest Ledger — Authoritative Checkout Settlement Readiness Projection (GLF-D).
- *
- * Read-only, zero-mutation projection that evaluates guest ledger settlement
- * readiness for a single FrontDeskStay. Executes in a single REPEATABLE READ
- * READ ONLY PostgreSQL transaction.
- *
- * ADR-088 defines the ownership boundary: PMS Guest Ledger owns settlement
- * readiness evidence. GLF-D provides the authoritative read-only projection
- * that Front Desk and future checkout execution packages consume.
- */
 class GuestLedgerCheckoutSettlementReadinessProjectionService
 {
     public const VIEW_PERMISSION = 'pms.guest-ledger.settlement-readiness.view';
-    public const PROJECTION_VERSION = 'GLF-D-1.0';
+    public const PROJECTION_VERSION = 'GLF-D-1.1';
+
+    private const STABLE_ERROR_NESTED_TX = 'GLF_D_REQUIRES_TOP_LEVEL_READ_TRANSACTION';
 
     public function __construct(
         private readonly CurrentPropertyService                        $currentProperty,
-        private readonly GuestLedgerFolioAggregateService              $folioAggregate,
         private readonly GuestLedgerFolioTotalsCalculator               $calculator,
         private readonly GuestLedgerPostingCompletenessReadPort         $postingCompletenessPort,
         private readonly GuestLedgerSettlementHoldReadPort              $settlementHoldPort,
         private readonly GuestLedgerCompletedSettlementConflictReadPort $completedSettlementPort,
     ) {}
 
-    /**
-     * Project settlement readiness for a FrontDeskStay.
-     *
-     * @param  User   $actor            Authenticated actor (must match auth session).
-     * @param  string $frontDeskStayId  FrontDeskStay ULID.
-     * @return GuestLedgerCheckoutSettlementReadinessProjection
-     *
-     * @throws AuthorizationException  Actor not authorized.
-     * @throws NotFoundException       Stay not found in current property (non-disclosing).
-     * @throws DomainException         Cannot guarantee read transaction isolation.
-     */
     public function project(User $actor, string $frontDeskStayId): GuestLedgerCheckoutSettlementReadinessProjection
     {
-        // ── Authorization (before any data access) ──────────────────────────
         $propertyId = $this->resolveCurrentProperty();
         $this->guardActor($actor, $propertyId);
 
-        // ── REPEATABLE READ READ ONLY transaction ───────────────────────────
+        // ── Strict top-level transaction contract ──────────────────────────
         if (DB::transactionLevel() > 0) {
-            // Already inside a parent transaction (e.g., test RefreshDatabase or
-            // nested service call). Evaluate directly — we cannot change the
-            // isolation level mid-transaction. The parent is responsible for
-            // consistency guarantees.
-            return $this->evaluateProjection($actor, $frontDeskStayId, $propertyId);
+            throw new DomainException(self::STABLE_ERROR_NESTED_TX);
         }
 
-        // Top-level call: establish one coherent REPEATABLE READ READ ONLY snapshot.
         return DB::transaction(function () use ($actor, $frontDeskStayId, $propertyId) {
             DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
-
             return $this->evaluateProjection($actor, $frontDeskStayId, $propertyId);
         });
     }
 
-    /**
-     * Internal evaluation — all queries within REPEATABLE READ READ ONLY.
-     */
     private function evaluateProjection(User $actor, string $frontDeskStayId, string $propertyId): GuestLedgerCheckoutSettlementReadinessProjection
     {
-        // ── Resolve FrontDeskStay (non-disclosing) ──────────────────────────
+        // ── Resolve Stay (non-disclosing) ─────────────────────────────────
         $stay = FrontDeskStay::withoutGlobalScope('property')
             ->where('id', $frontDeskStayId)
             ->where('property_id', $propertyId)
             ->first();
-
-        if (! $stay) {
-            throw new NotFoundException('FrontDeskStay');
-        }
+        if (! $stay) { throw new NotFoundException('FrontDeskStay'); }
 
         $evaluatedAt = now()->toIsoString();
+        $blockers = []; $blockerMsgs = []; $reviews = []; $unavailable = [];
+        $markers = []; $sourceIds = [];
 
-        // ── Resolve Reservation and Guest ───────────────────────────────────
+        // ── Stay → Reservation → Guest integrity ──────────────────────────
         $reservation = Reservation::withoutGlobalScope('property')
             ->where('id', $stay->reservation_id)
             ->where('property_id', $propertyId)
             ->first();
 
-        if (! $reservation) {
-            return $this->evidenceUnavailable(
-                $propertyId, $frontDeskStayId, '', '', [], null,
+        if (! $reservation || $stay->reservation_id !== $reservation->id) {
+            return $this->evidenceUnavailable($propertyId, $frontDeskStayId, '', '', [], null,
                 ['stay_relationship_marker' => 'STAY_RESERVATION_LINK_EVIDENCE_UNAVAILABLE'],
-                [$evaluatedAt],
+                ['evaluated_at' => $evaluatedAt],
                 'STAY_RESERVATION_LINK_EVIDENCE_UNAVAILABLE',
-                'Stay-to-Reservation relationship could not be resolved.'
-            );
+                'Stay-to-Reservation relationship could not be resolved.');
         }
 
         $guestId = $reservation->primary_guest_id ?? '';
-        if (empty($guestId)) {
-            return $this->evidenceUnavailable(
-                $propertyId, $frontDeskStayId, $reservation->id, '', [], null,
+        if (empty($guestId) || $stay->guest_id !== $guestId) {
+            return $this->evidenceUnavailable($propertyId, $frontDeskStayId, $reservation->id, $guestId, [], null,
                 ['stay_relationship_marker' => 'STAY_RESERVATION_LINK_EVIDENCE_UNAVAILABLE'],
-                [$evaluatedAt],
+                ['evaluated_at' => $evaluatedAt],
                 'STAY_RESERVATION_LINK_EVIDENCE_UNAVAILABLE',
-                'Reservation has no primary guest.'
-            );
+                'Stay guest does not match reservation primary guest or primary guest missing.');
         }
 
-        // ── Resolve checkout-relevant Folios ────────────────────────────────
+        $markers['stay_relationship_marker'] = 'STAY_RESERVATION_GUEST_RESOLVED';
+
+        // ── Checkout-relevant Folios ──────────────────────────────────────
         $folios = Folio::withoutGlobalScope('property')
             ->where('property_id', $propertyId)
             ->where('reservation_id', $reservation->id)
@@ -147,835 +113,767 @@ class GuestLedgerCheckoutSettlementReadinessProjectionService
             ->get();
 
         if ($folios->isEmpty()) {
-            return $this->evidenceUnavailable(
-                $propertyId, $frontDeskStayId, $reservation->id, $guestId, [], null,
+            return $this->evidenceUnavailable($propertyId, $frontDeskStayId, $reservation->id, $guestId, [], null,
                 ['folio_scope_marker' => 'CHECKOUT_RELEVANT_FOLIOS_EVIDENCE_UNAVAILABLE'],
-                [$evaluatedAt],
+                ['evaluated_at' => $evaluatedAt],
                 'CHECKOUT_RELEVANT_FOLIOS_EVIDENCE_UNAVAILABLE',
-                'No checkout-relevant folios found for this reservation.'
-            );
+                'No checkout-relevant folios found.');
         }
 
-        // ── Accumulators ────────────────────────────────────────────────────
-        $blockerCodes            = [];
-        $blockerMessages         = [];
-        $reviewReasons           = [];
-        $evidenceUnavailableCodes = [];
-        $markers                 = [];
-        $sourceIdentifiers       = [];
-        $folioIds                = [];
-        $currencies              = [];
-        $aggregateBalance        = '0.00';
+        $folioIds = []; $currencies = []; $aggregateBalance = '0.00';
+        $allFolioFreshTotals = []; $allFolioCachedTotals = [];
+        $allFolioItemIds = [];
+        $allPaymentIds = []; $allAllocIds = []; $allPayRevIds = [];
+        $allDepositIds = []; $allAppIds = []; $allDepRevIds = [];
+        $allRefundIds = [];
+        $allArRequestIds = []; $allArDecisionIds = [];
 
-        // ── Stay relationship marker ────────────────────────────────────────
-        $markers['stay_relationship_marker'] = 'STAY_RESERVATION_GUEST_RESOLVED';
-
-        // ── Evaluate every Folio ────────────────────────────────────────────
+        // ── Per-Folio evaluation ──────────────────────────────────────────
         foreach ($folios as $folio) {
             $folioIds[] = $folio->id;
+            $currencies[$folio->currency ?? ''] = true;
 
-            // Guest mismatch check
             if ($folio->guest_id !== $guestId) {
-                $reviewReasons[] = 'FOLIO_RELATIONSHIP_CONFLICT';
-                $blockerMessages[] = "Folio {$folio->id} guest does not match reservation primary guest.";
+                $reviews[] = 'FOLIO_RELATIONSHIP_CONFLICT';
+                $blockerMsgs[] = "Folio {$folio->id} guest mismatch.";
+            }
+            if ($folio->status === FolioStatusEnum::Closed || $folio->status === FolioStatusEnum::Void) {
+                $reviews[] = 'FOLIO_LIFECYCLE_REVIEW_REQUIRED';
+                $blockerMsgs[] = "Folio {$folio->id} is {$folio->status->value}.";
             }
 
-            // Currency tracking
-            if (! empty($folio->currency)) {
-                $currencies[$folio->currency] = true;
-            }
-
-            // Folio lifecycle review
-            if ($folio->status === FolioStatusEnum::Closed) {
-                $reviewReasons[] = 'FOLIO_LIFECYCLE_REVIEW_REQUIRED';
-                $blockerMessages[] = "Folio {$folio->id} is closed without explicit accepted settlement semantics.";
-            }
-
-            if ($folio->status === FolioStatusEnum::Void) {
-                $reviewReasons[] = 'FOLIO_LIFECYCLE_REVIEW_REQUIRED';
-                $blockerMessages[] = "Folio {$folio->id} is void without explicit accepted settlement semantics.";
-            }
-
-            // ── Fresh totals calculation ────────────────────────────────────
             $activeItems = FolioItem::where('folio_id', $folio->id)
-                ->where('is_void', false)
-                ->orderBy('posted_at')
-                ->get();
-
+                ->where('is_void', false)->orderBy('posted_at')->get();
             $fresh = $this->calculator->calculate($activeItems);
+            $allFolioFreshTotals[$folio->id] = $fresh;
+            $allFolioCachedTotals[$folio->id] = [
+                'total_charges' => (string) $folio->total_charges,
+                'total_payments' => (string) $folio->total_payments,
+                'total_deposits' => (string) $folio->total_deposits,
+                'total_ar_transfers' => (string) $folio->total_ar_transfers,
+                'balance' => (string) $folio->balance,
+            ];
 
-            // ── Compare fresh vs cached totals ──────────────────────────────
+            // Compare all five fields; balance mismatch alone triggers review
             $mismatch = false;
-            $mismatch = $mismatch || bccomp($fresh['total_charges'], (string) $folio->total_charges, 2) !== 0;
-            $mismatch = $mismatch || bccomp($fresh['total_payments'], (string) $folio->total_payments, 2) !== 0;
-            $mismatch = $mismatch || bccomp($fresh['total_deposits'], (string) $folio->total_deposits, 2) !== 0;
-            $mismatch = $mismatch || bccomp($fresh['total_ar_transfers'], (string) $folio->total_ar_transfers, 2) !== 0;
-            // balance is derived — mismatch on any component means balance also mismatches
-
+            foreach (['total_charges','total_payments','total_deposits','total_ar_transfers','balance'] as $f) {
+                if (bccomp($fresh[$f], $allFolioCachedTotals[$folio->id][$f], 2) !== 0) {
+                    $mismatch = true;
+                    break;
+                }
+            }
             if ($mismatch) {
-                $reviewReasons[] = 'FOLIO_CACHED_TOTALS_MISMATCH';
-                $blockerMessages[] = "Folio {$folio->id} cached totals do not match fresh source-derived calculation.";
+                $reviews[] = 'FOLIO_CACHED_TOTALS_MISMATCH';
+                $blockerMsgs[] = "Folio {$folio->id} cached totals mismatch.";
             }
 
-            // ── Use fresh balance as source-derived truth ────────────────────
-            $folioBalance = $fresh['balance'];
-            $aggregateBalance = bcadd($aggregateBalance, $folioBalance, 2);
-
-            // ── Individual Folio zero check ──────────────────────────────────
-            if (bccomp($folioBalance, '0.00', 2) !== 0) {
-                $blockerCodes[] = 'INDIVIDUAL_FOLIO_BALANCE_NOT_ZERO';
-                $blockerMessages[] = "Folio {$folio->id} balance is not zero: {$folioBalance}.";
+            $aggregateBalance = bcadd($aggregateBalance, $fresh['balance'], 2);
+            if (bccomp($fresh['balance'], '0.00', 2) !== 0) {
+                $blockers[] = 'INDIVIDUAL_FOLIO_BALANCE_NOT_ZERO';
+                $blockerMsgs[] = "Folio {$folio->id} balance {$fresh['balance']}.";
             }
 
-            $markers['folio_totals_marker'] = 'FRESH_SOURCE_CALCULATED';
+            foreach ($activeItems as $item) {
+                $allFolioItemIds[] = $item->id;
+            }
         }
 
         $resolvedCurrency = count($currencies) === 1 ? key($currencies) : null;
-
-        // ── Currency consistency ────────────────────────────────────────────
         if (count($currencies) > 1) {
-            $reviewReasons[] = 'FOLIO_CURRENCY_CONFLICT';
-            $blockerMessages[] = 'Multiple currencies detected across checkout-relevant folios.';
+            $reviews[] = 'FOLIO_CURRENCY_CONFLICT';
+            $blockerMsgs[] = 'Multiple currencies across folios.';
         }
 
-        // Multi-Folio scope marker
-        $markers['folio_scope_marker'] = count($folioIds) > 1
-            ? 'MULTI_FOLIO_EVALUATED'
-            : 'SINGLE_FOLIO_EVALUATED';
+        $markers['folio_scope_marker'] = count($folioIds) > 1 ? 'MULTI_FOLIO_EVALUATED' : 'SINGLE_FOLIO_EVALUATED';
+        $markers['folio_totals_marker'] = 'FRESH_SOURCE_CALCULATED';
 
-        // ── Guest Payment evaluation ─────────────────────────────────────────
-        $this->evaluatePayments(
-            $reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $folioIds, $blockerCodes, $blockerMessages, $reviewReasons
-        );
+        // ── Guest Payments ────────────────────────────────────────────────
+        $this->evaluatePayments($reservation->id, $propertyId, $guestId, $resolvedCurrency,
+            $folioIds, $blockers, $blockerMsgs, $reviews,
+            $allPaymentIds, $allAllocIds, $allPayRevIds, $markers);
 
-        // ── Guest Deposit evaluation ────────────────────────────────────────
-        $this->evaluateDeposits(
-            $reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $folioIds, $blockerCodes, $blockerMessages, $reviewReasons
-        );
+        // ── Guest Deposits ────────────────────────────────────────────────
+        $this->evaluateDeposits($reservation->id, $propertyId, $guestId, $resolvedCurrency,
+            $folioIds, $blockers, $blockerMsgs, $reviews,
+            $allDepositIds, $allAppIds, $allDepRevIds, $markers);
 
-        // ── Guest Refund evaluation ─────────────────────────────────────────
-        $this->evaluateRefunds(
-            $reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $blockerCodes, $blockerMessages, $reviewReasons
-        );
+        // ── Guest Refunds ─────────────────────────────────────────────────
+        $this->evaluateRefunds($reservation->id, $propertyId, $guestId, $resolvedCurrency,
+            $blockers, $blockerMsgs, $reviews, $allRefundIds, $markers);
 
-        // ── AR Transfer evaluation ──────────────────────────────────────────
-        $this->evaluateArTransfers(
-            $reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $folioIds, $blockerCodes, $blockerMessages, $reviewReasons
-        );
+        // ── AR Transfers ──────────────────────────────────────────────────
+        $this->evaluateArTransfers($reservation->id, $propertyId, $guestId, $resolvedCurrency,
+            $folioIds, $blockers, $blockerMsgs, $reviews,
+            $allArRequestIds, $allArDecisionIds, $markers);
 
-        // ── External evidence ports ─────────────────────────────────────────
-        $this->evaluateExternalPorts(
-            $reservation->id, $propertyId,
-            $blockerCodes, $blockerMessages, $reviewReasons,
-            $evidenceUnavailableCodes, $markers, $sourceIdentifiers
-        );
+        // ── External ports ────────────────────────────────────────────────
+        $this->evaluateExternalPorts($reservation->id, $propertyId,
+            $blockers, $blockerMsgs, $reviews, $unavailable, $markers, $sourceIds);
 
-        // ── Determine status ────────────────────────────────────────────────
-        $status = $this->determineStatus(
-            $evidenceUnavailableCodes,
-            $reviewReasons,
-            $blockerCodes
-        );
+        // ── Status ────────────────────────────────────────────────────────
+        $status = $this->determineStatus($unavailable, $reviews, $blockers);
 
-        // ── Source fingerprint ──────────────────────────────────────────────
-        $sourceFingerprint = $this->buildSourceFingerprint(
+        // ── Source identifiers ────────────────────────────────────────────
+        sort($allFolioItemIds); sort($allPaymentIds); sort($allAllocIds); sort($allPayRevIds);
+        sort($allDepositIds); sort($allAppIds); sort($allDepRevIds);
+        sort($allRefundIds); sort($allArRequestIds); sort($allArDecisionIds);
+        $sourceIds['folio_ids'] = $folioIds;
+        $sourceIds['folio_item_ids'] = $allFolioItemIds;
+        $sourceIds['payment_ids'] = $allPaymentIds;
+        $sourceIds['payment_allocation_ids'] = $allAllocIds;
+        $sourceIds['payment_reversal_ids'] = $allPayRevIds;
+        $sourceIds['deposit_ids'] = $allDepositIds;
+        $sourceIds['deposit_application_ids'] = $allAppIds;
+        $sourceIds['deposit_reversal_ids'] = $allDepRevIds;
+        $sourceIds['refund_ids'] = $allRefundIds;
+        $sourceIds['ar_request_ids'] = $allArRequestIds;
+        $sourceIds['ar_decision_ids'] = $allArDecisionIds;
+        $sourceIds['property_id'] = $propertyId;
+        $sourceIds['front_desk_stay_id'] = $frontDeskStayId;
+        $sourceIds['reservation_id'] = $reservation->id;
+        $sourceIds['guest_id'] = $guestId;
+
+        // ── Fingerprint ───────────────────────────────────────────────────
+        $fingerprint = $this->buildFingerprint(
             $propertyId, $frontDeskStayId, $reservation->id, $guestId,
-            $folios, $resolvedCurrency, $status->value,
-            $blockerCodes, $reviewReasons, $evidenceUnavailableCodes
+            $allFolioFreshTotals, $allFolioCachedTotals, $folioIds,
+            $currencies, $resolvedCurrency, $status->value,
+            $blockers, $reviews, $unavailable,
+            $allPaymentIds, $allAllocIds, $allPayRevIds,
+            $allDepositIds, $allAppIds, $allDepRevIds,
+            $allRefundIds, $allArRequestIds, $allArDecisionIds,
+            $allFolioItemIds,
         );
-
-        // Collect source identifiers
-        $sourceIdentifiers['property_id']       = $propertyId;
-        $sourceIdentifiers['front_desk_stay_id'] = $frontDeskStayId;
-        $sourceIdentifiers['reservation_id']     = $reservation->id;
-        $sourceIdentifiers['guest_id']           = $guestId;
 
         return GuestLedgerCheckoutSettlementReadinessProjection::create(
-            projection_version:          self::PROJECTION_VERSION,
-            status:                      $status,
-            property_id:                 $propertyId,
-            front_desk_stay_id:          $frontDeskStayId,
-            reservation_id:              $reservation->id,
-            guest_id:                    $guestId,
-            folio_ids:                   $folioIds,
-            folio_count:                 count($folios),
+            projection_version: self::PROJECTION_VERSION,
+            status: $status,
+            property_id: $propertyId,
+            front_desk_stay_id: $frontDeskStayId,
+            reservation_id: $reservation->id,
+            guest_id: $guestId,
+            folio_ids: $folioIds,
+            folio_count: count($folios),
             canonical_aggregate_balance: $aggregateBalance,
-            currency:                    $resolvedCurrency,
-            blocker_codes:               $blockerCodes,
-            blocker_messages:            $blockerMessages,
-            review_reasons:              $reviewReasons,
-            evidence_unavailable_codes:  $evidenceUnavailableCodes,
-            markers:                     $markers,
-            evaluated_at:                $evaluatedAt,
-            source_fingerprint:          $sourceFingerprint,
-            source_identifiers:          $sourceIdentifiers,
+            currency: $resolvedCurrency,
+            blocker_codes: $blockers,
+            blocker_messages: $blockerMsgs,
+            review_reasons: $reviews,
+            evidence_unavailable_codes: $unavailable,
+            markers: $markers,
+            evaluated_at: $evaluatedAt,
+            source_fingerprint: $fingerprint,
+            source_identifiers: $sourceIds,
         );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private evaluators
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+    // Payment evaluation
+    // ═════════════════════════════════════════════════════════════════════════
 
     private function evaluatePayments(
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
-        array $folioIds, array &$blockerCodes, array &$blockerMessages, array &$reviewReasons
+        array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews,
+        array &$allPaymentIds, array &$allAllocIds, array &$allPayRevIds, array &$markers
     ): void {
         $payments = GuestPaymentTransaction::where('property_id', $propertyId)
-            ->where('reservation_id', $reservationId)
-            ->get();
+            ->where('reservation_id', $reservationId)->get();
 
-        foreach ($payments as $payment) {
-            // Cross-reference checks
-            if ($payment->guest_id !== $guestId) {
-                $reviewReasons[] = 'PAYMENT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Payment {$payment->id} guest does not match reservation primary guest.";
+        $allResolved = true;
+        $anyPayment = false;
+
+        foreach ($payments as $p) {
+            $anyPayment = true;
+            $allPaymentIds[] = $p->id;
+            $pAmount = bcadd((string) $p->amount, '0.00', 2);
+
+            if ($p->guest_id !== $guestId) {
+                $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Payment {$p->id} guest mismatch.";
+            }
+            if ($currency !== null && $p->currency !== $currency) {
+                $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Payment {$p->id} currency mismatch.";
             }
 
-            if ($currency !== null && $payment->currency !== $currency) {
-                $reviewReasons[] = 'PAYMENT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Payment {$payment->id} currency mismatch.";
-            }
-
-            $paymentAmount = bcadd((string) $payment->amount, '0.00', 2);
-
-            // VOIDED check
-            if ($payment->lifecycle_status === GuestPaymentLifecycleStatusEnum::Voided) {
-                // Confirm void evidence exists and no conflicting allocations/refunds
-                $hasVoidReversal = GuestPaymentReversal::where('property_id', $propertyId)
-                    ->where('guest_payment_transaction_id', $payment->id)
+            // ── VOIDED ────────────────────────────────────────────────────
+            if ($p->lifecycle_status === GuestPaymentLifecycleStatusEnum::Voided) {
+                $voidRevs = GuestPaymentReversal::where('property_id', $propertyId)
+                    ->where('guest_payment_transaction_id', $p->id)
                     ->where('reversal_type', GuestPaymentReversalTypeEnum::PaymentVoid->value)
-                    ->exists();
+                    ->get();
+                $hasAlloc = GuestPaymentAllocation::where('property_id', $propertyId)
+                    ->where('guest_payment_transaction_id', $p->id)->exists();
+                $hasRefund = GuestRefundTransaction::where('property_id', $propertyId)
+                    ->where('guest_payment_transaction_id', $p->id)->exists();
 
-                $hasAllocations = GuestPaymentAllocation::where('property_id', $propertyId)
-                    ->where('guest_payment_transaction_id', $payment->id)
-                    ->exists();
-
-                $hasRefunds = GuestRefundTransaction::where('property_id', $propertyId)
-                    ->where('guest_payment_transaction_id', $payment->id)
-                    ->exists();
-
-                if (! $hasVoidReversal && ($hasAllocations || $hasRefunds)) {
-                    $reviewReasons[] = 'PAYMENT_SOURCE_CONFLICT';
-                    $blockerMessages[] = "Payment {$payment->id} is VOIDED but has conflicting allocation/refund evidence.";
+                if ($voidRevs->count() !== 1 || bccomp(bcadd((string) $voidRevs->first()->amount, '0.00', 2), $pAmount, 2) !== 0) {
+                    $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
+                    $blockerMsgs[] = "Payment {$p->id} void evidence invalid.";
                 }
-
+                if ($hasAlloc || $hasRefund) {
+                    $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
+                    $blockerMsgs[] = "Payment {$p->id} VOIDED but has allocation/refund.";
+                }
+                foreach ($voidRevs as $vr) { $allPayRevIds[] = $vr->id; }
                 continue;
             }
 
-            // Active allocation total
-            $activeAllocated = '0.00';
+            // ── Active allocations vs reversals ───────────────────────────
             $allocations = GuestPaymentAllocation::where('property_id', $propertyId)
-                ->where('guest_payment_transaction_id', $payment->id)
-                ->get();
+                ->where('guest_payment_transaction_id', $p->id)->get();
+            $activeAllocated = '0.00';
 
-            foreach ($allocations as $allocation) {
-                // Check if allocation is reversed
-                $reversed = GuestPaymentReversal::where('property_id', $propertyId)
-                    ->where('guest_payment_allocation_id', $allocation->id)
+            foreach ($allocations as $alloc) {
+                $allAllocIds[] = $alloc->id;
+                $rev = GuestPaymentReversal::where('property_id', $propertyId)
+                    ->where('guest_payment_allocation_id', $alloc->id)
                     ->where('reversal_type', GuestPaymentReversalTypeEnum::AllocationReversal->value)
-                    ->exists();
+                    ->first();
 
-                if (! $reversed) {
-                    $activeAllocated = bcadd($activeAllocated, bcadd((string) $allocation->amount, '0.00', 2), 2);
-
-                    // Check allocation targets a checkout-relevant Folio
-                    if (! in_array($allocation->folio_id, $folioIds, true)) {
-                        $reviewReasons[] = 'PAYMENT_SOURCE_CONFLICT';
-                        $blockerMessages[] = "Payment allocation {$allocation->id} targets non-checkout Folio {$allocation->folio_id}.";
+                if ($rev) {
+                    $allPayRevIds[] = $rev->id;
+                    // Verify reversed allocation has preserved source FolioItems
+                    $origItem = FolioItem::where('guest_payment_allocation_id', $alloc->id)
+                        ->where('is_void', false)->first();
+                    $revItem  = FolioItem::where('guest_payment_reversal_id', $rev->id)
+                        ->where('is_void', false)->first();
+                    if (! $origItem || ! $revItem
+                        || bccomp((string) $revItem->amount, bcadd((string) $alloc->amount, '0.00', 2), 2) !== 0
+                        || (string) $revItem->amount === (string) $origItem->amount // should be opposite sign
+                    ) {
+                        $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
+                        $blockerMsgs[] = "Payment allocation {$alloc->id} reversal linkage invalid.";
+                    }
+                    if ($revItem && $revItem->reverses_folio_item_id !== $origItem->id) {
+                        $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
+                        $blockerMsgs[] = "Payment reversal {$rev->id} reverses_folio_item_id mismatch.";
+                    }
+                } else {
+                    $activeAllocated = bcadd($activeAllocated, bcadd((string) $alloc->amount, '0.00', 2), 2);
+                    // Verify exact one Payment FolioItem
+                    $payItem = FolioItem::where('guest_payment_allocation_id', $alloc->id)
+                        ->where('is_void', false)->first();
+                    if (! $payItem
+                        || $payItem->property_id !== $propertyId
+                        || ! in_array($payItem->folio_id, $folioIds, true)
+                        || $payItem->item_type !== FolioItemTypeEnum::Payment
+                        || bccomp(bcadd((string) $payItem->amount, '0.00', 2), bcmul(bcadd((string) $alloc->amount, '0.00', 2), '-1', 2), 2) !== 0
+                    ) {
+                        $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
+                        $blockerMsgs[] = "Payment allocation {$alloc->id} missing/invalid Payment FolioItem.";
+                    }
+                    if (! in_array($alloc->folio_id, $folioIds, true)) {
+                        $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
+                        $blockerMsgs[] = "Payment allocation {$alloc->id} outside checkout folios.";
                     }
                 }
             }
 
-            // Completed refund total
             $refundedTotal = '0.00';
-            $refunds = GuestRefundTransaction::where('property_id', $propertyId)
-                ->where('guest_payment_transaction_id', $payment->id)
-                ->get();
-
-            foreach ($refunds as $refund) {
-                $refundedTotal = bcadd($refundedTotal, bcadd((string) $refund->amount, '0.00', 2), 2);
+            foreach (GuestRefundTransaction::where('property_id', $propertyId)
+                ->where('guest_payment_transaction_id', $p->id)->get() as $ref) {
+                $refundedTotal = bcadd($refundedTotal, bcadd((string) $ref->amount, '0.00', 2), 2);
             }
 
-            // Resolved amount
             $resolved = bcadd($activeAllocated, $refundedTotal, 2);
+            $cmp = bccomp($resolved, $pAmount, 2);
+            $allResolved = $allResolved && ($cmp === 0);
 
-            // Source-linked FolioItems check
-            $folioItemCount = FolioItem::where('guest_payment_allocation_id', '!=', null)
-                ->whereIn('guest_payment_allocation_id', $allocations->pluck('id'))
-                ->where('is_void', false)
-                ->count();
-
-            if ($folioItemCount !== $allocations->count()) {
-                $reviewReasons[] = 'PAYMENT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Payment {$payment->id} has missing or duplicate source FolioItems.";
-            }
-
-            // Evaluate resolution
-            $cmp = bccomp($resolved, $paymentAmount, 2);
-
-            if ($cmp === 0) {
-                // Fully resolved — fine
+            if ($cmp > 0) {
+                $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Payment {$p->id} over-resolved.";
             } elseif ($cmp < 0) {
-                // Unresolved remainder
-                $blockerCodes[] = 'GUEST_PAYMENT_UNRESOLVED';
-                $remainder = bcsub($paymentAmount, $resolved, 2);
-                $blockerMessages[] = "Payment {$payment->id} has unresolved remainder {$remainder}.";
-            } else {
-                // Over-resolved
-                $reviewReasons[] = 'PAYMENT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Payment {$payment->id} resolved amount exceeds payment amount.";
-            }
-
-            // Lifecycle/source consistency
-            if ($payment->lifecycle_status === GuestPaymentLifecycleStatusEnum::Voided && $cmp !== 0) {
-                $reviewReasons[] = 'PAYMENT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Payment {$payment->id} lifecycle status conflicts with derived source state.";
+                $blockers[] = 'GUEST_PAYMENT_UNRESOLVED';
+                $allResolved = false;
+                $blockerMsgs[] = "Payment {$p->id} unresolved " . bcsub($pAmount, $resolved, 2) . ".";
             }
         }
+
+        $markers['payment_resolution_marker'] = (! $anyPayment || $allResolved)
+            ? 'PAYMENT_RESOLUTION_COMPLETE' : 'PAYMENT_RESOLUTION_INCOMPLETE';
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Deposit evaluation
+    // ═════════════════════════════════════════════════════════════════════════
 
     private function evaluateDeposits(
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
-        array $folioIds, array &$blockerCodes, array &$blockerMessages, array &$reviewReasons
+        array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews,
+        array &$allDepositIds, array &$allAppIds, array &$allDepRevIds, array &$markers
     ): void {
         $deposits = GuestDepositTransaction::where('property_id', $propertyId)
-            ->where('reservation_id', $reservationId)
-            ->get();
+            ->where('reservation_id', $reservationId)->get();
 
-        foreach ($deposits as $deposit) {
-            if ($deposit->guest_id !== $guestId) {
-                $reviewReasons[] = 'DEPOSIT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Deposit {$deposit->id} guest does not match reservation primary guest.";
+        $allResolved = true;
+        $anyDeposit = false;
+
+        foreach ($deposits as $d) {
+            $anyDeposit = true;
+            $allDepositIds[] = $d->id;
+            $dAmount = bcadd((string) $d->amount, '0.00', 2);
+
+            if ($d->guest_id !== $guestId) {
+                $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Deposit {$d->id} guest mismatch.";
+            }
+            if ($currency !== null && $d->currency !== $currency) {
+                $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Deposit {$d->id} currency mismatch.";
             }
 
-            if ($currency !== null && $deposit->currency !== $currency) {
-                $reviewReasons[] = 'DEPOSIT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Deposit {$deposit->id} currency mismatch.";
-            }
-
-            $depositAmount = bcadd((string) $deposit->amount, '0.00', 2);
-
-            // VOIDED check
-            if ($deposit->lifecycle_status === GuestDepositLifecycleStatusEnum::Voided) {
-                $hasVoidReversal = GuestDepositReversal::where('property_id', $propertyId)
-                    ->where('guest_deposit_transaction_id', $deposit->id)
+            // ── VOIDED ────────────────────────────────────────────────────
+            if ($d->lifecycle_status === GuestDepositLifecycleStatusEnum::Voided) {
+                $voidRevs = GuestDepositReversal::where('property_id', $propertyId)
+                    ->where('guest_deposit_transaction_id', $d->id)
                     ->where('reversal_type', GuestDepositReversalTypeEnum::DepositVoid->value)
-                    ->exists();
+                    ->get();
+                $hasApp = GuestDepositApplication::where('property_id', $propertyId)
+                    ->where('guest_deposit_transaction_id', $d->id)->exists();
+                $hasRef = GuestRefundTransaction::where('property_id', $propertyId)
+                    ->where('guest_deposit_transaction_id', $d->id)->exists();
 
-                $hasApplications = GuestDepositApplication::where('property_id', $propertyId)
-                    ->where('guest_deposit_transaction_id', $deposit->id)
-                    ->exists();
-
-                $hasRefunds = GuestRefundTransaction::where('property_id', $propertyId)
-                    ->where('guest_deposit_transaction_id', $deposit->id)
-                    ->exists();
-
-                if (! $hasVoidReversal && ($hasApplications || $hasRefunds)) {
-                    $reviewReasons[] = 'DEPOSIT_SOURCE_CONFLICT';
-                    $blockerMessages[] = "Deposit {$deposit->id} is VOIDED but has conflicting application/refund evidence.";
+                if ($voidRevs->count() !== 1 || bccomp(bcadd((string) $voidRevs->first()->amount, '0.00', 2), $dAmount, 2) !== 0) {
+                    $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
+                    $blockerMsgs[] = "Deposit {$d->id} void evidence invalid.";
                 }
-
+                if ($hasApp || $hasRef) {
+                    $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
+                    $blockerMsgs[] = "Deposit {$d->id} VOIDED but has application/refund.";
+                }
+                foreach ($voidRevs as $vr) { $allDepRevIds[] = $vr->id; }
                 continue;
             }
 
-            // Active application total
-            $activeApplied = '0.00';
             $applications = GuestDepositApplication::where('property_id', $propertyId)
-                ->where('guest_deposit_transaction_id', $deposit->id)
-                ->get();
+                ->where('guest_deposit_transaction_id', $d->id)->get();
+            $activeApplied = '0.00';
 
-            foreach ($applications as $application) {
-                $reversed = GuestDepositReversal::where('property_id', $propertyId)
-                    ->where('guest_deposit_application_id', $application->id)
+            foreach ($applications as $app) {
+                $allAppIds[] = $app->id;
+                $rev = GuestDepositReversal::where('property_id', $propertyId)
+                    ->where('guest_deposit_application_id', $app->id)
                     ->where('reversal_type', GuestDepositReversalTypeEnum::ApplicationReversal->value)
-                    ->exists();
+                    ->first();
 
-                if (! $reversed) {
-                    $activeApplied = bcadd($activeApplied, bcadd((string) $application->amount, '0.00', 2), 2);
-
-                    if (! in_array($application->folio_id, $folioIds, true)) {
-                        $reviewReasons[] = 'DEPOSIT_SOURCE_CONFLICT';
-                        $blockerMessages[] = "Deposit application {$application->id} targets non-checkout Folio {$application->folio_id}.";
+                if ($rev) {
+                    $allDepRevIds[] = $rev->id;
+                    $origItem = FolioItem::where('guest_deposit_application_id', $app->id)
+                        ->where('is_void', false)->first();
+                    $revItem  = FolioItem::where('guest_deposit_reversal_id', $rev->id)
+                        ->where('is_void', false)->first();
+                    if (! $origItem || ! $revItem
+                        || bccomp((string) $revItem->amount, bcadd((string) $app->amount, '0.00', 2), 2) !== 0
+                    ) {
+                        $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
+                        $blockerMsgs[] = "Deposit application {$app->id} reversal linkage invalid.";
+                    }
+                    if ($revItem && $revItem->reverses_folio_item_id !== $origItem->id) {
+                        $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
+                        $blockerMsgs[] = "Deposit reversal reverses_folio_item_id mismatch.";
+                    }
+                } else {
+                    $activeApplied = bcadd($activeApplied, bcadd((string) $app->amount, '0.00', 2), 2);
+                    $depItem = FolioItem::where('guest_deposit_application_id', $app->id)
+                        ->where('is_void', false)->first();
+                    if (! $depItem
+                        || $depItem->property_id !== $propertyId
+                        || ! in_array($depItem->folio_id, $folioIds, true)
+                        || $depItem->item_type !== FolioItemTypeEnum::Deposit
+                        || bccomp(bcadd((string) $depItem->amount, '0.00', 2), bcmul(bcadd((string) $app->amount, '0.00', 2), '-1', 2), 2) !== 0
+                    ) {
+                        $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
+                        $blockerMsgs[] = "Deposit application {$app->id} missing/invalid Deposit FolioItem.";
                     }
                 }
             }
 
-            // Refund total
             $refundedTotal = '0.00';
-            $refunds = GuestRefundTransaction::where('property_id', $propertyId)
-                ->where('guest_deposit_transaction_id', $deposit->id)
-                ->get();
-
-            foreach ($refunds as $refund) {
-                $refundedTotal = bcadd($refundedTotal, bcadd((string) $refund->amount, '0.00', 2), 2);
+            foreach (GuestRefundTransaction::where('property_id', $propertyId)
+                ->where('guest_deposit_transaction_id', $d->id)->get() as $ref) {
+                $refundedTotal = bcadd($refundedTotal, bcadd((string) $ref->amount, '0.00', 2), 2);
             }
 
             $resolved = bcadd($activeApplied, $refundedTotal, 2);
+            $cmp = bccomp($resolved, $dAmount, 2);
+            $allResolved = $allResolved && ($cmp === 0);
 
-            // Source-linked FolioItems
-            $appIds = $applications->pluck('id')->toArray();
-            $folioItemCount = FolioItem::where('guest_deposit_application_id', '!=', null)
-                ->whereIn('guest_deposit_application_id', $appIds)
-                ->where('is_void', false)
-                ->count();
-
-            if ($folioItemCount !== $applications->count()) {
-                $reviewReasons[] = 'DEPOSIT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Deposit {$deposit->id} has missing or duplicate source FolioItems.";
-            }
-
-            $cmp = bccomp($resolved, $depositAmount, 2);
-
-            if ($cmp === 0) {
-                // Resolved
+            if ($cmp > 0) {
+                $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Deposit {$d->id} over-resolved.";
             } elseif ($cmp < 0) {
-                $blockerCodes[] = 'GUEST_DEPOSIT_UNRESOLVED';
-                $remainder = bcsub($depositAmount, $resolved, 2);
-                $blockerMessages[] = "Deposit {$deposit->id} has unresolved remainder {$remainder}.";
-            } else {
-                $reviewReasons[] = 'DEPOSIT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Deposit {$deposit->id} resolved amount exceeds deposit amount.";
-            }
-
-            if ($deposit->lifecycle_status === GuestDepositLifecycleStatusEnum::Voided && $cmp !== 0) {
-                $reviewReasons[] = 'DEPOSIT_SOURCE_CONFLICT';
-                $blockerMessages[] = "Deposit {$deposit->id} lifecycle status conflicts with derived source state.";
+                $blockers[] = 'GUEST_DEPOSIT_UNRESOLVED';
+                $allResolved = false;
+                $blockerMsgs[] = "Deposit {$d->id} unresolved " . bcsub($dAmount, $resolved, 2) . ".";
             }
         }
+
+        $markers['deposit_resolution_marker'] = (! $anyDeposit || $allResolved)
+            ? 'DEPOSIT_RESOLUTION_COMPLETE' : 'DEPOSIT_RESOLUTION_INCOMPLETE';
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Refund evaluation
+    // ═════════════════════════════════════════════════════════════════════════
 
     private function evaluateRefunds(
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
-        array &$blockerCodes, array &$blockerMessages, array &$reviewReasons
+        array &$blockers, array &$blockerMsgs, array &$reviews,
+        array &$allRefundIds, array &$markers
     ): void {
         $refunds = GuestRefundTransaction::where('property_id', $propertyId)
-            ->where('reservation_id', $reservationId)
-            ->get();
+            ->where('reservation_id', $reservationId)->get();
+        $anyIssue = false;
 
-        foreach ($refunds as $refund) {
-            // Guest and currency checks
-            if ($refund->guest_id !== $guestId) {
-                $reviewReasons[] = 'REFUND_SOURCE_CONFLICT';
-                $blockerMessages[] = "Refund {$refund->id} guest does not match reservation primary guest.";
+        foreach ($refunds as $r) {
+            $allRefundIds[] = $r->id;
+
+            if ($r->property_id !== $propertyId || $r->reservation_id !== $reservationId) {
+                $reviews[] = 'REFUND_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Refund {$r->id} scope mismatch."; $anyIssue = true; continue;
+            }
+            if ($r->guest_id !== $guestId) {
+                $reviews[] = 'REFUND_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Refund {$r->id} guest mismatch."; $anyIssue = true;
+            }
+            if ($currency !== null && $r->currency !== $currency) {
+                $reviews[] = 'REFUND_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Refund {$r->id} currency mismatch."; $anyIssue = true;
             }
 
-            if ($currency !== null && $refund->currency !== $currency) {
-                $reviewReasons[] = 'REFUND_SOURCE_CONFLICT';
-                $blockerMessages[] = "Refund {$refund->id} currency mismatch.";
+            $hasPay = ! empty($r->guest_payment_transaction_id);
+            $hasDep = ! empty($r->guest_deposit_transaction_id);
+            if ($hasPay === $hasDep) {
+                $reviews[] = 'REFUND_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Refund {$r->id} must have exactly one source."; $anyIssue = true; continue;
             }
 
-            // XOR source validation
-            $hasPaymentSource = ! empty($refund->guest_payment_transaction_id);
-            $hasDepositSource = ! empty($refund->guest_deposit_transaction_id);
-
-            if ($hasPaymentSource === $hasDepositSource) {
-                $reviewReasons[] = 'REFUND_SOURCE_CONFLICT';
-                $blockerMessages[] = "Refund {$refund->id} must have exactly one Payment or Deposit source.";
+            if ($hasPay) {
+                $src = GuestPaymentTransaction::whereKey($r->guest_payment_transaction_id)
+                    ->where('property_id', $propertyId)->first();
+                if (! $src || $src->reservation_id !== $reservationId
+                    || $src->guest_id !== $guestId
+                    || ($currency !== null && $src->currency !== $currency)) {
+                    $reviews[] = 'REFUND_SOURCE_CONFLICT';
+                    $blockerMsgs[] = "Refund {$r->id} Payment source invalid."; $anyIssue = true;
+                }
             }
-
-            // Verify source exists
-            if ($hasPaymentSource) {
-                $source = GuestPaymentTransaction::whereKey($refund->guest_payment_transaction_id)
-                    ->where('property_id', $propertyId)
-                    ->first();
-                if (! $source) {
-                    $reviewReasons[] = 'REFUND_SOURCE_CONFLICT';
-                    $blockerMessages[] = "Refund {$refund->id} Payment source not found.";
+            if ($hasDep) {
+                $src = GuestDepositTransaction::whereKey($r->guest_deposit_transaction_id)
+                    ->where('property_id', $propertyId)->first();
+                if (! $src || $src->reservation_id !== $reservationId
+                    || $src->guest_id !== $guestId
+                    || ($currency !== null && $src->currency !== $currency)) {
+                    $reviews[] = 'REFUND_SOURCE_CONFLICT';
+                    $blockerMsgs[] = "Refund {$r->id} Deposit source invalid."; $anyIssue = true;
                 }
             }
 
-            if ($hasDepositSource) {
-                $source = GuestDepositTransaction::whereKey($refund->guest_deposit_transaction_id)
-                    ->where('property_id', $propertyId)
-                    ->first();
-                if (! $source) {
-                    $reviewReasons[] = 'REFUND_SOURCE_CONFLICT';
-                    $blockerMessages[] = "Refund {$refund->id} Deposit source not found.";
-                }
+            if (bccomp(bcadd((string) $r->amount, '0.00', 2), '0.00', 2) <= 0) {
+                $reviews[] = 'REFUND_SOURCE_CONFLICT';
+                $blockerMsgs[] = "Refund {$r->id} amount not positive."; $anyIssue = true;
             }
         }
+
+        $markers['refund_resolution_marker'] = $anyIssue
+            ? 'REFUND_RESOLUTION_REVIEW_REQUIRED' : 'REFUND_RESOLUTION_TERMINAL';
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // AR Transfer evaluation
+    // ═════════════════════════════════════════════════════════════════════════
 
     private function evaluateArTransfers(
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
-        array $folioIds, array &$blockerCodes, array &$blockerMessages, array &$reviewReasons
+        array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews,
+        array &$allArRequestIds, array &$allArDecisionIds, array &$markers
     ): void {
-        // AR transfer requests are linked through folios in the checkout set.
-        // We scope to folios that belong to this reservation.
-        $folioIdsForReservation = Folio::withoutGlobalScope('property')
+        $folioIdsForRes = Folio::withoutGlobalScope('property')
             ->where('property_id', $propertyId)
             ->where('reservation_id', $reservationId)
-            ->pluck('id')
-            ->toArray();
+            ->pluck('id')->toArray();
 
         $requests = GuestArTransferRequest::where('property_id', $propertyId)
-            ->whereIn('folio_id', $folioIdsForReservation)
-            ->get();
+            ->whereIn('folio_id', $folioIdsForRes)->get();
+        $anyBlock = false; $anyReview = false;
 
-        foreach ($requests as $request) {
-            // Guest and currency checks
-            if ($request->guest_id !== $guestId) {
-                $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-                $blockerMessages[] = "AR transfer request {$request->id} guest mismatch.";
+        foreach ($requests as $req) {
+            $allArRequestIds[] = $req->id;
+            if ($req->guest_id !== $guestId || ($currency !== null && $req->currency !== $currency)) {
+                $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+                $blockerMsgs[] = "AR {$req->id} guest/currency mismatch."; $anyReview = true;
             }
-
-            if ($currency !== null && $request->currency !== $currency) {
-                $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-                $blockerMessages[] = "AR transfer request {$request->id} currency mismatch.";
-            }
-
-            // Check Folio is in scope
-            if (! in_array($request->folio_id, $folioIds, true)) {
-                $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-                $blockerMessages[] = "AR transfer request {$request->id} targets non-checkout Folio {$request->folio_id}.";
+            if (! in_array($req->folio_id, $folioIds, true)) {
+                $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+                $blockerMsgs[] = "AR {$req->id} outside checkout folios."; $anyReview = true;
             }
 
             $decisions = GuestArTransferDecision::where('property_id', $propertyId)
-                ->where('guest_ar_transfer_request_id', $request->id)
-                ->orderBy('created_at')
-                ->get();
+                ->where('guest_ar_transfer_request_id', $req->id)
+                ->orderBy('created_at')->get();
+            foreach ($decisions as $dec) { $allArDecisionIds[] = $dec->id; }
 
-            match ($request->lifecycle_status) {
-                GuestArTransferStatusEnum::Requested => [
-                    $blockerCodes[] = 'GUEST_AR_TRANSFER_PENDING',
-                    $blockerMessages[] = "AR transfer request {$request->id} has not been decided.",
-                ],
+            $accepted  = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Accepted);
+            $rejected  = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Rejected);
+            $reversed  = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Reversed);
 
-                GuestArTransferStatusEnum::Accepted => $this->validateAcceptedArTransfer(
-                    $request, $decisions, $propertyId, $folioIds,
-                    $blockerCodes, $blockerMessages, $reviewReasons
-                ),
-
-                GuestArTransferStatusEnum::Rejected => [
-                    // Terminal non-settling — does not permanently block
-                    // if Folio is resolved another way.
-                ],
-
-                GuestArTransferStatusEnum::Reversed => $this->validateReversedArTransfer(
-                    $request, $decisions, $propertyId,
-                    $blockerCodes, $blockerMessages, $reviewReasons
-                ),
+            match ($req->lifecycle_status) {
+                GuestArTransferStatusEnum::Requested => $this->arRequested($req, $decisions, $blockers, $blockerMsgs, $reviews, $anyBlock, $anyReview),
+                GuestArTransferStatusEnum::Accepted  => $this->arAccepted($req, $accepted, $rejected, $reversed, $propertyId, $folioIds, $blockers, $blockerMsgs, $reviews, $anyReview),
+                GuestArTransferStatusEnum::Rejected  => $this->arRejected($req, $accepted, $rejected, $reviews, $blockerMsgs, $anyReview),
+                GuestArTransferStatusEnum::Reversed  => $this->arReversed($req, $accepted, $reversed, $propertyId, $blockers, $blockerMsgs, $reviews, $anyReview),
             };
 
-            // Check for conflicting terminal decisions
-            $acceptedCount = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Accepted)->count();
-            $rejectedCount = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Rejected)->count();
-            $reversedCount = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Reversed)->count();
-
-            if (($acceptedCount > 0 && $rejectedCount > 0) || ($acceptedCount > 1 && ! in_array($request->lifecycle_status, [GuestArTransferStatusEnum::Reversed]))) {
-                $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-                $blockerMessages[] = "AR transfer request {$request->id} has conflicting terminal decisions.";
+            // Conflicting decisions
+            if ($accepted->count() > 0 && $rejected->count() > 0) {
+                $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+                $blockerMsgs[] = "AR {$req->id} has conflicting accepted+rejected."; $anyReview = true;
             }
-
-            // Status/decision mismatch
-            $expectedStatus = match (true) {
-                $reversedCount > 0 => GuestArTransferStatusEnum::Reversed,
-                $acceptedCount > 0 => GuestArTransferStatusEnum::Accepted,
-                $rejectedCount > 0 => GuestArTransferStatusEnum::Rejected,
-                default => GuestArTransferStatusEnum::Requested,
-            };
-
-            if ($request->lifecycle_status !== $expectedStatus) {
-                $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-                $blockerMessages[] = "AR transfer request {$request->id} lifecycle status does not match its decisions.";
+            if ($accepted->count() > 1 && $req->lifecycle_status !== GuestArTransferStatusEnum::Reversed) {
+                $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+                $blockerMsgs[] = "AR {$req->id} has multiple accepted."; $anyReview = true;
             }
         }
+
+        $markers['ar_transfer_marker'] = $anyBlock ? 'AR_TRANSFER_BLOCKED'
+            : ($anyReview ? 'AR_TRANSFER_REVIEW_REQUIRED' : 'AR_TRANSFER_CLEAR');
     }
 
-    private function validateAcceptedArTransfer(
-        GuestArTransferRequest $request,
-        $decisions, string $propertyId, array $folioIds,
-        array &$blockerCodes, array &$blockerMessages, array &$reviewReasons
-    ): void {
-        $accepted = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Accepted)->first();
-
-        if (! $accepted) {
-            $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-            $blockerMessages[] = "AR transfer request {$request->id} is ACCEPTED but no accepted decision exists.";
-            return;
-        }
-
-        // Verify exact ArTransfer FolioItem
-        $folioItem = FolioItem::where('guest_ar_transfer_decision_id', $accepted->id)
-            ->where('is_void', false)
-            ->first();
-
-        if (! $folioItem) {
-            $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-            $blockerMessages[] = "AR transfer request {$request->id} has accepted decision but no source-linked ArTransfer FolioItem.";
-        }
-
-        if ($folioItem && ! in_array($folioItem->folio_id, $folioIds, true)) {
-            $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+    private function arRequested($req, $decisions, &$blockers, &$blockerMsgs, &$reviews, &$anyBlock, &$anyReview): void {
+        $blockers[] = 'GUEST_AR_TRANSFER_PENDING';
+        $blockerMsgs[] = "AR {$req->id} pending decision.";
+        $anyBlock = true;
+        if ($decisions->isNotEmpty()) {
+            $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+            $blockerMsgs[] = "AR {$req->id} REQUESTED but has decisions."; $anyReview = true;
         }
     }
 
-    private function validateReversedArTransfer(
-        GuestArTransferRequest $request,
-        $decisions, string $propertyId,
-        array &$blockerCodes, array &$blockerMessages, array &$reviewReasons
-    ): void {
-        $accepted = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Accepted)->first();
-        $reversed = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Reversed)->first();
-
-        if (! $accepted) {
-            $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-            $blockerMessages[] = "AR transfer request {$request->id} is REVERSED but no accepted decision exists.";
+    private function arAccepted($req, $accepted, $rejected, $reversed, $propertyId, $folioIds, &$blockers, &$blockerMsgs, &$reviews, &$anyReview): void {
+        if ($rejected->isNotEmpty() || $reversed->isNotEmpty()) {
+            $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+            $blockerMsgs[] = "AR {$req->id} ACCEPTED with conflicting decisions."; $anyReview = true;
+        }
+        if ($accepted->count() !== 1) {
+            $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+            $blockerMsgs[] = "AR {$req->id} ACCEPTED needs exactly 1 accepted decision."; $anyReview = true;
             return;
         }
-
-        if (! $reversed) {
-            $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-            $blockerMessages[] = "AR transfer request {$request->id} is REVERSED but no reversal decision exists.";
-            return;
-        }
-
-        // Verify exact ArTransferReversal FolioItem
-        $reversalItem = FolioItem::where('guest_ar_transfer_decision_id', $reversed->id)
-            ->where('is_void', false)
-            ->first();
-
-        if (! $reversalItem) {
-            $reviewReasons[] = 'AR_TRANSFER_SOURCE_CONFLICT';
-            $blockerMessages[] = "AR transfer request {$request->id} has reversal decision but no source-linked ArTransferReversal FolioItem.";
+        $acc = $accepted->first();
+        $item = FolioItem::where('guest_ar_transfer_decision_id', $acc->id)
+            ->where('is_void', false)->first();
+        if (! $item
+            || $item->property_id !== $propertyId
+            || ! in_array($item->folio_id, $folioIds, true)
+            || $item->item_type !== FolioItemTypeEnum::ArTransfer
+            || bccomp((string) $item->amount, '0.00', 2) >= 0
+        ) {
+            $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+            $blockerMsgs[] = "AR {$req->id} ACCEPTED missing/invalid ArTransfer FolioItem."; $anyReview = true;
         }
     }
+
+    private function arRejected($req, $accepted, $rejected, &$reviews, &$blockerMsgs, &$anyReview): void {
+        if ($accepted->isNotEmpty() || $rejected->count() !== 1) {
+            $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+            $blockerMsgs[] = "AR {$req->id} REJECTED decision conflict."; $anyReview = true;
+        }
+    }
+
+    private function arReversed($req, $accepted, $reversed, $propertyId, &$blockers, &$blockerMsgs, &$reviews, &$anyReview): void {
+        if ($accepted->count() !== 1 || $reversed->count() !== 1) {
+            $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+            $blockerMsgs[] = "AR {$req->id} REVERSED needs 1 accepted + 1 reversed."; $anyReview = true;
+            return;
+        }
+        $acc = $accepted->first();
+        $rev = $reversed->first();
+        if ($rev->reverses_decision_id !== $acc->id) {
+            $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+            $blockerMsgs[] = "AR {$req->id} reversal not linked to accepted."; $anyReview = true;
+        }
+        $origItem = FolioItem::where('guest_ar_transfer_decision_id', $acc->id)
+            ->where('is_void', false)->first();
+        $revItem  = FolioItem::where('guest_ar_transfer_decision_id', $rev->id)
+            ->where('is_void', false)->first();
+        if (! $origItem || ! $revItem
+            || $origItem->item_type !== FolioItemTypeEnum::ArTransfer
+            || $revItem->item_type !== FolioItemTypeEnum::ArTransferReversal
+        ) {
+            $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+            $blockerMsgs[] = "AR {$req->id} REVERSED missing FolioItems."; $anyReview = true;
+        }
+        if ($revItem && $revItem->reverses_folio_item_id !== $origItem->id) {
+            $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
+            $blockerMsgs[] = "AR {$req->id} reversal FolioItem linkage invalid."; $anyReview = true;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // External ports
+    // ═════════════════════════════════════════════════════════════════════════
 
     private function evaluateExternalPorts(
         string $reservationId, string $propertyId,
-        array &$blockerCodes, array &$blockerMessages, array &$reviewReasons,
-        array &$evidenceUnavailableCodes, array &$markers, array &$sourceIdentifiers
+        array &$blockers, array &$blockerMsgs, array &$reviews,
+        array &$unavailable, array &$markers, array &$sourceIds
     ): void {
-        // ── Posting Completeness ─────────────────────────────────────────────
-        $postingResult = $this->postingCompletenessPort->evaluate($reservationId, $propertyId);
+        foreach ([
+            ['port' => $this->postingCompletenessPort, 'blocker' => 'MANDATORY_POSTINGS_INCOMPLETE',
+             'review' => 'POSTING_COMPLETENESS_REVIEW_REQUIRED', 'marker' => 'posting_completeness_marker',
+             'idKey' => 'posting_completeness'],
+            ['port' => $this->settlementHoldPort, 'blocker' => 'SETTLEMENT_HOLD_ACTIVE',
+             'review' => 'SETTLEMENT_HOLD_REVIEW_REQUIRED', 'marker' => 'settlement_hold_marker',
+             'idKey' => 'settlement_hold'],
+            ['port' => $this->completedSettlementPort, 'blocker' => 'CONFLICTING_COMPLETED_SETTLEMENT',
+             'review' => 'COMPLETED_SETTLEMENT_CONFLICT_REVIEW_REQUIRED', 'marker' => 'completed_settlement_conflict_marker',
+             'idKey' => 'completed_settlement_conflict'],
+        ] as $cfg) {
+            $result = $cfg['port']->evaluate($reservationId, $propertyId);
+            $sourceIds[$cfg['idKey'] . '_status'] = $result['status'];
+            $sourceIds[$cfg['idKey'] . '_code'] = $result['code'] ?? 'null';
 
-        match ($postingResult['status']) {
-            GuestLedgerPostingCompletenessReadPort::AVAILABLE_CLEAR => [
-                $markers['posting_completeness_marker'] = 'POSTING_COMPLETENESS_CLEAR',
-            ],
-            GuestLedgerPostingCompletenessReadPort::AVAILABLE_BLOCKED => [
-                $blockerCodes[]            = 'MANDATORY_POSTINGS_INCOMPLETE',
-                $blockerMessages[]         = $postingResult['message'] ?? 'Mandatory operational postings are incomplete.',
-                $markers['posting_completeness_marker'] = 'POSTING_COMPLETENESS_BLOCKED',
-            ],
-            GuestLedgerPostingCompletenessReadPort::REVIEW_REQUIRED => [
-                $reviewReasons[]           = 'POSTING_COMPLETENESS_REVIEW_REQUIRED',
-                $blockerMessages[]         = $postingResult['message'] ?? 'Posting completeness requires human review.',
-                $markers['posting_completeness_marker'] = 'POSTING_COMPLETENESS_REVIEW_REQUIRED',
-            ],
-            default => [
-                $evidenceUnavailableCodes[] = $postingResult['code'] ?? 'POSTING_COMPLETENESS_EVIDENCE_UNAVAILABLE',
-                $blockerMessages[]          = $postingResult['message'] ?? 'Posting completeness evidence is unavailable.',
-                $markers['posting_completeness_marker'] = 'POSTING_COMPLETENESS_EVIDENCE_UNAVAILABLE',
-            ],
-        };
-
-        // ── Settlement Hold ──────────────────────────────────────────────────
-        $holdResult = $this->settlementHoldPort->evaluate($reservationId, $propertyId);
-
-        match ($holdResult['status']) {
-            GuestLedgerSettlementHoldReadPort::AVAILABLE_CLEAR => [
-                $markers['settlement_hold_marker'] = 'SETTLEMENT_HOLD_CLEAR',
-            ],
-            GuestLedgerSettlementHoldReadPort::AVAILABLE_BLOCKED => [
-                $blockerCodes[]            = 'SETTLEMENT_HOLD_ACTIVE',
-                $blockerMessages[]         = $holdResult['message'] ?? 'An active settlement hold exists.',
-                $markers['settlement_hold_marker'] = 'SETTLEMENT_HOLD_BLOCKED',
-            ],
-            GuestLedgerSettlementHoldReadPort::REVIEW_REQUIRED => [
-                $reviewReasons[]           = 'SETTLEMENT_HOLD_REVIEW_REQUIRED',
-                $blockerMessages[]         = $holdResult['message'] ?? 'Settlement hold evidence requires human review.',
-                $markers['settlement_hold_marker'] = 'SETTLEMENT_HOLD_REVIEW_REQUIRED',
-            ],
-            default => [
-                $evidenceUnavailableCodes[] = $holdResult['code'] ?? 'SETTLEMENT_HOLD_EVIDENCE_UNAVAILABLE',
-                $blockerMessages[]          = $holdResult['message'] ?? 'Settlement hold evidence is unavailable.',
-                $markers['settlement_hold_marker'] = 'SETTLEMENT_HOLD_EVIDENCE_UNAVAILABLE',
-            ],
-        };
-
-        // ── Completed Settlement Conflict ────────────────────────────────────
-        $conflictResult = $this->completedSettlementPort->evaluate($reservationId, $propertyId);
-
-        match ($conflictResult['status']) {
-            GuestLedgerCompletedSettlementConflictReadPort::AVAILABLE_CLEAR => [
-                $markers['completed_settlement_conflict_marker'] = 'COMPLETED_SETTLEMENT_CONFLICT_CLEAR',
-            ],
-            GuestLedgerCompletedSettlementConflictReadPort::AVAILABLE_BLOCKED => [
-                $blockerCodes[]            = 'CONFLICTING_COMPLETED_SETTLEMENT',
-                $blockerMessages[]         = $conflictResult['message'] ?? 'A conflicting completed settlement exists.',
-                $markers['completed_settlement_conflict_marker'] = 'COMPLETED_SETTLEMENT_CONFLICT_BLOCKED',
-            ],
-            GuestLedgerCompletedSettlementConflictReadPort::REVIEW_REQUIRED => [
-                $reviewReasons[]           = 'COMPLETED_SETTLEMENT_CONFLICT_REVIEW_REQUIRED',
-                $blockerMessages[]         = $conflictResult['message'] ?? 'Completed settlement conflict evidence requires human review.',
-                $markers['completed_settlement_conflict_marker'] = 'COMPLETED_SETTLEMENT_CONFLICT_REVIEW_REQUIRED',
-            ],
-            default => [
-                $evidenceUnavailableCodes[] = $conflictResult['code'] ?? 'COMPLETED_SETTLEMENT_CONFLICT_EVIDENCE_UNAVAILABLE',
-                $blockerMessages[]          = $conflictResult['message'] ?? 'Completed settlement conflict evidence is unavailable.',
-                $markers['completed_settlement_conflict_marker'] = 'COMPLETED_SETTLEMENT_CONFLICT_EVIDENCE_UNAVAILABLE',
-            ],
-        };
+            match ($result['status']) {
+                'AVAILABLE_CLEAR' => $markers[$cfg['marker']] = strtoupper($cfg['idKey']) . '_CLEAR',
+                'AVAILABLE_BLOCKED' => (function () use ($cfg, $result, &$blockers, &$blockerMsgs, &$markers) {
+                    $blockers[] = $cfg['blocker'];
+                    $blockerMsgs[] = $result['message'] ?? $cfg['blocker'];
+                    $markers[$cfg['marker']] = strtoupper($cfg['idKey']) . '_BLOCKED';
+                })(),
+                'REVIEW_REQUIRED' => (function () use ($cfg, $result, &$reviews, &$blockerMsgs, &$markers) {
+                    $reviews[] = $cfg['review'];
+                    $blockerMsgs[] = $result['message'] ?? $cfg['review'];
+                    $markers[$cfg['marker']] = strtoupper($cfg['idKey']) . '_REVIEW_REQUIRED';
+                })(),
+                default => (function () use ($cfg, $result, &$unavailable, &$blockerMsgs, &$markers) {
+                    $unavailable[] = $result['code'] ?? strtoupper($cfg['idKey']) . '_EVIDENCE_UNAVAILABLE';
+                    $blockerMsgs[] = $result['message'] ?? ($cfg['idKey'] . ' evidence unavailable.');
+                    $markers[$cfg['marker']] = strtoupper($cfg['idKey']) . '_EVIDENCE_UNAVAILABLE';
+                })(),
+            };
+        }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Status determination
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+    // Status precedence
+    // ═════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Precedence:
-     *   1. EVIDENCE_UNAVAILABLE when any mandatory source is unavailable.
-     *   2. REVIEW_REQUIRED when no source is unavailable but evidence is ambiguous.
-     *   3. BLOCKED when all sources available but requirements unmet.
-     *   4. READY only when all pass.
-     */
-    private function determineStatus(
-        array $evidenceUnavailableCodes,
-        array $reviewReasons,
-        array $blockerCodes
-    ): GuestLedgerSettlementReadinessStatusEnum {
-        if (! empty($evidenceUnavailableCodes)) {
-            return GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementEvidenceUnavailable;
-        }
-
-        if (! empty($reviewReasons)) {
-            return GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementReviewRequired;
-        }
-
-        if (! empty($blockerCodes)) {
-            return GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementBlocked;
-        }
-
+    private function determineStatus(array $unavailable, array $reviews, array $blockers): GuestLedgerSettlementReadinessStatusEnum
+    {
+        if (! empty($unavailable)) return GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementEvidenceUnavailable;
+        if (! empty($reviews))    return GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementReviewRequired;
+        if (! empty($blockers))   return GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementBlocked;
         return GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementReady;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Source fingerprint
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+    // Source fingerprint — full canonical sorted source facts
+    // ═════════════════════════════════════════════════════════════════════════
 
-    private function buildSourceFingerprint(
+    private function buildFingerprint(
         string $propertyId, string $stayId, string $reservationId, string $guestId,
-        $folios, ?string $currency, string $statusValue,
-        array $blockerCodes, array $reviewReasons, array $evidenceUnavailableCodes
+        array $freshTotals, array $cachedTotals, array $folioIds,
+        array $currencies, ?string $resolvedCurrency, string $statusValue,
+        array $blockers, array $reviews, array $unavailable,
+        array $paymentIds, array $allocIds, array $payRevIds,
+        array $depositIds, array $appIds, array $depRevIds,
+        array $refundIds, array $arReqIds, array $arDecIds,
+        array $folioItemIds,
     ): string {
         $parts = [];
+        $parts[] = "p:{$propertyId}";
+        $parts[] = "s:{$stayId}";
+        $parts[] = "r:{$reservationId}";
+        $parts[] = "g:{$guestId}";
+        $parts[] = "cur:" . ($resolvedCurrency ?? 'null');
 
-        $parts[] = "property:{$propertyId}";
-        $parts[] = "stay:{$stayId}";
-        $parts[] = "reservation:{$reservationId}";
-        $parts[] = "guest:{$guestId}";
-        $parts[] = "currency:" . ($currency ?? 'null');
-        $parts[] = "status:{$statusValue}";
-
-        foreach ($folios as $folio) {
-            $parts[] = "folio:{$folio->id}:{$folio->status->value}:{$folio->currency}:{$folio->total_charges}:{$folio->total_payments}:{$folio->total_deposits}:{$folio->total_ar_transfers}:{$folio->balance}";
+        // Fresh totals (source truth)
+        foreach ($folioIds as $fid) {
+            $ft = $freshTotals[$fid] ?? ['total_charges'=>'0.00','total_payments'=>'0.00','total_deposits'=>'0.00','total_ar_transfers'=>'0.00','balance'=>'0.00'];
+            $ct = $cachedTotals[$fid] ?? $ft;
+            $parts[] = "ff:{$fid}:{$ft['total_charges']}:{$ft['total_payments']}:{$ft['total_deposits']}:{$ft['total_ar_transfers']}:{$ft['balance']}";
+            $parts[] = "fc:{$fid}:{$ct['total_charges']}:{$ct['total_payments']}:{$ct['total_deposits']}:{$ct['total_ar_transfers']}:{$ct['balance']}";
         }
 
-        $sortedBlockers = $blockerCodes;
-        sort($sortedBlockers);
-        $parts[] = 'blockers:' . implode(',', $sortedBlockers);
-
-        $sortedReviews = $reviewReasons;
-        sort($sortedReviews);
-        $parts[] = 'reviews:' . implode(',', $sortedReviews);
-
-        $sortedUnavailable = $evidenceUnavailableCodes;
-        sort($sortedUnavailable);
-        $parts[] = 'unavailable:' . implode(',', $sortedUnavailable);
+        $s = function (array $a): string { sort($a); return implode(',', $a); };
+        $parts[] = 'fi:' . $s($folioItemIds);
+        $parts[] = 'pm:' . $s($paymentIds);
+        $parts[] = 'pa:' . $s($allocIds);
+        $parts[] = 'pr:' . $s($payRevIds);
+        $parts[] = 'dp:' . $s($depositIds);
+        $parts[] = 'da:' . $s($appIds);
+        $parts[] = 'dr:' . $s($depRevIds);
+        $parts[] = 'rf:' . $s($refundIds);
+        $parts[] = 'arq:' . $s($arReqIds);
+        $parts[] = 'ard:' . $s($arDecIds);
+        $parts[] = 'bl:' . $s($blockers);
+        $parts[] = 'rv:' . $s($reviews);
+        $parts[] = 'un:' . $s($unavailable);
 
         return hash('sha256', implode('|', $parts));
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Evidence Unavailable helper
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+    // Evidence unavailable helper
+    // ═════════════════════════════════════════════════════════════════════════
 
     private function evidenceUnavailable(
         string $propertyId, string $stayId, string $reservationId, string $guestId,
-        array $folioIds, ?string $currency, array $markers, array $sourceIdentifiers,
+        array $folioIds, ?string $currency, array $markers, array $sourceIds,
         string $code, string $message
     ): GuestLedgerCheckoutSettlementReadinessProjection {
-        $evidenceCodes = [$code];
-        $messages      = [$message];
-
         return GuestLedgerCheckoutSettlementReadinessProjection::create(
-            projection_version:          self::PROJECTION_VERSION,
-            status:                      GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementEvidenceUnavailable,
-            property_id:                 $propertyId,
-            front_desk_stay_id:          $stayId,
-            reservation_id:              $reservationId,
-            guest_id:                    $guestId,
-            folio_ids:                   $folioIds,
-            folio_count:                 count($folioIds),
+            projection_version: self::PROJECTION_VERSION,
+            status: GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementEvidenceUnavailable,
+            property_id: $propertyId,
+            front_desk_stay_id: $stayId,
+            reservation_id: $reservationId,
+            guest_id: $guestId,
+            folio_ids: $folioIds,
+            folio_count: count($folioIds),
             canonical_aggregate_balance: '0.00',
-            currency:                    $currency,
-            blocker_codes:               [],
-            blocker_messages:            $messages,
-            review_reasons:              [],
-            evidence_unavailable_codes:  $evidenceCodes,
-            markers:                     $markers,
-            evaluated_at:                now()->toIsoString(),
-            source_fingerprint:          hash('sha256', $code . '|' . $stayId . '|' . $propertyId),
-            source_identifiers:          array_merge(
-                ['property_id' => $propertyId, 'front_desk_stay_id' => $stayId],
-                $sourceIdentifiers
-            ),
+            currency: $currency,
+            blocker_codes: [],
+            blocker_messages: [$message],
+            review_reasons: [],
+            evidence_unavailable_codes: [$code],
+            markers: $markers,
+            evaluated_at: now()->toIsoString(),
+            source_fingerprint: hash('sha256', "$code|$stayId|$propertyId"),
+            source_identifiers: $sourceIds,
         );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Authorization helpers
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+    // Authorization
+    // ═════════════════════════════════════════════════════════════════════════
 
     private function resolveCurrentProperty(): string
     {
-        $propertyId = session('active_property_id')
-            ?? session('current_property_id')
+        $id = session('active_property_id') ?? session('current_property_id')
             ?? $this->currentProperty->resolveOrFail();
-
-        $this->currentProperty->setPropertyId($propertyId);
-        return $propertyId;
+        $this->currentProperty->setPropertyId($id);
+        return $id;
     }
 
     private function guardActor(User $actor, string $propertyId): void
     {
-        // Actor must match authenticated session
         if (! auth()->check() || auth()->id() !== $actor->id) {
-            throw new AuthorizationException('Actor identity does not match the authenticated session.');
+            throw new AuthorizationException('Actor identity does not match.');
         }
-
-        // Actor must be active
         $fresh = User::whereKey($actor->id)->where('is_active', true)->first();
         if (! $fresh) {
-            throw new AuthorizationException('Settlement readiness projection requires an active actor.');
+            throw new AuthorizationException('Active actor required.');
         }
-
-        // Active property membership
-        $hasAccess = $fresh->properties()
-            ->where('properties.id', $propertyId)
-            ->wherePivot('status', 'active')
-            ->exists();
-
-        if (! $hasAccess) {
-            throw new AuthorizationException('Settlement readiness projection requires active property membership.');
+        $has = $fresh->properties()->where('properties.id', $propertyId)
+            ->wherePivot('status', 'active')->exists();
+        if (! $has) {
+            throw new AuthorizationException('Active property membership required.');
         }
-
-        // Narrow view permission
-        try {
-            $allowed = $fresh->can(self::VIEW_PERMISSION);
-        } catch (Throwable) {
-            $allowed = false;
-        }
-
-        if (! $allowed) {
-            throw new AuthorizationException(
-                'Settlement readiness projection requires pms.guest-ledger.settlement-readiness.view permission.'
-            );
+        try { $ok = $fresh->can(self::VIEW_PERMISSION); } catch (Throwable) { $ok = false; }
+        if (! $ok) {
+            throw new AuthorizationException('Permission required.');
         }
     }
 }

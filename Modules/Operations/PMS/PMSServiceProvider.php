@@ -31,10 +31,32 @@ use Modules\Operations\PMS\Policies\RatePlanPolicy;
 use Modules\Operations\PMS\Policies\ReservationPolicy;
 use Modules\Operations\PMS\Policies\RoomBlockPolicy;
 use Modules\Operations\PMS\Policies\StayPolicy;
+use Modules\Operations\PMS\Services\Adapters\UnavailableCompletedSettlementConflictAdapter;
+use Modules\Operations\PMS\Services\Adapters\UnavailablePostingCompletenessAdapter;
+use Modules\Operations\PMS\Services\Adapters\UnavailableSettlementHoldAdapter;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictReadPort;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldReadPort;
 
 class PMSServiceProvider extends ServiceProvider
 {
-    public function register(): void {}
+    public function register(): void
+    {
+        // GLF-D production bindings — fail-closed unavailable adapters.
+        // Tests may override these with CLEAR/BLOCKED/REVIEW_REQUIRED stubs.
+        $this->app->singleton(
+            GuestLedgerPostingCompletenessReadPort::class,
+            UnavailablePostingCompletenessAdapter::class,
+        );
+        $this->app->singleton(
+            GuestLedgerSettlementHoldReadPort::class,
+            UnavailableSettlementHoldAdapter::class,
+        );
+        $this->app->singleton(
+            GuestLedgerCompletedSettlementConflictReadPort::class,
+            UnavailableCompletedSettlementConflictAdapter::class,
+        );
+    }
 
     public function boot(): void
     {

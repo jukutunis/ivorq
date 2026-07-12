@@ -43,11 +43,11 @@ use Shared\Services\CurrentPropertyService;
 use Spatie\Permission\PermissionRegistrar;
 use Tests\Postgres\Operations\PMS\Concerns\CreatesGuestLedgerFolioData;
 use Tests\PostgresTestCase;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
 
 class GuestLedgerCheckoutSettlementReadinessProjectionTest extends PostgresTestCase
 {
-    use RefreshDatabase;
+    use DatabaseMigrations;
     use CreatesGuestLedgerFolioData;
 
     private GuestLedgerCheckoutSettlementReadinessProjectionService $service;
