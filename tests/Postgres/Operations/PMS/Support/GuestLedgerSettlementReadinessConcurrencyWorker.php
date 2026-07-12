@@ -8,6 +8,11 @@
  * executes a real production lifecycle mutation (payment allocation,
  * deposit application, refund, AR accept/reverse).
  *
+ * Deterministic two-phase barrier:
+ *   Phase 1 — both workers booted and ready
+ *   Phase 2 — projection transaction established snapshot (blocking adapter)
+ *   Phase 3 — mutator released, mutation committed, projection released
+ *
  * Credentials come from proc_open environment variables — never from
  * command-line arguments. Result JSON excludes all secrets.
  */
@@ -46,14 +51,10 @@ try {
     $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
     $kernel->bootstrap();
 
-    // Bind CLEAR test ports
-    $app->singleton(Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort::class, function () {
-        return new class implements Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort {
-            public function evaluate(string $rid, string $pid): array {
-                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'message' => null];
-            }
-        };
-    });
+    // Bind CLEAR test ports for SettlementHold and CompletedSettlementConflict.
+    // PostingCompleteness port is bound differently per worker role:
+    //   - Projection worker (index 0): blocking adapter for deterministic snapshot
+    //   - Mutator worker (index 1): simple CLEAR adapter
     $app->singleton(Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldReadPort::class, function () {
         return new class implements Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldReadPort {
             public function evaluate(string $rid, string $pid): array {
@@ -69,9 +70,41 @@ try {
         };
     });
 
+    // PostingCompleteness: blocking adapter for projection worker, CLEAR for mutator.
+    // The blocking adapter is evaluated INSIDE the projection transaction AFTER all
+    // financial-source reads (Payment, Deposit, Refund, AR, Folio). It signals
+    // "snapshot established" then waits for "mutation committed" before returning.
+    $isProjectionWorker = ($index === 0 || $args['IVORQ_MUTATOR'] === '');
+    if ($isProjectionWorker) {
+        $app->singleton(Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort::class, function () use ($barrier) {
+            return new class($barrier) implements Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort {
+                private string $barrier;
+                public function __construct(string $barrier) { $this->barrier = $barrier; }
+                public function evaluate(string $rid, string $pid): array {
+                    // Signal: projection snapshot is established (all financial reads done)
+                    file_put_contents($this->barrier . '-snapshot', (string) getmypid());
+                    // Wait for mutation-committed signal
+                    $maxWait = 120; $waited = 0;
+                    while ($waited < $maxWait) {
+                        if (file_exists($this->barrier . '-mutated')) break;
+                        usleep(50000); $waited += 0.05;
+                    }
+                    return ['status' => self::AVAILABLE_CLEAR,
+                            'code' => null, 'message' => null];
+                }
+            };
+        });
+    } else {
+        $app->singleton(Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort::class, function () {
+            return new class implements Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort {
+                public function evaluate(string $rid, string $pid): array {
+                    return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'message' => null];
+                }
+            };
+        });
+    }
+
     // Test double: bypass sensitive-action confirmation in worker processes.
-    // Production services (refund, AR accept/reverse) require confirmation;
-    // the worker process has no interactive session, so we bind a pass-through.
     $app->singleton(Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService::class, function () use ($app) {
         $auditSvc = $app->make(Modules\Foundation\Audit\Services\AuditService::class);
         return new class($auditSvc) extends Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService {
@@ -103,14 +136,14 @@ try {
         app(Shared\Services\CurrentPropertyService::class)->setPropertyId($propId);
     }
 
-    // ── Barrier synchronisation ─────────────────────────────────────────
-    $readyFile = $barrier . '-' . $workerId;
+    // ── Phase 1: both workers booted and ready ──────────────────────────
+    $readyFile = $barrier . '-ready-' . $workerId;
     file_put_contents($readyFile, (string) $phpPid);
-    $maxWait = 60; $waited = 0;
+    $maxWait = 120; $waited = 0;
     while ($waited < $maxWait) {
-        $readyCount = count(glob($barrier . '-*'));
+        $readyCount = count(glob($barrier . '-ready-*'));
         if ($readyCount >= 2) break;
-        usleep(300000); $waited += 0.3;
+        usleep(100000); $waited += 0.1;
     }
 
     $result = [
@@ -118,29 +151,57 @@ try {
         'scenario' => $scenario, 'index' => $index,
     ];
 
-    if ($index === 0 || $mutatorCmd === '') {
+    // Determine if this is a projection-only worker
+    $isMutator = ($index === 1 && $mutatorCmd !== '');
+
+    if (! $isMutator) {
         // ── Projection worker ───────────────────────────────────────────
         $service = $app->make(
             Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService::class
         );
         if ($stayId && $actor) {
             $proj = $service->project($actor, $stayId);
-            $result['status'] = $proj->status->value;
+            $result['status']           = $proj->status->value;
             $result['source_fingerprint'] = $proj->source_fingerprint;
-            $result['canonical_balance'] = $proj->canonical_aggregate_balance;
-            $result['property_id'] = $proj->property_id;
-            $result['markers'] = $proj->markers;
-            $result['folio_count'] = $proj->folio_count;
-            $result['blocker_codes'] = $proj->blocker_codes;
-            $result['folio_count_after'] = DB::table('folios')->count();
-            $result['folio_item_count_after'] = DB::table('folio_items')->count();
+            $result['canonical_balance']  = $proj->canonical_aggregate_balance;
+            $result['property_id']        = $proj->property_id;
+            $result['markers']            = $proj->markers;
+            $result['folio_count']        = $proj->folio_count;
+            $result['blocker_codes']      = $proj->blocker_codes;
+            $result['review_reasons']     = $proj->review_reasons;
+            $result['evidence_unavailable_codes'] = $proj->evidence_unavailable_codes;
+            $result['folio_ids']          = $proj->folio_ids;
+            // Zero-write proof: capture source-table row counts after projection
+            $result['zero_write'] = [
+                'folios'                    => DB::table('folios')->count(),
+                'folio_items'               => DB::table('folio_items')->count(),
+                'guest_payment_transactions'    => DB::table('guest_payment_transactions')->count(),
+                'guest_payment_allocations'     => DB::table('guest_payment_allocations')->count(),
+                'guest_payment_reversals'       => DB::table('guest_payment_reversals')->count(),
+                'guest_deposit_transactions'    => DB::table('guest_deposit_transactions')->count(),
+                'guest_deposit_applications'    => DB::table('guest_deposit_applications')->count(),
+                'guest_deposit_reversals'       => DB::table('guest_deposit_reversals')->count(),
+                'guest_refund_transactions'     => DB::table('guest_refund_transactions')->count(),
+                'guest_ar_transfer_requests'    => DB::table('guest_ar_transfer_requests')->count(),
+                'guest_ar_transfer_decisions'   => DB::table('guest_ar_transfer_decisions')->count(),
+                'front_desk_stays'              => DB::table('front_desk_stays')->count(),
+            ];
         } else {
             $result['error'] = 'Missing stay/actor IDs for projection';
         }
-    } elseif ($index === 1 && $mutatorCmd !== '') {
-        // ── Mutator worker — real production lifecycle service ──────────
-        // Small delay to let projection worker establish its snapshot
-        usleep(250000);
+    } else {
+        // ── Mutator worker — deterministic barrier ──────────────────────
+
+        // Phase 2: wait for projection snapshot to be established.
+        // This guarantees the projection transaction has read all financial
+        // sources and is blocked inside the external-port evaluation.
+        $maxWait = 120; $waited = 0;
+        while ($waited < $maxWait) {
+            if (file_exists($barrier . '-snapshot')) break;
+            usleep(50000); $waited += 0.05;
+        }
+
+        // Phase 3: execute production lifecycle mutation
         $mutationResult = null;
 
         switch ($mutatorCmd) {
@@ -201,6 +262,11 @@ try {
             $result['mutator_executed'] = false;
             $result['mutation_error'] = $mutationResult['error'] ?? 'Mutation failed';
         }
+
+        // Signal: mutation committed — this releases the projection worker's
+        // blocking adapter, allowing the projection to complete with its
+        // pre-mutation REPEATABLE READ snapshot intact.
+        file_put_contents($barrier . '-mutated', '1');
     }
 
     file_put_contents($resultFile, json_encode($result));

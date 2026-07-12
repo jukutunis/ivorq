@@ -152,13 +152,17 @@ class GuestLedgerSettlementReadinessConcurrencyCoordinator
             $stderrFile = $this->resultDir . "/stderr-{$workerId}.txt";
             if (file_exists($resultFile)) {
                 $decoded = json_decode(file_get_contents($resultFile), true);
-                if ($decoded && isset($decoded['error'])) {
-                    // Attach stderr for diagnostics when worker reports an error
+                if (! is_array($decoded)) {
+                    $decoded = ['_parse_error' => 'malformed_json', '_stderr' => file_exists($stderrFile) ? trim(file_get_contents($stderrFile)) : ''];
+                }
+                // Always attach process exit code for integrity verification
+                $decoded['_exit_code'] = $exitCode;
+                if (isset($decoded['error'])) {
                     $decoded['_stderr'] = file_exists($stderrFile) ? trim(file_get_contents($stderrFile)) : '';
                 }
                 $results[] = $decoded;
             } else {
-                $results[] = ['_proc_error' => 'no_result_file', '_stderr' => file_exists($stderrFile) ? trim(file_get_contents($stderrFile)) : ''];
+                $results[] = ['_proc_error' => 'no_result_file', '_exit_code' => $exitCode, '_stderr' => file_exists($stderrFile) ? trim(file_get_contents($stderrFile)) : ''];
             }
         }
 
