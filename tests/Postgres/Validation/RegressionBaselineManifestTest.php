@@ -411,7 +411,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertCount(
             8,
             $activeIds,
-            "Must have exactly 7 active baselines. Found: " . implode(', ', $activeIds)
+            "Must have exactly 8 active baselines. Found: " . implode(', ', $activeIds)
         );
 
         foreach ($expectedActiveIds as $id) {
@@ -518,6 +518,24 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             $ids,
             "Manifest must contain exactly {$expectedCount} baselines. Found: " . implode(', ', $ids)
         );
+    }
+
+    public function test_glf_d_baseline_has_exact_three_classes_and_correct_counts(): void
+    {
+        $baseline = $this->findBaseline('guest-ledger-settlement-readiness-baseline');
+        $this->assertNotNull($baseline, 'GLF-D baseline must exist.');
+        $this->assertEquals('active', $baseline->status);
+        $this->assertCount(3, $baseline->classes, 'GLF-D must have exactly 3 classes.');
+        $this->assertEquals('GuestLedgerCheckoutSettlementReadinessProjectionTest', $baseline->classes[0]);
+        $this->assertEquals('GuestLedgerCheckoutSettlementReadinessSourceIntegrityTest', $baseline->classes[1]);
+        $this->assertEquals('GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest', $baseline->classes[2]);
+        $this->assertEquals(49, $baseline->expected->tests ?? null, 'GLF-D must have 49 tests.');
+        $this->assertEquals(94, $baseline->expected->assertions ?? null, 'GLF-D must have 94 assertions.');
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertEquals([], $baseline->accepted_debt);
+        $this->assertEquals('ec66a1ebda9d93d297b19717793adbe18e6de0f3', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-glf-d-checkout-settlement-readiness-projection', $baseline->provenance->branch ?? null);
     }
 
     private function findBaseline(string $id): ?object
