@@ -177,16 +177,16 @@
         "GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 49,
-        "assertions": 94,
+        "tests": 54,
+        "assertions": 99,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-12",
         "branch": "sprint-glf-d-checkout-settlement-readiness-projection",
-        "sha": "ec66a1ebda9d93d297b19717793adbe18e6de0f3",
-        "note": "GLF-D correction measurement: 3 exact classes / 49 tests / 94 assertions / 0 failures / 0 errors. Production DI bindings for all three read ports. Strict top-level REPEATABLE READ READ ONLY transaction contract. Shared GuestLedgerFolioTotalsCalculator as single calculation authority. Corrected Payment/Deposit/Refund/AR-transfer source derivation with exact cardinality proofs. Complete markers and source identifiers. Full SHA-256 fingerprint from canonical sorted source facts. Real worker/coordinator with disposable database. Nested transaction stable error proof. GLF-A/B/C baselines preserved."
+        "sha": "d96bf980b17b57425228b091dc7300f077f6fda2",
+        "note": "GLF-D second correction: 3 exact classes / 54 tests / 99 assertions / 0 failures / 0 errors. Exact-cardinality Payment proof (count != 1 checks, lifecycle consistency for Recorded/PartiallyAllocated/FullyAllocated/Voided). Exact-cardinality Deposit proof (same rigor). Refund source-type agreement validation. Exact-cardinality AR proof (accepted/rejected/reversed exact counts). Full-fact SHA-256 fingerprint from canonical sorted source values (folio totals, items, payment/alloc/reversal facts, deposit/app/reversal facts, refund sources, AR decisions, port states). Fingerprint mutation tests for Payment lifecycle, Deposit lifecycle, AR decision, and FolioItem source linkage. evaluated_at independence proven. Real production lifecycle mutations in concurrency worker (allocate, apply_deposit, refund, accept_ar, reverse_ar). Credential-safe env propagation. GLF-A/B/C baselines preserved."
       },
       "accepted_debt": [],
       "status": "active"
