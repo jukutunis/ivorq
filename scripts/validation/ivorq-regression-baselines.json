@@ -177,16 +177,16 @@
         "GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 54,
-        "assertions": 99,
+        "tests": 60,
+        "assertions": 164,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-12",
+        "measured_at": "2026-07-13",
         "branch": "sprint-glf-d-checkout-settlement-readiness-projection",
-        "sha": "d96bf980b17b57425228b091dc7300f077f6fda2",
-        "note": "GLF-D second correction: 3 exact classes / 54 tests / 99 assertions / 0 failures / 0 errors. Exact-cardinality Payment proof (count != 1 checks, lifecycle consistency for Recorded/PartiallyAllocated/FullyAllocated/Voided). Exact-cardinality Deposit proof (same rigor). Refund source-type agreement validation. Exact-cardinality AR proof (accepted/rejected/reversed exact counts). Full-fact SHA-256 fingerprint from canonical sorted source values (folio totals, items, payment/alloc/reversal facts, deposit/app/reversal facts, refund sources, AR decisions, port states). Fingerprint mutation tests for Payment lifecycle, Deposit lifecycle, AR decision, and FolioItem source linkage. evaluated_at independence proven. Real production lifecycle mutations in concurrency worker (allocate, apply_deposit, refund, accept_ar, reverse_ar). Credential-safe env propagation. GLF-A/B/C baselines preserved."
+        "sha": "c17701ab8160af76ab52a52abc9e82b969cfcf0e",
+        "note": "GLF-D final closure: 3 exact classes / 60 tests / 164 assertions / 0 failures / 0 errors. Real worker concurrency proof with credential-safe proc_open env (DB creds never in command-line JSON). Five spawnWorkers scenarios (parallel projection, payment race, deposit race, AR race, cross-property) with distinct PHP/PG PIDs. Complete fingerprint mutation matrix (payment alloc amount, refund amount, refund source FK/type, external port status, port stable source identifier). Worker binds SensitiveActionConfirmationService pass-through and CLEAR test ports. GLF-A/B/C and all active baselines preserved."
       },
       "accepted_debt": [],
       "status": "active"
