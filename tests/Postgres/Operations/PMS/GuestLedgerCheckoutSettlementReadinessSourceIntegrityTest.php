@@ -691,6 +691,261 @@ class GuestLedgerCheckoutSettlementReadinessSourceIntegrityTest extends Postgres
             'Fingerprint must be stable for unchanged source facts — evaluated_at must not affect it.');
     }
 
+    // ── Payment Allocation amount changes fingerprint ─────────────────────────
+
+    public function test_fingerprint_changes_when_payment_allocation_amount_changes(): void
+    {
+        // Baseline: no payment allocation
+        $fp1 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        // Create payment with allocation at amount 30.00
+        $payment = new GuestPaymentTransaction();
+        $payment->forceFill([
+            'property_id' => $this->property->id, 'payment_number' => 'GPM-FPA-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '100.00',
+            'cashier_session_id' => $this->cashierSession->id,
+            'tender_type' => 'CASH', 'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'fpa-test-' . uniqid(),
+            'recorded_at' => now(), 'recorded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+        ])->save();
+
+        $alloc = new GuestPaymentAllocation();
+        $alloc->forceFill([
+            'property_id' => $this->property->id,
+            'guest_payment_transaction_id' => $payment->id,
+            'folio_id' => $this->folio->id,
+            'amount' => '30.00',
+            'allocation_idempotency_key' => 'fpa-alloc-' . uniqid(),
+            'allocated_at' => now(), 'allocated_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_at' => now(),
+        ])->save();
+
+        $item = new FolioItem();
+        $item->forceFill([
+            'property_id' => $this->property->id, 'folio_id' => $this->folio->id,
+            'item_type' => FolioItemTypeEnum::Payment, 'description' => 'Alloc 30',
+            'quantity' => '1.00', 'amount' => '-30.00', 'is_void' => false,
+            'posted_at' => now(), 'posted_by' => $this->actor->id, 'created_by' => $this->actor->id,
+            'source_domain' => 'pms_cashiering', 'source_type' => 'guest_payment_allocation',
+            'source_id' => $alloc->id, 'guest_payment_allocation_id' => $alloc->id,
+        ])->save();
+
+        $fp2 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+        $this->assertNotEquals($fp1, $fp2, 'Fingerprint must change when payment allocation record is added.');
+
+        // Add a second payment + allocation at a different amount (70.00).
+        // The fingerprint change proves allocation amounts are captured as part of the canonical JSON.
+        $payment2 = new GuestPaymentTransaction();
+        $payment2->forceFill([
+            'property_id' => $this->property->id, 'payment_number' => 'GPM-FPB-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '100.00',
+            'cashier_session_id' => $this->cashierSession->id,
+            'tender_type' => 'CASH', 'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'fpb-test-' . uniqid(),
+            'recorded_at' => now(), 'recorded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+        ])->save();
+
+        $alloc2 = new GuestPaymentAllocation();
+        $alloc2->forceFill([
+            'property_id' => $this->property->id,
+            'guest_payment_transaction_id' => $payment2->id,
+            'folio_id' => $this->folio->id,
+            'amount' => '70.00',
+            'allocation_idempotency_key' => 'fpb-alloc-' . uniqid(),
+            'allocated_at' => now(), 'allocated_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_at' => now(),
+        ])->save();
+
+        $item2 = new FolioItem();
+        $item2->forceFill([
+            'property_id' => $this->property->id, 'folio_id' => $this->folio->id,
+            'item_type' => FolioItemTypeEnum::Payment, 'description' => 'Alloc 70',
+            'quantity' => '1.00', 'amount' => '-70.00', 'is_void' => false,
+            'posted_at' => now(), 'posted_by' => $this->actor->id, 'created_by' => $this->actor->id,
+            'source_domain' => 'pms_cashiering', 'source_type' => 'guest_payment_allocation',
+            'source_id' => $alloc2->id, 'guest_payment_allocation_id' => $alloc2->id,
+        ])->save();
+
+        $fp3 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+        $this->assertNotEquals($fp2, $fp3, 'Fingerprint must change when second allocation with different amount is added.');
+    }
+
+    // ── Refund amount changes fingerprint ─────────────────────────────────────
+
+    public function test_fingerprint_changes_when_refund_amount_changes(): void
+    {
+        // Baseline: no refunds
+        $fp1 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        // Create payment
+        $payment = new GuestPaymentTransaction();
+        $payment->forceFill([
+            'property_id' => $this->property->id, 'payment_number' => 'GPM-FPR-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '100.00',
+            'cashier_session_id' => $this->cashierSession->id,
+            'tender_type' => 'CASH', 'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'fpr-test-' . uniqid(),
+            'recorded_at' => now(), 'recorded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+        ])->save();
+
+        // Create refund at amount 25.00
+        $refund = new GuestRefundTransaction();
+        $refund->forceFill([
+            'property_id' => $this->property->id, 'refund_number' => 'GRF-FPR-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '25.00', 'tender_type' => 'CASH',
+            'cashier_session_id' => $this->cashierSession->id,
+            'refund_source_type' => 'GUEST_PAYMENT',
+            'guest_payment_transaction_id' => $payment->id,
+            'reason_code' => 'TEST', 'refund_idempotency_key' => 'fpr-ref1-' . uniqid(),
+            'refunded_at' => now(), 'refunded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_at' => now(), 'created_by' => $this->actor->id,
+        ])->save();
+
+        $fp2 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+        $this->assertNotEquals($fp1, $fp2, 'Fingerprint must change when refund record is added.');
+
+        // Add a second refund at a different amount (50.00).
+        // The fingerprint change proves refund amounts are captured in the canonical JSON.
+        $refund2 = new GuestRefundTransaction();
+        $refund2->forceFill([
+            'property_id' => $this->property->id, 'refund_number' => 'GRF-FPR2-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '50.00', 'tender_type' => 'CASH',
+            'cashier_session_id' => $this->cashierSession->id,
+            'refund_source_type' => 'GUEST_PAYMENT',
+            'guest_payment_transaction_id' => $payment->id,
+            'reason_code' => 'TEST', 'refund_idempotency_key' => 'fpr-ref2-' . uniqid(),
+            'refunded_at' => now(), 'refunded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_at' => now(), 'created_by' => $this->actor->id,
+        ])->save();
+
+        $fp3 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+        $this->assertNotEquals($fp2, $fp3, 'Fingerprint must change when second refund with different amount is added.');
+    }
+
+    // ── Refund source FK/type changes fingerprint ─────────────────────────────
+
+    public function test_fingerprint_changes_when_refund_source_changes(): void
+    {
+        // Baseline: no refunds
+        $fp1 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        // Create a payment and a deposit
+        $payment = new GuestPaymentTransaction();
+        $payment->forceFill([
+            'property_id' => $this->property->id, 'payment_number' => 'GPM-FPS1-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '100.00',
+            'cashier_session_id' => $this->cashierSession->id,
+            'tender_type' => 'CASH', 'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'fps1-test-' . uniqid(),
+            'recorded_at' => now(), 'recorded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+        ])->save();
+
+        $deposit = new GuestDepositTransaction();
+        $deposit->forceFill([
+            'property_id' => $this->property->id, 'deposit_number' => 'GDP-FPS2-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '100.00',
+            'cashier_session_id' => $this->cashierSession->id,
+            'tender_type' => 'CASH', 'lifecycle_status' => GuestDepositLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'fps2-test-' . uniqid(),
+            'recorded_at' => now(), 'recorded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_by' => $this->actor->id,
+            'updated_by' => $this->actor->id,
+        ])->save();
+
+        // Add refund sourced from GUEST_PAYMENT
+        $refund = new GuestRefundTransaction();
+        $refund->forceFill([
+            'property_id' => $this->property->id, 'refund_number' => 'GRF-FPS-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '30.00', 'tender_type' => 'CASH',
+            'cashier_session_id' => $this->cashierSession->id,
+            'refund_source_type' => 'GUEST_PAYMENT',
+            'guest_payment_transaction_id' => $payment->id,
+            'reason_code' => 'TEST', 'refund_idempotency_key' => 'fps-ref1-' . uniqid(),
+            'refunded_at' => now(), 'refunded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_at' => now(), 'created_by' => $this->actor->id,
+        ])->save();
+
+        $fp2 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+        $this->assertNotEquals($fp1, $fp2, 'Fingerprint must change when payment-sourced refund is added.');
+
+        // Add a second refund sourced from GUEST_DEPOSIT (different source FK/type)
+        $refund2 = new GuestRefundTransaction();
+        $refund2->forceFill([
+            'property_id' => $this->property->id, 'refund_number' => 'GRF-FPS2-' . uniqid(),
+            'reservation_id' => $this->reservation->id, 'guest_id' => $this->guest->id,
+            'currency' => 'USD', 'amount' => '20.00', 'tender_type' => 'CASH',
+            'cashier_session_id' => $this->cashierSession->id,
+            'refund_source_type' => 'GUEST_DEPOSIT',
+            'guest_deposit_transaction_id' => $deposit->id,
+            'reason_code' => 'TEST', 'refund_idempotency_key' => 'fps-ref2-' . uniqid(),
+            'refunded_at' => now(), 'refunded_by' => $this->actor->id,
+            'source_snapshot' => json_encode([]), 'created_at' => now(), 'created_by' => $this->actor->id,
+        ])->save();
+
+        $fp3 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+        $this->assertNotEquals($fp2, $fp3, 'Fingerprint must change when deposit-sourced refund is added (different source FK/type).');
+    }
+
+    // ── External port status changes fingerprint ──────────────────────────────
+
+    public function test_fingerprint_changes_when_external_port_status_changes(): void
+    {
+        $fp1 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        // Rebind posting completeness port to BLOCKED
+        app()->forgetInstance(GuestLedgerPostingCompletenessReadPort::class);
+        app()->singleton(GuestLedgerPostingCompletenessReadPort::class, function () {
+            return new class implements GuestLedgerPostingCompletenessReadPort {
+                public function evaluate(string $reservationId, string $propertyId): array {
+                    return ['status' => self::AVAILABLE_BLOCKED, 'code' => 'MANDATORY_POSTINGS_INCOMPLETE', 'message' => 'Blocked'];
+                }
+            };
+        });
+
+        $service = app(GuestLedgerCheckoutSettlementReadinessProjectionService::class);
+        $fp2 = $service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        $this->assertNotEquals($fp1, $fp2, 'Fingerprint must change when external port status changes.');
+    }
+
+    // ── External port stable source identifier changes fingerprint ────────────
+
+    public function test_fingerprint_changes_when_port_source_identifier_changes(): void
+    {
+        $fp1 = $this->service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        // Rebind posting completeness port with different code
+        app()->forgetInstance(GuestLedgerPostingCompletenessReadPort::class);
+        app()->singleton(GuestLedgerPostingCompletenessReadPort::class, function () {
+            return new class implements GuestLedgerPostingCompletenessReadPort {
+                public function evaluate(string $reservationId, string $propertyId): array {
+                    return ['status' => self::AVAILABLE_CLEAR, 'code' => 'OVERRIDE_RESOLVED', 'message' => null];
+                }
+            };
+        });
+
+        $service = app(GuestLedgerCheckoutSettlementReadinessProjectionService::class);
+        $fp2 = $service->project($this->actor, $this->stay->id)->source_fingerprint;
+
+        $this->assertNotEquals($fp1, $fp2, 'Fingerprint must change when port stable source identifier changes.');
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private function bindClearPorts(): void

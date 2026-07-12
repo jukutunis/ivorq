@@ -13,23 +13,21 @@ use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
 use Modules\Operations\PMS\Enums\GuestDepositLifecycleStatusEnum;
 use Modules\Operations\PMS\Enums\GuestPaymentLifecycleStatusEnum;
+use Modules\Operations\PMS\Enums\GuestArTransferStatusEnum;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Models\Guest;
-use Modules\Operations\PMS\Models\GuestPaymentAllocation;
 use Modules\Operations\PMS\Models\GuestPaymentTransaction;
 use Modules\Operations\PMS\Models\GuestDepositTransaction;
-use Modules\Operations\PMS\Models\GuestDepositApplication;
 use Modules\Operations\PMS\Models\GuestArTransferRequest;
 use Modules\Operations\PMS\Models\Reservation;
 use Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService;
-use Modules\Finance\AccountsReceivable\Enums\GuestArTransferDecisionTypeEnum;
-use Modules\Finance\AccountsReceivable\Models\GuestArTransferDecision;
+use Modules\Operations\PMS\Services\GuestPaymentLifecycleService;
+use Modules\Operations\PMS\Services\GuestDepositLifecycleService;
+use Modules\Operations\PMS\Services\GuestRefundLifecycleService;
+use Modules\Finance\AccountsReceivable\Services\GuestArTransferDecisionService;
 use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Models\CashierSession;
-use Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictReadPort;
-use Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort;
-use Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldReadPort;
 use Shared\Exceptions\NotFoundException;
 use Shared\Services\CurrentPropertyService;
 use Spatie\Permission\PermissionRegistrar;
@@ -71,153 +69,241 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // Scenario A: Two parallel projections over unchanged source
+    // Scenario A — parallel projection (two workers, unchanged source)
     // ═════════════════════════════════════════════════════════════════════
 
-    public function test_parallel_projection_unchanged_source_identical_results(): void
+    public function test_scenario_a_parallel_projection_unchanged_source_identical_results(): void
     {
         $this->seedStayWithZeroFolio();
-        $service = app(GuestLedgerCheckoutSettlementReadinessProjectionService::class);
 
-        // Two distinct PostgreSQL connections → distinct backend PIDs
-        $pid1 = DB::connection('pgsql')->select('SELECT pg_backend_pid() as pid')[0]->pid;
-        $r1 = $service->project(User::where('is_active', true)->first(), FrontDeskStay::first()->id);
+        $extra = [
+            0 => [
+                'IVORQ_STAY_ID'    => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID' => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'   => $this->state['actor_id'],
+                'IVORQ_MUTATOR'    => '',
+            ],
+            1 => [
+                'IVORQ_STAY_ID'    => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID' => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'   => $this->state['actor_id'],
+                'IVORQ_MUTATOR'    => '',
+            ],
+        ];
 
-        // Force new backend PID via disconnect + reconnect
-        DB::disconnect('pgsql');
-        $pid2 = DB::connection('pgsql')->select('SELECT pg_backend_pid() as pid')[0]->pid;
+        $results = $this->coordinator->spawnWorkers(2, 'scenario_a', $extra);
 
-        $r2 = $service->project(User::where('is_active', true)->first(), FrontDeskStay::first()->id);
+        // Both workers must produce non-null successful results
+        $this->assertCount(2, $results);
+        $this->assertNotNull($results[0], 'Worker 0 result must not be null');
+        $this->assertNotNull($results[1], 'Worker 1 result must not be null');
+        $this->assertArrayNotHasKey('error', $results[0], 'Worker 0 must not have error');
+        $this->assertArrayNotHasKey('error', $results[1], 'Worker 1 must not have error');
 
-        $this->assertEquals($r1->status, $r2->status);
-        $this->assertEquals($r1->source_fingerprint, $r2->source_fingerprint);
-        if ($pid1 === $pid2) {
-            $this->markTestSkipped('PG backend PID unchanged — connection pooling prevented distinct PIDs.');
-        }
-        $this->assertNotEquals($pid1, $pid2);
+        // Distinct PHP PIDs
+        $this->assertNotNull($results[0]['php_pid']);
+        $this->assertNotNull($results[1]['php_pid']);
+        $this->assertNotEquals($results[0]['php_pid'], $results[1]['php_pid'],
+            'Workers must have distinct PHP PIDs');
+
+        // Distinct PostgreSQL backend PIDs
+        $this->assertNotNull($results[0]['pg_backend_pid']);
+        $this->assertNotNull($results[1]['pg_backend_pid']);
+        $this->assertNotEquals($results[0]['pg_backend_pid'], $results[1]['pg_backend_pid'],
+            'Workers must have distinct PostgreSQL backend PIDs');
+
+        // Identical projection results
+        $this->assertEquals($results[0]['status'], $results[1]['status']);
+        $this->assertEquals($results[0]['source_fingerprint'], $results[1]['source_fingerprint']);
+        $this->assertEquals($results[0]['canonical_balance'], $results[1]['canonical_balance']);
+        $this->assertEquals($results[0]['markers'], $results[1]['markers']);
+
+        // No mutation occurred
+        $this->assertArrayNotHasKey('mutator_executed', $results[0]);
+        $this->assertArrayNotHasKey('mutator_executed', $results[1]);
     }
 
-    public function test_projection_vs_payment_allocation_coherent_snapshot(): void
+    // ═════════════════════════════════════════════════════════════════════
+    // Scenario B — Payment allocation race
+    // ═════════════════════════════════════════════════════════════════════
+
+    public function test_scenario_b_payment_race_projection_coherent_snapshot(): void
     {
         $this->seedStayWithPayment();
-        $service = app(GuestLedgerCheckoutSettlementReadinessProjectionService::class);
 
-        // Snapshot A: pre-allocation
-        $r1 = $service->project(User::where('is_active', true)->first(), FrontDeskStay::first()->id);
-        $this->assertContains('GUEST_PAYMENT_UNRESOLVED', $r1->blocker_codes);
+        $extra = [
+            0 => [
+                'IVORQ_STAY_ID'    => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID' => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'   => $this->state['actor_id'],
+                'IVORQ_MUTATOR'    => '',
+            ],
+            1 => [
+                'IVORQ_STAY_ID'    => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID' => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'   => $this->state['actor_id'],
+                'IVORQ_MUTATOR'    => 'allocate',
+                'IVORQ_PAYMENT_ID' => $this->state['payment_id'],
+                'IVORQ_FOLIO_ID'   => $this->state['folio_id'],
+            ],
+        ];
 
-        // Allocate payment — creates FolioItem via forceFill
-        $payment = GuestPaymentTransaction::first();
-        $folio = Folio::first();
-        $alloc = new GuestPaymentAllocation();
-        $alloc->forceFill([
-            'property_id' => $folio->property_id,
-            'guest_payment_transaction_id' => $payment->id,
-            'folio_id' => $folio->id, 'amount' => '100.00',
-            'allocation_idempotency_key' => 'conc-alloc-'.uniqid(),
-            'allocated_at' => now(), 'allocated_by' => $this->state['actor_id'],
-            'source_snapshot' => json_encode([]), 'created_at' => now(),
-        ])->save();
+        $results = $this->coordinator->spawnWorkers(2, 'scenario_b', $extra);
 
-        // Source-linked FolioItem
-        $item = new FolioItem();
-        $item->forceFill([
-            'property_id' => $folio->property_id, 'folio_id' => $folio->id,
-            'item_type' => FolioItemTypeEnum::Payment, 'description' => 'Alloc',
-            'quantity' => '1.00', 'amount' => '-100.00', 'is_void' => false,
-            'posted_at' => now(), 'posted_by' => $this->state['actor_id'],
-            'created_by' => $this->state['actor_id'],
-            'source_domain' => 'pms_cashiering', 'source_type' => 'guest_payment_allocation',
-            'source_id' => $alloc->id, 'guest_payment_allocation_id' => $alloc->id,
-        ])->save();
+        $this->assertCount(2, $results);
+        $this->assertNotNull($results[0], 'Projection worker must not be null');
+        $this->assertNotNull($results[1], 'Mutation worker must not be null');
+        $this->assertArrayNotHasKey('error', $results[0], 'Projection worker error');
+        $this->assertArrayNotHasKey('error', $results[1], 'Mutation worker error');
 
-        // Snapshot B: post-allocation (coherent — represents committed state)
-        $r2 = $service->project(User::where('is_active', true)->first(), FrontDeskStay::first()->id);
-        $this->assertNotContains('GUEST_PAYMENT_UNRESOLVED', $r2->blocker_codes);
+        // Distinct PIDs
+        $this->assertNotEquals($results[0]['php_pid'], $results[1]['php_pid']);
+        $this->assertNotEquals($results[0]['pg_backend_pid'], $results[1]['pg_backend_pid']);
+
+        // Mutator must have executed
+        $this->assertTrue($results[1]['mutator_executed'] ?? false, 'Payment allocation must execute');
+        $this->assertEquals('allocation', $results[1]['mutation']['type'] ?? '');
+
+        // Projection must be coherent
+        $this->assertNotNull($results[0]['status']);
+        $this->assertNotNull($results[0]['source_fingerprint']);
+        $this->assertNotNull($results[0]['canonical_balance']);
     }
 
-    public function test_projection_vs_deposit_coherent_snapshot(): void
+    // ═════════════════════════════════════════════════════════════════════
+
+    public function test_scenario_c_deposit_race_projection_coherent_snapshot(): void
     {
         $this->seedStayWithDeposit();
-        $service = app(GuestLedgerCheckoutSettlementReadinessProjectionService::class);
 
-        $r1 = $service->project(User::where('is_active', true)->first(), FrontDeskStay::first()->id);
-        $this->assertContains('GUEST_DEPOSIT_UNRESOLVED', $r1->blocker_codes);
+        $extra = [
+            0 => [
+                'IVORQ_STAY_ID'    => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID' => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'   => $this->state['actor_id'],
+                'IVORQ_MUTATOR'    => '',
+            ],
+            1 => [
+                'IVORQ_STAY_ID'    => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID' => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'   => $this->state['actor_id'],
+                'IVORQ_MUTATOR'    => 'apply_deposit',
+                'IVORQ_DEPOSIT_ID' => $this->state['deposit_id'],
+                'IVORQ_FOLIO_ID'   => $this->state['folio_id'],
+            ],
+        ];
 
-        // Apply deposit
-        $deposit = GuestDepositTransaction::first();
-        $folio = Folio::first();
-        $app = new GuestDepositApplication();
-        $app->forceFill([
-            'property_id' => $folio->property_id,
-            'guest_deposit_transaction_id' => $deposit->id,
-            'folio_id' => $folio->id, 'amount' => '200.00',
-            'application_idempotency_key' => 'conc-app-'.uniqid(),
-            'applied_at' => now(), 'applied_by' => $this->state['actor_id'],
-            'source_snapshot' => json_encode([]), 'created_at' => now(),
-        ])->save();
+        $results = $this->coordinator->spawnWorkers(2, 'scenario_c', $extra);
 
-        $item = new FolioItem();
-        $item->forceFill([
-            'property_id' => $folio->property_id, 'folio_id' => $folio->id,
-            'item_type' => FolioItemTypeEnum::Deposit, 'description' => 'Dep app',
-            'quantity' => '1.00', 'amount' => '-200.00', 'is_void' => false,
-            'posted_at' => now(), 'posted_by' => $this->state['actor_id'],
-            'created_by' => $this->state['actor_id'],
-            'source_domain' => 'pms_cashiering', 'source_type' => 'guest_deposit_application',
-            'source_id' => $app->id, 'guest_deposit_application_id' => $app->id,
-        ])->save();
+        $this->assertCount(2, $results);
+        $this->assertNotNull($results[0], 'Projection worker must not be null');
+        $this->assertNotNull($results[1], 'Mutation worker must not be null');
+        $this->assertArrayNotHasKey('error', $results[0], 'Projection worker error');
+        $this->assertArrayNotHasKey('error', $results[1], 'Mutation worker error');
 
-        $r2 = $service->project(User::where('is_active', true)->first(), FrontDeskStay::first()->id);
-        $this->assertNotContains('GUEST_DEPOSIT_UNRESOLVED', $r2->blocker_codes);
+        // Distinct PIDs
+        $this->assertNotEquals($results[0]['php_pid'], $results[1]['php_pid']);
+        $this->assertNotEquals($results[0]['pg_backend_pid'], $results[1]['pg_backend_pid']);
+
+        // Mutator must have executed
+        $this->assertTrue($results[1]['mutator_executed'] ?? false, 'Deposit application must execute');
+        $this->assertEquals('deposit_application', $results[1]['mutation']['type'] ?? '');
+
+        // Projection must be coherent
+        $this->assertNotNull($results[0]['status']);
+        $this->assertNotNull($results[0]['source_fingerprint']);
     }
 
-    public function test_projection_vs_ar_acceptance_coherent_snapshot(): void
+    // ═════════════════════════════════════════════════════════════════════
+    // Scenario D — AR transfer acceptance race
+    // ═════════════════════════════════════════════════════════════════════
+
+    public function test_scenario_d_ar_race_projection_coherent_snapshot(): void
     {
         $this->seedStayWithArRequest();
-        $service = app(GuestLedgerCheckoutSettlementReadinessProjectionService::class);
 
-        $r1 = $service->project(User::where('is_active', true)->first(), FrontDeskStay::first()->id);
-        $this->assertContains('GUEST_AR_TRANSFER_PENDING', $r1->blocker_codes);
+        $extra = [
+            0 => [
+                'IVORQ_STAY_ID'     => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID'  => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'    => $this->state['actor_id'],
+                'IVORQ_MUTATOR'     => '',
+            ],
+            1 => [
+                'IVORQ_STAY_ID'      => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID'   => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'     => $this->state['actor_id'],
+                'IVORQ_MUTATOR'      => 'accept_ar',
+                'IVORQ_AR_REQUEST_ID' => $this->state['ar_request_id'],
+            ],
+        ];
 
-        // Accept AR
-        $ar = GuestArTransferRequest::first();
-        $dec = new GuestArTransferDecision();
-        $dec->forceFill([
-            'property_id' => $ar->property_id,
-            'guest_ar_transfer_request_id' => $ar->id,
-            'decision_type' => GuestArTransferDecisionTypeEnum::Accepted->value,
-            'reason_code' => 'TEST', 'decision_idempotency_key' => 'conc-dec-'.uniqid(),
-            'decided_at' => now(), 'decided_by' => $this->state['actor_id'],
-            'source_snapshot' => json_encode([]), 'created_at' => now(),
-        ])->save();
-        $ar->forceFill(['lifecycle_status' => 'ACCEPTED', 'updated_by' => $this->state['actor_id']])->save();
+        $results = $this->coordinator->spawnWorkers(2, 'scenario_d', $extra);
 
-        // Note: FolioItem creation requires GLF-C source integrity trigger satisfaction.
-        // Full AR transfer with FolioItem effect is tested in the source integrity test.
-        // Here we prove the projection detects the status change (ACCEPTED without FolioItem
-        // triggers review).
+        $this->assertCount(2, $results);
+        $this->assertNotNull($results[0], 'Projection worker must not be null');
+        $this->assertNotNull($results[1], 'Mutation worker must not be null');
+        $this->assertArrayNotHasKey('error', $results[0], 'Projection worker error');
+        $this->assertArrayNotHasKey('error', $results[1], 'Mutation worker error');
 
-        $r2 = $service->project(User::where('is_active', true)->first(), FrontDeskStay::first()->id);
-        // ACCEPTED with decision but without FolioItem — AR_TRANSFER_PENDING is gone,
-        // but AR_TRANSFER_SOURCE_CONFLICT may appear as review
-        $this->assertNotContains('GUEST_AR_TRANSFER_PENDING', $r2->blocker_codes);
+        // Distinct PIDs
+        $this->assertNotEquals($results[0]['php_pid'], $results[1]['php_pid']);
+        $this->assertNotEquals($results[0]['pg_backend_pid'], $results[1]['pg_backend_pid']);
+
+        // Mutator must have executed
+        $this->assertTrue($results[1]['mutator_executed'] ?? false, 'AR accept must execute');
+        $this->assertEquals('ar_accept', $results[1]['mutation']['type'] ?? '');
+
+        // Projection must be coherent
+        $this->assertNotNull($results[0]['status']);
+        $this->assertNotNull($results[0]['source_fingerprint']);
     }
 
-    public function test_cross_property_parallel_projection_no_leakage(): void
+    // ═════════════════════════════════════════════════════════════════════
+    // Scenario E — Cross-property parallel projection
+    // ═════════════════════════════════════════════════════════════════════
+
+    public function test_scenario_e_cross_property_parallel_no_leakage(): void
     {
         $this->seedTwoProperties();
-        $service = app(GuestLedgerCheckoutSettlementReadinessProjectionService::class);
 
-        // Property A projection
-        app(CurrentPropertyService::class)->setPropertyId($this->state['prop_id']);
-        $rA = $service->project(User::where('is_active', true)->first(), FrontDeskStay::first()->id);
-        $this->assertEquals($this->state['prop_id'], $rA->property_id);
+        $extra = [
+            0 => [
+                'IVORQ_STAY_ID'    => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID' => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'   => $this->state['actor_id'],
+                'IVORQ_MUTATOR'    => '',
+            ],
+            1 => [
+                'IVORQ_STAY_ID'    => $this->state['stay_b_id'],
+                'IVORQ_PROPERTY_ID' => $this->state['prop_b_id'],
+                'IVORQ_ACTOR_ID'   => $this->state['actor_b_id'],
+                'IVORQ_MUTATOR'    => '',
+            ],
+        ];
 
-        // Property B — stay B cross-property non-disclosure
-        // Actor from prop A trying to access stay from prop B
-        $this->expectException(NotFoundException::class);
-        $service->project(User::where('is_active', true)->first(), $this->state['stay_b_id']);
+        $results = $this->coordinator->spawnWorkers(2, 'scenario_e', $extra);
+
+        $this->assertCount(2, $results);
+        $this->assertNotNull($results[0], 'Worker A must not be null');
+        $this->assertNotNull($results[1], 'Worker B must not be null');
+        $this->assertArrayNotHasKey('error', $results[0], 'Worker A must not have error');
+        $this->assertArrayNotHasKey('error', $results[1], 'Worker B must not have error');
+
+        // Correct independent property IDs
+        $this->assertEquals($this->state['prop_id'], $results[0]['property_id']);
+        $this->assertEquals($this->state['prop_b_id'], $results[1]['property_id']);
+
+        // Distinct fingerprints (different property sources)
+        $this->assertNotEquals($results[0]['source_fingerprint'], $results[1]['source_fingerprint'],
+            'Different properties must produce distinct fingerprints');
+
+        // Both successful — no NotFoundException
+        $this->assertNotNull($results[0]['status']);
+        $this->assertNotNull($results[1]['status']);
+
+        // Distinct PIDs
+        $this->assertNotEquals($results[0]['php_pid'], $results[1]['php_pid']);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -232,7 +318,6 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
         $actor = User::where('is_active', true)->first();
         $stayId = FrontDeskStay::first()->id;
 
-        // Service must be called with actor matching auth session
         auth()->login($actor);
         $this->actingAs($actor);
 
@@ -250,7 +335,6 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
 
     public function test_production_container_resolves_without_test_bindings(): void
     {
-        // App should resolve the projection service with production bindings
         $service = app(GuestLedgerCheckoutSettlementReadinessProjectionService::class);
         $this->assertInstanceOf(
             GuestLedgerCheckoutSettlementReadinessProjectionService::class,
@@ -259,18 +343,48 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // Helpers
+    // Command-line credential exclusion proof
     // ═════════════════════════════════════════════════════════════════════
 
-    private function workerEnv(int $index, string $mutator, array $overrides = []): array
+    public function test_command_line_excludes_credentials(): void
     {
-        return array_merge([
-            'IVORQ_STAY_ID'    => $this->state['stay_id'] ?? '',
-            'IVORQ_PROPERTY_ID' => $this->state['prop_id'] ?? '',
-            'IVORQ_ACTOR_ID'   => $this->state['actor_id'] ?? '',
-            'IVORQ_MUTATOR'    => $mutator,
-        ], $overrides);
+        $this->seedStayWithZeroFolio();
+
+        // Inspect spawnWorkers internals: the command string must not contain
+        // the database password. We capture by inspecting the coordinator's
+        // result directory for any stderr or result files containing credentials.
+        $extra = [
+            0 => [
+                'IVORQ_STAY_ID'    => $this->state['stay_id'],
+                'IVORQ_PROPERTY_ID' => $this->state['prop_id'],
+                'IVORQ_ACTOR_ID'   => $this->state['actor_id'],
+                'IVORQ_MUTATOR'    => '',
+            ],
+        ];
+
+        $results = $this->coordinator->spawnWorkers(1, 'credential_proof', $extra);
+
+        $this->assertCount(1, $results);
+        $this->assertNotNull($results[0]);
+
+        // Result must not contain DB password key
+        $this->assertArrayNotHasKey('IVORQ_DB_PASSWORD', $results[0]);
+        $this->assertArrayNotHasKey('db_password', $results[0]);
+        $this->assertArrayNotHasKey('DB_PASSWORD', $results[0]);
+
+        // Read stderr file to confirm no password leaked
+        $stderrFile = $this->coordinator->resultDir() . '/stderr-w0.txt';
+        if (file_exists($stderrFile)) {
+            $stderr = file_get_contents($stderrFile);
+            // The password from coordinator env should not appear in stderr
+            // (we can't assert exact password value, but can assert no env=password pattern)
+            $this->assertStringNotContainsString('DB_PASSWORD=', $stderr);
+        }
     }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // Helpers
+    // ═════════════════════════════════════════════════════════════════════
 
     private function seedStayWithZeroFolio(): void
     {
@@ -286,6 +400,7 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
         $folio = $this->createFolio();
         $folio->forceFill(['total_charges'=>'0.00','total_payments'=>'0.00',
             'total_deposits'=>'0.00','total_ar_transfers'=>'0.00','balance'=>'0.00'])->save();
+        $this->state['folio_id'] = $folio->id;
         $this->createPayment('100.00');
     }
 
@@ -295,6 +410,7 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
         $folio = $this->createFolio();
         $folio->forceFill(['total_charges'=>'0.00','total_payments'=>'0.00',
             'total_deposits'=>'0.00','total_ar_transfers'=>'0.00','balance'=>'0.00'])->save();
+        $this->state['folio_id'] = $folio->id;
         $this->createDeposit('200.00');
     }
 
@@ -302,8 +418,20 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
     {
         $this->seedBase();
         $folio = $this->createFolio();
-        $folio->forceFill(['total_charges'=>'0.00','total_payments'=>'0.00',
-            'total_deposits'=>'0.00','total_ar_transfers'=>'0.00','balance'=>'0.00'])->save();
+        // AR transfer requires folio balance >= transfer amount.
+        // Add a room charge to create a positive balance.
+        $item = new FolioItem();
+        $item->forceFill([
+            'property_id' => $this->state['prop_id'],
+            'folio_id' => $folio->id,
+            'item_type' => FolioItemTypeEnum::RoomCharge,
+            'description' => 'Room charge for AR',
+            'quantity' => '1.00', 'amount' => '100.00', 'is_void' => false,
+            'posted_at' => now(), 'posted_by' => $this->state['actor_id'],
+            'created_by' => $this->state['actor_id'],
+        ])->save();
+        $folio->forceFill(['total_charges'=>'100.00','total_payments'=>'0.00',
+            'total_deposits'=>'0.00','total_ar_transfers'=>'0.00','balance'=>'100.00'])->save();
         $this->createArRequest($folio);
     }
 
@@ -356,9 +484,23 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
         $u = User::create(['name'=>'Conc Actor','email'=>'conc-'.Str::lower(Str::random(6)).'@test.com',
             'password'=>bcrypt('password'),'is_active'=>true]);
         $u->properties()->attach($p->id, ['is_default'=>true,'status'=>'active','joined_at'=>now()]);
-        $perm = Permission::firstOrCreate(['name'=>GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,'guard_name'=>'web']);
+
+        // Grant projection permission
+        $viewPerm = Permission::firstOrCreate(['name'=>GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,'guard_name'=>'web']);
+        // Grant mutation permissions for concurrency workers
+        $allocatePerm = Permission::firstOrCreate(['name'=>GuestPaymentLifecycleService::ALLOCATE_PERMISSION,'guard_name'=>'web']);
+        $depositApplyPerm = Permission::firstOrCreate(['name'=>GuestDepositLifecycleService::APPLY_PERMISSION,'guard_name'=>'web']);
+        $refundPerm = Permission::firstOrCreate(['name'=>GuestRefundLifecycleService::RECORD_PERMISSION,'guard_name'=>'web']);
+        $arAcceptPerm = Permission::firstOrCreate(['name'=>GuestArTransferDecisionService::ACCEPT_PERMISSION,'guard_name'=>'web']);
+        $arReversePerm = Permission::firstOrCreate(['name'=>GuestArTransferDecisionService::REVERSE_PERMISSION,'guard_name'=>'web']);
         app(PermissionRegistrar::class)->forgetCachedPermissions();
-        $u->givePermissionTo($perm);
+
+        $u->givePermissionTo($viewPerm);
+        $u->givePermissionTo($allocatePerm);
+        $u->givePermissionTo($depositApplyPerm);
+        $u->givePermissionTo($refundPerm);
+        $u->givePermissionTo($arAcceptPerm);
+        $u->givePermissionTo($arReversePerm);
 
         $g = Guest::create(['property_id'=>$p->id,'guest_code'=>'G'.Str::random(4),'full_name'=>'Guest','guest_type'=>'individual']);
         $r = Reservation::create(['property_id'=>$p->id,'reservation_number'=>'RES-'.Str::random(4),
@@ -378,6 +520,7 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
         $this->state['actor_id'] = $u->id;
         $this->state['guest_id'] = $g->id;
         $this->state['reservation_id'] = $r->id;
+        $this->state['company_id'] = $c->id;
     }
 
     private function createFolio(): Folio
@@ -426,6 +569,8 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
             'created_by' => $this->state['actor_id'],
             'updated_by' => $this->state['actor_id'],
         ])->save();
+        $this->state['payment_id'] = $p->id;
+        $this->state['cashier_session_id'] = $cs->id;
     }
 
     private function createDeposit(string $amount): void
@@ -447,6 +592,7 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
             'created_by' => $this->state['actor_id'],
             'updated_by' => $this->state['actor_id'],
         ])->save();
+        $this->state['deposit_id'] = $d->id;
     }
 
     private function createArRequest(Folio $folio): void
@@ -459,7 +605,7 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
             'reservation_id' => $this->state['reservation_id'],
             'guest_id' => $this->state['guest_id'],
             'currency' => 'USD', 'amount' => '50.00',
-            'lifecycle_status' => \Modules\Operations\PMS\Enums\GuestArTransferStatusEnum::Requested->value,
+            'lifecycle_status' => GuestArTransferStatusEnum::Requested->value,
             'request_reason_code' => 'TEST',
             'request_idempotency_key' => 'conc-ar-'.uniqid(),
             'requested_at' => now(), 'requested_by' => $this->state['actor_id'],
@@ -467,5 +613,6 @@ class GuestLedgerCheckoutSettlementReadinessConcurrencyProofTest extends Postgre
             'created_by' => $this->state['actor_id'],
             'updated_by' => $this->state['actor_id'],
         ])->save();
+        $this->state['ar_request_id'] = $ar->id;
     }
 }

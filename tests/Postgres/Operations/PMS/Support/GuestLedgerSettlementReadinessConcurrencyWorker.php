@@ -12,7 +12,17 @@
  * command-line arguments. Result JSON excludes all secrets.
  */
 
-$args = json_decode($argv[1] ?? '{}', true);
+// Read args from file (args file path is the first argument)
+$argsFile = $argv[1] ?? '';
+if ($argsFile === '' || ! file_exists($argsFile)) {
+    fwrite(STDERR, "Missing or unreadable args file\n");
+    exit(1);
+}
+$args = json_decode(file_get_contents($argsFile), true);
+if (! is_array($args)) {
+    fwrite(STDERR, "Invalid args JSON in {$argsFile}\n");
+    exit(1);
+}
 $workerId   = (string) ($args['IVORQ_WORKER_ID'] ?? 'unknown');
 $scenario   = (string) ($args['IVORQ_SCENARIO'] ?? 'project');
 $resultFile = (string) ($args['IVORQ_RESULT_FILE'] ?? '');
@@ -21,19 +31,17 @@ $index      = (int) ($args['IVORQ_WORKER_INDEX'] ?? 0);
 
 if ($resultFile === '' || $barrier === '') { fwrite(STDERR, "Missing result_file or barrier\n"); exit(1); }
 
-// DB credentials from environment (proc_open env) — NOT from command args
-$_ENV['DB_DATABASE'] = getenv('IVORQ_DB_DATABASE') ?: 'ivorq_testing';
-$_ENV['DB_HOST']     = getenv('IVORQ_DB_HOST') ?: '127.0.0.1';
-$_ENV['DB_PORT']     = getenv('IVORQ_DB_PORT') ?: '5432';
-$_ENV['DB_USERNAME'] = getenv('IVORQ_DB_USERNAME') ?: '';
-$_ENV['DB_PASSWORD'] = getenv('IVORQ_DB_PASSWORD') ?: '';
-putenv('DB_DATABASE=' . $_ENV['DB_DATABASE']);
+// DB credentials from environment (proc_open env) — NOT from command args.
+// The coordinator sets DB_DATABASE to the disposable DB name in the process env.
+// Host/port/username/password are inherited from the parent process.
 putenv('APP_ENV=testing');
 $_ENV['APP_ENV'] = 'testing';
 
 $phpPid = getmypid();
 
 try {
+    // Load autoloader before bootstrapping Laravel
+    require __DIR__ . '/../../../../../vendor/autoload.php';
     $app = require __DIR__ . '/../../../../../bootstrap/app.php';
     $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
     $kernel->bootstrap();
@@ -61,17 +69,32 @@ try {
         };
     });
 
+    // Test double: bypass sensitive-action confirmation in worker processes.
+    // Production services (refund, AR accept/reverse) require confirmation;
+    // the worker process has no interactive session, so we bind a pass-through.
+    $app->singleton(Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService::class, function () use ($app) {
+        $auditSvc = $app->make(Modules\Foundation\Audit\Services\AuditService::class);
+        return new class($auditSvc) extends Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService {
+            public function __construct($auditService) { parent::__construct($auditService); }
+            public function requireValidConfirmation($actor, string $intent, $companyId, string $propertyId): void {
+                // Pass-through: worker process confirmation is pre-authorized
+            }
+        };
+    });
+
     $pgPid = DB::select('SELECT pg_backend_pid() as pid')[0]->pid;
 
-    // Resolve IDs from env (non-secret identifiers only)
-    $stayId    = (string) ($args['IVORQ_STAY_ID'] ?? '');
-    $propId    = (string) ($args['IVORQ_PROPERTY_ID'] ?? '');
-    $actorId   = (string) ($args['IVORQ_ACTOR_ID'] ?? '');
-    $mutatorCmd = (string) ($args['IVORQ_MUTATOR'] ?? '');
-    $paymentId = (string) ($args['IVORQ_PAYMENT_ID'] ?? '');
-    $folioId   = (string) ($args['IVORQ_FOLIO_ID'] ?? '');
-    $depositId = (string) ($args['IVORQ_DEPOSIT_ID'] ?? '');
-    $arRequestId = (string) ($args['IVORQ_AR_REQUEST_ID'] ?? '');
+    // Resolve IDs from args (non-secret identifiers only — credentials come from proc_open env)
+    $stayId         = (string) ($args['IVORQ_STAY_ID'] ?? '');
+    $propId         = (string) ($args['IVORQ_PROPERTY_ID'] ?? '');
+    $actorId        = (string) ($args['IVORQ_ACTOR_ID'] ?? '');
+    $mutatorCmd     = (string) ($args['IVORQ_MUTATOR'] ?? '');
+    $paymentId      = (string) ($args['IVORQ_PAYMENT_ID'] ?? '');
+    $folioId        = (string) ($args['IVORQ_FOLIO_ID'] ?? '');
+    $depositId      = (string) ($args['IVORQ_DEPOSIT_ID'] ?? '');
+    $arRequestId    = (string) ($args['IVORQ_AR_REQUEST_ID'] ?? '');
+    $cashierSessionId = (string) ($args['IVORQ_CASHIER_SESSION_ID'] ?? '');
+    $refundSourceType = (string) ($args['IVORQ_REFUND_SOURCE_TYPE'] ?? 'GUEST_PAYMENT');
 
     // Authenticate and set property context
     $actor = Modules\Foundation\User\Models\User::whereKey($actorId)->where('is_active', true)->first();
@@ -140,10 +163,11 @@ try {
                 break;
 
             case 'refund':
-                if ($paymentId && $actor) {
+                if ($paymentId && $actor && $cashierSessionId) {
                     $svc = $app->make(Modules\Operations\PMS\Services\GuestRefundLifecycleService::class);
-                    $ref = $svc->recordCashRefund($actor, 'GUEST_PAYMENT', $paymentId,
-                        '', '50.00', 'CONC_TEST', 'glf-d-conc-ref-' . uniqid());
+                    $sourceId = $refundSourceType === 'GUEST_DEPOSIT' ? $depositId : $paymentId;
+                    $ref = $svc->recordCashRefund($actor, $refundSourceType, $sourceId,
+                        $cashierSessionId, '50.00', 'CONC_TEST', 'glf-d-conc-ref-' . uniqid());
                     $mutationResult = ['type' => 'refund', 'id' => $ref->id, 'amount' => (string) $ref->amount];
                 }
                 break;

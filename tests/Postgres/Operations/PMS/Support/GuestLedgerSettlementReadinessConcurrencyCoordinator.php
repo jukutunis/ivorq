@@ -86,9 +86,15 @@ class GuestLedgerSettlementReadinessConcurrencyCoordinator
     /**
      * Spawn multiple worker processes.
      *
+     * Command-line JSON contains only non-secret values (worker ID, scenario,
+     * result/barrier paths, index, property/stay/source identifiers, mutator).
+     *
+     * DB credentials and APP_ENV are passed via proc_open $env (5th argument)
+     * and never appear in the command string or result files.
+     *
      * @param  int    $count   Number of workers.
      * @param  string $scenario  Scenario identifier.
-     * @param  array  $extra   Extra env vars per worker (indexed by worker index).
+     * @param  array  $extra   Extra non-secret args per worker (indexed by worker index).
      * @return array<int, array|null>  Decoded JSON result per worker, or null on failure.
      */
     public function spawnWorkers(int $count, string $scenario, array $extra = []): array
@@ -100,31 +106,41 @@ class GuestLedgerSettlementReadinessConcurrencyCoordinator
         for ($i = 0; $i < $count; $i++) {
             $workerId = "w{$i}";
             $resultFile = $this->resultDir . "/result-{$workerId}.json";
-            $workerEnv = array_merge([
-                'IVORQ_DB_DATABASE' => $this->dbName,
-                'IVORQ_DB_HOST'     => $this->dbHost,
-                'IVORQ_DB_PORT'     => $this->dbPort,
-                'IVORQ_DB_USERNAME' => $this->dbUser,
-                'IVORQ_DB_PASSWORD' => $this->dbPass,
+
+            // Non-secret command-line JSON — no credentials
+            $cmdArgs = array_merge([
                 'IVORQ_WORKER_ID'   => $workerId,
                 'IVORQ_SCENARIO'    => $scenario,
                 'IVORQ_RESULT_FILE' => $resultFile,
                 'IVORQ_BARRIER'     => $barrier,
                 'IVORQ_WORKER_INDEX' => (string) $i,
-                'APP_ENV'           => 'testing',
             ], $extra[$i] ?? []);
 
+            // Secret process environment — credentials never appear in cmd string.
+            // Inherit parent environment and override DB_DATABASE to point at the disposable DB.
+            $processEnv = array_merge(getenv(), [
+                'DB_DATABASE' => $this->dbName,
+                'APP_ENV'     => 'testing',
+            ]);
+
             $workerScript = __DIR__ . '/GuestLedgerSettlementReadinessConcurrencyWorker.php';
-            $cmd = sprintf('%s %s %s 2>&1',
+
+            // Write args to a temp file to avoid Windows command-line escaping issues
+            $argsFile = $this->resultDir . "/args-{$workerId}.json";
+            file_put_contents($argsFile, json_encode($cmdArgs));
+
+            $cmd = sprintf('%s %s %s',
                 PHP_BINARY,
                 escapeshellarg($workerScript),
-                escapeshellarg(json_encode($workerEnv))
+                escapeshellarg($argsFile)
             );
 
             $stderrFile = $this->resultDir . "/stderr-{$workerId}.txt";
             $spec = [['pipe', 'r'], ['file', $stderrFile, 'a'], ['file', $stderrFile, 'a']];
-            $proc = proc_open($cmd, $spec, $pipes);
+            $proc = proc_open($cmd, $spec, $pipes, null, $processEnv);
             if (is_resource($proc)) {
+                // Close stdin immediately — worker does not read from it
+                fclose($pipes[0]);
                 $this->procs[$workerId] = ['proc' => $proc, 'pipes' => $pipes];
             }
         }
@@ -133,10 +149,16 @@ class GuestLedgerSettlementReadinessConcurrencyCoordinator
         foreach ($this->procs as $workerId => $pdata) {
             $exitCode = proc_close($pdata['proc']);
             $resultFile = $this->resultDir . "/result-{$workerId}.json";
+            $stderrFile = $this->resultDir . "/stderr-{$workerId}.txt";
             if (file_exists($resultFile)) {
-                $results[] = json_decode(file_get_contents($resultFile), true);
+                $decoded = json_decode(file_get_contents($resultFile), true);
+                if ($decoded && isset($decoded['error'])) {
+                    // Attach stderr for diagnostics when worker reports an error
+                    $decoded['_stderr'] = file_exists($stderrFile) ? trim(file_get_contents($stderrFile)) : '';
+                }
+                $results[] = $decoded;
             } else {
-                $results[] = null;
+                $results[] = ['_proc_error' => 'no_result_file', '_stderr' => file_exists($stderrFile) ? trim(file_get_contents($stderrFile)) : ''];
             }
         }
 
