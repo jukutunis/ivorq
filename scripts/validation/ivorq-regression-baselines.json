@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), and Guest Ledger settlement-readiness integration (FD-B9). All 53 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), and FD-B9 authorization-first Guest Ledger read integration. All 53 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 375,
-        "assertions": 1512,
+        "tests": 388,
+        "assertions": 1573,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-13",
+        "measured_at": "2026-07-14",
         "branch": "sprint-fd-b9-guest-ledger-settlement-readiness-integration",
-        "sha": "ca25ebc2d5cd99b5557edde4645256a5af3986c5",
-        "note": "All 53 classes proven via exact-class runner at 375 tests / 1512 assertions / 0 failures / 0 errors. FD-B9 integrates the PMS Guest Ledger GLF-D read-only settlement-readiness dependency into Front Desk departure checkout boundary and queue projections without adding checkout execution, financial mutation, or ownership drift. Metadata-only restamp."
+        "sha": "5a9ed7d4c496c73df2e2a4a7414bf637667a9db2",
+        "note": "Marker-truth correction measured at Commit 4: 53 exact Front Desk classes / 388 tests / 1573 assertions / 0 failures / 0 errors. Queue-level capability marker, summary-suppressed row marker, and workspace marker assertions now match the FD-B9 authorization-first Guest Ledger read integration runtime contract. No checkout execution, financial mutation, accepted debt, or ownership drift added."
       },
       "accepted_debt": [],
       "status": "active"
