@@ -194,13 +194,13 @@ class FrontDeskDepartureOperationalHandoverWorkspaceTest extends PostgresTestCas
         $queue = app(FrontDeskDepartureQueueProjectionService::class)
             ->queue($this->frontDeskActor);
 
-        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $queue['financial_marker']);
+        $this->assertSame('Financial settlement readiness is sourced read-only from PMS Guest Ledger GLF-D when authorized.', $queue['financial_marker']);
 
         $dueOutToday = $queue['views']['dueOutToday'] ?? [];
         $stayRow = collect($dueOutToday)->firstWhere('stay_id', $stay->id);
 
         if ($stayRow) {
-            $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $stayRow['financial_marker']);
+            $this->assertSame('Financial settlement readiness is not exposed in this queue row.', $stayRow['financial_marker']);
         }
     }
 }

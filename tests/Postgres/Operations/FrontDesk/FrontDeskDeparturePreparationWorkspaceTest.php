@@ -51,8 +51,8 @@ class FrontDeskDeparturePreparationWorkspaceTest extends PostgresTestCase
             ->where('departureWorkspace.snapshots.dueOutToday', 1)
             ->where('departureWorkspace.views.dueOutToday.0.stay_id', $stay->id)
             ->where('departureWorkspace.views.dueOutToday.0.due_out_classification', FrontDeskDepartureQueueProjectionService::DUE_OUT_TODAY)
-            ->where('departureWorkspace.views.dueOutToday.0.financial_marker', 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.')
-            ->where('departureWorkspace.financial_marker', 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.')
+            ->where('departureWorkspace.views.dueOutToday.0.financial_marker', 'Financial settlement readiness is not exposed in this queue row.')
+            ->where('departureWorkspace.financial_marker', 'Financial settlement readiness is sourced read-only from PMS Guest Ledger GLF-D when authorized.')
         );
     }
 

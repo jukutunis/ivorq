@@ -199,12 +199,12 @@ class FrontDeskDeparturePreparationEventWorkspaceTest extends PostgresTestCase
 
     // ── Workspace financial marker ──
 
-    public function test_workspace_financial_marker_is_b2(): void
+    public function test_workspace_financial_marker_uses_guest_ledger_capability_contract(): void
     {
         [$stay] = $this->checkedInStay('5008');
 
         $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor);
-        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $queue['financial_marker']);
+        $this->assertSame('Financial settlement readiness is sourced read-only from PMS Guest Ledger GLF-D when authorized.', $queue['financial_marker']);
 
         $log = app(FrontDeskDeparturePreparationEventProjectionService::class)->actionLog(
             $this->frontDeskActor, $stay->id
