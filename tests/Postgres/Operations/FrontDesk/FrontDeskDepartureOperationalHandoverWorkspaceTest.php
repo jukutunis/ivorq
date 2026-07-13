@@ -187,20 +187,20 @@ class FrontDeskDepartureOperationalHandoverWorkspaceTest extends PostgresTestCas
 
     // ── Financial marker B3 in queue ──
 
-    public function test_departure_queue_financial_marker_is_b3(): void
+    public function test_departure_queue_financial_marker_is_guest_ledger_read_only(): void
     {
         [$stay] = $this->checkedInStay('3508');
 
         $queue = app(FrontDeskDepartureQueueProjectionService::class)
             ->queue($this->frontDeskActor);
 
-        $this->assertStringContainsString('Not evaluated in Front Desk Package B3', $queue['financial_marker']);
+        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $queue['financial_marker']);
 
         $dueOutToday = $queue['views']['dueOutToday'] ?? [];
         $stayRow = collect($dueOutToday)->firstWhere('stay_id', $stay->id);
 
         if ($stayRow) {
-            $this->assertStringContainsString('Not evaluated in Front Desk Package B3', $stayRow['financial_marker']);
+            $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $stayRow['financial_marker']);
         }
     }
 }

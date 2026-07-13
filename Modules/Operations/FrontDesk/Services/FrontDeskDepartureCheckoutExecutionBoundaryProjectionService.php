@@ -17,6 +17,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
 
     // Stable blocker codes
     public const BLOCKER_FINANCIAL_SETTLEMENT_UNAVAILABLE = 'FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE';
+    public const BLOCKER_FINANCIAL_SETTLEMENT_BLOCKED = 'FINANCIAL_SETTLEMENT_BLOCKED';
+    public const BLOCKER_FINANCIAL_SETTLEMENT_REVIEW_REQUIRED = 'FINANCIAL_SETTLEMENT_REVIEW_REQUIRED';
     public const BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE = 'CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE';
     public const BLOCKER_BUSINESS_DATE_UNAVAILABLE = 'BUSINESS_DATE_EVIDENCE_UNAVAILABLE';
     public const BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE = 'NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE';
@@ -24,6 +26,10 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     public const BLOCKER_FD_B7_EVIDENCE_MISSING = 'FD_B7_EVIDENCE_MISSING';
     public const BLOCKER_STAY_NOT_IN_HOUSE = 'STAY_NOT_IN_HOUSE';
     public const BLOCKER_CHECKOUT_NOT_IMPLEMENTED = 'CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED';
+
+    public function __construct(
+        private readonly FrontDeskGuestLedgerSettlementReadinessDependencyService $guestLedgerSettlementReadiness
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -131,14 +137,20 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             ];
         }
 
-        // Gate 4: Financial settlement evidence (MISSING - PMS Guest Ledger-owned, no Front Desk projection)
-        $blockerCodes[] = self::BLOCKER_FINANCIAL_SETTLEMENT_UNAVAILABLE;
-        $blockerMessages[] = 'Authoritative Guest Ledger settlement projection is not yet implemented. Front Desk cannot infer readiness from current folio totals, so financial settlement remains unavailable.';
+        // Gate 4: Financial settlement evidence (PMS Guest Ledger GLF-D read-only dependency)
+        $guestLedger = $this->guestLedgerSettlementReadiness->project($actor, $frontDeskStayId);
+        $this->applyGuestLedgerSettlementReadiness($guestLedger, $blockerCodes, $blockerMessages, $reviewReasons);
         $authoritativeGates['financial_settlement'] = [
             'gate' => 'Folio balance is settled or transferred through an approved authoritative process',
             'owner' => 'PMS Guest Ledger',
-            'satisfied' => false,
-            'detail' => 'Authoritative PMS Guest Ledger settlement projection is unavailable. Current folio totals cannot prove checkout settlement readiness.',
+            'satisfied' => $guestLedger['status'] === 'GUEST_LEDGER_SETTLEMENT_READY',
+            'detail' => 'GLF-D settlement status: ' . $guestLedger['status'] . '.',
+            'status' => $guestLedger['status'],
+            'canonical_aggregate_balance' => $guestLedger['canonical_aggregate_balance'],
+            'currency' => $guestLedger['currency'],
+            'folio_count' => $guestLedger['folio_count'],
+            'evaluated_at' => $guestLedger['evaluated_at'],
+            'source_fingerprint' => $guestLedger['source_fingerprint'],
         ];
 
         // Gate 5: Cashier obligation evidence (MISSING - General Cashier-owned, no Front Desk projection)
@@ -181,12 +193,14 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'detail' => 'Checkout execution package has not been implemented.',
         ];
 
-        // Determine overall status
-        $canExecute = false;
+        $blockerCodes = $this->sortedUnique($blockerCodes);
+        $blockerMessages = $this->sortedUnique($blockerMessages);
+        $reviewReasons = $this->sortedUnique($reviewReasons);
 
+        // Determine overall status. FD-B9 never executes checkout.
+        $canExecute = false;
         if (empty($blockerCodes)) {
             $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryReady->value;
-            $canExecute = true;
         } elseif (! empty($reviewReasons)) {
             $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryReviewRequired->value;
         } else {
@@ -206,8 +220,9 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'blocker_messages' => $blockerMessages,
             'review_reasons' => $reviewReasons,
             'authoritative_gates' => $authoritativeGates,
-            'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B8.',
-            'financial_settlement_marker' => 'Financial settlement: Not evaluated in Front Desk Package B8. Owned by PMS Guest Ledger.',
+            'guest_ledger_settlement_readiness' => $guestLedger,
+            'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B9.',
+            'financial_settlement_marker' => 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.',
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -232,5 +247,81 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         }
 
         return $propertyId;
+    }
+
+    /**
+     * @param array<string, mixed> $guestLedger
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     * @param string[] $reviewReasons
+     */
+    private function applyGuestLedgerSettlementReadiness(
+        array $guestLedger,
+        array &$blockerCodes,
+        array &$blockerMessages,
+        array &$reviewReasons
+    ): void {
+        match ($guestLedger['status']) {
+            'GUEST_LEDGER_SETTLEMENT_READY' => null,
+            'GUEST_LEDGER_SETTLEMENT_BLOCKED' => $this->appendFinancialBlocker(
+                $blockerCodes,
+                $blockerMessages,
+                self::BLOCKER_FINANCIAL_SETTLEMENT_BLOCKED,
+                'PMS Guest Ledger GLF-D reports financial settlement blocked.'
+            ),
+            'GUEST_LEDGER_SETTLEMENT_REVIEW_REQUIRED' => $this->appendFinancialReview(
+                $blockerCodes,
+                $blockerMessages,
+                $reviewReasons,
+                $guestLedger['review_reasons'] ?? []
+            ),
+            default => $this->appendFinancialBlocker(
+                $blockerCodes,
+                $blockerMessages,
+                self::BLOCKER_FINANCIAL_SETTLEMENT_UNAVAILABLE,
+                'PMS Guest Ledger GLF-D settlement evidence is unavailable.'
+            ),
+        };
+    }
+
+    /**
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     */
+    private function appendFinancialBlocker(array &$blockerCodes, array &$blockerMessages, string $code, string $message): void
+    {
+        $blockerCodes[] = $code;
+        $blockerMessages[] = $message;
+    }
+
+    /**
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     * @param string[] $reviewReasons
+     * @param string[] $sourceReviewReasons
+     */
+    private function appendFinancialReview(
+        array &$blockerCodes,
+        array &$blockerMessages,
+        array &$reviewReasons,
+        array $sourceReviewReasons
+    ): void {
+        $blockerCodes[] = self::BLOCKER_FINANCIAL_SETTLEMENT_REVIEW_REQUIRED;
+        $blockerMessages[] = 'PMS Guest Ledger GLF-D reports financial settlement requires review.';
+        foreach ($sourceReviewReasons as $reason) {
+            $reviewReasons[] = $reason;
+        }
+    }
+
+    /**
+     * @param string[] $values
+     * @return string[]
+     */
+    private function sortedUnique(array $values): array
+    {
+        $values = array_values(array_unique($values));
+        sort($values);
+
+        return $values;
     }
 }

@@ -3,6 +3,7 @@
 namespace Modules\Operations\FrontDesk\Services;
 
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
@@ -96,7 +97,7 @@ class FrontDeskDepartureQueueProjectionService
                 'dueOutFuture' => $stays->where('due_out_classification', self::DUE_OUT_FUTURE)->values()->all(),
                 'overdueDepartures' => $overdue->values()->all(),
             ],
-            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
+            'financial_marker' => 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.',
         ];
     }
 
@@ -181,8 +182,8 @@ class FrontDeskDepartureQueueProjectionService
                 ? $this->allowedCheckoutFinalReviewStatusesForWorkspace()
                 : [],
             'departure_checkout_execution_boundary' => $this->projectExecutionBoundaryOrNull($actor, $stay->id),
-            'can_view_execution_boundary' => $actor->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION),
-            'financial_marker' => 'Financial settlement: Not evaluated in Front Desk Package B3.',
+            'can_view_execution_boundary' => $this->canViewExecutionBoundary($actor),
+            'financial_marker' => 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.',
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -689,7 +690,7 @@ class FrontDeskDepartureQueueProjectionService
      */
     private function projectExecutionBoundaryOrNull(User $actor, string $stayId): ?array
     {
-        if (! $actor->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION)) {
+        if (! $this->canViewExecutionBoundary($actor)) {
             return null;
         }
 
@@ -703,6 +704,32 @@ class FrontDeskDepartureQueueProjectionService
             'blocker_messages' => $boundary['blocker_messages'],
             'review_reasons' => $boundary['review_reasons'],
             'execution_not_performed_marker' => $boundary['execution_not_performed_marker'],
+            'financial_settlement_marker' => $boundary['financial_settlement_marker'],
+            'guest_ledger_settlement_readiness' => [
+                'status' => $boundary['guest_ledger_settlement_readiness']['status'],
+                'canonical_aggregate_balance' => $boundary['guest_ledger_settlement_readiness']['canonical_aggregate_balance'],
+                'currency' => $boundary['guest_ledger_settlement_readiness']['currency'],
+                'folio_count' => $boundary['guest_ledger_settlement_readiness']['folio_count'],
+                'blocker_codes' => $boundary['guest_ledger_settlement_readiness']['blocker_codes'],
+                'review_reasons' => $boundary['guest_ledger_settlement_readiness']['review_reasons'],
+                'evidence_unavailable_codes' => $boundary['guest_ledger_settlement_readiness']['evidence_unavailable_codes'],
+                'evaluated_at' => $boundary['guest_ledger_settlement_readiness']['evaluated_at'],
+                'source_fingerprint' => $boundary['guest_ledger_settlement_readiness']['source_fingerprint'],
+            ],
         ];
+    }
+
+    private function canViewExecutionBoundary(User $actor): bool
+    {
+        if (! auth()->check() || auth()->id() !== $actor->id) {
+            return false;
+        }
+
+        if (DB::transactionLevel() > 0) {
+            return false;
+        }
+
+        return $actor->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION)
+            && $actor->can(FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION);
     }
 }

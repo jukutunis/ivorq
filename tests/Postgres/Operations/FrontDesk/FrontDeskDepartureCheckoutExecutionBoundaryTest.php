@@ -2,7 +2,8 @@
 
 namespace Tests\Postgres\Operations\FrontDesk;
 
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
@@ -15,19 +16,29 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessServ
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
+use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
+use Modules\Operations\PMS\Enums\FolioStatusEnum;
+use Modules\Operations\PMS\Models\Folio;
+use Modules\Operations\PMS\Models\FolioItem;
+use Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictReadPort;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldReadPort;
+use Spatie\Permission\PermissionRegistrar;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\Postgres\Operations\FrontDesk\Concerns\CreatesFrontDeskFdA2Data;
 use Tests\PostgresTestCase;
 
 class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 {
-    use CreatesFrontDeskFdA2Data, RefreshDatabase;
+    use CreatesFrontDeskFdA2Data, DatabaseMigrations;
 
     protected function setUp(): void
     {
         parent::setUp();
         Carbon::setTestNow(Carbon::parse('2026-07-11 10:00:00'));
         $this->setUpFrontDeskFdA2Fixture();
+        $this->actingAs($this->frontDeskActor, 'web');
     }
 
     protected function tearDown(): void
@@ -58,6 +69,70 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
     private function queueService(): FrontDeskDepartureQueueProjectionService
     {
         return app(FrontDeskDepartureQueueProjectionService::class);
+    }
+
+    private function bindClearGuestLedgerPorts(): void
+    {
+        app()->forgetInstance(GuestLedgerPostingCompletenessReadPort::class);
+        app()->forgetInstance(GuestLedgerSettlementHoldReadPort::class);
+        app()->forgetInstance(GuestLedgerCompletedSettlementConflictReadPort::class);
+
+        app()->singleton(GuestLedgerPostingCompletenessReadPort::class, fn () => new class implements GuestLedgerPostingCompletenessReadPort {
+            public function evaluate(string $reservationId, string $propertyId): array
+            {
+                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'message' => null];
+            }
+        });
+        app()->singleton(GuestLedgerSettlementHoldReadPort::class, fn () => new class implements GuestLedgerSettlementHoldReadPort {
+            public function evaluate(string $reservationId, string $propertyId): array
+            {
+                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'message' => null];
+            }
+        });
+        app()->singleton(GuestLedgerCompletedSettlementConflictReadPort::class, fn () => new class implements GuestLedgerCompletedSettlementConflictReadPort {
+            public function evaluate(string $reservationId, string $propertyId): array
+            {
+                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'message' => null];
+            }
+        });
+    }
+
+    private function makeGuestLedgerFolio(array $stay, string $balance = '0.00', string $status = 'open'): Folio
+    {
+        $folio = new Folio();
+        $folio->forceFill([
+            'property_id' => $this->property->id,
+            'folio_number' => 'FD-B9-' . strtoupper(Str::random(8)),
+            'reservation_id' => $stay[2],
+            'guest_id' => $stay[0]->guest_id,
+            'status' => $status,
+            'currency' => 'USD',
+            'window_number' => random_int(1, 9999),
+            'opening_idempotency_key' => 'fd-b9-' . Str::ulid(),
+            'total_charges' => $balance,
+            'total_payments' => '0.00',
+            'total_deposits' => '0.00',
+            'total_ar_transfers' => '0.00',
+            'balance' => $balance,
+        ])->save();
+
+        if (bccomp($balance, '0.00', 2) !== 0) {
+            $item = new FolioItem();
+            $item->forceFill([
+                'property_id' => $this->property->id,
+                'folio_id' => $folio->id,
+                'item_type' => FolioItemTypeEnum::RoomCharge,
+                'description' => 'FD-B9 test room charge',
+                'quantity' => '1.00',
+                'amount' => $balance,
+                'is_void' => false,
+                'posted_at' => now(),
+                'posted_by' => $this->frontDeskActor->id,
+                'created_by' => $this->frontDeskActor->id,
+            ])->save();
+        }
+
+        return $folio->fresh();
     }
 
     // ── Stay Lifecycle Resolution ──
@@ -199,6 +274,58 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertNotNull($financialGate);
         $this->assertFalse($financialGate['satisfied']);
         $this->assertSame('PMS Guest Ledger', $financialGate['owner']);
+        $this->assertSame('GUEST_LEDGER_SETTLEMENT_EVIDENCE_UNAVAILABLE', $b['guest_ledger_settlement_readiness']['status']);
+        $this->assertContains('CHECKOUT_RELEVANT_FOLIOS_EVIDENCE_UNAVAILABLE', $b['guest_ledger_settlement_readiness']['evidence_unavailable_codes']);
+    }
+
+    public function test_guest_ledger_ready_satisfies_only_financial_gate_and_can_execute_remains_false(): void
+    {
+        $this->bindClearGuestLedgerPorts();
+        $s = $this->checkedInStay('8220');
+        $this->makeGuestLedgerFolio($s);
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('GUEST_LEDGER_SETTLEMENT_READY', $b['guest_ledger_settlement_readiness']['status']);
+        $this->assertTrue($b['authoritative_gates']['financial_settlement']['satisfied']);
+        $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FINANCIAL_SETTLEMENT_UNAVAILABLE, $b['blocker_codes']);
+        $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FINANCIAL_SETTLEMENT_BLOCKED, $b['blocker_codes']);
+        $this->assertFalse($b['can_execute']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CHECKOUT_NOT_IMPLEMENTED, $b['blocker_codes']);
+    }
+
+    public function test_guest_ledger_blocked_maps_to_front_desk_financial_blocker_with_nested_source_codes(): void
+    {
+        $this->bindClearGuestLedgerPorts();
+        $s = $this->checkedInStay('8221');
+        $this->makeGuestLedgerFolio($s, '25.00');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('GUEST_LEDGER_SETTLEMENT_BLOCKED', $b['guest_ledger_settlement_readiness']['status']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FINANCIAL_SETTLEMENT_BLOCKED, $b['blocker_codes']);
+        $this->assertContains('INDIVIDUAL_FOLIO_BALANCE_NOT_ZERO', $b['guest_ledger_settlement_readiness']['blocker_codes']);
+        $this->assertFalse($b['authoritative_gates']['financial_settlement']['satisfied']);
+        $this->assertFalse($b['can_execute']);
+    }
+
+    public function test_guest_ledger_review_required_maps_to_review_reason_and_nested_source_reasons(): void
+    {
+        $this->bindClearGuestLedgerPorts();
+        $s = $this->checkedInStay('8222');
+        $this->makeGuestLedgerFolio($s, '0.00', FolioStatusEnum::Closed->value);
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('GUEST_LEDGER_SETTLEMENT_REVIEW_REQUIRED', $b['guest_ledger_settlement_readiness']['status']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FINANCIAL_SETTLEMENT_REVIEW_REQUIRED, $b['blocker_codes']);
+        $this->assertContains('FOLIO_LIFECYCLE_REVIEW_REQUIRED', $b['guest_ledger_settlement_readiness']['review_reasons']);
+        $this->assertContains('FOLIO_LIFECYCLE_REVIEW_REQUIRED', $b['review_reasons']);
+        $this->assertSame('EXECUTION_BOUNDARY_REVIEW_REQUIRED', $b['execution_boundary_status']);
+        $this->assertFalse($b['can_execute']);
     }
 
     public function test_cashier_obligation_evidence_unavailable(): void
@@ -238,6 +365,70 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->expectExceptionMessage('Front Desk checkout execution boundary view permission is required.');
 
         $this->service()->boundary($this->financeActor, $s[0]->id);
+    }
+
+    public function test_guest_ledger_view_permission_is_required_for_dedicated_boundary(): void
+    {
+        $s = $this->checkedInStay('8223');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $this->frontDeskActor->revokePermissionTo(GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $this->expectException(AuthorizationException::class);
+
+        $this->service()->boundary($this->frontDeskActor->fresh(), $s[0]->id);
+    }
+
+    public function test_actor_auth_mismatch_fails(): void
+    {
+        $s = $this->checkedInStay('8224');
+        $this->seedB3B4B5B6B7Ready($s);
+        $this->frontDeskViewOnlyActor->givePermissionTo([
+            FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
+            GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
+        ]);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $this->expectException(AuthorizationException::class);
+
+        $this->service()->boundary($this->frontDeskViewOnlyActor->fresh(), $s[0]->id);
+    }
+
+    public function test_inactive_actor_fails(): void
+    {
+        $s = $this->checkedInStay('8225');
+        $this->seedB3B4B5B6B7Ready($s);
+        $inactive = $this->user('FD B9 Inactive', 'fd-b9-inactive@example.test');
+        $this->attachProperty($inactive, $this->property);
+        $inactive->givePermissionTo([
+            FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
+            GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
+        ]);
+        $inactive->forceFill(['is_active' => false])->save();
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        $this->actingAs($inactive, 'web');
+
+        $this->expectException(AuthorizationException::class);
+
+        $this->service()->boundary($inactive->fresh(), $s[0]->id);
+    }
+
+    public function test_absent_current_property_membership_fails(): void
+    {
+        $s = $this->checkedInStay('8226');
+        $this->seedB3B4B5B6B7Ready($s);
+        $outsider = $this->user('FD B9 Outsider', 'fd-b9-outsider@example.test');
+        $outsider->givePermissionTo([
+            FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
+            GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
+        ]);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        $this->actingAs($outsider, 'web');
+
+        $this->expectException(AuthorizationException::class);
+
+        $this->service()->boundary($outsider->fresh(), $s[0]->id);
     }
 
     public function test_projection_uses_current_property_context(): void
@@ -306,7 +497,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        $this->assertSame('Checkout execution is not performed in FD-B8.', $b['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is not performed in FD-B9.', $b['execution_not_performed_marker']);
     }
 
     // ── All Authoritative Gates Present ──
@@ -366,7 +557,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $boundary['execution_boundary_status']);
         $this->assertNotEmpty($boundary['blocker_codes']);
         $this->assertIsArray($boundary['review_reasons']);
-        $this->assertSame('Checkout execution is not performed in FD-B8.', $boundary['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is not performed in FD-B9.', $boundary['execution_not_performed_marker']);
     }
 
     public function test_queue_does_not_silently_normalize_boundary_exception(): void
@@ -476,8 +667,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        $this->assertSame('Checkout execution is not performed in FD-B8.', $b['execution_not_performed_marker']);
-        $this->assertSame('Financial settlement: Not evaluated in Front Desk Package B8. Owned by PMS Guest Ledger.', $b['financial_settlement_marker']);
+        $this->assertSame('Checkout execution is not performed in FD-B9.', $b['execution_not_performed_marker']);
+        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.', $b['financial_settlement_marker']);
     }
 
     public function test_workspace_source_contract(): void
@@ -495,16 +686,25 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertStringContainsString('blocker_messages', $source, 'Type must include blocker_messages.');
         $this->assertStringContainsString('review_reasons', $source, 'Type must include review_reasons.');
         $this->assertStringContainsString('execution_not_performed_marker', $source, 'Type must include execution_not_performed_marker.');
+        $this->assertStringContainsString('guest_ledger_settlement_readiness', $source, 'Type must include nested Guest Ledger settlement readiness.');
+        $this->assertStringContainsString('canonical_aggregate_balance', $source, 'Nested Guest Ledger summary must include canonical balance.');
+        $this->assertStringContainsString('source_fingerprint', $source, 'Nested Guest Ledger summary must include source fingerprint.');
 
         // 2. Semantic badge mappings
         $this->assertStringContainsString("'success'", $source, 'READY must map to success badge status.');
         $this->assertStringContainsString("'warning'", $source, 'BLOCKED must map to warning badge status.');
         $this->assertStringContainsString("'pending'", $source, 'REVIEW_REQUIRED must map to pending badge status.');
+        $this->assertStringContainsString("'neutral'", $source, 'EVIDENCE_UNAVAILABLE must map to neutral badge status.');
 
         // 3. Required marker strings
         $this->assertStringContainsString('Checkout execution not yet available', $source, 'Disabled affordance marker must exist.');
-        $this->assertStringContainsString('Checkout execution is not performed in FD-B8.', $source, 'Not-performed marker must exist.');
-        $this->assertStringContainsString('Financial settlement: Not evaluated in Front Desk Package B8. Owned by PMS Guest Ledger.', $source, 'Exact workspace financial settlement marker must exist.');
+        $this->assertStringContainsString('Checkout execution is not performed in FD-B9.', $source, 'Not-performed marker must exist.');
+        $this->assertStringContainsString('PMS Guest Ledger Settlement', $source, 'Workspace must render PMS Guest Ledger settlement summary.');
+        $this->assertStringContainsString('Folio count', $source, 'Workspace must render Folio count.');
+        $this->assertStringContainsString('Evidence unavailable', $source, 'Workspace must render evidence-unavailable summary.');
+        $this->assertStringContainsString('financial_settlement_marker', $source, 'Workspace must render server-projected ownership marker.');
+        $this->assertStringNotContainsString('Authoritative Guest Ledger settlement projection is not yet implemented', $source, 'Obsolete unavailable copy must be removed.');
+        $this->assertStringNotContainsString('Financial settlement: Not evaluated in Front Desk Package B8.', $source, 'Obsolete FD-B8 marker must be removed.');
 
         // 4. No enabled checkout execution action — the panel must not contain a checkout button/form
         $panelStart = strpos($source, 'function CheckoutExecutionBoundaryPanel');

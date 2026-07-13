@@ -204,7 +204,7 @@ class FrontDeskDeparturePreparationEventWorkspaceTest extends PostgresTestCase
         [$stay] = $this->checkedInStay('5008');
 
         $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor);
-        $this->assertStringContainsString('Package B3', $queue['financial_marker']);
+        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $queue['financial_marker']);
 
         $log = app(FrontDeskDeparturePreparationEventProjectionService::class)->actionLog(
             $this->frontDeskActor, $stay->id

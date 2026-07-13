@@ -2,7 +2,7 @@
 
 namespace Tests\Postgres\Operations\FrontDesk;
 
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -11,6 +11,8 @@ use Modules\Operations\FrontDesk\Services\FrontDeskCheckInService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
+use Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService;
+use Spatie\Permission\PermissionRegistrar;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\Postgres\Operations\FrontDesk\Concerns\CreatesFrontDeskFdA2Data;
 use Tests\PostgresTestCase;
@@ -18,13 +20,14 @@ use Tests\PostgresTestCase;
 class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
 {
     use CreatesFrontDeskFdA2Data;
-    use RefreshDatabase;
+    use DatabaseMigrations;
 
     protected function setUp(): void
     {
         parent::setUp();
         Carbon::setTestNow(Carbon::parse('2026-07-08 09:00:00'));
         $this->setUpFrontDeskFdA2Fixture();
+        $this->actingAs($this->frontDeskActor, 'web');
     }
 
     protected function tearDown(): void
@@ -37,6 +40,8 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
 
     public function test_unauthenticated_departure_queue_access_denied(): void
     {
+        auth()->logout();
+
         $this->getJson('/frontdesk/departures')->assertUnauthorized();
     }
 
@@ -297,8 +302,8 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $dueOutToday = $queue['views']['dueOutToday'];
 
         $this->assertNotEmpty($dueOutToday);
-        $this->assertSame('Financial settlement: Not evaluated in Front Desk Package B3.', $dueOutToday[0]['financial_marker']);
-        $this->assertSame('Financial settlement: Not evaluated in Front Desk Package B3.', $queue['financial_marker']);
+        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $dueOutToday[0]['financial_marker']);
+        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $queue['financial_marker']);
     }
 
     // ── No financial fields ──
@@ -411,6 +416,38 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         );
     }
 
+    public function test_queue_boundary_summary_is_null_when_guest_ledger_permission_is_missing(): void
+    {
+        [$stay] = $this->checkedInStay('1719');
+        $this->frontDeskActor->revokePermissionTo(GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor->fresh());
+        $row = $this->findStayInQueue($queue, $stay->id);
+
+        $this->assertFalse($row['can_view_execution_boundary']);
+        $this->assertNull($row['departure_checkout_execution_boundary']);
+    }
+
+    public function test_queue_boundary_summary_requires_both_view_permissions_and_omits_full_source_identifiers(): void
+    {
+        [$stay] = $this->checkedInStay('1720');
+
+        $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor);
+        $row = $this->findStayInQueue($queue, $stay->id);
+
+        $this->assertTrue($row['can_view_execution_boundary']);
+        $this->assertNotNull($row['departure_checkout_execution_boundary']);
+        $summary = $row['departure_checkout_execution_boundary'];
+        $this->assertArrayHasKey('guest_ledger_settlement_readiness', $summary);
+        $this->assertArrayNotHasKey('folio_ids', $summary['guest_ledger_settlement_readiness']);
+        $this->assertArrayNotHasKey('source_identifiers', $summary['guest_ledger_settlement_readiness']);
+        $this->assertArrayHasKey('status', $summary['guest_ledger_settlement_readiness']);
+        $this->assertArrayHasKey('canonical_aggregate_balance', $summary['guest_ledger_settlement_readiness']);
+        $this->assertArrayHasKey('source_fingerprint', $summary['guest_ledger_settlement_readiness']);
+        $this->assertSame('Checkout execution is not performed in FD-B9.', $summary['execution_not_performed_marker']);
+    }
+
     // ── Helpers ──
 
     protected function checkedInStay(string $roomNumber): array
@@ -423,5 +460,24 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $stay = app(FrontDeskCheckInService::class)->checkIn($this->frontDeskActor, $assigned['stay']->id, $context);
 
         return [$stay->fresh(), $room, $reservation];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function findStayInQueue(array $queue, string $stayId): array
+    {
+        foreach (array_merge(
+            $queue['views']['dueOutToday'],
+            $queue['views']['dueOutTomorrow'],
+            $queue['views']['dueOutFuture'],
+            $queue['views']['overdueDepartures']
+        ) as $row) {
+            if ($row['stay_id'] === $stayId) {
+                return $row;
+            }
+        }
+
+        $this->fail('Stay not found in departure queue.');
     }
 }

@@ -27,6 +27,7 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverS
 use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
+use Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
 
 trait CreatesFrontDeskFdA2Data
@@ -83,6 +84,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskDepartureCheckoutAuthorizationService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
+            GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
         ]);
 
         $this->frontDeskViewOnlyActor->givePermissionTo([
@@ -251,6 +253,14 @@ trait CreatesFrontDeskFdA2Data
             'stays',
             'folios',
             'folio_items',
+            'guest_payment_transactions',
+            'guest_payment_allocations',
+            'guest_deposit_transactions',
+            'guest_deposit_applications',
+            'guest_refund_transactions',
+            'guest_ar_transfer_requests',
+            'guest_ar_transfer_decisions',
+            'cashier_sessions',
             'journal_candidates',
             'journal_candidate_lines',
             'gl_journal_entries',
@@ -293,6 +303,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskDepartureCheckoutAuthorizationService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
+            GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
         ];
     }
 
