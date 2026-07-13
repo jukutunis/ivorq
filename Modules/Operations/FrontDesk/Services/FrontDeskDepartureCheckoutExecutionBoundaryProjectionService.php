@@ -2,14 +2,18 @@
 
 namespace Modules\Operations\FrontDesk\Services;
 
+use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Enums\FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
+use Modules\Operations\PMS\Enums\GuestLedgerSettlementReadinessStatusEnum;
 use Shared\Services\CurrentPropertyService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
+use Throwable;
 
 class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
 {
@@ -26,6 +30,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     public const BLOCKER_FD_B7_EVIDENCE_MISSING = 'FD_B7_EVIDENCE_MISSING';
     public const BLOCKER_STAY_NOT_IN_HOUSE = 'STAY_NOT_IN_HOUSE';
     public const BLOCKER_CHECKOUT_NOT_IMPLEMENTED = 'CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED';
+    public const UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS = 'FD_B9_UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS';
+    private const AUTHORIZATION_FAILURE_MESSAGE = 'Front Desk checkout execution boundary view is not authorized.';
 
     public function __construct(
         private readonly FrontDeskGuestLedgerSettlementReadinessDependencyService $guestLedgerSettlementReadiness
@@ -229,6 +235,18 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
 
     private function authorizeView(User $actor): string
     {
+        if (! auth()->check() || auth()->id() !== $actor->id) {
+            throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
+        }
+
+        $fresh = User::whereKey($actor->id)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $fresh) {
+            throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
+        }
+
         $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
         $companyId = session('active_company_id');
 
@@ -239,11 +257,21 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             ->first();
 
         if (! $property) {
-            throw new HttpException(403, 'Active property is required.');
+            throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
         }
 
-        if (! $actor->can(self::VIEW_PERMISSION)) {
-            throw new HttpException(403, 'Front Desk checkout execution boundary view permission is required.');
+        $hasMembership = $fresh->properties()
+            ->where('properties.id', $propertyId)
+            ->wherePivot('status', 'active')
+            ->exists();
+
+        if (! $hasMembership) {
+            throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
+        }
+
+        if (! $this->actorCan($fresh, self::VIEW_PERMISSION)
+            || ! $this->actorCan($fresh, FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION)) {
+            throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
         }
 
         return $propertyId;
@@ -262,26 +290,36 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         array &$reviewReasons
     ): void {
         match ($guestLedger['status']) {
-            'GUEST_LEDGER_SETTLEMENT_READY' => null,
-            'GUEST_LEDGER_SETTLEMENT_BLOCKED' => $this->appendFinancialBlocker(
+            GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementReady->value => null,
+            GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementBlocked->value => $this->appendFinancialBlocker(
                 $blockerCodes,
                 $blockerMessages,
                 self::BLOCKER_FINANCIAL_SETTLEMENT_BLOCKED,
                 'PMS Guest Ledger GLF-D reports financial settlement blocked.'
             ),
-            'GUEST_LEDGER_SETTLEMENT_REVIEW_REQUIRED' => $this->appendFinancialReview(
+            GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementReviewRequired->value => $this->appendFinancialReview(
                 $blockerCodes,
                 $blockerMessages,
                 $reviewReasons,
                 $guestLedger['review_reasons'] ?? []
             ),
-            default => $this->appendFinancialBlocker(
+            GuestLedgerSettlementReadinessStatusEnum::GuestLedgerSettlementEvidenceUnavailable->value => $this->appendFinancialBlocker(
                 $blockerCodes,
                 $blockerMessages,
                 self::BLOCKER_FINANCIAL_SETTLEMENT_UNAVAILABLE,
                 'PMS Guest Ledger GLF-D settlement evidence is unavailable.'
             ),
+            default => throw new DomainException(self::UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS),
         };
+    }
+
+    private function actorCan(User $actor, string $permission): bool
+    {
+        try {
+            return $actor->can($permission);
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     /**

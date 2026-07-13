@@ -24,6 +24,7 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBou
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
+use Throwable;
 
 class FrontDeskDepartureQueueProjectionService
 {
@@ -38,6 +39,9 @@ class FrontDeskDepartureQueueProjectionService
     public const DEPARTURE_OPERATIONALLY_READY = 'DEPARTURE_OPERATIONALLY_READY';
     public const DEPARTURE_OPERATIONALLY_BLOCKED = 'DEPARTURE_OPERATIONALLY_BLOCKED';
     public const DEPARTURE_READINESS_UNKNOWN = 'DEPARTURE_READINESS_UNKNOWN';
+    public const FINANCIAL_MARKER_AUTHORIZED = 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.';
+    public const FINANCIAL_MARKER_SUPPRESSED = 'Financial settlement readiness is not exposed in this queue row.';
+    public const FINANCIAL_MARKER_CAPABILITY = 'Financial settlement readiness is sourced read-only from PMS Guest Ledger GLF-D when authorized.';
 
     public function __construct(
         private readonly EngineeringAvailabilityDependencyService $engineeringAvailability,
@@ -52,6 +56,7 @@ class FrontDeskDepartureQueueProjectionService
     public function queue(User $actor): array
     {
         [$propertyId, $property] = $this->authorizeView($actor);
+        $canResolveExecutionBoundary = $this->resolveExecutionBoundaryVisibility($actor, $propertyId);
 
         $today = Carbon::now($property->timezone ?: config('app.timezone'))->toDateString();
         $tomorrow = Carbon::now($property->timezone ?: config('app.timezone'))->addDay()->toDateString();
@@ -67,7 +72,7 @@ class FrontDeskDepartureQueueProjectionService
             ->where('status', FrontDeskStayStatusEnum::InHouse->value)
             ->orderBy('checked_in_at')
             ->get()
-            ->map(fn (FrontDeskStay $stay) => $this->projectStay($actor, $stay, $propertyId, $today, $tomorrow))
+            ->map(fn (FrontDeskStay $stay) => $this->projectStay($actor, $stay, $propertyId, $today, $tomorrow, $canResolveExecutionBoundary))
             ->values();
 
         $dueOutToday = $stays->where('due_out_classification', self::DUE_OUT_TODAY);
@@ -97,14 +102,21 @@ class FrontDeskDepartureQueueProjectionService
                 'dueOutFuture' => $stays->where('due_out_classification', self::DUE_OUT_FUTURE)->values()->all(),
                 'overdueDepartures' => $overdue->values()->all(),
             ],
-            'financial_marker' => 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.',
+            'financial_marker' => self::FINANCIAL_MARKER_CAPABILITY,
         ];
     }
 
     /**
      * @return array<string, mixed>
      */
-    private function projectStay(User $actor, FrontDeskStay $stay, string $propertyId, string $today, string $tomorrow): array
+    private function projectStay(
+        User $actor,
+        FrontDeskStay $stay,
+        string $propertyId,
+        string $today,
+        string $tomorrow,
+        bool $canResolveExecutionBoundary
+    ): array
     {
         $departureDate = $stay->reservation?->departure_date?->toDateString();
         $dueOutClassification = $this->classifyDueOut($departureDate, $today, $tomorrow);
@@ -117,6 +129,7 @@ class FrontDeskDepartureQueueProjectionService
         $checkoutReadiness = $this->projectCheckoutReadinessOrNull($actor, $stay);
 
         $blockingReasons = $this->collectBlockingReasons($housekeeping, $engineering, $checkoutReadiness);
+        $executionBoundarySummary = $this->projectExecutionBoundaryOrNull($actor, $stay->id, $canResolveExecutionBoundary);
 
         $departureReadiness = match (true) {
             $roomId === null => self::DEPARTURE_READINESS_UNKNOWN,
@@ -181,9 +194,9 @@ class FrontDeskDepartureQueueProjectionService
             'allowed_checkout_final_review_statuses' => $actor->can(FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION)
                 ? $this->allowedCheckoutFinalReviewStatusesForWorkspace()
                 : [],
-            'departure_checkout_execution_boundary' => $this->projectExecutionBoundaryOrNull($actor, $stay->id),
-            'can_view_execution_boundary' => $this->canViewExecutionBoundary($actor),
-            'financial_marker' => 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.',
+            'departure_checkout_execution_boundary' => $executionBoundarySummary,
+            'can_view_execution_boundary' => $executionBoundarySummary !== null,
+            'financial_marker' => $executionBoundarySummary['financial_settlement_marker'] ?? self::FINANCIAL_MARKER_SUPPRESSED,
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -688,9 +701,9 @@ class FrontDeskDepartureQueueProjectionService
     /**
      * @return array<string, mixed>|null
      */
-    private function projectExecutionBoundaryOrNull(User $actor, string $stayId): ?array
+    private function projectExecutionBoundaryOrNull(User $actor, string $stayId, bool $canResolveExecutionBoundary): ?array
     {
-        if (! $this->canViewExecutionBoundary($actor)) {
+        if (! $canResolveExecutionBoundary) {
             return null;
         }
 
@@ -719,7 +732,7 @@ class FrontDeskDepartureQueueProjectionService
         ];
     }
 
-    private function canViewExecutionBoundary(User $actor): bool
+    private function resolveExecutionBoundaryVisibility(User $actor, string $propertyId): bool
     {
         if (! auth()->check() || auth()->id() !== $actor->id) {
             return false;
@@ -729,7 +742,28 @@ class FrontDeskDepartureQueueProjectionService
             return false;
         }
 
-        return $actor->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION)
-            && $actor->can(FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION);
+        $fresh = User::whereKey($actor->id)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $fresh) {
+            return false;
+        }
+
+        $hasMembership = $fresh->properties()
+            ->where('properties.id', $propertyId)
+            ->wherePivot('status', 'active')
+            ->exists();
+
+        if (! $hasMembership) {
+            return false;
+        }
+
+        try {
+            return $fresh->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION)
+                && $fresh->can(FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION);
+        } catch (Throwable) {
+            return false;
+        }
     }
 }

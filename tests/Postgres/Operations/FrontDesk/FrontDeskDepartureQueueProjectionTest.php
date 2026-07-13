@@ -2,6 +2,7 @@
 
 namespace Tests\Postgres\Operations\FrontDesk;
 
+use DomainException;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +11,8 @@ use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckInService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBoundaryProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskGuestLedgerSettlementReadinessDependencyService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService;
 use Spatie\Permission\PermissionRegistrar;
@@ -302,8 +305,8 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $dueOutToday = $queue['views']['dueOutToday'];
 
         $this->assertNotEmpty($dueOutToday);
-        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $dueOutToday[0]['financial_marker']);
-        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D.', $queue['financial_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_AUTHORIZED, $dueOutToday[0]['financial_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_CAPABILITY, $queue['financial_marker']);
     }
 
     // ── No financial fields ──
@@ -427,6 +430,52 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
 
         $this->assertFalse($row['can_view_execution_boundary']);
         $this->assertNull($row['departure_checkout_execution_boundary']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_CAPABILITY, $queue['financial_marker']);
+    }
+
+    public function test_queue_boundary_summary_is_null_when_front_desk_boundary_permission_is_missing(): void
+    {
+        [$stay] = $this->checkedInStay('1721');
+        $this->frontDeskActor->revokePermissionTo(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor->fresh());
+        $row = $this->findStayInQueue($queue, $stay->id);
+
+        $this->assertFalse($row['can_view_execution_boundary']);
+        $this->assertNull($row['departure_checkout_execution_boundary']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
+    }
+
+    public function test_queue_boundary_summary_is_null_for_actor_auth_mismatch(): void
+    {
+        [$stay] = $this->checkedInStay('1722');
+        $this->frontDeskViewOnlyActor->givePermissionTo([
+            FrontDeskDepartureQueueProjectionService::VIEW_PERMISSION,
+            FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
+            FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION,
+        ]);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskViewOnlyActor->fresh());
+        $row = $this->findStayInQueue($queue, $stay->id);
+
+        $this->assertFalse($row['can_view_execution_boundary']);
+        $this->assertNull($row['departure_checkout_execution_boundary']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
+    }
+
+    public function test_queue_boundary_summary_is_null_during_parent_transaction(): void
+    {
+        [$stay] = $this->checkedInStay('1723');
+
+        $queue = DB::transaction(fn () => app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor));
+        $row = $this->findStayInQueue($queue, $stay->id);
+
+        $this->assertFalse($row['can_view_execution_boundary']);
+        $this->assertNull($row['departure_checkout_execution_boundary']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
     }
 
     public function test_queue_boundary_summary_requires_both_view_permissions_and_omits_full_source_identifiers(): void
@@ -446,6 +495,27 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertArrayHasKey('canonical_aggregate_balance', $summary['guest_ledger_settlement_readiness']);
         $this->assertArrayHasKey('source_fingerprint', $summary['guest_ledger_settlement_readiness']);
         $this->assertSame('Checkout execution is not performed in FD-B9.', $summary['execution_not_performed_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_AUTHORIZED, $row['financial_marker']);
+    }
+
+    public function test_queue_does_not_hide_authorized_execution_boundary_source_failure(): void
+    {
+        [$stay] = $this->checkedInStay('1724');
+
+        $boundary = new class(app(FrontDeskGuestLedgerSettlementReadinessDependencyService::class)) extends FrontDeskDepartureCheckoutExecutionBoundaryProjectionService {
+            public function boundary(\Modules\Foundation\User\Models\User $actor, string $frontDeskStayId): array
+            {
+                throw new DomainException('FD_B9_AUTHORIZED_SOURCE_FAILURE');
+            }
+        };
+
+        app()->instance(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::class, $boundary);
+        app()->forgetInstance(FrontDeskDepartureQueueProjectionService::class);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('FD_B9_AUTHORIZED_SOURCE_FAILURE');
+
+        app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor);
     }
 
     // ── Helpers ──

@@ -2,17 +2,22 @@
 
 namespace Tests\Postgres\Operations\FrontDesk;
 
+use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
+use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBoundaryProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
+use Modules\Operations\FrontDesk\Services\FrontDeskGuestLedgerSettlementReadinessDependencyService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
@@ -32,6 +37,8 @@ use Tests\PostgresTestCase;
 class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 {
     use CreatesFrontDeskFdA2Data, DatabaseMigrations;
+
+    private const AUTHORIZATION_FAILURE_MESSAGE = 'Front Desk checkout execution boundary view is not authorized.';
 
     protected function setUp(): void
     {
@@ -133,6 +140,94 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         }
 
         return $folio->fresh();
+    }
+
+    private function createCrossPropertyStayId(): string
+    {
+        $otherGuestId = $this->guest($this->otherProperty, 'Cross-Property Guest');
+        $otherReservationId = $this->reservation($this->otherProperty, $otherGuestId, 'RES-XP-' . strtoupper(Str::random(5)), 'confirmed');
+        $stayId = (string) Str::ulid();
+
+        DB::table('front_desk_stays')->insert([
+            'id' => $stayId,
+            'property_id' => $this->otherProperty->id,
+            'reservation_id' => $otherReservationId,
+            'guest_id' => $otherGuestId,
+            'status' => 'IN_HOUSE',
+            'created_by' => $this->frontDeskActor->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $stayId;
+    }
+
+    /**
+     * @param string[] $stayIds
+     */
+    private function assertAuthorizationDeniedParityWithoutDomainQueries(User $actor, array $stayIds): void
+    {
+        foreach ($stayIds as $stayId) {
+            $queries = [];
+            DB::listen(function (QueryExecuted $query) use (&$queries): void {
+                $queries[] = $query->sql;
+            });
+
+            try {
+                $this->service()->boundary($actor, $stayId);
+                $this->fail('Boundary lookup should have been denied before resource lookup.');
+            } catch (AuthorizationException $exception) {
+                $this->assertSame(self::AUTHORIZATION_FAILURE_MESSAGE, $exception->getMessage());
+            }
+
+            $this->assertNoFrontDeskOrGuestLedgerDomainQueries($queries);
+        }
+    }
+
+    /**
+     * @param string[] $queries
+     */
+    private function assertNoFrontDeskOrGuestLedgerDomainQueries(array $queries): void
+    {
+        $forbiddenTables = [
+            'front_desk_stays',
+            'front_desk_departure_checkout_final_reviews',
+            'folios',
+            'folio_items',
+            'guest_payment_transactions',
+            'guest_payment_allocations',
+            'guest_deposit_transactions',
+            'guest_deposit_applications',
+            'guest_refund_transactions',
+            'guest_ar_transfer_requests',
+            'guest_ar_transfer_decisions',
+        ];
+
+        $domainQueries = [];
+        foreach ($queries as $sql) {
+            foreach ($forbiddenTables as $table) {
+                if (str_contains($sql, '"' . $table . '"') || str_contains($sql, $table)) {
+                    $domainQueries[] = $sql;
+                    break;
+                }
+            }
+        }
+
+        $this->assertSame([], $domainQueries, 'Authorization denial must not query Front Desk stay/B7 or Guest Ledger source tables.');
+    }
+
+    /**
+     * @return string[]
+     */
+    private function denialParityStayIds(): array
+    {
+        $stay = $this->checkedInStay('8230');
+
+        return [
+            $stay[0]->id,
+            (string) Str::ulid(),
+            $this->createCrossPropertyStayId(),
+        ];
     }
 
     // ── Stay Lifecycle Resolution ──
@@ -328,6 +423,28 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertFalse($b['can_execute']);
     }
 
+    public function test_unknown_guest_ledger_status_fails_closed_without_evidence_unavailable_normalization(): void
+    {
+        $s = $this->checkedInStay('8231');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $guestLedger = new class extends FrontDeskGuestLedgerSettlementReadinessDependencyService {
+            public function __construct() {}
+
+            public function project(User $actor, string $frontDeskStayId): array
+            {
+                return ['status' => 'GUEST_LEDGER_SETTLEMENT_FUTURE_UNKNOWN'];
+            }
+        };
+
+        $service = new FrontDeskDepartureCheckoutExecutionBoundaryProjectionService($guestLedger);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS);
+
+        $service->boundary($this->frontDeskActor, $s[0]->id);
+    }
+
     public function test_cashier_obligation_evidence_unavailable(): void
     {
         $s = $this->checkedInStay('8208');
@@ -361,10 +478,85 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $s = $this->checkedInStay('8210');
         $this->seedB3B4B5B6B7Ready($s);
 
-        $this->expectException(HttpException::class);
-        $this->expectExceptionMessage('Front Desk checkout execution boundary view permission is required.');
+        $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage(self::AUTHORIZATION_FAILURE_MESSAGE);
 
         $this->service()->boundary($this->financeActor, $s[0]->id);
+    }
+
+    public function test_actor_auth_mismatch_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        $this->frontDeskViewOnlyActor->givePermissionTo([
+            FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
+            FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION,
+        ]);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskViewOnlyActor->fresh(), $stayIds);
+    }
+
+    public function test_missing_front_desk_boundary_permission_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        $this->frontDeskActor->revokePermissionTo(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_missing_guest_ledger_permission_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        $this->frontDeskActor->revokePermissionTo(FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_inactive_actor_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        $this->frontDeskActor->forceFill(['is_active' => false])->save();
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_absent_membership_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        $this->frontDeskActor->properties()->detach($this->property->id);
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_inactive_membership_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        DB::table('property_user')
+            ->where('user_id', $this->frontDeskActor->id)
+            ->where('property_id', $this->property->id)
+            ->update(['status' => 'inactive']);
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_fully_authorized_unknown_and_cross_property_stays_are_non_disclosing_404_identical(): void
+    {
+        $stayIds = [
+            (string) Str::ulid(),
+            $this->createCrossPropertyStayId(),
+        ];
+
+        foreach ($stayIds as $stayId) {
+            try {
+                $this->service()->boundary($this->frontDeskActor, $stayId);
+                $this->fail('Unknown and cross-property stays must not be disclosed.');
+            } catch (HttpException $exception) {
+                $this->assertSame(404, $exception->getStatusCode());
+                $this->assertSame('Front Desk stay not found.', $exception->getMessage());
+            }
+        }
     }
 
     public function test_guest_ledger_view_permission_is_required_for_dedicated_boundary(): void
@@ -376,6 +568,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage(self::AUTHORIZATION_FAILURE_MESSAGE);
 
         $this->service()->boundary($this->frontDeskActor->fresh(), $s[0]->id);
     }
@@ -391,6 +584,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage(self::AUTHORIZATION_FAILURE_MESSAGE);
 
         $this->service()->boundary($this->frontDeskViewOnlyActor->fresh(), $s[0]->id);
     }
@@ -410,6 +604,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->actingAs($inactive, 'web');
 
         $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage(self::AUTHORIZATION_FAILURE_MESSAGE);
 
         $this->service()->boundary($inactive->fresh(), $s[0]->id);
     }
@@ -427,6 +622,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->actingAs($outsider, 'web');
 
         $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage(self::AUTHORIZATION_FAILURE_MESSAGE);
 
         $this->service()->boundary($outsider->fresh(), $s[0]->id);
     }
@@ -472,6 +668,17 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             ->where('front_desk_stay_id', $s[0]->id)->count();
 
         $this->assertSame($b7CountBefore, $b7CountAfter);
+    }
+
+    public function test_boundary_projection_does_not_mutate_front_desk_or_financial_source_tables(): void
+    {
+        $s = $this->checkedInStay('8232');
+        $this->seedB3B4B5B6B7Ready($s);
+        $before = $this->domainTableCounts();
+
+        $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame($before, $this->domainTableCounts());
     }
 
     public function test_repeated_get_requests_are_stable(): void
