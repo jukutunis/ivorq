@@ -19,23 +19,33 @@ use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Enums\GeneralCashierCheckoutObligationStatusEnum;
 use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutObligationProjectionService;
+use Modules\Operations\PMS\Enums\GuestDepositReversalTypeEnum;
 use Modules\Operations\PMS\Enums\GuestDepositLifecycleStatusEnum;
 use Modules\Operations\PMS\Enums\GuestPaymentLifecycleStatusEnum;
+use Modules\Operations\PMS\Enums\GuestPaymentReversalTypeEnum;
+use Modules\Operations\PMS\Enums\GuestRefundSourceTypeEnum;
 use Modules\Operations\PMS\Models\Guest;
+use Modules\Operations\PMS\Models\GuestDepositApplication;
+use Modules\Operations\PMS\Models\GuestDepositReversal;
 use Modules\Operations\PMS\Models\GuestDepositTransaction;
+use Modules\Operations\PMS\Models\GuestPaymentAllocation;
+use Modules\Operations\PMS\Models\GuestPaymentReversal;
 use Modules\Operations\PMS\Models\GuestPaymentTransaction;
 use Modules\Operations\PMS\Models\GuestRefundTransaction;
 use Modules\Operations\PMS\Models\Reservation;
+use Modules\Operations\PMS\Services\GuestDepositLifecycleService;
+use Modules\Operations\PMS\Services\GuestPaymentLifecycleService;
+use Modules\Operations\PMS\Services\GuestRefundLifecycleService;
 use Shared\Exceptions\NotFoundException;
 use Shared\Services\CurrentPropertyService;
 use Spatie\Permission\PermissionRegistrar;
-use Tests\Postgres\Operations\PMS\Concerns\CreatesGuestLedgerFolioData;
+use Tests\Postgres\Operations\PMS\Concerns\CreatesGuestDepositRefundArData;
 use Tests\PostgresTestCase;
 
 class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
 {
     use DatabaseMigrations;
-    use CreatesGuestLedgerFolioData;
+    use CreatesGuestDepositRefundArData;
 
     private GeneralCashierCheckoutObligationProjectionService $service;
     private Company $company;
@@ -48,7 +58,7 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
     {
         parent::setUp();
 
-        $this->setUpGuestLedgerFolioFixture();
+        $this->setUpGlfCFixture();
 
         $this->company = $this->glfCompany;
         $this->property = $this->glfProperty;
@@ -60,8 +70,24 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
             'name' => GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION,
             'guard_name' => 'web',
         ]);
+        foreach ([
+            GuestPaymentLifecycleService::VOID_PERMISSION,
+            GuestPaymentLifecycleService::REVERSAL_PERMISSION,
+            GuestRefundLifecycleService::RECORD_PERMISSION,
+            GuestDepositLifecycleService::VOID_PERMISSION,
+            GuestDepositLifecycleService::REVERSE_PERMISSION,
+        ] as $permission) {
+            Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
+        }
         app(PermissionRegistrar::class)->forgetCachedPermissions();
-        $this->actor->givePermissionTo(GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION);
+        $this->actor->givePermissionTo([
+            GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION,
+            GuestPaymentLifecycleService::VOID_PERMISSION,
+            GuestPaymentLifecycleService::REVERSAL_PERMISSION,
+            GuestRefundLifecycleService::RECORD_PERMISSION,
+            GuestDepositLifecycleService::VOID_PERMISSION,
+            GuestDepositLifecycleService::REVERSE_PERMISSION,
+        ]);
 
         app(CurrentPropertyService::class)->setPropertyId($this->property->id);
         session([
@@ -131,6 +157,36 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         $this->assertSame('CASHIER_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE', $projection->markers['cashier_accountability_marker']);
     }
 
+    public function test_production_payment_recorded_open_then_session_closed_is_evidence_unavailable_not_snapshot_conflict(): void
+    {
+        [$stay, $reservation] = $this->stayTriplet();
+        $session = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+
+        $this->paymentService->recordCashPayment($this->actor, $reservation->id, $session->id, '10.00', 'gc-a1-prod-payment');
+        $this->closeSession($session);
+
+        $projection = $this->service->project($this->actor, $stay->id);
+
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationEvidenceUnavailable, $projection->status);
+        $this->assertContains('CASHIER_SESSION_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE', $projection->evidence_unavailable_codes);
+        $this->assertNotContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $projection->review_reasons);
+    }
+
+    public function test_production_deposit_recorded_open_then_session_closed_is_evidence_unavailable_not_snapshot_conflict(): void
+    {
+        [$stay, $reservation] = $this->stayTriplet();
+        $session = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+
+        $this->depositService->recordCashDeposit($this->actor, $reservation->id, $session->id, '10.00', 'gc-a1-prod-deposit');
+        $this->closeSession($session);
+
+        $projection = $this->service->project($this->actor, $stay->id);
+
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationEvidenceUnavailable, $projection->status);
+        $this->assertContains('CASHIER_SESSION_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE', $projection->evidence_unavailable_codes);
+        $this->assertNotContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $projection->review_reasons);
+    }
+
     public function test_conflicting_source_snapshot_requires_review(): void
     {
         [$stay, $reservation, $guest] = $this->stayTriplet();
@@ -148,6 +204,22 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         $this->assertSame('CASHIER_ACCOUNTABILITY_REVIEW_REQUIRED', $projection->markers['cashier_accountability_marker']);
     }
 
+    public function test_snapshot_session_identity_conflict_requires_review(): void
+    {
+        [$stay, $reservation, $guest] = $this->stayTriplet();
+        $session = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+        $this->payment($reservation, $guest, $session, [
+            'cashier_session_id' => (string) Str::ulid(),
+            'cashier_user_id' => $session->cashier_user_id,
+            'cashier_session_status' => 'OPEN',
+        ]);
+
+        $projection = $this->service->project($this->actor, $stay->id);
+
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $projection->status);
+        $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $projection->review_reasons);
+    }
+
     public function test_deposit_and_refund_cash_sources_are_included_as_authoritative_session_obligations(): void
     {
         [$stay, $reservation, $guest] = $this->stayTriplet();
@@ -163,6 +235,103 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         $this->assertContains($refund->id, $projection->source_identifiers['related_guest_refund_transaction_ids']);
     }
 
+    public function test_payment_lifecycle_matrix_excludes_voided_and_fully_allocated_sources_but_reincludes_reversed_allocation(): void
+    {
+        [$stay, $reservation] = $this->stayTriplet();
+        $session = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+
+        $voided = $this->paymentService->recordCashPayment($this->actor, $reservation->id, $session->id, '10.00', 'gc-a1-pay-void');
+        $this->confirmGlfC(GuestPaymentLifecycleService::VOID_CONFIRMATION_INTENT);
+        $this->paymentService->voidPayment($this->actor, $voided->id, 'VOIDED', 'gc-a1-pay-void-rev');
+        $fullyAllocated = $this->paymentService->recordCashPayment($this->actor, $reservation->id, $session->id, '20.00', 'gc-a1-pay-alloc');
+        $folio = $this->makeGlfFolio($reservation, Guest::findOrFail($reservation->primary_guest_id));
+        $allocation = $this->paymentService->allocatePayment($this->actor, $fullyAllocated->id, $folio->id, '20.00', 'gc-a1-pay-alloc-full');
+
+        $clearProjection = $this->service->project($this->actor, $stay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationClear, $clearProjection->status);
+        $this->assertNotContains($voided->id, $clearProjection->related_guest_payment_transaction_ids);
+        $this->assertNotContains($fullyAllocated->id, $clearProjection->related_guest_payment_transaction_ids);
+
+        $this->confirmGlfC(GuestPaymentLifecycleService::REVERSAL_CONFIRMATION_INTENT);
+        $this->paymentService->reverseAllocation($this->actor, $allocation->id, 'REVERSAL', 'gc-a1-pay-alloc-reverse');
+
+        $blockedProjection = $this->service->project($this->actor, $stay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationBlocked, $blockedProjection->status);
+        $this->assertContains($fullyAllocated->id, $blockedProjection->related_guest_payment_transaction_ids);
+    }
+
+    public function test_deposit_lifecycle_matrix_excludes_voided_and_resolved_sources_but_reincludes_application_reversal(): void
+    {
+        [$stay, $reservation] = $this->stayTriplet();
+        $session = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+
+        $voided = $this->depositService->recordCashDeposit($this->actor, $reservation->id, $session->id, '10.00', 'gc-a1-dep-void');
+        $this->confirmGlfC(GuestDepositLifecycleService::VOID_INTENT);
+        $this->depositService->voidDeposit($this->actor, $voided->id, 'VOIDED', 'gc-a1-dep-void-rev');
+        $resolved = $this->depositService->recordCashDeposit($this->actor, $reservation->id, $session->id, '20.00', 'gc-a1-dep-app');
+        $folio = $this->makeGlfFolio($reservation, Guest::findOrFail($reservation->primary_guest_id));
+        $application = $this->depositService->applyDeposit($this->actor, $resolved->id, $folio->id, '20.00', 'gc-a1-dep-app-full');
+
+        $clearProjection = $this->service->project($this->actor, $stay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationClear, $clearProjection->status);
+        $this->assertNotContains($voided->id, $clearProjection->source_identifiers['related_guest_deposit_transaction_ids']);
+        $this->assertNotContains($resolved->id, $clearProjection->source_identifiers['related_guest_deposit_transaction_ids']);
+
+        $this->confirmGlfC(GuestDepositLifecycleService::REVERSE_INTENT);
+        $this->depositService->reverseDepositApplication($this->actor, $application->id, 'REVERSAL', 'gc-a1-dep-app-reverse');
+
+        $blockedProjection = $this->service->project($this->actor, $stay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationBlocked, $blockedProjection->status);
+        $this->assertContains($resolved->id, $blockedProjection->source_identifiers['related_guest_deposit_transaction_ids']);
+    }
+
+    public function test_payment_and_deposit_sourced_refunds_are_relevant_without_double_counting_resolved_sources(): void
+    {
+        [$stay, $reservation] = $this->stayTriplet();
+        $session = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+        $payment = $this->paymentService->recordCashPayment($this->actor, $reservation->id, $session->id, '10.00', 'gc-a1-ref-pay-source');
+        $deposit = $this->depositService->recordCashDeposit($this->actor, $reservation->id, $session->id, '10.00', 'gc-a1-ref-dep-source');
+
+        $this->confirmGlfC(GuestRefundLifecycleService::CONFIRMATION_INTENT);
+        $paymentRefund = $this->refundService->recordCashRefund($this->actor, GuestRefundSourceTypeEnum::GuestPayment->value, $payment->id, $session->id, '10.00', 'PAY_REF', 'gc-a1-ref-pay');
+        $this->confirmGlfC(GuestRefundLifecycleService::CONFIRMATION_INTENT);
+        $depositRefund = $this->refundService->recordCashRefund($this->actor, GuestRefundSourceTypeEnum::GuestDeposit->value, $deposit->id, $session->id, '10.00', 'DEP_REF', 'gc-a1-ref-dep');
+
+        $projection = $this->service->project($this->actor, $stay->id);
+
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationBlocked, $projection->status);
+        $this->assertNotContains($payment->id, $projection->related_guest_payment_transaction_ids);
+        $this->assertNotContains($deposit->id, $projection->source_identifiers['related_guest_deposit_transaction_ids']);
+        $expectedRefundIds = [$paymentRefund->id, $depositRefund->id];
+        $actualRefundIds = $projection->source_identifiers['related_guest_refund_transaction_ids'];
+        sort($expectedRefundIds);
+        sort($actualRefundIds);
+        $this->assertSame($expectedRefundIds, $actualRefundIds);
+    }
+
+    public function test_mixed_state_precedence_prefers_review_then_unavailable_then_blocked(): void
+    {
+        [$stay, $reservation, $guest] = $this->stayTriplet();
+        $openSession = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+        $closedCashier = $this->userWithoutPermission();
+        $closedSession = $this->cashierSession(CashierSessionStatusEnum::CLOSED, $closedCashier);
+        $closedSession->forceFill(['closed_by' => null])->save();
+        $this->payment($reservation, $guest, $openSession);
+        $this->payment($reservation, $guest, $closedSession);
+        $this->payment($reservation, $guest, $openSession, [
+            'cashier_session_id' => $openSession->id,
+            'cashier_user_id' => (string) Str::ulid(),
+            'cashier_session_status' => 'OPEN',
+        ]);
+
+        $projection = $this->service->project($this->actor, $stay->id);
+
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $projection->status);
+        $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $projection->review_reasons);
+        $this->assertContains('CASHIER_SESSION_CLOSE_EVIDENCE_UNAVAILABLE', $projection->evidence_unavailable_codes);
+        $this->assertContains('CASHIER_SESSION_OPEN', $projection->blocker_codes);
+    }
+
     public function test_authorization_occurs_before_stay_lookup(): void
     {
         $unauthorized = $this->userWithoutPermission();
@@ -171,6 +340,67 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
 
         $this->expectException(AuthorizationException::class);
         $this->service->project($unauthorized, (string) Str::ulid());
+    }
+
+    public function test_missing_active_company_is_rejected_before_stay_lookup(): void
+    {
+        session()->forget('active_company_id');
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->project($this->actor, (string) Str::ulid());
+    }
+
+    public function test_unknown_active_company_is_rejected_before_stay_lookup(): void
+    {
+        session(['active_company_id' => (string) Str::ulid()]);
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->project($this->actor, (string) Str::ulid());
+    }
+
+    public function test_inactive_active_company_is_rejected_before_stay_lookup(): void
+    {
+        $this->company->forceFill(['is_active' => false])->save();
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->project($this->actor, (string) Str::ulid());
+    }
+
+    public function test_cross_company_property_context_is_rejected_before_stay_lookup(): void
+    {
+        $otherCompany = Company::create([
+            'name' => 'GC A1 Other Company',
+            'slug' => 'gc-a1-other-' . Str::lower(Str::random(6)),
+            'is_active' => true,
+        ]);
+        session(['active_company_id' => $otherCompany->id]);
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->project($this->actor, (string) Str::ulid());
+    }
+
+    public function test_inactive_property_context_is_rejected_before_stay_lookup(): void
+    {
+        $this->property->forceFill(['is_active' => false])->save();
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->project($this->actor, (string) Str::ulid());
+    }
+
+    public function test_inactive_actor_is_rejected_before_stay_lookup(): void
+    {
+        $this->actor->forceFill(['is_active' => false])->save();
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->project($this->actor, (string) Str::ulid());
+    }
+
+    public function test_inactive_property_membership_is_rejected_before_stay_lookup(): void
+    {
+        $this->actor->properties()->updateExistingPivot($this->property->id, ['status' => 'inactive']);
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->project($this->actor, (string) Str::ulid());
     }
 
     public function test_unknown_and_cross_property_stays_are_non_disclosing_after_authorization(): void
@@ -265,15 +495,36 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         $this->assertNotSame($projectionWorker['php_pid'], $mutationWorker['php_pid']);
         $this->assertNotSame($projectionWorker['pg_backend_pid'], $mutationWorker['pg_backend_pid']);
         $this->assertTrue($mutationWorker['mutator_executed']);
+        $this->assertTrue($projectionWorker['handshake']['both_workers_started']);
+        $this->assertTrue($projectionWorker['handshake']['projection_transaction_entered']);
+        $this->assertSame('repeatable read', $projectionWorker['handshake']['projection_transaction_isolation']);
+        $this->assertSame('on', $projectionWorker['handshake']['projection_transaction_read_only']);
+        $this->assertTrue($projectionWorker['handshake']['projection_first_source_read_completed']);
+        $this->assertTrue($mutationWorker['handshake']['mutator_observed_first_source_read_completed']);
+        $this->assertTrue($mutationWorker['handshake']['mutation_committed']);
+        $this->assertTrue($projectionWorker['handshake']['projection_observed_mutation_committed_barrier']);
 
         $this->assertSame($preMutation->status->value, $projectionWorker['status']);
         $this->assertSame($preMutation->source_fingerprint, $projectionWorker['source_fingerprint']);
         $this->assertSame($preMutation->blocker_codes, $projectionWorker['blocker_codes']);
 
         $postMutation = $this->service->project($this->actor, $stay->id);
-        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $postMutation->status);
-        $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $postMutation->review_reasons);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationEvidenceUnavailable, $postMutation->status);
+        $this->assertContains('CASHIER_SESSION_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE', $postMutation->evidence_unavailable_codes);
+        $this->assertNotContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $postMutation->review_reasons);
         $this->assertNotSame($postMutation->source_fingerprint, $projectionWorker['source_fingerprint']);
+    }
+
+    public function test_concurrency_worker_fails_hard_when_mutation_barrier_is_not_reached(): void
+    {
+        [$stay, $reservation, $guest] = $this->stayTriplet();
+        $session = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+        $this->payment($reservation, $guest, $session);
+
+        $result = $this->spawnProjectionWorkerWithoutMutator($stay, $session);
+
+        $this->assertNotSame(0, $result['_exit_code']);
+        $this->assertStringContainsString('GC_A1_BARRIER_TIMEOUT:ready-w1', $result['error']);
     }
 
     private function stayTriplet(): array
@@ -302,17 +553,30 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         return $stay->fresh();
     }
 
-    private function cashierSession(CashierSessionStatusEnum $status): CashierSession
+    private function cashierSession(CashierSessionStatusEnum $status, ?User $cashier = null): CashierSession
     {
+        $cashier = $cashier ?? $this->actor;
+
         $session = new CashierSession();
         $session->forceFill([
             'property_id' => $this->property->id,
-            'cashier_user_id' => $this->actor->id,
+            'cashier_user_id' => $cashier->id,
             'status' => $status->value,
             'opened_at' => Carbon::parse('2026-07-14 08:00:00'),
-            'opened_by' => $this->actor->id,
+            'opened_by' => $cashier->id,
             'closed_at' => $status === CashierSessionStatusEnum::CLOSED ? Carbon::parse('2026-07-14 09:00:00') : null,
-            'closed_by' => $status === CashierSessionStatusEnum::CLOSED ? $this->actor->id : null,
+            'closed_by' => $status === CashierSessionStatusEnum::CLOSED ? $cashier->id : null,
+        ])->save();
+
+        return $session->fresh();
+    }
+
+    private function closeSession(CashierSession $session): CashierSession
+    {
+        $session->forceFill([
+            'status' => CashierSessionStatusEnum::CLOSED->value,
+            'closed_at' => Carbon::parse('2026-07-14 09:00:00'),
+            'closed_by' => $session->cashier_user_id,
         ])->save();
 
         return $session->fresh();
@@ -398,6 +662,11 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
             'created_by' => $this->actor->id,
         ])->save();
 
+        $deposit->forceFill([
+            'lifecycle_status' => GuestDepositLifecycleStatusEnum::PartiallyResolved->value,
+            'updated_by' => $this->actor->id,
+        ])->save();
+
         return $refund->fresh();
     }
 
@@ -406,7 +675,7 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         return [
             'cashier_session_id' => $session->id,
             'cashier_user_id' => $session->cashier_user_id,
-            'cashier_session_status' => $session->status->value,
+            'cashier_session_status' => CashierSessionStatusEnum::OPEN->value,
         ];
     }
 
@@ -449,14 +718,18 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         $worker = __DIR__ . DIRECTORY_SEPARATOR . 'Support' . DIRECTORY_SEPARATOR . 'GeneralCashierCheckoutObligationConcurrencyWorker.php';
         $barrier = $dir . DIRECTORY_SEPARATOR . 'barrier';
         $processes = [];
+        $runId = (string) Str::ulid();
+        $created = [];
 
         for ($i = 0; $i < 2; $i++) {
             $argsFile = $dir . DIRECTORY_SEPARATOR . "args-w{$i}.json";
             $resultFile = $dir . DIRECTORY_SEPARATOR . "result-w{$i}.json";
             $stderrFile = $dir . DIRECTORY_SEPARATOR . "stderr-w{$i}.txt";
+            array_push($created, $argsFile, $resultFile, $stderrFile);
             file_put_contents($argsFile, json_encode([
                 'worker_id' => "w{$i}",
                 'index' => $i,
+                'run_id' => $runId,
                 'result_file' => $resultFile,
                 'barrier' => $barrier,
                 'property_id' => $this->property->id,
@@ -499,12 +772,88 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
             $results[$i] = $decoded;
         }
 
-        foreach (glob($dir . DIRECTORY_SEPARATOR . '*') ?: [] as $file) {
-            @unlink($file);
+        foreach ([
+            $barrier . '-ready-w0.json',
+            $barrier . '-ready-w1.json',
+            $barrier . '-first-source-read-completed.json',
+            $barrier . '-mutation-committed.json',
+        ] as $file) {
+            $created[] = $file;
+        }
+
+        foreach ($created as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
         }
         @rmdir($dir);
 
         ksort($results);
         return array_values($results);
+    }
+
+    private function spawnProjectionWorkerWithoutMutator(FrontDeskStay $stay, CashierSession $session): array
+    {
+        $dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'gc-a1-conc-fail-' . Str::lower(Str::random(8));
+        mkdir($dir, 0700, true);
+
+        $worker = __DIR__ . DIRECTORY_SEPARATOR . 'Support' . DIRECTORY_SEPARATOR . 'GeneralCashierCheckoutObligationConcurrencyWorker.php';
+        $barrier = $dir . DIRECTORY_SEPARATOR . 'barrier';
+        $argsFile = $dir . DIRECTORY_SEPARATOR . 'args-w0.json';
+        $resultFile = $dir . DIRECTORY_SEPARATOR . 'result-w0.json';
+        $stderrFile = $dir . DIRECTORY_SEPARATOR . 'stderr-w0.txt';
+        $runId = (string) Str::ulid();
+
+        file_put_contents($argsFile, json_encode([
+            'worker_id' => 'w0',
+            'index' => 0,
+            'run_id' => $runId,
+            'result_file' => $resultFile,
+            'barrier' => $barrier,
+            'property_id' => $this->property->id,
+            'company_id' => $this->company->id,
+            'stay_id' => $stay->id,
+            'actor_id' => $this->actor->id,
+            'cashier_session_id' => $session->id,
+        ]));
+
+        $command = sprintf('%s %s %s', PHP_BINARY, escapeshellarg($worker), escapeshellarg($argsFile));
+        $spec = [['pipe', 'r'], ['file', $stderrFile, 'a'], ['file', $stderrFile, 'a']];
+        $proc = proc_open($command, $spec, $pipes, base_path(), array_merge(getenv(), [
+            'APP_ENV' => 'testing',
+            'DB_CONNECTION' => 'pgsql',
+            'DB_DATABASE' => 'ivorq_testing',
+        ]));
+        if (! is_resource($proc)) {
+            throw new \RuntimeException('Unable to spawn GC-A1 failure worker.');
+        }
+
+        fclose($pipes[0]);
+        $exitCode = proc_close($proc);
+        $decoded = file_exists($resultFile)
+            ? json_decode(file_get_contents($resultFile), true)
+            : ['error' => 'missing result file'];
+        $decoded = is_array($decoded) ? $decoded : ['error' => 'malformed result json'];
+        $decoded['_exit_code'] = $exitCode;
+        if (file_exists($stderrFile)) {
+            $decoded['_stderr'] = trim(file_get_contents($stderrFile));
+        }
+
+        foreach ([
+            $argsFile,
+            $resultFile,
+            $stderrFile,
+            $barrier . '-ready-w0.json',
+            $barrier . '-ready-w1.json',
+            $barrier . '-first-source-read-completed.json',
+            $barrier . '-mutation-committed.json',
+        ] as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
+        }
+        @rmdir($dir);
+
+        return $decoded;
     }
 }
