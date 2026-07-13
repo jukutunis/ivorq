@@ -136,6 +136,31 @@
       "status": "active"
     },
     {
+      "id": "general-cashier-checkout-obligation-baseline",
+      "description": "General Cashier checkout obligation projection tests covering the immutable GC-A1 read model, exact four-status semantics, authorization-first behavior, property isolation, PMS cash source linkage, source fingerprint sensitivity, zero-write proof, top-level read-only transaction guard, and deterministic repeatable-read worker concurrency proof. All 1 exact test class passes cleanly as a single batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "GeneralCashierCheckoutObligationProjectionTest"
+      ],
+      "expected": {
+        "tests": 13,
+        "assertions": 52,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-14",
+        "branch": "sprint-gc-a1-checkout-cashier-obligation-projection",
+        "sha": "ead73166cc3135c6fe089804eace8618588f7d1f",
+        "note": "Implementation commit measurement: 1 exact GC-A1 class / 13 tests / 52 assertions / 0 failures / 0 errors. Projection remains General Cashier-owned, read-only, authorization-first, property-scoped, and fail-closed when session-scoped accountability evidence is unavailable. Deterministic worker proof closes a linked cashier session after PMS cash source read while projection remains on the pre-mutation repeatable-read snapshot. No Front Desk integration, checkout execution, cashier mutation, handover, count, reconciliation, folio mutation, Business Date, or Night Audit behavior added."
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
       "id": "guest-deposit-refund-ar-transfer-baseline",
       "description": "GLF-C PostgreSQL tests covering source-proven CASH guest deposits, partial/full/split application, immutable application reversal and unused-deposit void, Payment/Deposit-bounded cash refunds, PMS Guest Ledger AR-transfer requests, Accounting/AR accept/reject/reverse decisions, typed source-linked Folio effects, canonical Deposit/AR totals, database partial unique source indexes on folio_items (deposit_application, deposit_reversal, ar_decision), source-uniqueness SQLSTATE 23505/P0001 proof, duplicate-source-effect worker concurrency proof, full confirmation-failure matrix (deposit void, deposit reversal, cash refund, AR accept, AR reject, AR reverse), 12 cross-property non-disclosure sub-cases, accepted lock order (Deposit → Folio → Application → Reversal), thirteen real worker concurrency races, and disposable migration UP/DOWN/REAPPLY plus ambiguous legacy Deposit blocking. All 5 exact classes pass cleanly as one batch.",
       "type": "phpunit",

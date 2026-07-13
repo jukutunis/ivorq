@@ -53,6 +53,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'frontdesk-operational-baseline',
             'housekeeping-room-readiness-baseline',
             'engineering-availability-baseline',
+            'general-cashier-checkout-obligation-baseline',
             'guest-deposit-refund-ar-transfer-baseline',
             'inventory-avco-sensitive-baseline-v2-candidate',
             'inventory-reversal-inherited-debt-v1',
@@ -197,6 +198,29 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(
             '137ff01f01268541af05f4e6ef3b330294cf2781',
             $baseline->provenance->sha ?? null
+        );
+    }
+
+    public function test_general_cashier_checkout_obligation_baseline_matches_gc_a1_measurement(): void
+    {
+        $baseline = $this->findBaseline('general-cashier-checkout-obligation-baseline');
+        $this->assertNotNull($baseline, 'general-cashier-checkout-obligation-baseline must exist.');
+        $this->assertEquals('active', $baseline->status ?? null);
+        $this->assertSame([
+            'GeneralCashierCheckoutObligationProjectionTest',
+        ], $baseline->classes);
+        $this->assertEquals(13, $baseline->expected->tests ?? null);
+        $this->assertEquals(52, $baseline->expected->assertions ?? null);
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertSame([], $baseline->accepted_debt ?? null);
+        $this->assertEquals(
+            'ead73166cc3135c6fe089804eace8618588f7d1f',
+            $baseline->provenance->sha ?? null
+        );
+        $this->assertEquals(
+            'sprint-gc-a1-checkout-cashier-obligation-projection',
+            $baseline->provenance->branch ?? null
         );
     }
 
@@ -424,6 +448,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'frontdesk-operational-baseline',
             'guest-ledger-folio-aggregate-baseline',
             'pms-cashiering-guest-payment-baseline',
+            'general-cashier-checkout-obligation-baseline',
             'guest-deposit-refund-ar-transfer-baseline',
             'housekeeping-room-readiness-baseline',
             'engineering-availability-baseline',
@@ -432,9 +457,9 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ];
 
         $this->assertCount(
-            8,
+            9,
             $activeIds,
-            "Must have exactly 8 active baselines. Found: " . implode(', ', $activeIds)
+            "Must have exactly 9 active baselines. Found: " . implode(', ', $activeIds)
         );
 
         foreach ($expectedActiveIds as $id) {
@@ -535,7 +560,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
     {
         $ids = array_map(fn($b) => $b->id, $this->manifest->baselines);
 
-        $expectedCount = 10;
+        $expectedCount = 11;
         $this->assertCount(
             $expectedCount,
             $ids,
