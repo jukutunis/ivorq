@@ -200,6 +200,29 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
+    public function test_frontdesk_operational_baseline_matches_fd_b9_measurement(): void
+    {
+        $baseline = $this->findBaseline('frontdesk-operational-baseline');
+        $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
+        $this->assertEquals('active', $baseline->status ?? null);
+        $this->assertCount(53, $baseline->classes, 'Front Desk baseline must keep exactly 53 classes.');
+        $this->assertEquals('FrontDeskDepartureCheckoutExecutionBoundaryTest', $baseline->classes[count($baseline->classes) - 1]);
+        $this->assertEquals(375, $baseline->expected->tests ?? null);
+        $this->assertEquals(1512, $baseline->expected->assertions ?? null);
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertSame([], $baseline->accepted_debt ?? null);
+        $this->assertEquals(
+            'ca25ebc2d5cd99b5557edde4645256a5af3986c5',
+            $baseline->provenance->sha ?? null
+        );
+        $this->assertEquals(
+            'sprint-fd-b9-guest-ledger-settlement-readiness-integration',
+            $baseline->provenance->branch ?? null
+        );
+        $this->assertStringContainsString('FD-B9', $baseline->description ?? '');
+    }
+
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void
     {
         $baseline = $this->findBaseline('guest-deposit-refund-ar-transfer-baseline');

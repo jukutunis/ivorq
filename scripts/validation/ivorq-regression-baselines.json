@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), and Departure Checkout Execution Boundary (FD-B8). All 53 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), and Guest Ledger settlement-readiness integration (FD-B9). All 53 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 366,
-        "assertions": 1469,
+        "tests": 375,
+        "assertions": 1512,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-11",
-        "branch": "sprint-fd-b8-checkout-execution-boundary",
-        "sha": "ea54abb356ac96446264c5682c1d3f779ac9b5ac",
-        "note": "All 53 classes proven via exact-class runner at 366 tests / 1469 assertions / 0 failures / 0 errors. FD-B8 adds 23 tests to the prior 343-test baseline. Previous 3588-assertion count was inflated by per-route assertions; corrected to aggregate proof (1469). Commit ea54abb aligns queue/frontend blocker_messages contract, replaces per-route assertion inflation with aggregate route proof, and adds real workspace source-contract verification. This commit stamps final corrected provenance metadata only."
+        "measured_at": "2026-07-13",
+        "branch": "sprint-fd-b9-guest-ledger-settlement-readiness-integration",
+        "sha": "ca25ebc2d5cd99b5557edde4645256a5af3986c5",
+        "note": "All 53 classes proven via exact-class runner at 375 tests / 1512 assertions / 0 failures / 0 errors. FD-B9 integrates the PMS Guest Ledger GLF-D read-only settlement-readiness dependency into Front Desk departure checkout boundary and queue projections without adding checkout execution, financial mutation, or ownership drift. Metadata-only restamp."
       },
       "accepted_debt": [],
       "status": "active"
