@@ -21,6 +21,7 @@ use Modules\Operations\PMS\Enums\GuestDepositReversalTypeEnum;
 use Modules\Operations\PMS\Enums\GuestPaymentLifecycleStatusEnum;
 use Modules\Operations\PMS\Enums\GuestPaymentReversalTypeEnum;
 use Modules\Operations\PMS\Enums\GuestRefundSourceTypeEnum;
+use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\Guest;
 use Modules\Operations\PMS\Models\GuestDepositApplication;
 use Modules\Operations\PMS\Models\GuestDepositReversal;
@@ -779,17 +780,11 @@ class GeneralCashierCheckoutObligationProjectionService
             ];
 
             if ($sourceType === 'guest_payment') {
+                $fields['opened_at'] = $session?->opened_at;
                 $fields['opened_by'] = (string) ($session?->opened_by ?? '');
             }
 
             if (! $session || ! $this->snapshotFieldsMatch($snapshot, $fields)) {
-                $this->snapshotConflict($sourceType, (string) $row->id, $reviews, $messages);
-                continue;
-            }
-
-            if (array_key_exists('opened_at', $snapshot)
-                && ! $this->instantMatches($snapshot['opened_at'], $session->opened_at)
-            ) {
                 $this->snapshotConflict($sourceType, (string) $row->id, $reviews, $messages);
             }
         }
@@ -985,12 +980,19 @@ class GeneralCashierCheckoutObligationProjectionService
         array &$reviews,
         array &$messages
     ): bool {
+        $folio = Folio::withoutGlobalScopes()
+            ->whereKey($application->folio_id)
+            ->where('property_id', $deposit->property_id)
+            ->first();
+
         $valid = $application->property_id === $deposit->property_id
             && $application->guest_deposit_transaction_id === $deposit->id
+            && $folio !== null
             && $this->snapshotFieldsMatch($this->snapshotArray($application->source_snapshot), [
                 'deposit_id' => (string) $deposit->id,
                 'deposit_number' => (string) $deposit->deposit_number,
                 'folio_id' => (string) $application->folio_id,
+                'folio_number' => (string) ($folio?->folio_number ?? ''),
                 'reservation_id' => (string) $deposit->reservation_id,
                 'guest_id' => (string) $deposit->guest_id,
                 'currency' => (string) $deposit->currency,
@@ -1111,6 +1113,13 @@ class GeneralCashierCheckoutObligationProjectionService
     {
         foreach ($expected as $key => $value) {
             if (! array_key_exists($key, $snapshot)) {
+                return false;
+            }
+
+            if ($key === 'opened_at') {
+                if (! $this->instantMatches($snapshot[$key], $value)) {
+                    return false;
+                }
                 continue;
             }
 
