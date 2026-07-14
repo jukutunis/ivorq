@@ -224,27 +224,27 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_fd_b9_measurement(): void
+    public function test_frontdesk_operational_baseline_matches_fd_b10_measurement(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
         $this->assertEquals('active', $baseline->status ?? null);
         $this->assertCount(53, $baseline->classes, 'Front Desk baseline must keep exactly 53 classes.');
         $this->assertEquals('FrontDeskDepartureCheckoutExecutionBoundaryTest', $baseline->classes[count($baseline->classes) - 1]);
-        $this->assertEquals(388, $baseline->expected->tests ?? null);
-        $this->assertEquals(1573, $baseline->expected->assertions ?? null);
+        $this->assertEquals(398, $baseline->expected->tests ?? null);
+        $this->assertEquals(1655, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '5a9ed7d4c496c73df2e2a4a7414bf637667a9db2',
+            '3db4e91090977d5b5699569a3b7df431f8b2a8fe',
             $baseline->provenance->sha ?? null
         );
         $this->assertEquals(
-            'sprint-fd-b9-guest-ledger-settlement-readiness-integration',
+            'sprint-fd-b10-general-cashier-obligation-read-integration',
             $baseline->provenance->branch ?? null
         );
-        $this->assertStringContainsString('FD-B9', $baseline->description ?? '');
+        $this->assertStringContainsString('FD-B10', $baseline->description ?? '');
     }
 
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void

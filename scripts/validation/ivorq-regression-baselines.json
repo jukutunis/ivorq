@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), and FD-B9 authorization-first Guest Ledger read integration. All 53 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, and FD-B10 read-only General Cashier obligation integration. All 53 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 388,
-        "assertions": 1573,
+        "tests": 398,
+        "assertions": 1655,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-14",
-        "branch": "sprint-fd-b9-guest-ledger-settlement-readiness-integration",
-        "sha": "5a9ed7d4c496c73df2e2a4a7414bf637667a9db2",
-        "note": "Marker-truth correction measured at Commit 4: 53 exact Front Desk classes / 388 tests / 1573 assertions / 0 failures / 0 errors. Queue-level capability marker, summary-suppressed row marker, and workspace marker assertions now match the FD-B9 authorization-first Guest Ledger read integration runtime contract. No checkout execution, financial mutation, accepted debt, or ownership drift added."
+        "measured_at": "2026-07-15",
+        "branch": "sprint-fd-b10-general-cashier-obligation-read-integration",
+        "sha": "3db4e91090977d5b5699569a3b7df431f8b2a8fe",
+        "note": "FD-B10 General Cashier obligation read integration measured at source commit 3db4e91090977d5b5699569a3b7df431f8b2a8fe: 53 exact Front Desk classes / 398 tests / 1655 assertions / 0 failures / 0 errors. Queue authorization suppression, minimized cashier summary, workspace General Cashier Accountability, and execution-boundary GC-A1 gate assertions are included. Checkout execution remains can_execute=false; no Front Desk cashier session, guest cash transaction, count, handover, reconciliation, or accountability mutation added."
       },
       "accepted_debt": [],
       "status": "active"
