@@ -146,16 +146,16 @@
         "GeneralCashierCheckoutObligationProjectionTest"
       ],
       "expected": {
-        "tests": 13,
-        "assertions": 52,
+        "tests": 28,
+        "assertions": 96,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-14",
         "branch": "sprint-gc-a1-checkout-cashier-obligation-projection",
-        "sha": "ead73166cc3135c6fe089804eace8618588f7d1f",
-        "note": "Implementation commit measurement: 1 exact GC-A1 class / 13 tests / 52 assertions / 0 failures / 0 errors. Projection remains General Cashier-owned, read-only, authorization-first, property-scoped, and fail-closed when session-scoped accountability evidence is unavailable. Deterministic worker proof closes a linked cashier session after PMS cash source read while projection remains on the pre-mutation repeatable-read snapshot. No Front Desk integration, checkout execution, cashier mutation, handover, count, reconciliation, folio mutation, Business Date, or Night Audit behavior added."
+        "sha": "7879600fdebd0bc5f0322975cb3ba183c6f71ed6",
+        "note": "Correction commit measurement: 1 exact GC-A1 class / 28 tests / 96 assertions / 0 failures / 0 errors. Projection remains General Cashier-owned, read-only, authorization-first, active-company and property-scoped, and fail-closed when session-scoped accountability evidence is unavailable. Lifecycle relevance now excludes source-proven voided/resolved payment and deposit obligations, includes reversal-reopened sources and terminal payment/deposit refunds, treats historical OPEN to current CLOSED cashier sessions as evidence-unavailable rather than a snapshot conflict, and proves repeatable-read interleaving with deterministic worker barriers and timeout failure evidence. No Front Desk integration, checkout execution, cashier mutation, handover, count, reconciliation, folio mutation, Business Date, or Night Audit behavior added."
       },
       "accepted_debt": [],
       "status": "active"
