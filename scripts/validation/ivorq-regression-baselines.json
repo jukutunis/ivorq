@@ -146,16 +146,16 @@
         "GeneralCashierCheckoutObligationProjectionTest"
       ],
       "expected": {
-        "tests": 33,
-        "assertions": 148,
+        "tests": 38,
+        "assertions": 231,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-14",
         "branch": "sprint-gc-a1-checkout-cashier-obligation-projection",
-        "sha": "b8d1166fbc887b4b67c8d40c5aea269c00ee9afe",
-        "note": "Source-integrity correction measurement: 1 exact GC-A1 class / 33 tests / 148 assertions / 0 failures / 0 errors. Projection remains General Cashier-owned, read-only, authorization-first, active-company and property-scoped, and fail-closed when session-scoped accountability evidence is unavailable. Snapshot validation now runs across all payment, deposit, and refund rows including excluded lifecycle rows; payment/deposit/refund immutable identity, currency, tender, source pointer, source amount, available-before-refund, refund amount, and reason evidence fail closed on drift. Void and allocation/application reversal evidence must be complete and source-consistent before excluding or resolving obligations. Fingerprint coverage now includes all validated cash source, allocation/application, reversal, refund, and source snapshot facts while continuing to exclude evaluated_at. Historical OPEN to current CLOSED cashier sessions remain evidence-unavailable rather than snapshot conflicts. No Front Desk integration, checkout execution, cashier mutation, handover, count, reconciliation, folio mutation, Business Date, or Night Audit behavior added."
+        "sha": "0313ed1bb58eaa9f977e761e67cca327469b12b7",
+        "note": "Snapshot-completeness correction measurement: 1 exact GC-A1 class / 38 tests / 231 assertions / 0 failures / 0 errors. Projection remains General Cashier-owned, read-only, authorization-first, active-company and property-scoped, and fail-closed when session-scoped accountability evidence is unavailable. Snapshot validation now requires every canonical payment, deposit, refund, allocation/application, void, and reversal source-snapshot key supplied by the expected-field contract. Missing keys, empty snapshots, malformed amounts, absent payment opened_at, missing deposit application folio_number, and incomplete reversal evidence all fail closed as review-required and preserve conservative relevance. Fingerprint coverage changes when required snapshot evidence is removed while evaluated_at remains excluded. Historical OPEN to current CLOSED cashier sessions remain evidence-unavailable rather than snapshot conflicts. No Front Desk integration, checkout execution, cashier mutation, handover, count, reconciliation, folio mutation, Business Date, or Night Audit behavior added."
       },
       "accepted_debt": [],
       "status": "active"

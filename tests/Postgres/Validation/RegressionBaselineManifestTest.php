@@ -209,13 +209,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertSame([
             'GeneralCashierCheckoutObligationProjectionTest',
         ], $baseline->classes);
-        $this->assertEquals(33, $baseline->expected->tests ?? null);
-        $this->assertEquals(148, $baseline->expected->assertions ?? null);
+        $this->assertEquals(38, $baseline->expected->tests ?? null);
+        $this->assertEquals(231, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'b8d1166fbc887b4b67c8d40c5aea269c00ee9afe',
+            '0313ed1bb58eaa9f977e761e67cca327469b12b7',
             $baseline->provenance->sha ?? null
         );
         $this->assertEquals(
