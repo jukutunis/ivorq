@@ -332,6 +332,161 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         $this->assertContains('CASHIER_SESSION_OPEN', $projection->blocker_codes);
     }
 
+    public function test_payment_snapshot_immutable_identity_mismatches_require_review(): void
+    {
+        foreach ([
+            'reservation_id' => (string) Str::ulid(),
+            'guest_id' => (string) Str::ulid(),
+            'currency' => 'EUR',
+            'tender_type' => 'BANK',
+            'opened_by' => $this->otherActor->id,
+            'opened_at' => Carbon::parse('2026-07-14 07:59:00')->toISOString(),
+        ] as $field => $value) {
+            [$stay, $reservation, $guest] = $this->stayTriplet();
+            $session = $this->cashierSession(CashierSessionStatusEnum::CLOSED, $this->userWithoutPermission());
+            $snapshot = $this->cashSourceSnapshot($session, $reservation, $guest);
+            $snapshot[$field] = $value;
+            $this->payment($reservation, $guest, $session, $snapshot);
+
+            $projection = $this->service->project($this->actor, $stay->id);
+
+            $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $projection->status, $field);
+            $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $projection->review_reasons, $field);
+            $this->closeSession($session);
+        }
+    }
+
+    public function test_deposit_snapshot_immutable_identity_mismatches_require_review(): void
+    {
+        foreach ([
+            'reservation_id' => (string) Str::ulid(),
+            'guest_id' => (string) Str::ulid(),
+            'currency' => 'EUR',
+            'tender_type' => 'BANK',
+        ] as $field => $value) {
+            [$stay, $reservation, $guest] = $this->stayTriplet();
+            $session = $this->cashierSession(CashierSessionStatusEnum::CLOSED, $this->userWithoutPermission());
+            $snapshot = $this->cashSourceSnapshot($session, $reservation, $guest);
+            $snapshot[$field] = $value;
+            $this->deposit($reservation, $guest, $session, $snapshot);
+
+            $projection = $this->service->project($this->actor, $stay->id);
+
+            $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $projection->status, $field);
+            $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $projection->review_reasons, $field);
+            $this->closeSession($session);
+        }
+    }
+
+    public function test_refund_snapshot_source_identity_and_amount_mismatches_require_review(): void
+    {
+        foreach ([
+            'source_type' => GuestRefundSourceTypeEnum::GuestPayment->value,
+            'source_id' => (string) Str::ulid(),
+            'source_number' => 'GRF-BAD-SOURCE',
+            'source_amount' => '99.99',
+            'available_before_refund' => '8.99',
+            'reservation_id' => (string) Str::ulid(),
+            'guest_id' => (string) Str::ulid(),
+            'currency' => 'EUR',
+            'amount' => '2.00',
+            'reason_code' => 'BAD_REASON',
+        ] as $field => $value) {
+            [$stay, $reservation, $guest] = $this->stayTriplet();
+            $session = $this->cashierSession(CashierSessionStatusEnum::CLOSED, $this->userWithoutPermission());
+            $deposit = $this->deposit($reservation, $guest, $session);
+            $snapshot = $this->refundSnapshot($session, $deposit, '1.00', 'GC_A1_TEST');
+            $snapshot[$field] = $value;
+            $this->refund($reservation, $guest, $session, $deposit, $snapshot);
+
+            $projection = $this->service->project($this->actor, $stay->id);
+
+            $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $projection->status, $field);
+            $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $projection->review_reasons, $field);
+            $this->closeSession($session);
+        }
+    }
+
+    public function test_excluded_voided_payment_and_resolved_deposit_still_validate_source_snapshots(): void
+    {
+        $sharedSession = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+        [$paymentStay, $paymentReservation] = $this->stayTriplet();
+        $voided = $this->paymentService->recordCashPayment($this->actor, $paymentReservation->id, $sharedSession->id, '10.00', 'gc-a1-excluded-void-snapshot');
+        $this->confirmGlfC(GuestPaymentLifecycleService::VOID_CONFIRMATION_INTENT);
+        $this->paymentService->voidPayment($this->actor, $voided->id, 'VOIDED', 'gc-a1-excluded-void-reversal');
+        $snapshot = $voided->fresh()->source_snapshot;
+        $snapshot['reservation_id'] = (string) Str::ulid();
+        $this->forceUpdateJson('guest_payment_transactions', $voided->id, 'source_snapshot', $snapshot);
+
+        $paymentProjection = $this->service->project($this->actor, $paymentStay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $paymentProjection->status);
+        $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $paymentProjection->review_reasons);
+
+        [$depositStay, $depositReservation] = $this->stayTriplet();
+        $resolved = $this->depositService->recordCashDeposit($this->actor, $depositReservation->id, $sharedSession->id, '20.00', 'gc-a1-excluded-dep-snapshot');
+        $folio = $this->makeGlfFolio($depositReservation, Guest::findOrFail($depositReservation->primary_guest_id));
+        $this->depositService->applyDeposit($this->actor, $resolved->id, $folio->id, '20.00', 'gc-a1-excluded-dep-application');
+        $snapshot = $resolved->fresh()->source_snapshot;
+        $snapshot['guest_id'] = (string) Str::ulid();
+        $this->forceUpdateJson('guest_deposit_transactions', $resolved->id, 'source_snapshot', $snapshot);
+
+        $depositProjection = $this->service->project($this->actor, $depositStay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $depositProjection->status);
+        $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $depositProjection->review_reasons);
+    }
+
+    public function test_invalid_void_and_reversal_evidence_requires_review_and_cannot_clear(): void
+    {
+        $sharedSession = $this->cashierSession(CashierSessionStatusEnum::OPEN);
+        [$voidStay, $voidReservation] = $this->stayTriplet();
+        $voided = $this->paymentService->recordCashPayment($this->actor, $voidReservation->id, $sharedSession->id, '10.00', 'gc-a1-bad-void-amount');
+        $this->confirmGlfC(GuestPaymentLifecycleService::VOID_CONFIRMATION_INTENT);
+        $paymentVoid = $this->paymentService->voidPayment($this->actor, $voided->id, 'VOIDED', 'gc-a1-bad-void-reversal');
+        $this->forceUpdateColumn('guest_payment_reversals', $paymentVoid->id, 'amount', '9.99');
+
+        $voidProjection = $this->service->project($this->actor, $voidStay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $voidProjection->status);
+        $this->assertContains('CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT', $voidProjection->review_reasons);
+
+        [$allocationStay, $allocationReservation] = $this->stayTriplet();
+        $payment = $this->paymentService->recordCashPayment($this->actor, $allocationReservation->id, $sharedSession->id, '20.00', 'gc-a1-bad-allocation-reversal');
+        $folio = $this->makeGlfFolio($allocationReservation, Guest::findOrFail($allocationReservation->primary_guest_id));
+        $allocation = $this->paymentService->allocatePayment($this->actor, $payment->id, $folio->id, '20.00', 'gc-a1-bad-allocation');
+        $this->confirmGlfC(GuestPaymentLifecycleService::REVERSAL_CONFIRMATION_INTENT);
+        $allocationReversal = $this->paymentService->reverseAllocation($this->actor, $allocation->id, 'REVERSAL', 'gc-a1-bad-allocation-reversal-row');
+        $snapshot = $allocationReversal->source_snapshot;
+        $snapshot['folio_id'] = (string) Str::ulid();
+        $this->forceUpdateJson('guest_payment_reversals', $allocationReversal->id, 'source_snapshot', $snapshot);
+
+        $allocationProjection = $this->service->project($this->actor, $allocationStay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $allocationProjection->status);
+        $this->assertContains('CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT', $allocationProjection->review_reasons);
+
+        [$depositVoidStay, $depositVoidReservation] = $this->stayTriplet();
+        $deposit = $this->depositService->recordCashDeposit($this->actor, $depositVoidReservation->id, $sharedSession->id, '10.00', 'gc-a1-bad-dep-void');
+        $this->confirmGlfC(GuestDepositLifecycleService::VOID_INTENT);
+        $depositVoid = $this->depositService->voidDeposit($this->actor, $deposit->id, 'VOIDED', 'gc-a1-bad-dep-void-row');
+        $this->forceUpdateColumn('guest_deposit_reversals', $depositVoid->id, 'amount', '9.99');
+
+        $depositVoidProjection = $this->service->project($this->actor, $depositVoidStay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $depositVoidProjection->status);
+        $this->assertContains('CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT', $depositVoidProjection->review_reasons);
+
+        [$applicationStay, $applicationReservation] = $this->stayTriplet();
+        $applicationDeposit = $this->depositService->recordCashDeposit($this->actor, $applicationReservation->id, $sharedSession->id, '20.00', 'gc-a1-bad-dep-app-reversal');
+        $applicationFolio = $this->makeGlfFolio($applicationReservation, Guest::findOrFail($applicationReservation->primary_guest_id));
+        $application = $this->depositService->applyDeposit($this->actor, $applicationDeposit->id, $applicationFolio->id, '20.00', 'gc-a1-bad-dep-app');
+        $this->confirmGlfC(GuestDepositLifecycleService::REVERSE_INTENT);
+        $applicationReversal = $this->depositService->reverseDepositApplication($this->actor, $application->id, 'REVERSAL', 'gc-a1-bad-dep-app-reversal-row');
+        $snapshot = $applicationReversal->source_snapshot;
+        $snapshot['application_id'] = (string) Str::ulid();
+        $this->forceUpdateJson('guest_deposit_reversals', $applicationReversal->id, 'source_snapshot', $snapshot);
+
+        $applicationProjection = $this->service->project($this->actor, $applicationStay->id);
+        $this->assertSame(GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired, $applicationProjection->status);
+        $this->assertContains('CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT', $applicationProjection->review_reasons);
+    }
+
     public function test_authorization_occurs_before_stay_lookup(): void
     {
         $unauthorized = $this->userWithoutPermission();
@@ -598,7 +753,7 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
             'recording_idempotency_key' => 'gc-a1-payment-' . Str::ulid(),
             'recorded_at' => Carbon::parse('2026-07-14 08:10:00'),
             'recorded_by' => $this->actor->id,
-            'source_snapshot' => $snapshot ?: $this->snapshot($session),
+            'source_snapshot' => $snapshot ?: $this->cashSourceSnapshot($session, $reservation, $guest),
             'created_at' => now(),
             'updated_at' => now(),
             'created_by' => $this->actor->id,
@@ -608,7 +763,7 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         return $payment->fresh();
     }
 
-    private function deposit(Reservation $reservation, Guest $guest, CashierSession $session): GuestDepositTransaction
+    private function deposit(Reservation $reservation, Guest $guest, CashierSession $session, array $snapshot = []): GuestDepositTransaction
     {
         $deposit = new GuestDepositTransaction();
         $deposit->forceFill([
@@ -624,7 +779,7 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
             'recording_idempotency_key' => 'gc-a1-deposit-' . Str::ulid(),
             'recorded_at' => Carbon::parse('2026-07-14 08:20:00'),
             'recorded_by' => $this->actor->id,
-            'source_snapshot' => $this->snapshot($session),
+            'source_snapshot' => $snapshot ?: $this->cashSourceSnapshot($session, $reservation, $guest),
             'created_at' => now(),
             'updated_at' => now(),
             'created_by' => $this->actor->id,
@@ -638,7 +793,8 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         Reservation $reservation,
         Guest $guest,
         CashierSession $session,
-        GuestDepositTransaction $deposit
+        GuestDepositTransaction $deposit,
+        array $snapshot = []
     ): GuestRefundTransaction {
         $refund = new GuestRefundTransaction();
         $refund->forceFill([
@@ -657,7 +813,7 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
             'refund_idempotency_key' => 'gc-a1-refund-' . Str::ulid(),
             'refunded_at' => Carbon::parse('2026-07-14 08:30:00'),
             'refunded_by' => $this->actor->id,
-            'source_snapshot' => $this->snapshot($session),
+            'source_snapshot' => $snapshot ?: $this->refundSnapshot($session, $deposit, '1.00', 'GC_A1_TEST'),
             'created_at' => now(),
             'created_by' => $this->actor->id,
         ])->save();
@@ -670,13 +826,70 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         return $refund->fresh();
     }
 
-    private function snapshot(CashierSession $session): array
+    private function cashSourceSnapshot(CashierSession $session, Reservation $reservation, Guest $guest): array
     {
         return [
             'cashier_session_id' => $session->id,
             'cashier_user_id' => $session->cashier_user_id,
             'cashier_session_status' => CashierSessionStatusEnum::OPEN->value,
+            'opened_at' => $session->opened_at?->toISOString(),
+            'opened_by' => $session->opened_by,
+            'reservation_id' => $reservation->id,
+            'guest_id' => $guest->id,
+            'currency' => 'USD',
+            'tender_type' => 'CASH',
         ];
+    }
+
+    private function refundSnapshot(
+        CashierSession $session,
+        GuestDepositTransaction $deposit,
+        string $amount,
+        string $reasonCode
+    ): array {
+        return [
+            'source_type' => GuestRefundSourceTypeEnum::GuestDeposit->value,
+            'source_id' => $deposit->id,
+            'source_number' => $deposit->deposit_number,
+            'source_amount' => $this->amount($deposit->amount),
+            'available_before_refund' => $this->amount($deposit->amount),
+            'cashier_session_id' => $session->id,
+            'cashier_user_id' => $session->cashier_user_id,
+            'reservation_id' => $deposit->reservation_id,
+            'guest_id' => $deposit->guest_id,
+            'currency' => $deposit->currency,
+            'amount' => $this->amount($amount),
+            'reason_code' => $reasonCode,
+        ];
+    }
+
+    private function forceUpdateJson(string $table, string $id, string $column, array $value): void
+    {
+        $this->withUserTriggersDisabled($table, fn () => DB::table($table)
+            ->where('id', $id)
+            ->update([$column => json_encode($value)]));
+    }
+
+    private function forceUpdateColumn(string $table, string $id, string $column, string $value): void
+    {
+        $this->withUserTriggersDisabled($table, fn () => DB::table($table)
+            ->where('id', $id)
+            ->update([$column => $value]));
+    }
+
+    private function withUserTriggersDisabled(string $table, callable $callback): void
+    {
+        DB::statement("ALTER TABLE {$table} DISABLE TRIGGER USER");
+        try {
+            $callback();
+        } finally {
+            DB::statement("ALTER TABLE {$table} ENABLE TRIGGER USER");
+        }
+    }
+
+    private function amount(mixed $value): string
+    {
+        return bcadd((string) $value, '0.00', 2);
     }
 
     private function userWithoutPermission(): User
@@ -701,7 +914,11 @@ class GeneralCashierCheckoutObligationProjectionTest extends PostgresTestCase
         return [
             'front_desk_stays' => DB::table('front_desk_stays')->count(),
             'guest_payment_transactions' => DB::table('guest_payment_transactions')->count(),
+            'guest_payment_allocations' => DB::table('guest_payment_allocations')->count(),
+            'guest_payment_reversals' => DB::table('guest_payment_reversals')->count(),
             'guest_deposit_transactions' => DB::table('guest_deposit_transactions')->count(),
+            'guest_deposit_applications' => DB::table('guest_deposit_applications')->count(),
+            'guest_deposit_reversals' => DB::table('guest_deposit_reversals')->count(),
             'guest_refund_transactions' => DB::table('guest_refund_transactions')->count(),
             'cashier_sessions' => DB::table('cashier_sessions')->count(),
             'cash_count_evidence' => DB::table('cash_count_evidence')->count(),

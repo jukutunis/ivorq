@@ -2,8 +2,9 @@
 
 namespace Modules\Operations\GeneralCashier\Services;
 
-use DomainException;
 use BackedEnum;
+use Carbon\CarbonImmutable;
+use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -162,22 +163,26 @@ class GeneralCashierCheckoutObligationProjectionService
         $relevantDeposits = new Collection($relevance['deposits']);
         $relevantRefunds = new Collection($relevance['refunds']);
 
+        $sourceSessionIds = $this->collectSourceSessionIds($payments, $deposits, $refunds);
         $sessionIds = $this->collectSessionIds($relevantPayments, $relevantDeposits, $relevantRefunds, $unavailable, $messages);
         $this->signalSnapshotAfterCashSourceRead($propertyId, $frontDeskStayId);
 
-        $sessions = empty($sessionIds)
+        $lookupSessionIds = array_values(array_unique(array_merge($sourceSessionIds, $sessionIds)));
+        sort($lookupSessionIds);
+
+        $sessions = empty($lookupSessionIds)
             ? collect()
             : CashierSession::withoutGlobalScopes()
                 ->where('property_id', $propertyId)
-                ->whereIn('id', $sessionIds)
+                ->whereIn('id', $lookupSessionIds)
                 ->orderBy('id')
                 ->get()
                 ->keyBy('id');
 
         $this->evaluateLinkedSessions($sessionIds, $sessions, $blockers, $messages, $unavailable);
-        $this->evaluateSourceSnapshots($relevantPayments, $sessions, 'guest_payment', $reviews, $messages);
-        $this->evaluateSourceSnapshots($relevantDeposits, $sessions, 'guest_deposit', $reviews, $messages);
-        $this->evaluateSourceSnapshots($relevantRefunds, $sessions, 'guest_refund', $reviews, $messages);
+        $this->evaluateSourceSnapshots($payments, $sessions, 'guest_payment', $reviews, $messages);
+        $this->evaluateSourceSnapshots($deposits, $sessions, 'guest_deposit', $reviews, $messages);
+        $this->evaluateSourceSnapshots($refunds, $sessions, 'guest_refund', $reviews, $messages);
 
         if (! empty($sessionIds) && empty($blockers) && empty($reviews)) {
             $unavailable[] = 'CASHIER_SESSION_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE';
@@ -389,12 +394,22 @@ class GeneralCashierCheckoutObligationProjectionService
                     && $row->guest_payment_allocation_id === $allocation->id)
                 ->values();
 
+            $validReversal = false;
             if ($allocationReversals->count() > 1) {
                 $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
                 $messages[] = "Payment allocation {$allocation->id} has multiple allocation reversals.";
+            } elseif ($allocationReversals->count() === 1) {
+                $validReversal = $this->validatePaymentAllocationReversal(
+                    $allocationReversals->first(),
+                    $allocation,
+                    $payment,
+                    $reviews,
+                    $messages
+                );
             }
 
-            $reversed = $allocationReversals->count() >= 1;
+            $allocationSnapshotValid = $this->validatePaymentAllocationSnapshot($allocation, $payment, $reviews, $messages);
+            $reversed = $allocationReversals->count() === 1 && $validReversal && $allocationSnapshotValid;
             if (! $reversed) {
                 $activeAllocated = bcadd($activeAllocated, $this->amount($allocation->amount), 2);
             }
@@ -404,6 +419,7 @@ class GeneralCashierCheckoutObligationProjectionService
                 'amount' => $this->amount($allocation->amount),
                 'folio_id' => (string) $allocation->folio_id,
                 'reversed' => $reversed,
+                'source_snapshot' => $this->snapshotArray($allocation->source_snapshot),
                 'reversal_ids' => $allocationReversals->pluck('id')->map(fn ($id): string => (string) $id)->all(),
             ];
         }
@@ -416,11 +432,13 @@ class GeneralCashierCheckoutObligationProjectionService
         $reason = 'PAYMENT_EXCLUDED';
 
         if ($status === GuestPaymentLifecycleStatusEnum::Voided) {
-            if ($voids->count() !== 1 || $allocations->isNotEmpty() || $refunds->isNotEmpty()) {
+            $validVoid = $this->validatePaymentVoid($payment, $voids, $allocations, $refunds, $propertyId, $reviews, $messages);
+            if (! $validVoid) {
                 $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
                 $messages[] = "Voided payment {$payment->id} does not have source-consistent void evidence.";
             }
-            $reason = 'PAYMENT_VOIDED';
+            $relevant = ! $validVoid;
+            $reason = $validVoid ? 'PAYMENT_VOIDED' : 'PAYMENT_VOID_SOURCE_CONFLICT';
         } else {
             if ($voids->isNotEmpty()) {
                 $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
@@ -492,12 +510,22 @@ class GeneralCashierCheckoutObligationProjectionService
                     && $row->guest_deposit_application_id === $application->id)
                 ->values();
 
+            $validReversal = false;
             if ($applicationReversals->count() > 1) {
                 $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
                 $messages[] = "Deposit application {$application->id} has multiple application reversals.";
+            } elseif ($applicationReversals->count() === 1) {
+                $validReversal = $this->validateDepositApplicationReversal(
+                    $applicationReversals->first(),
+                    $application,
+                    $deposit,
+                    $reviews,
+                    $messages
+                );
             }
 
-            $reversed = $applicationReversals->count() >= 1;
+            $applicationSnapshotValid = $this->validateDepositApplicationSnapshot($application, $deposit, $reviews, $messages);
+            $reversed = $applicationReversals->count() === 1 && $validReversal && $applicationSnapshotValid;
             if (! $reversed) {
                 $activeApplied = bcadd($activeApplied, $this->amount($application->amount), 2);
             }
@@ -507,6 +535,7 @@ class GeneralCashierCheckoutObligationProjectionService
                 'amount' => $this->amount($application->amount),
                 'folio_id' => (string) $application->folio_id,
                 'reversed' => $reversed,
+                'source_snapshot' => $this->snapshotArray($application->source_snapshot),
                 'reversal_ids' => $applicationReversals->pluck('id')->map(fn ($id): string => (string) $id)->all(),
             ];
         }
@@ -519,11 +548,13 @@ class GeneralCashierCheckoutObligationProjectionService
         $reason = 'DEPOSIT_EXCLUDED';
 
         if ($status === GuestDepositLifecycleStatusEnum::Voided) {
-            if ($voids->count() !== 1 || $applications->isNotEmpty() || $refunds->isNotEmpty()) {
+            $validVoid = $this->validateDepositVoid($deposit, $voids, $applications, $refunds, $propertyId, $reviews, $messages);
+            if (! $validVoid) {
                 $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
                 $messages[] = "Voided deposit {$deposit->id} does not have source-consistent void evidence.";
             }
-            $reason = 'DEPOSIT_VOIDED';
+            $relevant = ! $validVoid;
+            $reason = $validVoid ? 'DEPOSIT_VOIDED' : 'DEPOSIT_VOID_SOURCE_CONFLICT';
         } else {
             if ($voids->isNotEmpty()) {
                 $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
@@ -663,6 +694,25 @@ class GeneralCashierCheckoutObligationProjectionService
         return $ids;
     }
 
+    private function collectSourceSessionIds(Collection $payments, Collection $deposits, Collection $refunds): array
+    {
+        $ids = [];
+
+        foreach ([$payments, $deposits, $refunds] as $rows) {
+            foreach ($rows as $row) {
+                $sessionId = (string) ($row->cashier_session_id ?? '');
+                if ($sessionId !== '') {
+                    $ids[] = $sessionId;
+                }
+            }
+        }
+
+        $ids = array_values(array_unique($ids));
+        sort($ids);
+
+        return $ids;
+    }
+
     private function evaluateLinkedSessions(
         array $sessionIds,
         \Illuminate\Support\Collection $sessions,
@@ -708,23 +758,410 @@ class GeneralCashierCheckoutObligationProjectionService
             $snapshot = $this->snapshotArray($row->source_snapshot);
             $session = $sessions->get((string) $row->cashier_session_id);
 
-            if (! $session || empty($snapshot)) {
+            if ($sourceType === 'guest_refund') {
+                $this->validateRefundSourceSnapshot($row, $snapshot, $session, $reviews, $messages);
                 continue;
             }
 
-            $snapshotSessionId = (string) ($snapshot['cashier_session_id'] ?? '');
-            $snapshotUserId = (string) ($snapshot['cashier_user_id'] ?? '');
-            $snapshotStatus = (string) ($snapshot['cashier_session_status'] ?? '');
+            if (empty($snapshot)) {
+                $this->snapshotConflict($sourceType, (string) $row->id, $reviews, $messages);
+                continue;
+            }
 
-            if (
-                ($snapshotSessionId !== '' && $snapshotSessionId !== $session->id) ||
-                ($snapshotUserId !== '' && $snapshotUserId !== $session->cashier_user_id) ||
-                ($snapshotStatus !== '' && $snapshotStatus !== CashierSessionStatusEnum::OPEN->value)
+            $fields = [
+                'cashier_session_id' => (string) $row->cashier_session_id,
+                'cashier_user_id' => (string) ($session?->cashier_user_id ?? ''),
+                'cashier_session_status' => CashierSessionStatusEnum::OPEN->value,
+                'reservation_id' => (string) $row->reservation_id,
+                'guest_id' => (string) $row->guest_id,
+                'currency' => (string) $row->currency,
+                'tender_type' => $row->tender_type?->value ?? (string) $row->tender_type,
+            ];
+
+            if ($sourceType === 'guest_payment') {
+                $fields['opened_by'] = (string) ($session?->opened_by ?? '');
+            }
+
+            if (! $session || ! $this->snapshotFieldsMatch($snapshot, $fields)) {
+                $this->snapshotConflict($sourceType, (string) $row->id, $reviews, $messages);
+                continue;
+            }
+
+            if (array_key_exists('opened_at', $snapshot)
+                && ! $this->instantMatches($snapshot['opened_at'], $session->opened_at)
             ) {
-                $reviews[] = 'CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT';
-                $messages[] = strtoupper($sourceType) . " {$row->id} cashier session snapshot conflicts with current General Cashier evidence.";
+                $this->snapshotConflict($sourceType, (string) $row->id, $reviews, $messages);
             }
         }
+    }
+
+    private function validateRefundSourceSnapshot(
+        GuestRefundTransaction $refund,
+        array $snapshot,
+        ?CashierSession $session,
+        array &$reviews,
+        array &$messages
+    ): void {
+        $sourceType = $refund->refund_source_type?->value ?? (string) $refund->refund_source_type;
+        $paymentId = (string) ($refund->guest_payment_transaction_id ?? '');
+        $depositId = (string) ($refund->guest_deposit_transaction_id ?? '');
+        $hasPayment = $paymentId !== '';
+        $hasDeposit = $depositId !== '';
+
+        if (($sourceType === GuestRefundSourceTypeEnum::GuestPayment->value && ! $hasPayment)
+            || ($sourceType === GuestRefundSourceTypeEnum::GuestDeposit->value && ! $hasDeposit)
+            || ($hasPayment && $hasDeposit)
+            || (! $hasPayment && ! $hasDeposit)
+            || empty($snapshot)) {
+            $this->snapshotConflict('guest_refund', (string) $refund->id, $reviews, $messages);
+            return;
+        }
+
+        $source = $hasPayment
+            ? GuestPaymentTransaction::withoutGlobalScopes()
+                ->whereKey($paymentId)
+                ->where('property_id', $refund->property_id)
+                ->first()
+            : GuestDepositTransaction::withoutGlobalScopes()
+                ->whereKey($depositId)
+                ->where('property_id', $refund->property_id)
+                ->first();
+
+        if (! $source
+            || ! $session
+            || $source->reservation_id !== $refund->reservation_id
+            || $source->guest_id !== $refund->guest_id
+            || $source->currency !== $refund->currency) {
+            $this->snapshotConflict('guest_refund', (string) $refund->id, $reviews, $messages);
+            return;
+        }
+
+        $sourceNumber = $hasPayment ? $source->payment_number : $source->deposit_number;
+        $sourceId = $hasPayment ? $paymentId : $depositId;
+        $fields = [
+            'source_type' => $sourceType,
+            'source_id' => $sourceId,
+            'source_number' => (string) $sourceNumber,
+            'source_amount' => $this->amount($source->amount),
+            'available_before_refund' => $this->refundAvailableBefore($refund, $source),
+            'cashier_session_id' => (string) $refund->cashier_session_id,
+            'cashier_user_id' => (string) $session->cashier_user_id,
+            'reservation_id' => (string) $source->reservation_id,
+            'guest_id' => (string) $source->guest_id,
+            'currency' => (string) $source->currency,
+            'amount' => $this->amount($refund->amount),
+            'reason_code' => (string) $refund->reason_code,
+        ];
+
+        if (! $this->snapshotFieldsMatch($snapshot, $fields, ['source_amount', 'available_before_refund', 'amount'])) {
+            $this->snapshotConflict('guest_refund', (string) $refund->id, $reviews, $messages);
+        }
+    }
+
+    private function validatePaymentVoid(
+        GuestPaymentTransaction $payment,
+        \Illuminate\Support\Collection $voids,
+        Collection $allocations,
+        Collection $refunds,
+        string $propertyId,
+        array &$reviews,
+        array &$messages
+    ): bool {
+        if ($voids->count() !== 1 || $allocations->isNotEmpty() || $refunds->isNotEmpty()) {
+            return false;
+        }
+
+        $void = $voids->first();
+        $snapshot = $this->snapshotArray($void->source_snapshot);
+        $valid = $void->property_id === $propertyId
+            && $void->guest_payment_transaction_id === $payment->id
+            && $void->guest_payment_allocation_id === null
+            && $void->reversal_type === GuestPaymentReversalTypeEnum::PaymentVoid
+            && $this->amount($void->amount) === $this->amount($payment->amount)
+            && $this->snapshotFieldsMatch($snapshot, [
+                'payment_id' => (string) $payment->id,
+                'payment_number' => (string) $payment->payment_number,
+                'amount' => $this->amount($payment->amount),
+                'reason_code' => (string) $void->reason_code,
+                'cashier_session_id' => (string) $payment->cashier_session_id,
+            ], ['amount']);
+
+        if (! $valid) {
+            $messages[] = "Payment void {$void->id} source snapshot conflicts with payment {$payment->id}.";
+        }
+
+        return $valid;
+    }
+
+    private function validatePaymentAllocationSnapshot(
+        GuestPaymentAllocation $allocation,
+        GuestPaymentTransaction $payment,
+        array &$reviews,
+        array &$messages
+    ): bool {
+        $valid = $allocation->property_id === $payment->property_id
+            && $allocation->guest_payment_transaction_id === $payment->id
+            && $this->snapshotFieldsMatch($this->snapshotArray($allocation->source_snapshot), [
+                'payment_id' => (string) $payment->id,
+                'payment_number' => (string) $payment->payment_number,
+                'reservation_id' => (string) $payment->reservation_id,
+                'folio_id' => (string) $allocation->folio_id,
+                'currency' => (string) $payment->currency,
+                'amount' => $this->amount($allocation->amount),
+            ], ['amount']);
+
+        if (! $valid) {
+            $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
+            $messages[] = "Payment allocation {$allocation->id} source snapshot conflicts with payment {$payment->id}.";
+        }
+
+        return $valid;
+    }
+
+    private function validatePaymentAllocationReversal(
+        GuestPaymentReversal $reversal,
+        GuestPaymentAllocation $allocation,
+        GuestPaymentTransaction $payment,
+        array &$reviews,
+        array &$messages
+    ): bool {
+        $valid = $reversal->property_id === $payment->property_id
+            && $reversal->guest_payment_transaction_id === $payment->id
+            && $reversal->guest_payment_allocation_id === $allocation->id
+            && $reversal->reversal_type === GuestPaymentReversalTypeEnum::AllocationReversal
+            && $this->amount($reversal->amount) === $this->amount($allocation->amount)
+            && $this->snapshotFieldsMatch($this->snapshotArray($reversal->source_snapshot), [
+                'payment_id' => (string) $payment->id,
+                'allocation_id' => (string) $allocation->id,
+                'folio_id' => (string) $allocation->folio_id,
+                'amount' => $this->amount($allocation->amount),
+                'reason_code' => (string) $reversal->reason_code,
+            ], ['amount']);
+
+        if (! $valid) {
+            $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
+            $messages[] = "Payment allocation reversal {$reversal->id} source evidence conflicts with allocation {$allocation->id}.";
+        }
+
+        return $valid;
+    }
+
+    private function validateDepositVoid(
+        GuestDepositTransaction $deposit,
+        \Illuminate\Support\Collection $voids,
+        Collection $applications,
+        Collection $refunds,
+        string $propertyId,
+        array &$reviews,
+        array &$messages
+    ): bool {
+        if ($voids->count() !== 1 || $applications->isNotEmpty() || $refunds->isNotEmpty()) {
+            return false;
+        }
+
+        $void = $voids->first();
+        $valid = $void->property_id === $propertyId
+            && $void->guest_deposit_transaction_id === $deposit->id
+            && $void->guest_deposit_application_id === null
+            && $void->reversal_type === GuestDepositReversalTypeEnum::DepositVoid
+            && $this->amount($void->amount) === $this->amount($deposit->amount)
+            && $this->snapshotFieldsMatch($this->snapshotArray($void->source_snapshot), [
+                'deposit_id' => (string) $deposit->id,
+                'application_id' => '',
+                'amount' => $this->amount($deposit->amount),
+                'reason_code' => (string) $void->reason_code,
+            ], ['amount']);
+
+        if (! $valid) {
+            $messages[] = "Deposit void {$void->id} source snapshot conflicts with deposit {$deposit->id}.";
+        }
+
+        return $valid;
+    }
+
+    private function validateDepositApplicationSnapshot(
+        GuestDepositApplication $application,
+        GuestDepositTransaction $deposit,
+        array &$reviews,
+        array &$messages
+    ): bool {
+        $valid = $application->property_id === $deposit->property_id
+            && $application->guest_deposit_transaction_id === $deposit->id
+            && $this->snapshotFieldsMatch($this->snapshotArray($application->source_snapshot), [
+                'deposit_id' => (string) $deposit->id,
+                'deposit_number' => (string) $deposit->deposit_number,
+                'folio_id' => (string) $application->folio_id,
+                'reservation_id' => (string) $deposit->reservation_id,
+                'guest_id' => (string) $deposit->guest_id,
+                'currency' => (string) $deposit->currency,
+                'amount' => $this->amount($application->amount),
+            ], ['amount']);
+
+        if (! $valid) {
+            $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
+            $messages[] = "Deposit application {$application->id} source snapshot conflicts with deposit {$deposit->id}.";
+        }
+
+        return $valid;
+    }
+
+    private function validateDepositApplicationReversal(
+        GuestDepositReversal $reversal,
+        GuestDepositApplication $application,
+        GuestDepositTransaction $deposit,
+        array &$reviews,
+        array &$messages
+    ): bool {
+        $valid = $reversal->property_id === $deposit->property_id
+            && $reversal->guest_deposit_transaction_id === $deposit->id
+            && $reversal->guest_deposit_application_id === $application->id
+            && $reversal->reversal_type === GuestDepositReversalTypeEnum::ApplicationReversal
+            && $this->amount($reversal->amount) === $this->amount($application->amount)
+            && $this->snapshotFieldsMatch($this->snapshotArray($reversal->source_snapshot), [
+                'deposit_id' => (string) $deposit->id,
+                'application_id' => (string) $application->id,
+                'amount' => $this->amount($application->amount),
+                'reason_code' => (string) $reversal->reason_code,
+            ], ['amount']);
+
+        if (! $valid) {
+            $reviews[] = 'CASHIER_OBLIGATION_RELEVANCE_SOURCE_CONFLICT';
+            $messages[] = "Deposit application reversal {$reversal->id} source evidence conflicts with application {$application->id}.";
+        }
+
+        return $valid;
+    }
+
+    private function refundAvailableBefore(GuestRefundTransaction $refund, GuestPaymentTransaction|GuestDepositTransaction $source): string
+    {
+        $committed = $source instanceof GuestPaymentTransaction
+            ? $this->activePaymentAllocationAmount($source)
+            : $this->activeDepositApplicationAmount($source);
+        $priorRefunded = '0.00';
+        $sourceColumn = $source instanceof GuestPaymentTransaction
+            ? 'guest_payment_transaction_id'
+            : 'guest_deposit_transaction_id';
+
+        $refunds = GuestRefundTransaction::withoutGlobalScopes()
+            ->where('property_id', $refund->property_id)
+            ->where($sourceColumn, $source->id)
+            ->orderBy('refunded_at')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($refunds as $row) {
+            if ($row->id === $refund->id) {
+                break;
+            }
+            $priorRefunded = bcadd($priorRefunded, $this->amount($row->amount), 2);
+        }
+
+        return bcsub(bcsub($this->amount($source->amount), $committed, 2), $priorRefunded, 2);
+    }
+
+    private function activePaymentAllocationAmount(GuestPaymentTransaction $payment): string
+    {
+        $total = '0.00';
+        $allocations = GuestPaymentAllocation::withoutGlobalScopes()
+            ->where('property_id', $payment->property_id)
+            ->where('guest_payment_transaction_id', $payment->id)
+            ->orderBy('id')
+            ->get();
+
+        foreach ($allocations as $allocation) {
+            $reversed = GuestPaymentReversal::withoutGlobalScopes()
+                ->where('property_id', $payment->property_id)
+                ->where('guest_payment_allocation_id', $allocation->id)
+                ->where('reversal_type', GuestPaymentReversalTypeEnum::AllocationReversal->value)
+                ->exists();
+
+            if (! $reversed) {
+                $total = bcadd($total, $this->amount($allocation->amount), 2);
+            }
+        }
+
+        return $total;
+    }
+
+    private function activeDepositApplicationAmount(GuestDepositTransaction $deposit): string
+    {
+        $total = '0.00';
+        $applications = GuestDepositApplication::withoutGlobalScopes()
+            ->where('property_id', $deposit->property_id)
+            ->where('guest_deposit_transaction_id', $deposit->id)
+            ->orderBy('id')
+            ->get();
+
+        foreach ($applications as $application) {
+            $reversed = GuestDepositReversal::withoutGlobalScopes()
+                ->where('property_id', $deposit->property_id)
+                ->where('guest_deposit_application_id', $application->id)
+                ->where('reversal_type', GuestDepositReversalTypeEnum::ApplicationReversal->value)
+                ->exists();
+
+            if (! $reversed) {
+                $total = bcadd($total, $this->amount($application->amount), 2);
+            }
+        }
+
+        return $total;
+    }
+
+    private function snapshotFieldsMatch(array $snapshot, array $expected, array $amountKeys = []): bool
+    {
+        foreach ($expected as $key => $value) {
+            if (! array_key_exists($key, $snapshot)) {
+                continue;
+            }
+
+            $actual = in_array($key, $amountKeys, true)
+                ? $this->safeAmount($snapshot[$key])
+                : (string) ($snapshot[$key] ?? '');
+            $expectedValue = in_array($key, $amountKeys, true)
+                ? $this->safeAmount($value)
+                : (string) ($value ?? '');
+
+            if ($actual === null || $expectedValue === null) {
+                return false;
+            }
+
+            if ($actual !== $expectedValue) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function safeAmount(mixed $value): ?string
+    {
+        try {
+            return $this->amount($value);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function instantMatches(mixed $snapshotValue, mixed $currentValue): bool
+    {
+        if (! $currentValue) {
+            return false;
+        }
+
+        try {
+            $snapshotInstant = CarbonImmutable::parse((string) $snapshotValue);
+            $currentInstant = CarbonImmutable::parse((string) $currentValue);
+        } catch (Throwable) {
+            return false;
+        }
+
+        return $snapshotInstant->format('U.u') === $currentInstant->format('U.u');
+    }
+
+    private function snapshotConflict(string $sourceType, string $id, array &$reviews, array &$messages): void
+    {
+        $reviews[] = 'CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT';
+        $messages[] = strtoupper($sourceType) . " {$id} source snapshot conflicts with current authoritative evidence.";
     }
 
     private function snapshotArray(mixed $snapshot): array
@@ -821,11 +1258,22 @@ class GeneralCashierCheckoutObligationProjectionService
 
             return [
                 'id' => (string) $row->id,
+                'property_id' => (string) $row->property_id,
                 'number' => (string) $row->{$numberColumn},
+                'reservation_id' => (string) $row->reservation_id,
+                'guest_id' => (string) $row->guest_id,
+                'currency' => (string) $row->currency,
                 'cashier_session_id' => (string) $row->cashier_session_id,
                 'tender_type' => $row->tender_type?->value ?? (string) $row->tender_type,
                 'status' => $status instanceof BackedEnum ? (string) $status->value : (string) $status,
-                'amount' => (string) $row->amount,
+                'amount' => $this->amount($row->amount),
+                'guest_payment_transaction_id' => (string) ($row->guest_payment_transaction_id ?? ''),
+                'guest_deposit_transaction_id' => (string) ($row->guest_deposit_transaction_id ?? ''),
+                'reason_code' => (string) ($row->reason_code ?? ''),
+                'recorded_at' => $row->recorded_at?->toIsoString(),
+                'recorded_by' => (string) ($row->recorded_by ?? ''),
+                'refunded_at' => $row->refunded_at?->toIsoString(),
+                'refunded_by' => (string) ($row->refunded_by ?? ''),
                 'source_snapshot' => $this->snapshotArray($row->source_snapshot),
             ];
         })->values()->all();
@@ -856,8 +1304,16 @@ class GeneralCashierCheckoutObligationProjectionService
     {
         return $reversals->map(fn ($row): array => [
             'id' => (string) $row->id,
+            'property_id' => (string) $row->property_id,
+            'guest_payment_transaction_id' => (string) ($row->guest_payment_transaction_id ?? ''),
+            'guest_payment_allocation_id' => (string) ($row->guest_payment_allocation_id ?? ''),
+            'guest_deposit_transaction_id' => (string) ($row->guest_deposit_transaction_id ?? ''),
+            'guest_deposit_application_id' => (string) ($row->guest_deposit_application_id ?? ''),
             'type' => $row->reversal_type?->value ?? (string) $row->reversal_type,
             'amount' => $this->amount($row->amount),
+            'reason_code' => (string) $row->reason_code,
+            'reversed_at' => $row->reversed_at?->toIsoString(),
+            'reversed_by' => (string) $row->reversed_by,
             'source_snapshot' => $this->snapshotArray($row->source_snapshot),
         ])->values()->all();
     }
