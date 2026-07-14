@@ -12,8 +12,10 @@ use Modules\Operations\FrontDesk\Services\FrontDeskCheckInService;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutReadinessProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBoundaryProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskGeneralCashierCheckoutObligationDependencyService;
 use Modules\Operations\FrontDesk\Services\FrontDeskGuestLedgerSettlementReadinessDependencyService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
+use Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutObligationProjectionService;
 use Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService;
 use Spatie\Permission\PermissionRegistrar;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -431,7 +433,30 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertFalse($row['can_view_execution_boundary']);
         $this->assertNull($row['departure_checkout_execution_boundary']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_CAPABILITY, $queue['financial_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_CAPABILITY, $queue['cashier_marker']);
+    }
+
+    public function test_queue_boundary_summary_is_null_when_general_cashier_permission_is_missing_without_cashier_queries(): void
+    {
+        [$stay] = $this->checkedInStay('1725');
+        $this->frontDeskActor->revokePermissionTo(GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $queries = [];
+        DB::listen(function ($query) use (&$queries): void {
+            $queries[] = $query->sql;
+        });
+
+        $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor->fresh());
+        $row = $this->findStayInQueue($queue, $stay->id);
+
+        $this->assertFalse($row['can_view_execution_boundary']);
+        $this->assertNull($row['departure_checkout_execution_boundary']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_CAPABILITY, $queue['cashier_marker']);
+        $this->assertNoCashierSourceQueries($queries);
     }
 
     public function test_queue_boundary_summary_is_null_when_front_desk_boundary_permission_is_missing(): void
@@ -446,6 +471,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertFalse($row['can_view_execution_boundary']);
         $this->assertNull($row['departure_checkout_execution_boundary']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
     }
 
     public function test_queue_boundary_summary_is_null_for_actor_auth_mismatch(): void
@@ -455,6 +481,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
             FrontDeskDepartureQueueProjectionService::VIEW_PERMISSION,
             FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
             FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION,
+            FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION,
         ]);
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
@@ -464,6 +491,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertFalse($row['can_view_execution_boundary']);
         $this->assertNull($row['departure_checkout_execution_boundary']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
     }
 
     public function test_queue_boundary_summary_is_null_during_parent_transaction(): void
@@ -476,6 +504,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertFalse($row['can_view_execution_boundary']);
         $this->assertNull($row['departure_checkout_execution_boundary']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
     }
 
     public function test_queue_boundary_summary_requires_both_view_permissions_and_omits_full_source_identifiers(): void
@@ -494,15 +523,31 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertArrayHasKey('status', $summary['guest_ledger_settlement_readiness']);
         $this->assertArrayHasKey('canonical_aggregate_balance', $summary['guest_ledger_settlement_readiness']);
         $this->assertArrayHasKey('source_fingerprint', $summary['guest_ledger_settlement_readiness']);
-        $this->assertSame('Checkout execution is not performed in FD-B9.', $summary['execution_not_performed_marker']);
+        $this->assertArrayHasKey('general_cashier_checkout_obligation', $summary);
+        $this->assertArrayNotHasKey('source_identifiers', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayNotHasKey('related_guest_payment_transaction_ids', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayNotHasKey('related_cashier_session_ids', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayHasKey('status', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayHasKey('related_guest_payment_transaction_count', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayHasKey('related_cashier_session_count', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayHasKey('blocker_codes', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayHasKey('review_reasons', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayHasKey('evidence_unavailable_codes', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayHasKey('evaluated_at', $summary['general_cashier_checkout_obligation']);
+        $this->assertArrayHasKey('source_fingerprint', $summary['general_cashier_checkout_obligation']);
+        $this->assertSame('Checkout execution is not performed in FD-B10.', $summary['execution_not_performed_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_AUTHORIZED, $row['financial_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_AUTHORIZED, $row['cashier_marker']);
     }
 
     public function test_queue_does_not_hide_authorized_execution_boundary_source_failure(): void
     {
         [$stay] = $this->checkedInStay('1724');
 
-        $boundary = new class(app(FrontDeskGuestLedgerSettlementReadinessDependencyService::class)) extends FrontDeskDepartureCheckoutExecutionBoundaryProjectionService {
+        $boundary = new class(
+            app(FrontDeskGuestLedgerSettlementReadinessDependencyService::class),
+            app(FrontDeskGeneralCashierCheckoutObligationDependencyService::class)
+        ) extends FrontDeskDepartureCheckoutExecutionBoundaryProjectionService {
             public function boundary(\Modules\Foundation\User\Models\User $actor, string $frontDeskStayId): array
             {
                 throw new DomainException('FD_B9_AUTHORIZED_SOURCE_FAILURE');
@@ -549,5 +594,34 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         }
 
         $this->fail('Stay not found in departure queue.');
+    }
+
+    /**
+     * @param string[] $queries
+     */
+    private function assertNoCashierSourceQueries(array $queries): void
+    {
+        $forbiddenTables = [
+            'cashier_sessions',
+            'guest_payment_transactions',
+            'guest_payment_allocations',
+            'guest_payment_reversals',
+            'guest_deposit_transactions',
+            'guest_deposit_applications',
+            'guest_deposit_reversals',
+            'guest_refund_transactions',
+        ];
+
+        $sourceQueries = [];
+        foreach ($queries as $sql) {
+            foreach ($forbiddenTables as $table) {
+                if (str_contains($sql, '"' . $table . '"') || str_contains($sql, $table)) {
+                    $sourceQueries[] = $sql;
+                    break;
+                }
+            }
+        }
+
+        $this->assertSame([], $sourceQueries, 'Suppressed queue rows must not query General Cashier or guest cash source evidence.');
     }
 }

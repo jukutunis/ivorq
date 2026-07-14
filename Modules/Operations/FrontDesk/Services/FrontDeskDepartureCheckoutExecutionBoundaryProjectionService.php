@@ -10,6 +10,7 @@ use Modules\Operations\FrontDesk\Enums\FrontDeskDepartureCheckoutExecutionBounda
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
+use Modules\Operations\GeneralCashier\Enums\GeneralCashierCheckoutObligationStatusEnum;
 use Modules\Operations\PMS\Enums\GuestLedgerSettlementReadinessStatusEnum;
 use Shared\Services\CurrentPropertyService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -24,6 +25,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     public const BLOCKER_FINANCIAL_SETTLEMENT_BLOCKED = 'FINANCIAL_SETTLEMENT_BLOCKED';
     public const BLOCKER_FINANCIAL_SETTLEMENT_REVIEW_REQUIRED = 'FINANCIAL_SETTLEMENT_REVIEW_REQUIRED';
     public const BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE = 'CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE';
+    public const BLOCKER_CASHIER_OBLIGATION_BLOCKED = 'CASHIER_OBLIGATION_BLOCKED';
+    public const BLOCKER_CASHIER_OBLIGATION_REVIEW_REQUIRED = 'CASHIER_OBLIGATION_REVIEW_REQUIRED';
     public const BLOCKER_BUSINESS_DATE_UNAVAILABLE = 'BUSINESS_DATE_EVIDENCE_UNAVAILABLE';
     public const BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE = 'NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE';
     public const BLOCKER_FD_B7_NOT_READY = 'FD_B7_NOT_READY';
@@ -31,10 +34,12 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     public const BLOCKER_STAY_NOT_IN_HOUSE = 'STAY_NOT_IN_HOUSE';
     public const BLOCKER_CHECKOUT_NOT_IMPLEMENTED = 'CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED';
     public const UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS = 'FD_B9_UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS';
+    public const UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS = 'FD_B10_UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS';
     private const AUTHORIZATION_FAILURE_MESSAGE = 'Front Desk checkout execution boundary view is not authorized.';
 
     public function __construct(
-        private readonly FrontDeskGuestLedgerSettlementReadinessDependencyService $guestLedgerSettlementReadiness
+        private readonly FrontDeskGuestLedgerSettlementReadinessDependencyService $guestLedgerSettlementReadiness,
+        private readonly FrontDeskGeneralCashierCheckoutObligationDependencyService $generalCashierCheckoutObligation
     ) {}
 
     /**
@@ -159,14 +164,22 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'source_fingerprint' => $guestLedger['source_fingerprint'],
         ];
 
-        // Gate 5: Cashier obligation evidence (MISSING - General Cashier-owned, no Front Desk projection)
-        $blockerCodes[] = self::BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE;
-        $blockerMessages[] = 'Authoritative cashier obligation evidence is not available to Front Desk. Cashier session, cashier responsibility, cash accountability, and cashier close/handover evidence are owned by General Cashier. No Front Desk-accessible cashier accountability projection exists.';
+        // Gate 5: Cashier obligation evidence (General Cashier GC-A1 read-only dependency)
+        $cashierObligation = $this->generalCashierCheckoutObligation->project($actor, $frontDeskStayId);
+        $cashierGateSatisfied = $this->applyGeneralCashierCheckoutObligation($cashierObligation, $blockerCodes, $blockerMessages, $reviewReasons);
         $authoritativeGates['cashier_obligation'] = [
             'gate' => 'No unresolved cashier accountability obligation',
             'owner' => 'General Cashier',
-            'satisfied' => false,
-            'detail' => 'Authoritative cashier obligation source is unavailable. General Cashier owns cashier session, cashier responsibility, cash accountability, and cashier close/handover evidence.',
+            'satisfied' => $cashierGateSatisfied,
+            'detail' => 'GC-A1 checkout obligation status: ' . $cashierObligation['status'] . '.',
+            'status' => $cashierObligation['status'],
+            'related_cashier_session_ids' => $cashierObligation['related_cashier_session_ids'],
+            'related_cashier_session_count' => count($cashierObligation['related_cashier_session_ids'] ?? []),
+            'related_guest_payment_transaction_ids' => $cashierObligation['related_guest_payment_transaction_ids'],
+            'related_guest_payment_transaction_count' => count($cashierObligation['related_guest_payment_transaction_ids'] ?? []),
+            'evaluated_at' => $cashierObligation['evaluated_at'],
+            'source_fingerprint' => $cashierObligation['source_fingerprint'],
+            'markers' => $cashierObligation['markers'],
         ];
 
         // Gate 6: Business date evidence (MISSING — ADR-034 Proposed, no implementation)
@@ -203,7 +216,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         $blockerMessages = $this->sortedUnique($blockerMessages);
         $reviewReasons = $this->sortedUnique($reviewReasons);
 
-        // Determine overall status. FD-B9 never executes checkout.
+        // Determine overall status. FD-B10 never executes checkout.
         $canExecute = false;
         if (empty($blockerCodes)) {
             $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryReady->value;
@@ -227,8 +240,10 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'review_reasons' => $reviewReasons,
             'authoritative_gates' => $authoritativeGates,
             'guest_ledger_settlement_readiness' => $guestLedger,
-            'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B9.',
+            'general_cashier_checkout_obligation' => $cashierObligation,
+            'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B10.',
             'financial_settlement_marker' => 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.',
+            'cashier_obligation_marker' => 'Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.',
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -270,7 +285,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         }
 
         if (! $this->actorCan($fresh, self::VIEW_PERMISSION)
-            || ! $this->actorCan($fresh, FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION)) {
+            || ! $this->actorCan($fresh, FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION)
+            || ! $this->actorCan($fresh, FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION)) {
             throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
         }
 
@@ -313,6 +329,42 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         };
     }
 
+    /**
+     * @param array<string, mixed> $cashierObligation
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     * @param string[] $reviewReasons
+     */
+    private function applyGeneralCashierCheckoutObligation(
+        array $cashierObligation,
+        array &$blockerCodes,
+        array &$blockerMessages,
+        array &$reviewReasons
+    ): bool {
+        return match ($cashierObligation['status']) {
+            GeneralCashierCheckoutObligationStatusEnum::CashierObligationClear->value => true,
+            GeneralCashierCheckoutObligationStatusEnum::CashierObligationBlocked->value => $this->appendCashierBlocker(
+                $blockerCodes,
+                $blockerMessages,
+                self::BLOCKER_CASHIER_OBLIGATION_BLOCKED,
+                'General Cashier GC-A1 reports cashier obligation blocked.'
+            ),
+            GeneralCashierCheckoutObligationStatusEnum::CashierObligationReviewRequired->value => $this->appendCashierReview(
+                $blockerCodes,
+                $blockerMessages,
+                $reviewReasons,
+                $cashierObligation['review_reasons'] ?? []
+            ),
+            GeneralCashierCheckoutObligationStatusEnum::CashierObligationEvidenceUnavailable->value => $this->appendCashierBlocker(
+                $blockerCodes,
+                $blockerMessages,
+                self::BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE,
+                'General Cashier GC-A1 cashier obligation evidence is unavailable.'
+            ),
+            default => throw new DomainException(self::UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS),
+        };
+    }
+
     private function actorCan(User $actor, string $permission): bool
     {
         try {
@@ -349,6 +401,39 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         foreach ($sourceReviewReasons as $reason) {
             $reviewReasons[] = $reason;
         }
+    }
+
+    /**
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     */
+    private function appendCashierBlocker(array &$blockerCodes, array &$blockerMessages, string $code, string $message): bool
+    {
+        $blockerCodes[] = $code;
+        $blockerMessages[] = $message;
+
+        return false;
+    }
+
+    /**
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     * @param string[] $reviewReasons
+     * @param string[] $sourceReviewReasons
+     */
+    private function appendCashierReview(
+        array &$blockerCodes,
+        array &$blockerMessages,
+        array &$reviewReasons,
+        array $sourceReviewReasons
+    ): bool {
+        $blockerCodes[] = self::BLOCKER_CASHIER_OBLIGATION_REVIEW_REQUIRED;
+        $blockerMessages[] = 'General Cashier GC-A1 reports cashier obligation requires review.';
+        foreach ($sourceReviewReasons as $reason) {
+            $reviewReasons[] = $reason;
+        }
+
+        return false;
     }
 
     /**

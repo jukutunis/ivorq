@@ -42,6 +42,9 @@ class FrontDeskDepartureQueueProjectionService
     public const FINANCIAL_MARKER_AUTHORIZED = 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.';
     public const FINANCIAL_MARKER_SUPPRESSED = 'Financial settlement readiness is not exposed in this queue row.';
     public const FINANCIAL_MARKER_CAPABILITY = 'Financial settlement readiness is sourced read-only from PMS Guest Ledger GLF-D when authorized.';
+    public const CASHIER_MARKER_AUTHORIZED = 'Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.';
+    public const CASHIER_MARKER_SUPPRESSED = 'Cashier obligation evidence is not exposed in this queue row.';
+    public const CASHIER_MARKER_CAPABILITY = 'Cashier obligation readiness is sourced read-only from General Cashier GC-A1 when authorized.';
 
     public function __construct(
         private readonly EngineeringAvailabilityDependencyService $engineeringAvailability,
@@ -103,6 +106,7 @@ class FrontDeskDepartureQueueProjectionService
                 'overdueDepartures' => $overdue->values()->all(),
             ],
             'financial_marker' => self::FINANCIAL_MARKER_CAPABILITY,
+            'cashier_marker' => self::CASHIER_MARKER_CAPABILITY,
         ];
     }
 
@@ -197,6 +201,7 @@ class FrontDeskDepartureQueueProjectionService
             'departure_checkout_execution_boundary' => $executionBoundarySummary,
             'can_view_execution_boundary' => $executionBoundarySummary !== null,
             'financial_marker' => $executionBoundarySummary['financial_settlement_marker'] ?? self::FINANCIAL_MARKER_SUPPRESSED,
+            'cashier_marker' => $executionBoundarySummary['cashier_obligation_marker'] ?? self::CASHIER_MARKER_SUPPRESSED,
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -718,6 +723,7 @@ class FrontDeskDepartureQueueProjectionService
             'review_reasons' => $boundary['review_reasons'],
             'execution_not_performed_marker' => $boundary['execution_not_performed_marker'],
             'financial_settlement_marker' => $boundary['financial_settlement_marker'],
+            'cashier_obligation_marker' => $boundary['cashier_obligation_marker'],
             'guest_ledger_settlement_readiness' => [
                 'status' => $boundary['guest_ledger_settlement_readiness']['status'],
                 'canonical_aggregate_balance' => $boundary['guest_ledger_settlement_readiness']['canonical_aggregate_balance'],
@@ -728,6 +734,17 @@ class FrontDeskDepartureQueueProjectionService
                 'evidence_unavailable_codes' => $boundary['guest_ledger_settlement_readiness']['evidence_unavailable_codes'],
                 'evaluated_at' => $boundary['guest_ledger_settlement_readiness']['evaluated_at'],
                 'source_fingerprint' => $boundary['guest_ledger_settlement_readiness']['source_fingerprint'],
+            ],
+            'general_cashier_checkout_obligation' => [
+                'status' => $boundary['general_cashier_checkout_obligation']['status'],
+                'related_guest_payment_transaction_count' => count($boundary['general_cashier_checkout_obligation']['related_guest_payment_transaction_ids'] ?? []),
+                'related_cashier_session_count' => count($boundary['general_cashier_checkout_obligation']['related_cashier_session_ids'] ?? []),
+                'blocker_codes' => $boundary['general_cashier_checkout_obligation']['blocker_codes'],
+                'review_reasons' => $boundary['general_cashier_checkout_obligation']['review_reasons'],
+                'evidence_unavailable_codes' => $boundary['general_cashier_checkout_obligation']['evidence_unavailable_codes'],
+                'evaluated_at' => $boundary['general_cashier_checkout_obligation']['evaluated_at'],
+                'source_fingerprint' => $boundary['general_cashier_checkout_obligation']['source_fingerprint'],
+                'markers' => $boundary['general_cashier_checkout_obligation']['markers'],
             ],
         ];
     }
@@ -761,7 +778,8 @@ class FrontDeskDepartureQueueProjectionService
 
         try {
             return $fresh->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION)
-                && $fresh->can(FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION);
+                && $fresh->can(FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION)
+                && $fresh->can(FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION);
         } catch (Throwable) {
             return false;
         }

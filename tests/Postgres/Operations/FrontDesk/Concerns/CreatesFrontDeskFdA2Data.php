@@ -2,6 +2,7 @@
 
 namespace Tests\Postgres\Operations\FrontDesk\Concerns;
 
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
@@ -26,7 +27,16 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBou
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDeparturePreparationEventService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
+use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
+use Modules\Operations\GeneralCashier\Models\CashierSession;
+use Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutObligationProjectionService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
+use Modules\Operations\PMS\Enums\GuestDepositLifecycleStatusEnum;
+use Modules\Operations\PMS\Enums\GuestPaymentLifecycleStatusEnum;
+use Modules\Operations\PMS\Models\Guest;
+use Modules\Operations\PMS\Models\GuestDepositTransaction;
+use Modules\Operations\PMS\Models\GuestPaymentTransaction;
+use Modules\Operations\PMS\Models\Reservation;
 use Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService;
 use Shared\Services\CurrentPropertyService;
 
@@ -85,6 +95,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
             GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
+            GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION,
         ]);
 
         $this->frontDeskViewOnlyActor->givePermissionTo([
@@ -255,8 +266,10 @@ trait CreatesFrontDeskFdA2Data
             'folio_items',
             'guest_payment_transactions',
             'guest_payment_allocations',
+            'guest_payment_reversals',
             'guest_deposit_transactions',
             'guest_deposit_applications',
+            'guest_deposit_reversals',
             'guest_refund_transactions',
             'guest_ar_transfer_requests',
             'guest_ar_transfer_decisions',
@@ -304,6 +317,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskDepartureCheckoutFinalReviewService::CREATE_PERMISSION,
             FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
             GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
+            GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION,
         ];
     }
 
@@ -326,5 +340,118 @@ trait CreatesFrontDeskFdA2Data
         );
 
         return [$stay->fresh(), $room, $reservation];
+    }
+
+    protected function frontDeskCashierSession(CashierSessionStatusEnum $status = CashierSessionStatusEnum::OPEN): CashierSession
+    {
+        $session = new CashierSession();
+        $session->forceFill([
+            'property_id' => $this->property->id,
+            'cashier_user_id' => $this->frontDeskActor->id,
+            'status' => $status->value,
+            'opened_at' => Carbon::parse('2026-07-14 08:00:00'),
+            'opened_by' => $this->frontDeskActor->id,
+            'closed_at' => $status === CashierSessionStatusEnum::CLOSED ? Carbon::parse('2026-07-14 09:00:00') : null,
+            'closed_by' => $status === CashierSessionStatusEnum::CLOSED ? $this->frontDeskActor->id : null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ])->save();
+
+        return $session->fresh();
+    }
+
+    protected function closeFrontDeskCashierSession(CashierSession $session): CashierSession
+    {
+        $session->forceFill([
+            'status' => CashierSessionStatusEnum::CLOSED->value,
+            'closed_at' => Carbon::parse('2026-07-14 09:00:00'),
+            'closed_by' => $session->cashier_user_id,
+            'updated_at' => now(),
+        ])->save();
+
+        return $session->fresh();
+    }
+
+    protected function frontDeskCashPayment(array $stay, CashierSession $session, array $snapshot = []): GuestPaymentTransaction
+    {
+        $reservation = Reservation::withoutGlobalScopes()->findOrFail($stay[2]);
+        $guest = Guest::withoutGlobalScopes()->findOrFail($stay[0]->guest_id);
+
+        $payment = new GuestPaymentTransaction();
+        $payment->forceFill([
+            'property_id' => $this->property->id,
+            'payment_number' => 'GPM-FDB10-' . Str::upper(Str::random(6)),
+            'reservation_id' => $reservation->id,
+            'guest_id' => $guest->id,
+            'currency' => 'USD',
+            'amount' => '10.00',
+            'tender_type' => 'CASH',
+            'cashier_session_id' => $session->id,
+            'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'fd-b10-payment-' . Str::ulid(),
+            'recorded_at' => Carbon::parse('2026-07-14 08:10:00'),
+            'recorded_by' => $this->frontDeskActor->id,
+            'source_snapshot' => $snapshot ?: $this->frontDeskCashSourceSnapshot($session, $reservation, $guest),
+            'created_at' => now(),
+            'updated_at' => now(),
+            'created_by' => $this->frontDeskActor->id,
+            'updated_by' => $this->frontDeskActor->id,
+        ])->save();
+
+        return $payment->fresh();
+    }
+
+    protected function frontDeskCashDeposit(array $stay, CashierSession $session, array $snapshot = []): GuestDepositTransaction
+    {
+        $reservation = Reservation::withoutGlobalScopes()->findOrFail($stay[2]);
+        $guest = Guest::withoutGlobalScopes()->findOrFail($stay[0]->guest_id);
+
+        $deposit = new GuestDepositTransaction();
+        $deposit->forceFill([
+            'property_id' => $this->property->id,
+            'deposit_number' => 'GDP-FDB10-' . Str::upper(Str::random(6)),
+            'reservation_id' => $reservation->id,
+            'guest_id' => $guest->id,
+            'currency' => 'USD',
+            'amount' => '10.00',
+            'tender_type' => 'CASH',
+            'cashier_session_id' => $session->id,
+            'lifecycle_status' => GuestDepositLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'fd-b10-deposit-' . Str::ulid(),
+            'recorded_at' => Carbon::parse('2026-07-14 08:20:00'),
+            'recorded_by' => $this->frontDeskActor->id,
+            'source_snapshot' => $snapshot ?: $this->frontDeskCashSourceSnapshot($session, $reservation, $guest),
+            'created_at' => now(),
+            'updated_at' => now(),
+            'created_by' => $this->frontDeskActor->id,
+            'updated_by' => $this->frontDeskActor->id,
+        ])->save();
+
+        return $deposit->fresh();
+    }
+
+    protected function frontDeskCashSourceSnapshot(CashierSession $session, Reservation $reservation, Guest $guest): array
+    {
+        return [
+            'cashier_session_id' => $session->id,
+            'cashier_user_id' => $session->cashier_user_id,
+            'cashier_session_status' => CashierSessionStatusEnum::OPEN->value,
+            'opened_at' => $session->opened_at?->toISOString(),
+            'opened_by' => $session->opened_by,
+            'reservation_id' => $reservation->id,
+            'guest_id' => $guest->id,
+            'currency' => 'USD',
+            'tender_type' => 'CASH',
+        ];
+    }
+
+    protected function forceFrontDeskJsonUpdate(string $table, string $id, string $column, array $value): void
+    {
+        DB::statement("ALTER TABLE {$table} DISABLE TRIGGER USER");
+        try {
+            DB::table($table)->where('id', $id)->update([$column => json_encode($value)]);
+        } finally {
+            DB::statement("ALTER TABLE {$table} ENABLE TRIGGER USER");
+        }
     }
 }

@@ -17,10 +17,13 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityS
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBoundaryProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureClosureReadinessService;
+use Modules\Operations\FrontDesk\Services\FrontDeskGeneralCashierCheckoutObligationDependencyService;
 use Modules\Operations\FrontDesk\Services\FrontDeskGuestLedgerSettlementReadinessDependencyService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureOperationalHandoverService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
+use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
+use Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutObligationProjectionService;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
 use Modules\Operations\PMS\Enums\FolioStatusEnum;
 use Modules\Operations\PMS\Models\Folio;
@@ -199,8 +202,11 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             'guest_deposit_transactions',
             'guest_deposit_applications',
             'guest_refund_transactions',
+            'guest_payment_reversals',
+            'guest_deposit_reversals',
             'guest_ar_transfer_requests',
             'guest_ar_transfer_decisions',
+            'cashier_sessions',
         ];
 
         $domainQueries = [];
@@ -437,7 +443,26 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             }
         };
 
-        $service = new FrontDeskDepartureCheckoutExecutionBoundaryProjectionService($guestLedger);
+        $cashier = new class extends FrontDeskGeneralCashierCheckoutObligationDependencyService {
+            public function __construct() {}
+
+            public function project(User $actor, string $frontDeskStayId): array
+            {
+                return [
+                    'status' => 'CASHIER_OBLIGATION_CLEAR',
+                    'related_guest_payment_transaction_ids' => [],
+                    'related_cashier_session_ids' => [],
+                    'blocker_codes' => [],
+                    'review_reasons' => [],
+                    'evidence_unavailable_codes' => [],
+                    'markers' => [],
+                    'evaluated_at' => now()->toISOString(),
+                    'source_fingerprint' => 'fake-clear',
+                ];
+            }
+        };
+
+        $service = new FrontDeskDepartureCheckoutExecutionBoundaryProjectionService($guestLedger, $cashier);
 
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS);
@@ -445,7 +470,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $service->boundary($this->frontDeskActor, $s[0]->id);
     }
 
-    public function test_cashier_obligation_evidence_unavailable(): void
+    public function test_no_cashier_source_clears_cashier_gate_and_removes_old_placeholder(): void
     {
         $s = $this->checkedInStay('8208');
         $this->seedB3B4B5B6B7Ready($s);
@@ -453,11 +478,139 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
         $this->assertFalse($b['can_execute']);
-        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE, $b['blocker_codes']);
+        $this->assertSame('CASHIER_OBLIGATION_CLEAR', $b['general_cashier_checkout_obligation']['status']);
+        $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE, $b['blocker_codes']);
+        $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CASHIER_OBLIGATION_BLOCKED, $b['blocker_codes']);
+        $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CASHIER_OBLIGATION_REVIEW_REQUIRED, $b['blocker_codes']);
 
         $cashierGate = $b['authoritative_gates']['cashier_obligation'] ?? null;
-        $this->assertFalse($cashierGate['satisfied']);
+        $this->assertTrue($cashierGate['satisfied']);
         $this->assertSame('General Cashier', $cashierGate['owner']);
+        $this->assertSame('CASHIER_OBLIGATION_CLEAR', $cashierGate['status']);
+        $this->assertSame(0, $cashierGate['related_cashier_session_count']);
+    }
+
+    public function test_general_cashier_adapter_preserves_source_projection_contract(): void
+    {
+        $s = $this->checkedInStay('8240');
+        $session = $this->frontDeskCashierSession();
+        $payment = $this->frontDeskCashPayment($s, $session);
+
+        $projection = app(FrontDeskGeneralCashierCheckoutObligationDependencyService::class)
+            ->project($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame(GeneralCashierCheckoutObligationProjectionService::PROJECTION_VERSION, $projection['projection_version']);
+        $this->assertSame('CASHIER_OBLIGATION_BLOCKED', $projection['status']);
+        $this->assertSame($this->property->id, $projection['property_id']);
+        $this->assertSame($s[0]->id, $projection['front_desk_stay_id']);
+        $this->assertContains($payment->id, $projection['related_guest_payment_transaction_ids']);
+        $this->assertContains($session->id, $projection['related_cashier_session_ids']);
+        $this->assertContains('CASHIER_SESSION_OPEN', $projection['blocker_codes']);
+        $this->assertArrayHasKey('cashier_accountability_marker', $projection['markers']);
+        $this->assertNotEmpty($projection['evaluated_at']);
+        $this->assertNotEmpty($projection['source_fingerprint']);
+        $this->assertArrayHasKey('source_identifiers', $projection);
+    }
+
+    public function test_open_cashier_linked_guest_cash_evidence_blocks_boundary_without_mutation(): void
+    {
+        $this->bindClearGuestLedgerPorts();
+        $s = $this->checkedInStay('8241');
+        $this->makeGuestLedgerFolio($s);
+        $this->seedB3B4B5B6B7Ready($s);
+        $session = $this->frontDeskCashierSession();
+        $payment = $this->frontDeskCashPayment($s, $session);
+        $before = $this->domainTableCounts();
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('CASHIER_OBLIGATION_BLOCKED', $b['general_cashier_checkout_obligation']['status']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CASHIER_OBLIGATION_BLOCKED, $b['blocker_codes']);
+        $this->assertContains('CASHIER_SESSION_OPEN', $b['general_cashier_checkout_obligation']['blocker_codes']);
+        $this->assertFalse($b['authoritative_gates']['cashier_obligation']['satisfied']);
+        $this->assertContains($payment->id, $b['general_cashier_checkout_obligation']['related_guest_payment_transaction_ids']);
+        $this->assertContains($session->id, $b['general_cashier_checkout_obligation']['related_cashier_session_ids']);
+        $this->assertFalse($b['can_execute']);
+        $this->assertSame($before, $this->domainTableCounts());
+    }
+
+    public function test_general_cashier_review_required_flows_into_boundary_review_precedence(): void
+    {
+        $this->bindClearGuestLedgerPorts();
+        $s = $this->checkedInStay('8242');
+        $this->makeGuestLedgerFolio($s);
+        $this->seedB3B4B5B6B7Ready($s);
+        $session = $this->frontDeskCashierSession();
+        $this->frontDeskCashPayment($s, $session, [
+            'cashier_session_id' => $session->id,
+            'cashier_user_id' => (string) Str::ulid(),
+            'cashier_session_status' => 'OPEN',
+        ]);
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('CASHIER_OBLIGATION_REVIEW_REQUIRED', $b['general_cashier_checkout_obligation']['status']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CASHIER_OBLIGATION_REVIEW_REQUIRED, $b['blocker_codes']);
+        $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $b['general_cashier_checkout_obligation']['review_reasons']);
+        $this->assertContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $b['review_reasons']);
+        $this->assertSame('EXECUTION_BOUNDARY_REVIEW_REQUIRED', $b['execution_boundary_status']);
+    }
+
+    public function test_closed_cashier_session_without_accountability_completion_is_evidence_unavailable(): void
+    {
+        $this->bindClearGuestLedgerPorts();
+        $s = $this->checkedInStay('8243');
+        $this->makeGuestLedgerFolio($s);
+        $this->seedB3B4B5B6B7Ready($s);
+        $session = $this->frontDeskCashierSession(CashierSessionStatusEnum::CLOSED);
+        $this->frontDeskCashPayment($s, $session);
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE', $b['general_cashier_checkout_obligation']['status']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CASHIER_OBLIGATION_UNAVAILABLE, $b['blocker_codes']);
+        $this->assertContains('CASHIER_SESSION_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE', $b['general_cashier_checkout_obligation']['evidence_unavailable_codes']);
+        $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $b['execution_boundary_status']);
+    }
+
+    public function test_payment_recorded_open_then_session_closed_is_not_snapshot_conflict(): void
+    {
+        $s = $this->checkedInStay('8244');
+        $this->seedB3B4B5B6B7Ready($s);
+        $session = $this->frontDeskCashierSession();
+        $this->frontDeskCashPayment($s, $session);
+        $this->closeFrontDeskCashierSession($session);
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE', $b['general_cashier_checkout_obligation']['status']);
+        $this->assertContains('CASHIER_SESSION_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE', $b['general_cashier_checkout_obligation']['evidence_unavailable_codes']);
+        $this->assertNotContains('CASHIER_SESSION_SOURCE_SNAPSHOT_CONFLICT', $b['general_cashier_checkout_obligation']['review_reasons']);
+    }
+
+    public function test_unknown_general_cashier_status_fails_closed_without_normalization(): void
+    {
+        $s = $this->checkedInStay('8245');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $cashier = new class extends FrontDeskGeneralCashierCheckoutObligationDependencyService {
+            public function __construct() {}
+
+            public function project(User $actor, string $frontDeskStayId): array
+            {
+                return ['status' => 'CASHIER_OBLIGATION_FUTURE_UNKNOWN'];
+            }
+        };
+
+        $service = new FrontDeskDepartureCheckoutExecutionBoundaryProjectionService(
+            app(FrontDeskGuestLedgerSettlementReadinessDependencyService::class),
+            $cashier
+        );
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS);
+
+        $service->boundary($this->frontDeskActor, $s[0]->id);
     }
 
     public function test_no_fabricated_ready_result(): void
@@ -514,6 +667,15 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
     }
 
+    public function test_missing_general_cashier_permission_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        $this->frontDeskActor->revokePermissionTo(FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
     public function test_inactive_actor_valid_unknown_and_cross_property_are_authorization_identical(): void
     {
         $stayIds = $this->denialParityStayIds();
@@ -537,6 +699,14 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             ->where('user_id', $this->frontDeskActor->id)
             ->where('property_id', $this->property->id)
             ->update(['status' => 'inactive']);
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_cross_company_property_context_is_denied_before_domain_queries(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        session(['active_company_id' => $this->otherCompany->id]);
 
         $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
     }
@@ -565,6 +735,20 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->seedB3B4B5B6B7Ready($s);
 
         $this->frontDeskActor->revokePermissionTo(GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $this->expectException(AuthorizationException::class);
+        $this->expectExceptionMessage(self::AUTHORIZATION_FAILURE_MESSAGE);
+
+        $this->service()->boundary($this->frontDeskActor->fresh(), $s[0]->id);
+    }
+
+    public function test_general_cashier_view_permission_is_required_for_dedicated_boundary(): void
+    {
+        $s = $this->checkedInStay('8246');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $this->frontDeskActor->revokePermissionTo(GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION);
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         $this->expectException(AuthorizationException::class);
@@ -704,7 +888,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        $this->assertSame('Checkout execution is not performed in FD-B9.', $b['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is not performed in FD-B10.', $b['execution_not_performed_marker']);
     }
 
     // ── All Authoritative Gates Present ──
@@ -764,7 +948,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $boundary['execution_boundary_status']);
         $this->assertNotEmpty($boundary['blocker_codes']);
         $this->assertIsArray($boundary['review_reasons']);
-        $this->assertSame('Checkout execution is not performed in FD-B9.', $boundary['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is not performed in FD-B10.', $boundary['execution_not_performed_marker']);
     }
 
     public function test_queue_does_not_silently_normalize_boundary_exception(): void
@@ -874,8 +1058,9 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        $this->assertSame('Checkout execution is not performed in FD-B9.', $b['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is not performed in FD-B10.', $b['execution_not_performed_marker']);
         $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.', $b['financial_settlement_marker']);
+        $this->assertSame('Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.', $b['cashier_obligation_marker']);
     }
 
     public function test_workspace_source_contract(): void
@@ -894,6 +1079,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertStringContainsString('review_reasons', $source, 'Type must include review_reasons.');
         $this->assertStringContainsString('execution_not_performed_marker', $source, 'Type must include execution_not_performed_marker.');
         $this->assertStringContainsString('guest_ledger_settlement_readiness', $source, 'Type must include nested Guest Ledger settlement readiness.');
+        $this->assertStringContainsString('general_cashier_checkout_obligation', $source, 'Type must include nested General Cashier checkout obligation.');
+        $this->assertStringContainsString('cashier_obligation_marker', $source, 'Type must include cashier ownership marker.');
         $this->assertStringContainsString('canonical_aggregate_balance', $source, 'Nested Guest Ledger summary must include canonical balance.');
         $this->assertStringContainsString('source_fingerprint', $source, 'Nested Guest Ledger summary must include source fingerprint.');
 
@@ -905,11 +1092,15 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         // 3. Required marker strings
         $this->assertStringContainsString('Checkout execution not yet available', $source, 'Disabled affordance marker must exist.');
-        $this->assertStringContainsString('Checkout execution is not performed in FD-B9.', $source, 'Not-performed marker must exist.');
+        $this->assertStringContainsString('Checkout execution is not performed in FD-B10.', $source, 'Not-performed marker must exist.');
         $this->assertStringContainsString('PMS Guest Ledger Settlement', $source, 'Workspace must render PMS Guest Ledger settlement summary.');
+        $this->assertStringContainsString('General Cashier Accountability', $source, 'Workspace must render General Cashier accountability summary.');
+        $this->assertStringContainsString('Cashier sessions', $source, 'Workspace must render related cashier-session count.');
+        $this->assertStringContainsString('Guest payments', $source, 'Workspace must render related payment count.');
         $this->assertStringContainsString('Folio count', $source, 'Workspace must render Folio count.');
         $this->assertStringContainsString('Evidence unavailable', $source, 'Workspace must render evidence-unavailable summary.');
         $this->assertStringContainsString('financial_settlement_marker', $source, 'Workspace must render server-projected ownership marker.');
+        $this->assertStringContainsString('cashier_obligation_marker', $source, 'Workspace must render server-projected cashier ownership marker.');
         $this->assertStringNotContainsString('Authoritative Guest Ledger settlement projection is not yet implemented', $source, 'Obsolete unavailable copy must be removed.');
         $this->assertStringNotContainsString('Financial settlement: Not evaluated in Front Desk Package B8.', $source, 'Obsolete FD-B8 marker must be removed.');
 

@@ -305,6 +305,18 @@ type GuestLedgerSettlementReadinessSummary = {
   source_fingerprint: string;
 };
 
+type GeneralCashierCheckoutObligationSummary = {
+  status: string;
+  related_guest_payment_transaction_count: number;
+  related_cashier_session_count: number;
+  blocker_codes: string[];
+  review_reasons: string[];
+  evidence_unavailable_codes: string[];
+  evaluated_at: string;
+  source_fingerprint: string;
+  markers: Record<string, string>;
+};
+
 type CheckoutExecutionBoundarySummary = {
   execution_boundary_status: string;
   can_execute: boolean;
@@ -313,7 +325,9 @@ type CheckoutExecutionBoundarySummary = {
   review_reasons: string[];
   execution_not_performed_marker: string;
   financial_settlement_marker: string;
+  cashier_obligation_marker: string;
   guest_ledger_settlement_readiness: GuestLedgerSettlementReadinessSummary;
+  general_cashier_checkout_obligation: GeneralCashierCheckoutObligationSummary;
 } | null;
 
 type AllowedCheckoutFinalReviewStatus = {
@@ -358,6 +372,7 @@ type DepartureRow = {
   departure_checkout_execution_boundary: CheckoutExecutionBoundarySummary;
   can_view_execution_boundary: boolean;
   financial_marker: string;
+  cashier_marker: string;
   evaluated_at: string;
 };
 
@@ -380,6 +395,7 @@ type DepartureWorkspace = {
     overdueDepartures: DepartureRow[];
   };
   financial_marker: string;
+  cashier_marker: string;
 };
 
 type Props = {
@@ -440,6 +456,7 @@ const emptyDepartureWorkspace: DepartureWorkspace = {
     overdueDepartures: [],
   },
   financial_marker: 'Financial settlement: Not evaluated in Front Desk Package B2.',
+  cashier_marker: 'Cashier obligation readiness is available when authorized.',
 };
 
 const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWorkspace, inHouseWorkspace = emptyInHouseWorkspace, departureWorkspace = emptyDepartureWorkspace }: Props) => {
@@ -1394,7 +1411,7 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
           Execution boundary evidence could not be resolved for this stay.
         </div>
         <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
-          Checkout execution is not performed in FD-B9.
+          Checkout execution is not performed in FD-B10.
         </div>
       </div>
     );
@@ -1405,10 +1422,16 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
     : boundary.execution_boundary_status === 'EXECUTION_BOUNDARY_BLOCKED' ? 'warning'
     : 'pending';
   const guestLedger = boundary.guest_ledger_settlement_readiness;
+  const cashierObligation = boundary.general_cashier_checkout_obligation;
   const settlementStatus: import('../../../Components/Ivorq/primitives/StatusBadge').BadgeStatus =
     guestLedger.status === 'GUEST_LEDGER_SETTLEMENT_READY' ? 'success'
     : guestLedger.status === 'GUEST_LEDGER_SETTLEMENT_BLOCKED' ? 'warning'
     : guestLedger.status === 'GUEST_LEDGER_SETTLEMENT_REVIEW_REQUIRED' ? 'pending'
+    : 'neutral';
+  const cashierStatus: import('../../../Components/Ivorq/primitives/StatusBadge').BadgeStatus =
+    cashierObligation.status === 'CASHIER_OBLIGATION_CLEAR' ? 'success'
+    : cashierObligation.status === 'CASHIER_OBLIGATION_BLOCKED' ? 'warning'
+    : cashierObligation.status === 'CASHIER_OBLIGATION_REVIEW_REQUIRED' ? 'pending'
     : 'neutral';
 
   return (
@@ -1427,7 +1450,7 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
 
       {boundary.can_execute ? (
         <div style={{ marginBottom: '6px', color: 'var(--text-success)', fontWeight: 500 }}>
-          Authoritative read gates are satisfied. Checkout execution remains unavailable in FD-B9.
+          Authoritative read gates are satisfied. Checkout execution remains unavailable in FD-B10.
         </div>
       ) : (
         <>
@@ -1508,6 +1531,42 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
         ) : null}
       </div>
 
+      <div style={{
+        marginTop: '10px',
+        padding: '8px 10px',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: '6px',
+        background: 'var(--surface-base)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>General Cashier Accountability</span>
+          <StatusBadge status={cashierStatus} style={{ fontSize: '10px', padding: '2px 7px' }}>
+            {cashierObligation.status.replace(/_/g, ' ')}
+          </StatusBadge>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+          <span>Cashier sessions: {cashierObligation.related_cashier_session_count}</span>
+          <span>Guest payments: {cashierObligation.related_guest_payment_transaction_count}</span>
+          <span>Evaluated: {cashierObligation.evaluated_at}</span>
+          <span>Fingerprint: {cashierObligation.source_fingerprint}</span>
+        </div>
+        {cashierObligation.blocker_codes.length > 0 ? (
+          <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-warning)' }}>
+            Cashier blockers: {cashierObligation.blocker_codes.join(', ')}
+          </div>
+        ) : null}
+        {cashierObligation.review_reasons.length > 0 ? (
+          <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--status-pending-fg)' }}>
+            Review: {cashierObligation.review_reasons.join(', ')}
+          </div>
+        ) : null}
+        {cashierObligation.evidence_unavailable_codes.length > 0 ? (
+          <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-dimmed)' }}>
+            Evidence unavailable: {cashierObligation.evidence_unavailable_codes.join(', ')}
+          </div>
+        ) : null}
+      </div>
+
       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}>
         <div style={{
           padding: '4px 10px',
@@ -1528,6 +1587,9 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
       </div>
       <div style={{ fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
         {boundary.financial_settlement_marker}
+      </div>
+      <div style={{ fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+        {boundary.cashier_obligation_marker}
       </div>
     </div>
   );
