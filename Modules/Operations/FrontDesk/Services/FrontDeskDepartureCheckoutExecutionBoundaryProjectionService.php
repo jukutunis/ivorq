@@ -4,6 +4,7 @@ namespace Modules\Operations\FrontDesk\Services;
 
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
+use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Enums\FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum;
@@ -262,12 +263,28 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
         }
 
-        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
         $companyId = session('active_company_id');
+        if (! is_string($companyId) || trim($companyId) === '') {
+            throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
+        }
+
+        $company = Company::withoutGlobalScopes()
+            ->whereKey($companyId)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $company) {
+            throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
+        }
+
+        $propertyId = app(CurrentPropertyService::class)->getPropertyId();
+        if (! is_string($propertyId) || trim($propertyId) === '') {
+            throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
+        }
 
         $property = Property::withoutGlobalScopes()
             ->whereKey($propertyId)
-            ->where('company_id', $companyId)
+            ->where('company_id', $company->id)
             ->where('is_active', true)
             ->first();
 

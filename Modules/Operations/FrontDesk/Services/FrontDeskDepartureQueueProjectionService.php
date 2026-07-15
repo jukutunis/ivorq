@@ -4,6 +4,7 @@ namespace Modules\Operations\FrontDesk\Services;
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
@@ -634,12 +635,28 @@ class FrontDeskDepartureQueueProjectionService
      */
     private function authorizeView(User $actor): array
     {
-        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
         $companyId = session('active_company_id');
+        if (! is_string($companyId) || trim($companyId) === '') {
+            throw new HttpException(403, 'Active property is required.');
+        }
+
+        $company = Company::withoutGlobalScopes()
+            ->whereKey($companyId)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $company) {
+            throw new HttpException(403, 'Active property is required.');
+        }
+
+        $propertyId = app(CurrentPropertyService::class)->getPropertyId();
+        if (! is_string($propertyId) || trim($propertyId) === '') {
+            throw new HttpException(403, 'Active property is required.');
+        }
 
         $property = Property::withoutGlobalScopes()
             ->whereKey($propertyId)
-            ->where('company_id', $companyId)
+            ->where('company_id', $company->id)
             ->where('is_active', true)
             ->first();
 

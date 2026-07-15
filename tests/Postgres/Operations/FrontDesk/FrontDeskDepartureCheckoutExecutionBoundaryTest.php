@@ -207,6 +207,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             'guest_ar_transfer_requests',
             'guest_ar_transfer_decisions',
             'cashier_sessions',
+            'guest_refund_allocations',
         ];
 
         $domainQueries = [];
@@ -709,6 +710,58 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         session(['active_company_id' => $this->otherCompany->id]);
 
         $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_missing_active_company_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        session()->forget('active_company_id');
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_empty_active_company_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        session(['active_company_id' => '']);
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_unknown_active_company_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        session(['active_company_id' => (string) Str::ulid()]);
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_inactive_active_company_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        $this->company->forceFill(['is_active' => false])->save();
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_inactive_active_property_valid_unknown_and_cross_property_are_authorization_identical(): void
+    {
+        $stayIds = $this->denialParityStayIds();
+        $this->property->forceFill(['is_active' => false])->save();
+
+        $this->assertAuthorizationDeniedParityWithoutDomainQueries($this->frontDeskActor->fresh(), $stayIds);
+    }
+
+    public function test_valid_active_company_and_property_context_still_succeeds(): void
+    {
+        $s = $this->checkedInStay('8247');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $boundary = $this->service()->boundary($this->frontDeskActor->fresh(), $s[0]->id);
+
+        $this->assertSame($s[0]->id, $boundary['front_desk_stay_id']);
+        $this->assertSame($this->property->id, $boundary['property_id']);
+        $this->assertFalse($boundary['can_execute']);
     }
 
     public function test_fully_authorized_unknown_and_cross_property_stays_are_non_disclosing_404_identical(): void

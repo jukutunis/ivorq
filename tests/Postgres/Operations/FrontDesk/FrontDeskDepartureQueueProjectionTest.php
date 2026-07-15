@@ -3,6 +3,7 @@
 namespace Tests\Postgres\Operations\FrontDesk;
 
 use DomainException;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -65,6 +66,49 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         [$stay] = $this->checkedInStay('1701');
         $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor);
         $this->assertSame($this->property->id, $queue['property']['id']);
+    }
+
+    public function test_missing_active_company_rejects_queue_before_stay_queries(): void
+    {
+        [$stay] = $this->checkedInStay('1726');
+        session()->forget('active_company_id');
+
+        $this->assertQueueAuthorizationDeniedBeforeDomainQueries();
+    }
+
+    public function test_unknown_active_company_rejects_queue_before_stay_queries(): void
+    {
+        [$stay] = $this->checkedInStay('1727');
+        session(['active_company_id' => (string) Str::ulid()]);
+
+        $this->assertQueueAuthorizationDeniedBeforeDomainQueries();
+    }
+
+    public function test_inactive_active_company_rejects_queue_before_stay_queries(): void
+    {
+        [$stay] = $this->checkedInStay('1728');
+        $this->company->forceFill(['is_active' => false])->save();
+
+        $this->assertQueueAuthorizationDeniedBeforeDomainQueries();
+    }
+
+    public function test_cross_company_active_property_context_rejects_queue_before_stay_queries(): void
+    {
+        [$stay] = $this->checkedInStay('1729');
+        session(['active_company_id' => $this->otherCompany->id]);
+
+        $this->assertQueueAuthorizationDeniedBeforeDomainQueries();
+    }
+
+    public function test_valid_active_company_context_retains_queue_behavior(): void
+    {
+        [$stay] = $this->checkedInStay('1730');
+
+        $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor->fresh());
+        $row = $this->findStayInQueue($queue, $stay->id);
+
+        $this->assertSame($this->property->id, $queue['property']['id']);
+        $this->assertSame($stay->id, $row['stay_id']);
     }
 
     // ── Property / Tenant Isolation ──
@@ -623,5 +667,63 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         }
 
         $this->assertSame([], $sourceQueries, 'Suppressed queue rows must not query General Cashier or guest cash source evidence.');
+    }
+
+    private function assertQueueAuthorizationDeniedBeforeDomainQueries(): void
+    {
+        $queries = [];
+        DB::listen(function (QueryExecuted $query) use (&$queries): void {
+            $queries[] = $query->sql;
+        });
+
+        try {
+            app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor->fresh());
+            $this->fail('Departure queue should have been denied before stay lookup.');
+        } catch (HttpException $exception) {
+            $this->assertSame(403, $exception->getStatusCode());
+            $this->assertSame('Active property is required.', $exception->getMessage());
+        }
+
+        $this->assertNoQueueDomainQueries($queries);
+    }
+
+    /**
+     * @param string[] $queries
+     */
+    private function assertNoQueueDomainQueries(array $queries): void
+    {
+        $forbiddenTables = [
+            'front_desk_stays',
+            'front_desk_departure_preparation_events',
+            'front_desk_departure_operational_handovers',
+            'front_desk_departure_closure_readiness',
+            'front_desk_departure_checkout_eligibilities',
+            'front_desk_departure_checkout_authorizations',
+            'front_desk_departure_checkout_final_reviews',
+            'folios',
+            'folio_items',
+            'guest_payment_transactions',
+            'guest_payment_allocations',
+            'guest_payment_reversals',
+            'guest_deposit_transactions',
+            'guest_deposit_applications',
+            'guest_deposit_reversals',
+            'guest_refund_transactions',
+            'guest_ar_transfer_requests',
+            'guest_ar_transfer_decisions',
+            'cashier_sessions',
+        ];
+
+        $domainQueries = [];
+        foreach ($queries as $sql) {
+            foreach ($forbiddenTables as $table) {
+                if (str_contains($sql, '"' . $table . '"') || str_contains($sql, $table)) {
+                    $domainQueries[] = $sql;
+                    break;
+                }
+            }
+        }
+
+        $this->assertSame([], $domainQueries, 'Queue authorization denial must not query stay, financial, or cashier source tables.');
     }
 }
