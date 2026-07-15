@@ -11,7 +11,7 @@
 
 FD-B7 delivered the checkout final review evidence layer — the last Front Desk-owned operational checkpoint before a future checkout execution package. FD-B8 defines, for the first time, the explicit boundary between Front Desk operational readiness and the future checkout execution action.
 
-The repository contains no existing ADR that defines the Front Desk checkout execution boundary. ADR-084 covers checkout readiness (non-financial operational evidence) but explicitly excludes checkout execution, folio, payment, settlement, cashier, business date, and Night Audit concerns. ADR-066 defines the Sensitive Action Confirmation primitive that future checkout execution will require. ADR-034 defines the Night Audit and Business Date architecture as Proposed status — no implementation exists.
+The repository contains no existing ADR that defines the Front Desk checkout execution boundary. ADR-084 covers checkout readiness (non-financial operational evidence) but explicitly excludes checkout execution, folio, payment, settlement, cashier, business date, and Night Audit concerns. ADR-066 defines the Sensitive Action Confirmation primitive that future checkout execution will require. ADR-034 defines the approved Night Audit and Business Date architecture authority; no Business Date or Night Audit runtime implementation exists.
 
 This ADR establishes the governance-backed Front Desk checkout execution boundary as a read-only projection. It identifies which authoritative sources exist, which are missing, and what must be in place before a future checkout execution package can perform any checkout mutation.
 
@@ -61,8 +61,8 @@ Each gate must be re-resolved independently at execution time. FD-B8 evaluates a
 | Guest payment allocation terminal and resolved | PMS Cashiering | No authoritative PMS Cashiering guest payment-allocation projection exists | Blocked: FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE |
 | Cashier session/accountability obligations resolved | General Cashier | General Cashier module exists but no Front Desk-accessible cashier session/accountability projection exists | Blocked: CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE |
 | AR transfer accepted when applicable | Accounting / AR | No Front Desk-accessible accepted-transfer projection exists | Blocked: FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE |
-| Business date permits checkout | Business Date/Night Audit | ADR-034 exists as Proposed; no implementation exists | Blocked: BUSINESS_DATE_EVIDENCE_UNAVAILABLE |
-| No active Night Audit close lock | Night Audit | ADR-034 exists as Proposed; no implementation exists | Blocked: NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE |
+| Business date permits checkout | Business Date/Night Audit | ADR-034 exists as approved architecture; no implementation exists | Blocked: BUSINESS_DATE_EVIDENCE_UNAVAILABLE |
+| No active Night Audit close lock | Night Audit | ADR-034 exists as approved architecture; no implementation exists | Blocked: NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE |
 | Room readiness (Housekeeping) | Housekeeping | Yes — HousekeepingRoomReadinessProjectionService | Read-only dependency available |
 | Engineering availability | Engineering | Yes — EngineeringRoomAvailabilityProjectionService | Read-only dependency available |
 
@@ -110,8 +110,8 @@ When authoritative evidence is missing, FD-B8 returns stable, non-fabricated blo
 |---|---|---|
 | `FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE` | No authoritative PMS Guest Ledger settlement projection exists for Front Desk. Current folio totals cannot prove settlement readiness. | PMS Guest Ledger owns this evidence; PMS Cashiering owns guest payment allocation evidence; Accounting / AR owns accepted transfer evidence where applicable |
 | `CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE` | No authoritative cashier session, cashier responsibility, cash accountability, close, or handover source exists for Front Desk | General Cashier owns this evidence |
-| `BUSINESS_DATE_EVIDENCE_UNAVAILABLE` | No implemented business-date source exists | ADR-034 is Proposed only |
-| `NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE` | No implemented Night Audit close-lock source exists | ADR-034 is Proposed only |
+| `BUSINESS_DATE_EVIDENCE_UNAVAILABLE` | No implemented business-date source exists | ADR-034 is approved architecture only |
+| `NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE` | No implemented Night Audit close-lock source exists | ADR-034 is approved architecture only |
 | `FD_B7_NOT_READY` | Latest FD-B7 final review is not CHECKOUT_FINAL_REVIEW_READY | Front Desk owns this evidence |
 | `FD_B7_EVIDENCE_MISSING` | No FD-B7 final review evidence exists | Front Desk owns this evidence |
 | `STAY_NOT_IN_HOUSE` | Stay is not in IN_HOUSE status | Front Desk owns this evidence |

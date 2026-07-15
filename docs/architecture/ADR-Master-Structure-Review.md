@@ -9,7 +9,7 @@
 | ADR-031 | Data Privacy, PII, Retention and Data Residency Governance | Tracked / Committed | Proposed | Enterprise Privacy Boundary |
 | ADR-032 | Purchasing, Procurement and Contract Management Architecture | Tracked / Committed | Proposed | Procurement Governance |
 | ADR-033 | Global Tax and Jurisdiction Compliance Architecture | Tracked / Committed | Proposed | Tax Governance |
-| ADR-034 | Night Audit and Hospitality Business Date Architecture | Tracked / Committed | Proposed | PMS Business-Date Foundation |
+| ADR-034 | Night Audit and Hospitality Business Date Architecture | Tracked / Committed | Approved | PMS Business-Date Foundation |
 
 ### Portfolio Capacity and Guardrails
 IVORQ currently has 34 tracked ADRs, ADR-001 through ADR-034. The intended healthy architecture portfolio range remains approximately 37–41 ADRs. This leaves an estimated conceptual capacity of approximately 3–7 additional ADRs. This range is a governance guardrail, not a quota. A new ADR must be created only when it records a cross-domain, long-lived, difficult-to-reverse architecture decision. A new module, workflow, UI, report, or implementation need does not automatically justify a new ADR.
@@ -17,7 +17,7 @@ IVORQ currently has 34 tracked ADRs, ADR-001 through ADR-034. The intended healt
 ## 2. Completed Roadmap Items
 The previously planned next five ADRs (ADR-030 through ADR-034) represent completed document delivery milestones. 
 - They have been created and baseline-committed.
-- Their decision status remains **Proposed**.
+- ADR-030 through ADR-033 remain **Proposed**. ADR-034 was activated as **Approved** on 2026-07-16.
 - Implementation remains separately governed and is not yet production complete.
 
 ## 3. Current Architecture Readiness Assessment
@@ -30,7 +30,7 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 | Procurement and vendor commercial controls | Tracked | Architecture ready, implementation pending | ADR-006, ADR-032 |
 | Inventory, GRNI, Cost Ledger, Finance boundary | Active | Foundation ready | ADR-004, ADR-008 through ADR-015 |
 | Tax and multi-jurisdiction architecture | Tracked | Architecture ready, implementation pending | ADR-033 |
-| Night Audit and hospitality business-date foundation | Tracked | Architecture ready, implementation pending | ADR-034 |
+| Night Audit and hospitality business-date foundation | Approved | Architecture activated on 2026-07-16; runtime implementation remains package-scoped | ADR-034 |
 | PMS readiness | Planning | Architecture prerequisites established, module design pending | Requires PRDs/Specifications based on ADR-034 |
 | Cost Control readiness | Planning | Separate Audit / Readiness Workstream | Not included in this ADR update |
 | HRIS readiness | Deferred | Deferred roadmap domain | Requires future PRDs |
@@ -90,9 +90,9 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 
 1. **Budgeting / Forecasting / Encumbrance Readiness Review**: Conduct a focused cross-domain readiness review. Draft ADR-035 only when Budgeting, Forecasting, formal budget control, or accounting encumbrance implementation is authorized. (Architecture decision readiness review → potential new ADR)
 2. **Cost Control Readiness Audit**: Continue the separate Cost Control audit workstream. (Review/Audit)
-3. **PMS Core Module Specifications**: Begin PMS discovery PRDs and operational specifications constrained by ADR-034. Before guest-folio or PMS financial implementation, perform the Guest Ledger / Folio boundary review described in the candidate assessment. Do not automatically create a PMS umbrella ADR. (PRD/Specification → potential boundary review)
+3. **PMS Core Module Specifications**: Begin PMS discovery PRDs and operational specifications constrained by ADR-034 after the approved Business Date activation sequence allows the relevant package. Before guest-folio or PMS financial implementation, perform the Guest Ledger / Folio boundary review described in the candidate assessment. Do not automatically create a PMS umbrella ADR. (PRD/Specification → potential boundary review)
 4. **Integration Specifications**: Draft technical specifications for external data exchange boundaries based on ADR-017 and ADR-031. (PRD/Specification)
-5. **Night Audit Checkpoint Catalog**: Draft the operational checklist and checkpoint specification for the Night Audit process based on ADR-034. (Specification)
+5. **Night Audit Checkpoint Catalog**: Draft the operational checklist and checkpoint specification for the Night Audit process based on ADR-034 only after the controlled Business Date / Night Audit package sequence authorizes that scope. (Specification)
 
 ## 7. Explicit Architecture Verdict
 

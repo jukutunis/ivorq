@@ -1,9 +1,12 @@
 # IVORQ Package Execution Contract
 
 Status: APPROVED
-Version: 1.0
+Version: 1.1
 Created: 2026-07-10
-Last amended: 2026-07-10
+Last amended: 2026-07-16
+
+Amendment note:
+  - Version 1.1 was explicitly approved by the IVORQ Owner for ADR-034 activation and controlled Business Date / Night Audit sequencing.
 
 Amendment protocol:
   - Only Owner may approve amendments to this contract.
@@ -50,27 +53,40 @@ Concise source-backed architecture summary — not a full ADR dump.
 - **Property context:** Property isolation is mandatory for operational work.
 - **Audit trail:** State-changing work must preserve audit/source evidence.
 - **Approval engine:** Approval-sensitive workflows must not bypass authorization or approval state.
-- **Finance boundary:** Front Desk must not mutate General Cashier, GL, AR, tax, revenue, settlement, payment, invoice, Night Audit, or Accounting unless the exact finance-owned package explicitly authorizes it.
+- **Finance boundary:** Front Desk must not mutate General Cashier, GL, AR, tax, revenue, settlement, payment, invoice, Night Audit, or Accounting unless the exact owner-domain package explicitly authorizes it.
+- **Business Date / Night Audit boundary:** Business Date / Night Audit owns its own operational business-date lifecycle and orchestration evidence. It may read source-domain attestations, but it must not absorb Folio, payment, cashier, settlement, tax, revenue, GL, AR, Inventory, Front Desk stay, checkout, financial-period close, or source-domain ownership.
 - **Interaction layer:** Use hospitality operational workspaces, not generic CRUD/admin screens. OPERA-derived logic, modern human-designed hospitality UX. No AdminLTE/long-sidebar patterns.
 - **Inventory/Cost boundary:** Inventory Ledger remains source of truth. AVCO is current valuation method. FIFO is future scope. Candidate baselines remain diagnostic unless explicitly promoted by Owner.
 - **Agent governance:** Delivery Mode by default. Exact scope, focused validation, concise evidence, stop.
 
 ## 5. Current accepted baseline
 
-- `ivorq-enterprise-core` @ `290ccf028c9a05b28a425fea0b042fe82e77201f`
-- PR #3 — Validation Baseline Governance merged
-- PR #4 — FD-B3 Controlled Departure Operational Handover merged
-- PR #5 — FD-B4 Controlled Departure Closure Readiness merged
-- PR #6 — AI Agent Governance Baseline merged
-- Front Desk active baseline: 258 tests / 1128 assertions / 0 failures / 0 errors
-- RegressionBaselineManifestTest: 24 tests / 502 assertions / 0 failures / 0 errors
-- Candidate Banking remains candidate
-- Candidate Inventory/AVCO/Sensitive remains candidate
-- Inventory Reversal inherited debt remains accepted as recorded in baseline governance
+- `ivorq-enterprise-core` @ `764f143be5f49f4ae1be66ac41196ea5596806ce`
+- GLF-D merged and accepted.
+- FD-B9 merged and accepted.
+- GC-A1 merged and accepted.
+- FD-B10 merged and accepted.
+- Front Desk active baseline: 409 tests / 1702 assertions / 0 failures / 0 errors
+- GC-A1: 38 tests / 231 assertions
+- GLF-D: 60 tests / 253 assertions
+- RegressionBaselineManifestTest: 29 tests / 762 assertions
+- Complete active runner: 9 active baselines PASS
+- Inventory Reversal inherited debt remains: 8 tests / 72 assertions / 2 accepted errors
 
 ## 6. Package sequencing model
 
 Packages must run sequentially. One package may depend on earlier package evidence, but must not silently implement later package behavior.
+
+### Current controlled sequence
+
+1. ADR-034 activation.
+2. BD-A1.
+3. FD-B11.
+4. NA-A1.
+5. FD-B12.
+6. Checkout execution readiness review.
+
+Only the next package may start after its predecessor is reviewed, accepted, and merged into the canonical branch. ADR-034 activation does not implement BD-A1; checkout execution remains unauthorized. Business Date and Night Audit must never absorb source-domain ownership. Package implementation remains sequential.
 
 ### A. Domain-owned package
 
@@ -94,8 +110,12 @@ A package that creates or consumes controlled handoff between domains.
 
 ### C. Finance/accounting package
 
-- Only finance/accounting-owned packages may mutate payment, cashier, folio, settlement, GL, AR, tax, revenue, invoice, or Night Audit state.
+- Finance retains financial-period close, GL, tax, revenue recognition, AR, payment, bank reconciliation, and accounting ownership.
+- Business Date / Night Audit owns its own operational business-date lifecycle and orchestration evidence.
+- Business Date / Night Audit may read source-domain attestations but may not mutate those domains without a separately authorized owner-domain command.
+- Only owner-domain packages may mutate payment, cashier, folio, settlement, GL, AR, tax, revenue, invoice, financial-period, Business Date, or Night Audit state.
 - Front Desk packages may display or record operational markers only when explicitly authorized.
+- Front Desk remains a read-only consumer of Business Date / Night Audit, cashier, settlement, folio, payment, tax, revenue, GL, AR, and accounting evidence until a separately authorized checkout command exists.
 - Financial marker must be present where financial settlement is intentionally not evaluated.
 
 ### D. Audit/security gate package

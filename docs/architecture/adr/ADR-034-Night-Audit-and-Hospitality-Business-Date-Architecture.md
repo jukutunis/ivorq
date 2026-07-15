@@ -1,7 +1,19 @@
 # ADR-034: Night Audit and Hospitality Business Date Architecture
 
 ## Status
-Proposed
+Approved
+
+## Activation Record
+ADR-034 was approved by the IVORQ Owner on 2026-07-16 after acceptance and merge of FD-B10 General Cashier Obligation Read Dependency Integration. The canonical activation base is `764f143be5f49f4ae1be66ac41196ea5596806ce`, and the continuation authority for this activation is `CONTINUE_AFTER_FD_B10_ACCEPTED`.
+
+This approval activates ADR-034 as the architectural authority for Business Date and Night Audit planning and controlled implementation. After this activation PR is independently reviewed, accepted, and merged, ADR-034 authorizes the BD-A1 implementation package to begin under a separate package authorization. This activation does not authorize BD-A1 runtime implementation inside this PR.
+
+This activation does not authorize Night Audit execution, business-date advancement, business-date reopen, checkout execution, financial-period close, tax finalization, ledger posting, or mutation of Folio, payment, cashier, settlement, tax, revenue, GL, AR, Inventory, Front Desk stay, or any other foreign-domain state.
+
+## Current Implementation Context
+IVORQ now has accepted PMS Guest Ledger, PMS Cashiering, General Cashier, and Front Desk readiness foundations. Those accepted domains remain the owners of their existing states, source evidence, and controlled outcomes.
+
+Business Date and Night Audit consume source-owned attestations. ADR-034 does not transfer Folio, payment, cashier, settlement, tax, revenue, GL, AR, Inventory, Front Desk stay, or checkout ownership to Business Date or Night Audit. Future implementation must remain incremental, package-scoped, and source-domain respectful.
 
 ## Context
 IVORQ is a multi-tenant, multi-property hospitality SaaS platform operating under the hierarchy: Enterprise → Tenant → Property. Hospitality operations require a rigorous mechanism to separate the actual chronology of events from the operational "business day" of the hotel, and further separate these from strict financial accounting periods. A hotel business day can and must close operationally without silently mutating finance periods, historical tax outcomes, audit evidence, or real-world timestamps.
@@ -20,6 +32,41 @@ This ADR defines IVORQ’s Night Audit and Hospitality Business Date Architectur
 - This ADR does not provide country-specific tax, accounting, labor, or legal guidance.
 - This ADR does not claim compliance with any law, accounting standard, security standard, or certification.
 - This ADR does not define database schema, API endpoints, UI screens, queue topology, cron schedules, code, vendor products, or exact business-day cutoff time.
+
+## BD-A1 Implementation Boundary
+BD-A1 is the first authorized implementation package after this ADR-034 activation is reviewed, accepted, and merged. BD-A1 is limited to an authoritative, Property-scoped Business Date foundation. It must not implement Night Audit close orchestration, business-date reopen, checkout integration, foreign-domain mutation, or automatic financial consequences.
+
+BD-A1 must preserve these invariants without ADR-034 defining exact schema, tables, routes, controllers, UI layouts, DTO fields, permission names, or implementation contracts:
+
+- One authoritative current hospitality business date per Property.
+- Explicit lifecycle state.
+- Active Company and Property validation.
+- Property timezone sourced server-side.
+- No browser-controlled Property, Company, business date, lifecycle state, actor, or audit fields.
+- Immutable UTC timestamps remain distinct from hospitality business date.
+- Business Date is distinct from Accounting Date and financial period.
+- Read and command boundaries are authorization-first.
+- Controlled initialization is idempotent.
+- Cross-property and cross-tenant disclosure is forbidden.
+- No silent date advancement.
+- No Night Audit close orchestration yet.
+- No reopen lifecycle yet.
+- No checkout integration yet.
+- No foreign-domain mutation.
+- No automatic revenue, tax, GL, AR, cashier, Folio, Inventory, or settlement consequences.
+
+Exact implementation details belong to the later BD-A1 delivery package and must be source-proven at that time.
+
+## Controlled Program Sequence
+1. ADR-034 activation - current package.
+2. BD-A1 - authoritative Property Business Date foundation.
+3. FD-B11 - Front Desk Business Date read dependency integration.
+4. NA-A1 - first controlled Night Audit foundation.
+5. FD-B12 - Front Desk Night Audit lock/read dependency integration.
+6. Checkout execution readiness review.
+7. checkout execution remains separately unauthorized until a future explicit Owner decision.
+
+Each step requires independent review, acceptance, merge, a new canonical SHA, and separate package authorization before the next package may start.
 
 ## Decision
 
