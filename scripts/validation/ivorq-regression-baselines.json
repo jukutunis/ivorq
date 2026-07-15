@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 398,
-        "assertions": 1655,
+        "tests": 409,
+        "assertions": 1702,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-15",
         "branch": "sprint-fd-b10-general-cashier-obligation-read-integration",
-        "sha": "3db4e91090977d5b5699569a3b7df431f8b2a8fe",
-        "note": "FD-B10 General Cashier obligation read integration measured at source commit 3db4e91090977d5b5699569a3b7df431f8b2a8fe: 53 exact Front Desk classes / 398 tests / 1655 assertions / 0 failures / 0 errors. Queue authorization suppression, minimized cashier summary, workspace General Cashier Accountability, and execution-boundary GC-A1 gate assertions are included. Checkout execution remains can_execute=false; no Front Desk cashier session, guest cash transaction, count, handover, reconciliation, or accountability mutation added."
+        "sha": "fd14a613c405241d6a7a2ada5dcf127cc18de777",
+        "note": "FD-B10 active-company authorization correction measured at source commit fd14a613c405241d6a7a2ada5dcf127cc18de777: 53 exact Front Desk classes / 409 tests / 1702 assertions / 0 failures / 0 errors. Dedicated execution-boundary and departure-queue paths now reject missing, empty, unknown, inactive, or cross-company active-company/property context before Front Desk stay/B7, PMS Guest Ledger, or General Cashier source evidence queries. Checkout execution remains can_execute=false; no Front Desk cashier session, guest cash transaction, count, handover, reconciliation, or accountability mutation added."
       },
       "accepted_debt": [],
       "status": "active"

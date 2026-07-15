@@ -231,13 +231,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals('active', $baseline->status ?? null);
         $this->assertCount(53, $baseline->classes, 'Front Desk baseline must keep exactly 53 classes.');
         $this->assertEquals('FrontDeskDepartureCheckoutExecutionBoundaryTest', $baseline->classes[count($baseline->classes) - 1]);
-        $this->assertEquals(398, $baseline->expected->tests ?? null);
-        $this->assertEquals(1655, $baseline->expected->assertions ?? null);
+        $this->assertEquals(409, $baseline->expected->tests ?? null);
+        $this->assertEquals(1702, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '3db4e91090977d5b5699569a3b7df431f8b2a8fe',
+            'fd14a613c405241d6a7a2ada5dcf127cc18de777',
             $baseline->provenance->sha ?? null
         );
         $this->assertEquals(
