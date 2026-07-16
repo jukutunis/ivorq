@@ -259,16 +259,16 @@
         "PropertyBusinessDateMigrationProofTest"
       ],
       "expected": {
-        "tests": 10,
-        "assertions": 175,
+        "tests": 11,
+        "assertions": 318,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-16",
         "branch": "sprint-bd-a1-authoritative-property-business-date-foundation",
-        "sha": "a484a9a719e6ae4ad4776c197fca84bf4e908f32",
-        "note": "BD-A1 source commit measurement: 3 exact PostgreSQL classes / 10 tests / 175 assertions / 0 failures / 0 errors. Covers first-history-only server-derived initialization, authorization-first current Business Date projection, timezone_snapshot evidence, PostgreSQL foundational immutability and delete rejection, legacy evidence fail-closed behavior, zero-write projection proof, and two-worker concurrency convergence. Existing tests/Feature/Foundation/PropertyBusinessDateTest.php was validated separately at 17 tests / 26 assertions under phpunit.pg.xml by exact file path because the active runner discovers tests/Postgres only. No close, date advancement, reopen, Night Audit, checkout, or foreign-domain mutation is activated."
+        "sha": "c4164a936a8d3dcbaa2cb345faba0a8f9f679492",
+        "note": "Canonical Property-context correction measurement: 3 exact PostgreSQL classes / 11 tests / 318 assertions / 0 failures / 0 errors. BD-A1 authorization now resolves Property only through CurrentPropertyService::getPropertyId(), covering explicit override, session current_property_id, and authenticated default Property fallback. Stale active_property_id alone is not authoritative and cannot override canonical session or explicit context. Existing tests/Feature/Foundation/PropertyBusinessDateTest.php was validated separately at 17 tests / 26 assertions under phpunit.pg.xml by exact file path because the active runner discovers tests/Postgres only. No close, date advancement, reopen, Night Audit, checkout, or foreign-domain mutation is activated."
       },
       "accepted_debt": [],
       "status": "active"

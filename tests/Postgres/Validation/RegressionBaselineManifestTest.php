@@ -580,12 +580,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'PropertyBusinessDateInitializationConcurrencyProofTest',
             'PropertyBusinessDateMigrationProofTest',
         ], $baseline->classes);
-        $this->assertEquals(10, $baseline->expected->tests ?? null);
-        $this->assertEquals(175, $baseline->expected->assertions ?? null);
+        $this->assertEquals(11, $baseline->expected->tests ?? null);
+        $this->assertEquals(318, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('a484a9a719e6ae4ad4776c197fca84bf4e908f32', $baseline->provenance->sha ?? null);
+        $this->assertEquals('c4164a936a8d3dcbaa2cb345faba0a8f9f679492', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-bd-a1-authoritative-property-business-date-foundation', $baseline->provenance->branch ?? null);
         $this->assertStringContainsString('BD-A1', $baseline->description ?? '');
         $this->assertStringContainsString('timezone evidence', $baseline->description ?? '');
