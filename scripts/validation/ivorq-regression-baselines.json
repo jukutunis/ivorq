@@ -247,6 +247,33 @@
       "status": "active"
     },
     {
+      "id": "business-date-foundation-baseline",
+      "description": "BD-A1 authoritative Property Business Date foundation PostgreSQL tests covering controlled first initialization, authorization-first projection, timezone evidence, PostgreSQL foundational immutability and deletion guards, legacy-row fail-closed behavior, zero-write projection proof, static architecture boundaries, real worker concurrency convergence, and disposable migration UP/DOWN/REAPPLY proof. The legacy Feature PropertyBusinessDateTest is validated separately by exact file path because phpunit.pg.xml discovers tests/Postgres only. All 3 PostgreSQL classes pass cleanly as a single batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "PropertyBusinessDateFoundationTest",
+        "PropertyBusinessDateInitializationConcurrencyProofTest",
+        "PropertyBusinessDateMigrationProofTest"
+      ],
+      "expected": {
+        "tests": 10,
+        "assertions": 175,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-16",
+        "branch": "sprint-bd-a1-authoritative-property-business-date-foundation",
+        "sha": "a484a9a719e6ae4ad4776c197fca84bf4e908f32",
+        "note": "BD-A1 source commit measurement: 3 exact PostgreSQL classes / 10 tests / 175 assertions / 0 failures / 0 errors. Covers first-history-only server-derived initialization, authorization-first current Business Date projection, timezone_snapshot evidence, PostgreSQL foundational immutability and delete rejection, legacy evidence fail-closed behavior, zero-write projection proof, and two-worker concurrency convergence. Existing tests/Feature/Foundation/PropertyBusinessDateTest.php was validated separately at 17 tests / 26 assertions under phpunit.pg.xml by exact file path because the active runner discovers tests/Postgres only. No close, date advancement, reopen, Night Audit, checkout, or foreign-domain mutation is activated."
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
       "id": "engineering-availability-baseline",
       "description": "Engineering room availability operational tests covering authorization, block lifecycle, Front Desk read boundary, projections, and concurrency (ENG-A1). All 5 test classes pass cleanly as a single batch.",
       "type": "phpunit",

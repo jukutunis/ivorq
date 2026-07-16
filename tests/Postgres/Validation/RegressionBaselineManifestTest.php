@@ -58,6 +58,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'inventory-avco-sensitive-baseline-v2-candidate',
             'inventory-reversal-inherited-debt-v1',
             'banking-master-baseline-v2-candidate',
+            'business-date-foundation-baseline',
         ];
 
         $actualIds = array_map(fn($b) => $b->id, $this->manifest->baselines);
@@ -454,12 +455,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'engineering-availability-baseline',
             'inventory-reversal-inherited-debt-v1',
             'guest-ledger-settlement-readiness-baseline',
+            'business-date-foundation-baseline',
         ];
 
         $this->assertCount(
-            9,
+            10,
             $activeIds,
-            "Must have exactly 9 active baselines. Found: " . implode(', ', $activeIds)
+            "Must have exactly 10 active baselines. Found: " . implode(', ', $activeIds)
         );
 
         foreach ($expectedActiveIds as $id) {
@@ -560,12 +562,34 @@ class RegressionBaselineManifestTest extends PostgresTestCase
     {
         $ids = array_map(fn($b) => $b->id, $this->manifest->baselines);
 
-        $expectedCount = 11;
+        $expectedCount = 12;
         $this->assertCount(
             $expectedCount,
             $ids,
             "Manifest must contain exactly {$expectedCount} baselines. Found: " . implode(', ', $ids)
         );
+    }
+
+    public function test_business_date_foundation_baseline_matches_bd_a1_measurement(): void
+    {
+        $baseline = $this->findBaseline('business-date-foundation-baseline');
+        $this->assertNotNull($baseline, 'BD-A1 baseline must exist.');
+        $this->assertEquals('active', $baseline->status);
+        $this->assertSame([
+            'PropertyBusinessDateFoundationTest',
+            'PropertyBusinessDateInitializationConcurrencyProofTest',
+            'PropertyBusinessDateMigrationProofTest',
+        ], $baseline->classes);
+        $this->assertEquals(10, $baseline->expected->tests ?? null);
+        $this->assertEquals(175, $baseline->expected->assertions ?? null);
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertSame([], $baseline->accepted_debt ?? null);
+        $this->assertEquals('a484a9a719e6ae4ad4776c197fca84bf4e908f32', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-bd-a1-authoritative-property-business-date-foundation', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('BD-A1', $baseline->description ?? '');
+        $this->assertStringContainsString('timezone evidence', $baseline->description ?? '');
+        $this->assertNotContains('BusinessDateCloseExecutionServiceTest', $baseline->classes);
     }
 
     public function test_glf_d_baseline_has_exact_three_classes_and_correct_counts(): void
