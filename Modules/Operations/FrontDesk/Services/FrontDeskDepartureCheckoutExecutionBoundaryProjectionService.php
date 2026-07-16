@@ -36,11 +36,13 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     public const BLOCKER_CHECKOUT_NOT_IMPLEMENTED = 'CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED';
     public const UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS = 'FD_B9_UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS';
     public const UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS = 'FD_B10_UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS';
+    public const UNKNOWN_BUSINESS_DATE_STATUS = 'FD_B11_UNKNOWN_BUSINESS_DATE_STATUS';
     private const AUTHORIZATION_FAILURE_MESSAGE = 'Front Desk checkout execution boundary view is not authorized.';
 
     public function __construct(
         private readonly FrontDeskGuestLedgerSettlementReadinessDependencyService $guestLedgerSettlementReadiness,
-        private readonly FrontDeskGeneralCashierCheckoutObligationDependencyService $generalCashierCheckoutObligation
+        private readonly FrontDeskGeneralCashierCheckoutObligationDependencyService $generalCashierCheckoutObligation,
+        private readonly FrontDeskBusinessDateDependencyService $businessDateDependency,
     ) {}
 
     /**
@@ -183,24 +185,34 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'markers' => $cashierObligation['markers'],
         ];
 
-        // Gate 6: Business date evidence (MISSING — ADR-034 Proposed, no implementation)
-        $blockerCodes[] = self::BLOCKER_BUSINESS_DATE_UNAVAILABLE;
-        $blockerMessages[] = 'Authoritative business date evidence is not available. Business date lifecycle is governed by ADR-034 (Proposed). No implementation exists.';
+        // Gate 6: Business Date evidence (BD-A1 read-only dependency)
+        $businessDate = $this->businessDateDependency->project($actor);
+        $businessDateGateSatisfied = $this->applyBusinessDate($businessDate, $blockerCodes, $blockerMessages);
         $authoritativeGates['business_date'] = [
-            'gate' => 'Business date permits checkout',
-            'owner' => 'Business Date / Night Audit (ADR-034)',
-            'satisfied' => false,
-            'detail' => 'ADR-034 is Proposed. No business date implementation exists.',
+            'gate' => 'Authoritative Property Business Date is OPEN',
+            'owner' => 'Business Date / Night Audit',
+            'satisfied' => $businessDateGateSatisfied,
+            'detail' => $businessDateGateSatisfied
+                ? 'BD-A1 Property Business Date status: BUSINESS_DATE_OPEN.'
+                : 'BD-A1 Property Business Date source status: ' . $businessDate['source_status'] . '.',
+            'status' => $businessDate['status'],
+            'source_status' => $businessDate['source_status'],
+            'business_date' => $businessDate['business_date'],
+            'lifecycle_status' => $businessDate['lifecycle_status'],
+            'property_timezone' => $businessDate['property_timezone'],
+            'evaluated_at' => $businessDate['evaluated_at'],
+            'source_fingerprint' => $businessDate['source_fingerprint'],
+            'evidence_unavailable_codes' => $businessDate['evidence_unavailable_codes'],
         ];
 
-        // Gate 7: Night Audit close-lock evidence (MISSING — ADR-034 Proposed, no implementation)
+        // Gate 7: Night Audit close-lock evidence (MISSING — NA-A1 not implemented)
         $blockerCodes[] = self::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE;
-        $blockerMessages[] = 'Authoritative Night Audit close-lock evidence is not available. Night Audit lifecycle is governed by ADR-034 (Proposed). No implementation exists.';
+        $blockerMessages[] = 'Authoritative Night Audit close-lock evidence is not available. ADR-034 is Approved and BD-A1 exists, but NA-A1 has not been implemented and no authoritative Night Audit close-lock source exists yet.';
         $authoritativeGates['night_audit_lock'] = [
             'gate' => 'No active Night Audit close lock',
             'owner' => 'Night Audit (ADR-034)',
             'satisfied' => false,
-            'detail' => 'ADR-034 is Proposed. No Night Audit implementation exists.',
+            'detail' => 'ADR-034 is Approved. BD-A1 exists. NA-A1 has not been implemented, so no authoritative Night Audit close-lock source exists yet.',
         ];
 
         // Gate 8: No existing completed checkout execution (not yet implemented)
@@ -217,7 +229,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         $blockerMessages = $this->sortedUnique($blockerMessages);
         $reviewReasons = $this->sortedUnique($reviewReasons);
 
-        // Determine overall status. FD-B10 never executes checkout.
+        // Determine overall status. FD-B11 never executes checkout.
         $canExecute = false;
         if (empty($blockerCodes)) {
             $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryReady->value;
@@ -242,9 +254,11 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'authoritative_gates' => $authoritativeGates,
             'guest_ledger_settlement_readiness' => $guestLedger,
             'general_cashier_checkout_obligation' => $cashierObligation,
-            'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B10.',
+            'property_business_date' => $businessDate,
+            'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B11.',
             'financial_settlement_marker' => 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.',
             'cashier_obligation_marker' => 'Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.',
+            'business_date_marker' => 'Business Date evidence is evaluated read-only from the authoritative BD-A1 Property source. Front Desk does not initialize, close, advance, reopen, or mutate Business Date.',
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -303,11 +317,42 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
 
         if (! $this->actorCan($fresh, self::VIEW_PERMISSION)
             || ! $this->actorCan($fresh, FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION)
-            || ! $this->actorCan($fresh, FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION)) {
+            || ! $this->actorCan($fresh, FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION)
+            || ! $this->actorCan($fresh, FrontDeskBusinessDateDependencyService::VIEW_PERMISSION)) {
             throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
         }
 
         return $propertyId;
+    }
+
+    /**
+     * @param array<string, mixed> $businessDate
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     */
+    private function applyBusinessDate(array $businessDate, array &$blockerCodes, array &$blockerMessages): bool
+    {
+        return match ($businessDate['status']) {
+            FrontDeskBusinessDateDependencyService::BUSINESS_DATE_OPEN => true,
+            FrontDeskBusinessDateDependencyService::BUSINESS_DATE_EVIDENCE_UNAVAILABLE => $this->appendBusinessDateUnavailable(
+                $blockerCodes,
+                $blockerMessages,
+                $businessDate['source_status']
+            ),
+            default => throw new DomainException(self::UNKNOWN_BUSINESS_DATE_STATUS),
+        };
+    }
+
+    /**
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     */
+    private function appendBusinessDateUnavailable(array &$blockerCodes, array &$blockerMessages, string $sourceStatus): bool
+    {
+        $blockerCodes[] = self::BLOCKER_BUSINESS_DATE_UNAVAILABLE;
+        $blockerMessages[] = 'Authoritative Business Date evidence is unavailable from BD-A1 source status ' . $sourceStatus . '.';
+
+        return false;
     }
 
     /**

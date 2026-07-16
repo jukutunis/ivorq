@@ -1,12 +1,13 @@
 # IVORQ Package Execution Contract
 
 Status: APPROVED
-Version: 1.1
+Version: 1.2
 Created: 2026-07-10
-Last amended: 2026-07-16
+Last amended: 2026-07-17
 
 Amendment note:
   - Version 1.1 was explicitly approved by the IVORQ Owner for ADR-034 activation and controlled Business Date / Night Audit sequencing.
+  - Version 1.2 was explicitly approved by the IVORQ Owner for FD-B11 authorization, accepted-baseline synchronization, and baseline-snapshot semantics.
 
 Amendment protocol:
   - Only Owner may approve amendments to this contract.
@@ -59,9 +60,16 @@ Concise source-backed architecture summary — not a full ADR dump.
 - **Inventory/Cost boundary:** Inventory Ledger remains source of truth. AVCO is current valuation method. FIFO is future scope. Candidate baselines remain diagnostic unless explicitly promoted by Owner.
 - **Agent governance:** Delivery Mode by default. Exact scope, focused validation, concise evidence, stop.
 
-## 5. Current accepted baseline
+## 5. Accepted predecessor snapshot at package authorization
 
-- `ivorq-enterprise-core` @ `764f143be5f49f4ae1be66ac41196ea5596806ce`
+- This section is a snapshot taken at package authorization. It is not a self-updating registry.
+- Current exact canonical SHA must always be verified from `origin/ivorq-enterprise-core`.
+- Current baseline counts must always be verified from the canonical regression manifest.
+- This section records the accepted predecessor state at the time a package is authorized.
+- Later merge results must not be inferred before independent merge verification.
+- `ivorq-enterprise-core` accepted predecessor @ `e9f3d4e3938ccc53f4420efeb86f789869e15916`
+- ADR-034 merged and accepted.
+- BD-A1 merged and accepted.
 - GLF-D merged and accepted.
 - FD-B9 merged and accepted.
 - GC-A1 merged and accepted.
@@ -69,9 +77,11 @@ Concise source-backed architecture summary — not a full ADR dump.
 - Front Desk active baseline: 409 tests / 1702 assertions / 0 failures / 0 errors
 - GC-A1: 38 tests / 231 assertions
 - GLF-D: 60 tests / 253 assertions
-- RegressionBaselineManifestTest: 29 tests / 762 assertions
-- Complete active runner: 9 active baselines PASS
+- BD-A1: 11 tests / 318 assertions
+- RegressionBaselineManifestTest: 30 tests / 806 assertions
+- Complete active runner: 10 active baselines PASS
 - Inventory Reversal inherited debt remains: 8 tests / 72 assertions / 2 accepted errors
+- FD-B11 is the current authorized package and is not accepted until review and merge.
 
 ## 6. Package sequencing model
 
@@ -79,14 +89,15 @@ Packages must run sequentially. One package may depend on earlier package eviden
 
 ### Current controlled sequence
 
-1. ADR-034 activation.
-2. BD-A1.
-3. FD-B11.
-4. NA-A1.
-5. FD-B12.
-6. Checkout execution readiness review.
+1. ADR-034 - accepted and merged.
+2. BD-A1 - accepted and merged.
+3. FD-B11 - current authorized package, not accepted until review and merge.
+4. NA-A1 - locked.
+5. FD-B12 - locked.
+6. Checkout execution readiness review - locked.
+7. Checkout execution - separately unauthorized.
 
-Only the next package may start after its predecessor is reviewed, accepted, and merged into the canonical branch. ADR-034 activation does not implement BD-A1; checkout execution remains unauthorized. Business Date and Night Audit must never absorb source-domain ownership. Package implementation remains sequential.
+Only the next package may start after its predecessor is reviewed, accepted, and merged into the canonical branch. BD-A1 is accepted as the authoritative Property Business Date foundation; checkout execution remains unauthorized. Business Date and Night Audit must never absorb source-domain ownership. Package implementation remains sequential.
 
 ### A. Domain-owned package
 

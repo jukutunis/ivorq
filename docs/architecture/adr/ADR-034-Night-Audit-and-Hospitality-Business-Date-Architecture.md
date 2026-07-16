@@ -16,8 +16,16 @@ BD-A1 retains the existing `property_business_dates` persistence and `PropertyBu
 
 BD-A1 captures timezone evidence server-side in `timezone_snapshot`, preserves legacy rows without fabricated evidence, and enforces foundational opening evidence immutability through PostgreSQL triggers. Legacy Inventory close services remain candidate-only, non-authoritative boundaries. BD-A1 activates no close, advancement, reopen, Night Audit, FD-B11, FD-B12, checkout execution, or foreign-domain mutation behavior.
 
+## FD-B11 Implementation Note
+
+FD-B11 consumes accepted BD-A1 Property Business Date evidence read-only inside the Front Desk checkout execution boundary and departure workspace. Front Desk receives current Property Business Date evidence only through the BD-A1 projection contract and does not initialize, close, advance, reopen, or mutate Business Date.
+
+Business Date evidence unavailability remains fail-closed through stable source codes. Night Audit close-lock evidence remains unavailable until NA-A1 implements an authoritative source. Checkout execution remains unauthorized and unimplemented in FD-B11, and `can_execute` remains explicitly false. This note describes the FD-B11 pull request scope and must not be read as FD-B11 acceptance before independent review and merge.
+
 ## Current Implementation Context
 IVORQ now has accepted PMS Guest Ledger, PMS Cashiering, General Cashier, and Front Desk readiness foundations. Those accepted domains remain the owners of their existing states, source evidence, and controlled outcomes.
+
+BD-A1 is now accepted and canonical as the authoritative Property Business Date runtime foundation. It provides current open Business Date evidence but no close, advancement, reopen, or Night Audit runtime behavior.
 
 Business Date and Night Audit consume source-owned attestations. ADR-034 does not transfer Folio, payment, cashier, settlement, tax, revenue, GL, AR, Inventory, Front Desk stay, or checkout ownership to Business Date or Night Audit. Future implementation must remain incremental, package-scoped, and source-domain respectful.
 
@@ -37,8 +45,9 @@ This ADR also constrains already accepted PMS Guest Ledger, PMS Cashiering, Gene
 
 ## Non-Goals
 - IVORQ already has accepted PMS Guest Ledger and PMS Cashiering foundations.
-- IVORQ does not yet have an accepted authoritative Business Date runtime or Night Audit runtime.
-- ADR-034 approval is architecture activation, not a claim that BD-A1 or Night Audit has been implemented.
+- IVORQ has an accepted authoritative Property Business Date runtime foundation through BD-A1.
+- IVORQ does not yet have accepted Business Date close, advancement, reopen, or Night Audit runtime behavior.
+- ADR-034 approval is architecture activation, not a claim that Night Audit has been implemented.
 - This ADR does not provide country-specific tax, accounting, labor, or legal guidance.
 - This ADR does not claim compliance with any law, accounting standard, security standard, or certification.
 - This ADR does not define database schema, API endpoints, UI screens, queue topology, cron schedules, code, vendor products, or exact business-day cutoff time.
@@ -68,12 +77,12 @@ BD-A1 must preserve these invariants without ADR-034 defining exact schema, tabl
 Exact implementation details belong to the later BD-A1 delivery package and must be source-proven at that time.
 
 ## Controlled Program Sequence
-1. ADR-034 activation - current package.
-2. BD-A1 - authoritative Property Business Date foundation.
-3. FD-B11 - Front Desk Business Date read dependency integration.
-4. NA-A1 - first controlled Night Audit foundation.
-5. FD-B12 - Front Desk Night Audit lock/read dependency integration.
-6. Checkout execution readiness review.
+1. ADR-034 activation - accepted and merged.
+2. BD-A1 - authoritative Property Business Date foundation, accepted and canonical.
+3. FD-B11 - Front Desk Business Date read dependency integration, current authorized package and not accepted until review and merge.
+4. NA-A1 - first controlled Night Audit foundation, locked until FD-B11 is accepted and merged.
+5. FD-B12 - Front Desk Night Audit lock/read dependency integration, locked.
+6. Checkout execution readiness review, locked.
 7. checkout execution remains separately unauthorized until a future explicit Owner decision.
 
 Each step requires independent review, acceptance, merge, a new canonical SHA, and separate package authorization before the next package may start.

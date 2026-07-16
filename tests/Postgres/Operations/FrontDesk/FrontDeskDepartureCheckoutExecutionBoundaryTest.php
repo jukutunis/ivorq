@@ -11,6 +11,11 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Modules\Foundation\User\Models\User;
+use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
+use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Foundation\Property\Services\PropertyBusinessDateAuthorizationService;
+use Modules\Foundation\Property\Services\PropertyBusinessDateProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskBusinessDateDependencyService;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizationService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutEligibilityService;
@@ -208,6 +213,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             'guest_ar_transfer_decisions',
             'cashier_sessions',
             'guest_refund_allocations',
+            'property_business_dates',
         ];
 
         $domainQueries = [];
@@ -463,7 +469,11 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             }
         };
 
-        $service = new FrontDeskDepartureCheckoutExecutionBoundaryProjectionService($guestLedger, $cashier);
+        $service = new FrontDeskDepartureCheckoutExecutionBoundaryProjectionService(
+            $guestLedger,
+            $cashier,
+            app(FrontDeskBusinessDateDependencyService::class)
+        );
 
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS);
@@ -489,6 +499,180 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertSame('General Cashier', $cashierGate['owner']);
         $this->assertSame('CASHIER_OBLIGATION_CLEAR', $cashierGate['status']);
         $this->assertSame(0, $cashierGate['related_cashier_session_count']);
+    }
+
+    public function test_front_desk_business_date_adapter_preserves_successful_bd_a1_contract(): void
+    {
+        $row = $this->createValidAuthoritativeBusinessDate();
+
+        $projection = app(FrontDeskBusinessDateDependencyService::class)->project($this->frontDeskActor);
+
+        $this->assertSame(FrontDeskBusinessDateDependencyService::PROJECTION_VERSION, $projection['projection_version']);
+        $this->assertSame('BUSINESS_DATE_OPEN', $projection['status']);
+        $this->assertSame('BUSINESS_DATE_OPEN', $projection['source_status']);
+        $this->assertSame('PROPERTY_BUSINESS_DATE_SOURCE_PROVEN', $projection['source_classification']);
+        $this->assertSame('Business Date / Night Audit', $projection['owner']);
+        $this->assertTrue($projection['read_only']);
+        $this->assertSame($row->id, $projection['property_business_date_id']);
+        $this->assertSame($this->property->id, $projection['property_id']);
+        $this->assertSame('2026-07-17', $projection['business_date']);
+        $this->assertSame('Open', $projection['lifecycle_status']);
+        $this->assertSame($this->property->timezone, $projection['property_timezone']);
+        $this->assertSame($this->frontDeskActor->id, $projection['opened_by']);
+        $this->assertSame([], $projection['evidence_unavailable_codes']);
+        $this->assertNotEmpty($projection['source_fingerprint']);
+        $this->assertArrayHasKey('read_only_marker', $projection['markers']);
+    }
+
+    public function test_open_business_date_satisfies_only_business_date_gate(): void
+    {
+        $this->bindClearGuestLedgerPorts();
+        $s = $this->checkedInStay('8248');
+        $this->makeGuestLedgerFolio($s);
+        $this->seedB3B4B5B6B7Ready($s);
+        $businessDate = $this->createValidAuthoritativeBusinessDate();
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('BUSINESS_DATE_OPEN', $b['property_business_date']['status']);
+        $this->assertTrue($b['authoritative_gates']['business_date']['satisfied']);
+        $this->assertSame('2026-07-17', $b['authoritative_gates']['business_date']['business_date']);
+        $this->assertSame($businessDate->id, $b['property_business_date']['property_business_date_id']);
+        $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_BUSINESS_DATE_UNAVAILABLE, $b['blocker_codes']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE, $b['blocker_codes']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CHECKOUT_NOT_IMPLEMENTED, $b['blocker_codes']);
+        $this->assertFalse($b['can_execute']);
+    }
+
+    public function test_no_business_date_history_maps_to_known_unavailable_code(): void
+    {
+        $s = $this->checkedInStay('8249');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame('BUSINESS_DATE_EVIDENCE_UNAVAILABLE', $b['property_business_date']['status']);
+        $this->assertSame(PropertyBusinessDateProjectionService::ERROR_NOT_INITIALIZED, $b['property_business_date']['source_status']);
+        $this->assertContains(PropertyBusinessDateProjectionService::ERROR_NOT_INITIALIZED, $b['property_business_date']['evidence_unavailable_codes']);
+        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_BUSINESS_DATE_UNAVAILABLE, $b['blocker_codes']);
+        $this->assertFalse($b['authoritative_gates']['business_date']['satisfied']);
+    }
+
+    public function test_closed_business_date_history_maps_to_known_unavailable_code(): void
+    {
+        PropertyBusinessDate::factory()->closed()->create([
+            'property_id' => $this->property->id,
+            'business_date' => '2026-07-16',
+            'timezone_snapshot' => $this->property->timezone,
+            'opened_by' => $this->frontDeskActor->id,
+        ]);
+        $s = $this->checkedInStay('8250');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+
+        $this->assertSame(PropertyBusinessDateProjectionService::ERROR_OPEN_UNAVAILABLE, $b['property_business_date']['source_status']);
+    }
+
+    public function test_incomplete_business_date_evidence_code_is_normalized(): void
+    {
+        $this->createValidAuthoritativeBusinessDate(['timezone_snapshot' => null]);
+
+        $projection = app(FrontDeskBusinessDateDependencyService::class)->project($this->frontDeskActor);
+
+        $this->assertSame('BUSINESS_DATE_EVIDENCE_UNAVAILABLE', $projection['status']);
+        $this->assertSame(PropertyBusinessDateProjectionService::ERROR_EVIDENCE_INCOMPLETE, $projection['source_status']);
+        $this->assertSame([PropertyBusinessDateProjectionService::ERROR_EVIDENCE_INCOMPLETE], $projection['evidence_unavailable_codes']);
+    }
+
+    public function test_business_date_timezone_mismatch_code_is_normalized(): void
+    {
+        $this->createValidAuthoritativeBusinessDate();
+        $this->property->forceFill(['timezone' => 'Asia/Makassar'])->save();
+
+        $projection = app(FrontDeskBusinessDateDependencyService::class)->project($this->frontDeskActor);
+
+        $this->assertSame(PropertyBusinessDateProjectionService::ERROR_TIMEZONE_MISMATCH, $projection['source_status']);
+    }
+
+    public function test_multiple_open_business_date_code_is_normalized(): void
+    {
+        $source = new class extends PropertyBusinessDateProjectionService {
+            public function __construct() {}
+
+            public function project(User $actor): array
+            {
+                throw new \RuntimeException(PropertyBusinessDateProjectionService::ERROR_MULTIPLE_OPEN);
+            }
+        };
+
+        $projection = (new FrontDeskBusinessDateDependencyService($source))->project($this->frontDeskActor);
+
+        $this->assertSame(PropertyBusinessDateProjectionService::ERROR_MULTIPLE_OPEN, $projection['source_status']);
+    }
+
+    public function test_unknown_business_date_adapter_status_fails_closed(): void
+    {
+        $s = $this->checkedInStay('8251');
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $businessDate = new class extends FrontDeskBusinessDateDependencyService {
+            public function __construct() {}
+
+            public function project(User $actor): array
+            {
+                return ['status' => 'BUSINESS_DATE_FUTURE_UNKNOWN'];
+            }
+        };
+
+        $service = new FrontDeskDepartureCheckoutExecutionBoundaryProjectionService(
+            app(FrontDeskGuestLedgerSettlementReadinessDependencyService::class),
+            app(FrontDeskGeneralCashierCheckoutObligationDependencyService::class),
+            $businessDate
+        );
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::UNKNOWN_BUSINESS_DATE_STATUS);
+
+        $service->boundary($this->frontDeskActor, $s[0]->id);
+    }
+
+    public function test_malformed_successful_business_date_projection_fails_closed(): void
+    {
+        $source = new class extends PropertyBusinessDateProjectionService {
+            public function __construct() {}
+
+            public function project(User $actor): array
+            {
+                return [
+                    'status' => 'BUSINESS_DATE_OPEN',
+                    'source_classification' => 'PROPERTY_BUSINESS_DATE_SOURCE_PROVEN',
+                    'property_business_date_id' => 'pbd',
+                ];
+            }
+        };
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(FrontDeskBusinessDateDependencyService::INVALID_PROJECTION);
+
+        (new FrontDeskBusinessDateDependencyService($source))->project($this->frontDeskActor);
+    }
+
+    public function test_unknown_business_date_runtime_failure_is_not_normalized(): void
+    {
+        $source = new class extends PropertyBusinessDateProjectionService {
+            public function __construct() {}
+
+            public function project(User $actor): array
+            {
+                throw new \RuntimeException('BD_A1_FUTURE_UNKNOWN_FAILURE');
+            }
+        };
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('BD_A1_FUTURE_UNKNOWN_FAILURE');
+
+        (new FrontDeskBusinessDateDependencyService($source))->project($this->frontDeskActor);
     }
 
     public function test_general_cashier_adapter_preserves_source_projection_contract(): void
@@ -605,7 +789,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $service = new FrontDeskDepartureCheckoutExecutionBoundaryProjectionService(
             app(FrontDeskGuestLedgerSettlementReadinessDependencyService::class),
-            $cashier
+            $cashier,
+            app(FrontDeskBusinessDateDependencyService::class)
         );
 
         $this->expectException(DomainException::class);
@@ -941,7 +1126,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        $this->assertSame('Checkout execution is not performed in FD-B10.', $b['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is not performed in FD-B11.', $b['execution_not_performed_marker']);
     }
 
     // ── All Authoritative Gates Present ──
@@ -1001,7 +1186,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $boundary['execution_boundary_status']);
         $this->assertNotEmpty($boundary['blocker_codes']);
         $this->assertIsArray($boundary['review_reasons']);
-        $this->assertSame('Checkout execution is not performed in FD-B10.', $boundary['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is not performed in FD-B11.', $boundary['execution_not_performed_marker']);
     }
 
     public function test_queue_does_not_silently_normalize_boundary_exception(): void
@@ -1111,7 +1296,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        $this->assertSame('Checkout execution is not performed in FD-B10.', $b['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is not performed in FD-B11.', $b['execution_not_performed_marker']);
         $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.', $b['financial_settlement_marker']);
         $this->assertSame('Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.', $b['cashier_obligation_marker']);
     }
@@ -1145,7 +1330,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         // 3. Required marker strings
         $this->assertStringContainsString('Checkout execution not yet available', $source, 'Disabled affordance marker must exist.');
-        $this->assertStringContainsString('Checkout execution is not performed in FD-B10.', $source, 'Not-performed marker must exist.');
+        $this->assertStringContainsString('Checkout execution is not performed in FD-B11.', $source, 'Not-performed marker must exist.');
         $this->assertStringContainsString('PMS Guest Ledger Settlement', $source, 'Workspace must render PMS Guest Ledger settlement summary.');
         $this->assertStringContainsString('General Cashier Accountability', $source, 'Workspace must render General Cashier accountability summary.');
         $this->assertStringContainsString('Cashier sessions', $source, 'Workspace must render related cashier-session count.');

@@ -8,8 +8,11 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Foundation\Property\Services\PropertyBusinessDateAuthorizationService;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityBlockService;
 use Modules\Operations\Engineering\Services\EngineeringRoomAvailabilityProjectionService;
@@ -96,6 +99,7 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
             GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
             GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION,
+            PropertyBusinessDateAuthorizationService::VIEW_PERMISSION,
         ]);
 
         $this->frontDeskViewOnlyActor->givePermissionTo([
@@ -318,7 +322,26 @@ trait CreatesFrontDeskFdA2Data
             FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION,
             GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
             GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION,
+            PropertyBusinessDateAuthorizationService::VIEW_PERMISSION,
         ];
+    }
+
+    protected function createValidAuthoritativeBusinessDate(array $overrides = []): PropertyBusinessDate
+    {
+        $businessDate = new PropertyBusinessDate();
+        $businessDate->forceFill(array_merge([
+            'property_id' => $this->property->id,
+            'business_date' => '2026-07-17',
+            'timezone_snapshot' => $this->property->timezone,
+            'status' => PropertyBusinessDateStatusEnum::Open,
+            'is_open' => true,
+            'opened_by' => $this->frontDeskActor->id,
+            'opened_at' => Carbon::parse('2026-07-16 23:30:00', 'UTC'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], $overrides))->save();
+
+        return $businessDate->fresh();
     }
 
     protected function checkedInStay(string $roomNumber): array

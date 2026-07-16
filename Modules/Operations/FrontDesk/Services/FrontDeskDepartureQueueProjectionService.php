@@ -46,6 +46,9 @@ class FrontDeskDepartureQueueProjectionService
     public const CASHIER_MARKER_AUTHORIZED = 'Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.';
     public const CASHIER_MARKER_SUPPRESSED = 'Cashier obligation evidence is not exposed in this queue row.';
     public const CASHIER_MARKER_CAPABILITY = 'Cashier obligation readiness is sourced read-only from General Cashier GC-A1 when authorized.';
+    public const BUSINESS_DATE_MARKER_AUTHORIZED = 'Business Date evidence is evaluated read-only from the authoritative BD-A1 Property source. Front Desk does not initialize, close, advance, reopen, or mutate Business Date.';
+    public const BUSINESS_DATE_MARKER_SUPPRESSED = 'Business Date evidence is not exposed in this queue row.';
+    public const BUSINESS_DATE_MARKER_CAPABILITY = 'Business Date evidence is sourced read-only from BD-A1 when authorized.';
 
     public function __construct(
         private readonly EngineeringAvailabilityDependencyService $engineeringAvailability,
@@ -108,6 +111,7 @@ class FrontDeskDepartureQueueProjectionService
             ],
             'financial_marker' => self::FINANCIAL_MARKER_CAPABILITY,
             'cashier_marker' => self::CASHIER_MARKER_CAPABILITY,
+            'business_date_marker' => self::BUSINESS_DATE_MARKER_CAPABILITY,
         ];
     }
 
@@ -203,6 +207,7 @@ class FrontDeskDepartureQueueProjectionService
             'can_view_execution_boundary' => $executionBoundarySummary !== null,
             'financial_marker' => $executionBoundarySummary['financial_settlement_marker'] ?? self::FINANCIAL_MARKER_SUPPRESSED,
             'cashier_marker' => $executionBoundarySummary['cashier_obligation_marker'] ?? self::CASHIER_MARKER_SUPPRESSED,
+            'business_date_marker' => $executionBoundarySummary['business_date_marker'] ?? self::BUSINESS_DATE_MARKER_SUPPRESSED,
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -741,6 +746,7 @@ class FrontDeskDepartureQueueProjectionService
             'execution_not_performed_marker' => $boundary['execution_not_performed_marker'],
             'financial_settlement_marker' => $boundary['financial_settlement_marker'],
             'cashier_obligation_marker' => $boundary['cashier_obligation_marker'],
+            'business_date_marker' => $boundary['business_date_marker'],
             'guest_ledger_settlement_readiness' => [
                 'status' => $boundary['guest_ledger_settlement_readiness']['status'],
                 'canonical_aggregate_balance' => $boundary['guest_ledger_settlement_readiness']['canonical_aggregate_balance'],
@@ -762,6 +768,16 @@ class FrontDeskDepartureQueueProjectionService
                 'evaluated_at' => $boundary['general_cashier_checkout_obligation']['evaluated_at'],
                 'source_fingerprint' => $boundary['general_cashier_checkout_obligation']['source_fingerprint'],
                 'markers' => $boundary['general_cashier_checkout_obligation']['markers'],
+            ],
+            'property_business_date' => [
+                'status' => $boundary['property_business_date']['status'],
+                'source_status' => $boundary['property_business_date']['source_status'],
+                'business_date' => $boundary['property_business_date']['business_date'],
+                'lifecycle_status' => $boundary['property_business_date']['lifecycle_status'],
+                'property_timezone' => $boundary['property_business_date']['property_timezone'],
+                'evidence_unavailable_codes' => $boundary['property_business_date']['evidence_unavailable_codes'],
+                'evaluated_at' => $boundary['property_business_date']['evaluated_at'],
+                'source_fingerprint' => $boundary['property_business_date']['source_fingerprint'],
             ],
         ];
     }
@@ -796,7 +812,8 @@ class FrontDeskDepartureQueueProjectionService
         try {
             return $fresh->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION)
                 && $fresh->can(FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION)
-                && $fresh->can(FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION);
+                && $fresh->can(FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION)
+                && $fresh->can(FrontDeskBusinessDateDependencyService::VIEW_PERMISSION);
         } catch (Throwable) {
             return false;
         }

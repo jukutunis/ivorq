@@ -30,8 +30,8 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 | Procurement and vendor commercial controls | Tracked | Architecture ready, implementation pending | ADR-006, ADR-032 |
 | Inventory, GRNI, Cost Ledger, Finance boundary | Active | Foundation ready | ADR-004, ADR-008 through ADR-015 |
 | Tax and multi-jurisdiction architecture | Tracked | Architecture ready, implementation pending | ADR-033 |
-| Night Audit and hospitality business-date foundation | Approved | Architecture activated on 2026-07-16; authoritative Business Date and Night Audit runtime remain pending | ADR-034 |
-| PMS readiness | Partial accepted foundations | PMS Guest Ledger and PMS Cashiering foundations exist; Front Desk, General Cashier, GLF-D, FD-B9, GC-A1, and FD-B10 dependencies are accepted per the current contract baseline. This is not full PMS production readiness. | ADR-034, ADR-087, ADR-088 |
+| Night Audit and hospitality business-date foundation | Approved | Architecture activated on 2026-07-16; BD-A1 authoritative Property Business Date runtime is accepted; Night Audit runtime remains pending | ADR-034 |
+| PMS readiness | Partial accepted foundations | PMS Guest Ledger, PMS Cashiering, Front Desk, General Cashier, GLF-D, FD-B9, GC-A1, FD-B10, and BD-A1 dependencies are accepted per the current contract baseline. FD-B11 is the current authorized integration package. This is not full PMS production readiness. | ADR-034, ADR-087, ADR-088 |
 | Guest Ledger, Folio, and hospitality financial subledger boundary | Active | Completed by ADR-088; durable ownership boundary established across PMS Guest Ledger, PMS Cashiering, General Cashier, Accounting, Finance, Front Desk, and Business Date / Night Audit. Implementation remains package-scoped and does not imply checkout execution. | ADR-088 |
 | Cost Control readiness | Planning | Separate Audit / Readiness Workstream | Not included in this ADR update |
 | HRIS readiness | Deferred | Deferred roadmap domain | Requires future PRDs |
@@ -93,7 +93,7 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 
 1. **Inventory Ledger posting governance references**: Treat ADR-035, ADR-036, and ADR-037 as existing Approved architecture decisions, not future ADR candidates. This ADR-034 activation package does not modify or reopen those decisions. (Source-truth synchronization)
 2. **Cost Control Readiness Audit**: Continue the separate Cost Control audit workstream. (Review/Audit)
-3. **PMS Core Module Specifications**: Treat this as historical planning language unless a future package reauthorizes the scope. Current source truth now includes accepted PMS Guest Ledger and PMS Cashiering foundations plus ADR-088's active Guest Ledger / Folio ownership boundary. Authoritative Business Date and Night Audit runtime remain pending. BD-A1 is the next eligible runtime package only after PR #22 is independently accepted and merged. (PRD/Specification → package-scoped delivery)
+3. **PMS Core Module Specifications**: Treat this as historical planning language unless a future package reauthorizes the scope. Current source truth now includes accepted PMS Guest Ledger and PMS Cashiering foundations, ADR-088's active Guest Ledger / Folio ownership boundary, and accepted BD-A1 authoritative Property Business Date runtime. FD-B11 is the current authorized integration package. NA-A1 remains locked until FD-B11 is independently reviewed, accepted, and merged. PR #22 language is historical. (PRD/Specification -> package-scoped delivery)
 4. **Integration Specifications**: Draft technical specifications for external data exchange boundaries based on ADR-017 and ADR-031. (PRD/Specification)
 5. **Night Audit Checkpoint Catalog**: Draft the operational checklist and checkpoint specification for the Night Audit process based on ADR-034 only after the controlled Business Date / Night Audit package sequence authorizes that scope. (Specification)
 
@@ -102,9 +102,9 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 **Finance Foundation**: Architecture Ready, Implementation Pending
 **Enterprise Security & Privacy**: Architecture Ready, Implementation Pending
 **Procurement & Tax Governance**: Architecture Ready, Implementation Pending
-**PMS Foundation**: Partial Accepted Foundations, Business Date / Night Audit Runtime Pending
+**PMS Foundation**: Partial Accepted Foundations, BD-A1 Business Date Runtime Accepted, Night Audit Runtime Pending
 **Cost Control**: Separate Audit / Readiness Workstream, Not Included in This ADR Update
 
 ADR-035, ADR-036, and ADR-037 already exist and are Approved. Their controlled Inventory Ledger posting governance decisions are no longer future ADR candidates. Implementation status remains distinct from architecture decision status, and this ADR-034 activation package does not modify or reopen those decisions.
 
-The current ADR portfolio is architecturally sufficient to continue controlled Finance, Security, Privacy, Procurement, Tax, and package-scoped PMS/Business Date work. It is not a claim of full PMS production readiness or implementation completion. BD-A1 is the next eligible runtime package only after PR #22 is independently accepted and merged. No next ADR is authorized by this package. Future ADR creation remains trigger-based and requires separate Owner authorization.
+The current ADR portfolio is architecturally sufficient to continue controlled Finance, Security, Privacy, Procurement, Tax, and package-scoped PMS/Business Date work. It is not a claim of full PMS production readiness or implementation completion. BD-A1 is accepted; FD-B11 is the current authorized integration package. NA-A1 remains locked until FD-B11 is independently reviewed, accepted, and merged. No new ADR is authorized by this package. Future ADR creation remains trigger-based and requires separate Owner authorization.
