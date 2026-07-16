@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, and FD-B10 read-only General Cashier obligation integration. All 53 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, FD-B10 read-only General Cashier obligation integration, and FD-B11 read-only authoritative Business Date integration. All 53 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 409,
-        "assertions": 1702,
+        "tests": 420,
+        "assertions": 1766,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-15",
-        "branch": "sprint-fd-b10-general-cashier-obligation-read-integration",
-        "sha": "fd14a613c405241d6a7a2ada5dcf127cc18de777",
-        "note": "FD-B10 active-company authorization correction measured at source commit fd14a613c405241d6a7a2ada5dcf127cc18de777: 53 exact Front Desk classes / 409 tests / 1702 assertions / 0 failures / 0 errors. Dedicated execution-boundary and departure-queue paths now reject missing, empty, unknown, inactive, or cross-company active-company/property context before Front Desk stay/B7, PMS Guest Ledger, or General Cashier source evidence queries. Checkout execution remains can_execute=false; no Front Desk cashier session, guest cash transaction, count, handover, reconciliation, or accountability mutation added."
+        "measured_at": "2026-07-17",
+        "branch": "sprint-fd-b11-business-date-read-integration",
+        "sha": "8300c359f3080f0a26d884d1318707cc4f194367",
+        "note": "FD-B11 Business Date read integration measured at source commit 8300c359f3080f0a26d884d1318707cc4f194367: 53 exact Front Desk classes / 420 tests / 1766 assertions / 0 failures / 0 errors. Dedicated execution-boundary and departure-queue paths require business-date.current.view before BD-A1 source evidence queries, read the authoritative BD-A1 Property Business Date projection only, map known BD-A1 unavailable evidence to BUSINESS_DATE_EVIDENCE_UNAVAILABLE, and preserve FD-B9 Guest Ledger plus FD-B10 General Cashier read-only dependencies. Checkout execution remains can_execute=false; no Front Desk cashier session, guest cash transaction, count, handover, reconciliation, accountability, Guest Ledger, General Cashier, Business Date, Night Audit, folio, settlement, close, advance, reopen, or posting mutation added."
       },
       "accepted_debt": [],
       "status": "active"

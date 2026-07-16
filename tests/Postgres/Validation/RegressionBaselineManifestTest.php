@@ -225,27 +225,29 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_fd_b10_measurement(): void
+    public function test_frontdesk_operational_baseline_matches_fd_b11_measurement(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
         $this->assertEquals('active', $baseline->status ?? null);
         $this->assertCount(53, $baseline->classes, 'Front Desk baseline must keep exactly 53 classes.');
         $this->assertEquals('FrontDeskDepartureCheckoutExecutionBoundaryTest', $baseline->classes[count($baseline->classes) - 1]);
-        $this->assertEquals(409, $baseline->expected->tests ?? null);
-        $this->assertEquals(1702, $baseline->expected->assertions ?? null);
+        $this->assertEquals(420, $baseline->expected->tests ?? null);
+        $this->assertEquals(1766, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'fd14a613c405241d6a7a2ada5dcf127cc18de777',
+            '8300c359f3080f0a26d884d1318707cc4f194367',
             $baseline->provenance->sha ?? null
         );
         $this->assertEquals(
-            'sprint-fd-b10-general-cashier-obligation-read-integration',
+            'sprint-fd-b11-business-date-read-integration',
             $baseline->provenance->branch ?? null
         );
-        $this->assertStringContainsString('FD-B10', $baseline->description ?? '');
+        $this->assertStringContainsString('FD-B11', $baseline->description ?? '');
+        $this->assertStringContainsString('BD-A1', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
     }
 
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void
