@@ -12,7 +12,7 @@
 | ADR-034 | Night Audit and Hospitality Business Date Architecture | Tracked / Committed | Approved | PMS Business-Date Foundation |
 
 ### Portfolio Capacity and Guardrails
-IVORQ currently has 34 tracked ADRs, ADR-001 through ADR-034. The intended healthy architecture portfolio range remains approximately 37–41 ADRs. This leaves an estimated conceptual capacity of approximately 3–7 additional ADRs. This range is a governance guardrail, not a quota. A new ADR must be created only when it records a cross-domain, long-lived, difficult-to-reverse architecture decision. A new module, workflow, UI, report, or implementation need does not automatically justify a new ADR.
+This review's original baseline covered ADR-001 through ADR-034. It is historical portfolio analysis, not the complete current repository ADR inventory. Later ADRs exist, including ADR-087 and ADR-088. ADR numbering must not be used to calculate a fixed remaining "ADR capacity"; architecture creation remains trigger-based, not quota-based. A new ADR must be created only when it records a cross-domain, long-lived, difficult-to-reverse architecture decision. A new module, workflow, UI, report, or implementation need does not automatically justify a new ADR.
 
 ## 2. Completed Roadmap Items
 The previously planned next five ADRs (ADR-030 through ADR-034) represent completed document delivery milestones. 
@@ -30,8 +30,9 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 | Procurement and vendor commercial controls | Tracked | Architecture ready, implementation pending | ADR-006, ADR-032 |
 | Inventory, GRNI, Cost Ledger, Finance boundary | Active | Foundation ready | ADR-004, ADR-008 through ADR-015 |
 | Tax and multi-jurisdiction architecture | Tracked | Architecture ready, implementation pending | ADR-033 |
-| Night Audit and hospitality business-date foundation | Approved | Architecture activated on 2026-07-16; runtime implementation remains package-scoped | ADR-034 |
-| PMS readiness | Planning | Architecture prerequisites established, module design pending | Requires PRDs/Specifications based on ADR-034 |
+| Night Audit and hospitality business-date foundation | Approved | Architecture activated on 2026-07-16; authoritative Business Date and Night Audit runtime remain pending | ADR-034 |
+| PMS readiness | Partial accepted foundations | PMS Guest Ledger and PMS Cashiering foundations exist; Front Desk, General Cashier, GLF-D, FD-B9, GC-A1, and FD-B10 dependencies are accepted per the current contract baseline. This is not full PMS production readiness. | ADR-034, ADR-087, ADR-088 |
+| Guest Ledger, Folio, and hospitality financial subledger boundary | Active | Completed by ADR-088; durable ownership boundary established across PMS Guest Ledger, PMS Cashiering, General Cashier, Accounting, Finance, Front Desk, and Business Date / Night Audit. Implementation remains package-scoped and does not imply checkout execution. | ADR-088 |
 | Cost Control readiness | Planning | Separate Audit / Readiness Workstream | Not included in this ADR update |
 | HRIS readiness | Deferred | Deferred roadmap domain | Requires future PRDs |
 | Budgeting / Forecasting / Encumbrance | Deferred | Requires future ADR | Deferred by ADR-032 |
@@ -79,7 +80,7 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 | :--- | :--- | :--- | :--- | :--- |
 | **Budgeting, Forecasting and Formal Accounting Encumbrance Architecture** | Create ADR next | It is the highest-priority remaining ADR candidate because ADR-032 explicitly deferred formal budget reservation and accounting encumbrance. The architecture decision should begin after a short scoped readiness review confirms the intended budget-control scope, Finance ownership, Procurement interaction, and relationship to Cost Control. It should not be created merely to fill the ADR portfolio target. | High | Before authorized implementation begins for Budgeting, Forecasting, formal budget control, or accounting encumbrance. |
 | **Legal Entity, Accounting Scope and Tax Registration Architecture** | Create ADR later when trigger is met | Interacts with Tenant, intercompany, and tax registration, but not required immediately. | Medium | Prior to complex multi-entity/group accounting expansion |
-| **Guest Ledger, Folio and Hospitality Financial Subledger Architecture** | Create ADR later when trigger is met | Guest Ledger, Folio, and Hospitality Financial Subledger may become a durable cross-domain source-of-truth and financial-boundary decision. It may intersect PMS, Front Office, guest folio, Revenue Recognition, Tax, City Ledger / AR, Night Audit, payments, and Finance. It should not be created automatically now because PMS implementation has not begun. Before PMS financial implementation starts, conduct a focused boundary review. Create the ADR only if that review confirms the need for a durable cross-domain source-of-truth or subledger ownership decision. PRDs and specifications remain required after the architecture boundary is established. | High | Before PMS financial / guest-folio implementation begins |
+| **Guest Ledger, Folio and Hospitality Financial Subledger Architecture** | Completed by ADR-088 - no longer a candidate | ADR-088 now exists and is Active. The durable Guest Ledger, Folio, PMS Cashiering, General Cashier, Accounting, Finance, Front Desk, and Business Date / Night Audit ownership boundary has been established. Implementation remains package-scoped and does not imply checkout execution. | Completed | ADR-088 active |
 | **Enterprise Document, Evidence and Records Management Architecture** | Create PRD/specification instead | Shared specification is sufficient for evidence boundaries governed by ADR-031. | Low | Prior to broad document module rollout |
 | **External Integration and Data Exchange Boundary** | Create PRD/specification instead | Integration specifications are sufficient, constrained by existing resiliency (ADR-017) and privacy (ADR-031) ADRs. | Medium | External POS/PMS Integrations |
 | **Reporting, BI, Data Warehouse and Cross-Tenant Benchmarking Governance** | Create PRD/specification instead | Specifications constrained by ADR-031 secondary-use rules are sufficient for now. | Low | Enterprise Analytics Expansion |
@@ -90,7 +91,7 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 
 1. **Budgeting / Forecasting / Encumbrance Readiness Review**: Conduct a focused cross-domain readiness review. Draft ADR-035 only when Budgeting, Forecasting, formal budget control, or accounting encumbrance implementation is authorized. (Architecture decision readiness review → potential new ADR)
 2. **Cost Control Readiness Audit**: Continue the separate Cost Control audit workstream. (Review/Audit)
-3. **PMS Core Module Specifications**: Begin PMS discovery PRDs and operational specifications constrained by ADR-034 after the approved Business Date activation sequence allows the relevant package. Before guest-folio or PMS financial implementation, perform the Guest Ledger / Folio boundary review described in the candidate assessment. Do not automatically create a PMS umbrella ADR. (PRD/Specification → potential boundary review)
+3. **PMS Core Module Specifications**: Treat this as historical planning language unless a future package reauthorizes the scope. Current source truth now includes accepted PMS Guest Ledger and PMS Cashiering foundations plus ADR-088's active Guest Ledger / Folio ownership boundary. Authoritative Business Date and Night Audit runtime remain pending. BD-A1 is the next eligible runtime package only after PR #22 is independently accepted and merged. (PRD/Specification → package-scoped delivery)
 4. **Integration Specifications**: Draft technical specifications for external data exchange boundaries based on ADR-017 and ADR-031. (PRD/Specification)
 5. **Night Audit Checkpoint Catalog**: Draft the operational checklist and checkpoint specification for the Night Audit process based on ADR-034 only after the controlled Business Date / Night Audit package sequence authorizes that scope. (Specification)
 
@@ -99,9 +100,9 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 **Finance Foundation**: Architecture Ready, Implementation Pending
 **Enterprise Security & Privacy**: Architecture Ready, Implementation Pending
 **Procurement & Tax Governance**: Architecture Ready, Implementation Pending
-**PMS Foundation**: Architecture Prerequisites Established, Module Design Pending
+**PMS Foundation**: Partial Accepted Foundations, Business Date / Night Audit Runtime Pending
 **Cost Control**: Separate Audit / Readiness Workstream, Not Included in This ADR Update
 
 The highest-priority remaining architecture decision is **Budgeting, Forecasting and Formal Accounting Encumbrance Architecture** (ADR-035 candidate).
 
-The current ADR portfolio is architecturally sufficient to continue controlled Finance, Security, Privacy, Procurement, Tax, and PMS discovery work. It is not a claim of production readiness or implementation completion. The next ADR is conditional on a real cross-domain implementation trigger, not on document count. The highest-priority candidate remains Budgeting, Forecasting and Formal Accounting Encumbrance Architecture, subject to the stated readiness trigger.
+The current ADR portfolio is architecturally sufficient to continue controlled Finance, Security, Privacy, Procurement, Tax, and package-scoped PMS/Business Date work. It is not a claim of full PMS production readiness or implementation completion. BD-A1 is the next eligible runtime package only after PR #22 is independently accepted and merged. Future ADR creation remains conditional on a real cross-domain implementation trigger, not on document count. The highest-priority candidate remains Budgeting, Forecasting and Formal Accounting Encumbrance Architecture, subject to the stated readiness trigger.

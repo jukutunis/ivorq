@@ -25,10 +25,14 @@ IVORQ is a multi-tenant, multi-property hospitality SaaS platform operating unde
 - **Safe Degradation:** The operational day must not be held hostage by downstream integration delays, nor should external systems freely dictate the business date bypassing controls.
 
 ## Scope
-This ADR defines IVORQ’s Night Audit and Hospitality Business Date Architecture before PMS implementation begins. It establishes the strict enterprise boundaries between actual timestamps, property calendar dates, hospitality business dates, and financial periods.
+This ADR governs current and future PMS, Business Date, and Night Audit implementation where hospitality business-date evidence, Night Audit locks, close checkpoints, or business-date reporting are consumed, exposed, or enforced. It is the mandatory architecture authority before BD-A1 and any Night Audit runtime package begin.
+
+This ADR also constrains already accepted PMS Guest Ledger, PMS Cashiering, General Cashier, and Front Desk foundations where they consume or expose Business Date or Night Audit evidence. It does not retroactively transfer ownership, rewrite accepted domain behavior, or turn Business Date / Night Audit into the owner of Folio, payment, cashier, settlement, tax, revenue, GL, AR, Inventory, Front Desk stay, or checkout state.
 
 ## Non-Goals
-- This ADR does not claim IVORQ already has a PMS or Night Audit implementation.
+- IVORQ already has accepted PMS Guest Ledger and PMS Cashiering foundations.
+- IVORQ does not yet have an accepted authoritative Business Date runtime or Night Audit runtime.
+- ADR-034 approval is architecture activation, not a claim that BD-A1 or Night Audit has been implemented.
 - This ADR does not provide country-specific tax, accounting, labor, or legal guidance.
 - This ADR does not claim compliance with any law, accounting standard, security standard, or certification.
 - This ADR does not define database schema, API endpoints, UI screens, queue topology, cron schedules, code, vendor products, or exact business-day cutoff time.
@@ -209,7 +213,9 @@ Fail closed for final operational closure, business-date assignment, tax-sensiti
 | Privacy/residency unresolved for export/access. | Fail-closed for export or transmission. |
 
 ### 12. PMS Readiness and Implementation Boundary
-This ADR is mandatory before PMS implementation begins. It is required before IVORQ supports Property-level Night Audit, guest folio cutover, front-office posting cutover, or multi-property hospitality business-date reporting. PMS, Front Office, guest folio, cashier, reservation, POS, and room-status modules must honor this ADR when designed. This ADR does not define PMS database schema, user interface, operational checklist screens, room status behavior, folio calculations, posting engine code, or Night Audit job implementation. Exact close-check catalog, operational thresholds, exception limits, cutoff times, and staffing procedures remain configurable Tenant/Property policy. Future PMS module documents must define their source-domain attestations and failure behavior against this Business Date architecture.
+This ADR governs accepted and future PMS-adjacent implementation wherever Property-level Business Date evidence, Night Audit locks, guest folio cutover, front-office posting cutover, or multi-property hospitality business-date reporting are involved. PMS Guest Ledger, PMS Cashiering, Front Office, guest folio, cashier, reservation, POS, and room-status modules must honor this ADR when they consume or expose Business Date / Night Audit evidence.
+
+This ADR does not define PMS database schema, user interface, operational checklist screens, room status behavior, folio calculations, posting engine code, or Night Audit job implementation. Exact close-check catalog, operational thresholds, exception limits, cutoff times, and staffing procedures remain configurable Tenant/Property policy. Future PMS module documents must define their source-domain attestations and failure behavior against this Business Date architecture without transferring their source-domain ownership to Business Date or Night Audit.
 
 ## Alternatives Considered
 - **Treating midnight UTC as universal business cutoff:** Rejected. Fails operational reality for a globally distributed SaaS platform where properties operate in distinct local time zones with varied hotel-day cutoffs.
@@ -226,7 +232,7 @@ This ADR is mandatory before PMS implementation begins. It is required before IV
 - Properties with sloppy operating procedures will experience "blocked closures" due to strict exception enforcement.
 
 ### Operational Requirements
-- This ADR is mandatory before PMS implementation begins.
+- This ADR is mandatory before BD-A1 and Night Audit runtime packages begin and constrains current or future PMS-adjacent packages that consume or expose Business Date / Night Audit evidence.
 - Business-date closure is separate from Finance period close.
 - Business date is Property-scoped while Tenant policy governs defaults and cross-property reporting.
 - Exact operational close checklist and cutoff policies are configurable.
