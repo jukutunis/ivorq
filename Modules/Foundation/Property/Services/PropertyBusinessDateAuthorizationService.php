@@ -57,10 +57,11 @@ class PropertyBusinessDateAuthorizationService
             $this->deny();
         }
 
-        $propertyId = session('active_property_id');
+        $propertyId = $this->currentProperty->getPropertyId();
         if (! is_string($propertyId) || trim($propertyId) === '') {
             $this->deny();
         }
+        $propertyId = trim($propertyId);
 
         $property = Property::withoutGlobalScopes()
             ->whereKey($propertyId)

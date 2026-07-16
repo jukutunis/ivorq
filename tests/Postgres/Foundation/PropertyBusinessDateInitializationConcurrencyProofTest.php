@@ -44,6 +44,7 @@ class PropertyBusinessDateInitializationConcurrencyProofTest extends PostgresTes
             $this->assertArrayNotHasKey('error', $result);
             $this->assertSame(1, $result['row_count']);
             $this->assertSame('2026-07-17', $result['business_date']);
+            $this->assertFalse($result['active_property_id_present']);
         }
 
         $this->assertNotSame($results[0]['php_pid'], $results[1]['php_pid']);

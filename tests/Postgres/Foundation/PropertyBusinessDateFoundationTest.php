@@ -45,6 +45,7 @@ class PropertyBusinessDateFoundationTest extends PostgresTestCase
     protected function tearDown(): void
     {
         Carbon::setTestNow();
+        app(CurrentPropertyService::class)->clear();
         parent::tearDown();
     }
 
@@ -163,9 +164,58 @@ class PropertyBusinessDateFoundationTest extends PostgresTestCase
             'missing_company' => fn () => session()->forget('active_company_id'),
             'unknown_company' => fn () => session(['active_company_id' => (string) Str::ulid()]),
             'cross_company' => fn () => session(['active_company_id' => \Database\Factories\CompanyFactory::new()->create(['is_active' => true])->id]),
-            'missing_property' => function (): void {
+            'missing_property_context' => function (): void {
+                $this->actor = \Database\Factories\UserFactory::new()->create(['is_active' => true]);
+                $this->actor->givePermissionTo([
+                    PropertyBusinessDateAuthorizationService::VIEW_PERMISSION,
+                    PropertyBusinessDateAuthorizationService::INITIALIZE_PERMISSION,
+                ]);
+                auth()->login($this->actor);
+                $this->actingAs($this->actor);
                 app(CurrentPropertyService::class)->clear();
                 session()->forget(['active_property_id', 'current_property_id']);
+                session(['active_company_id' => $this->company->id]);
+            },
+            'unknown_property_context' => fn () => app(CurrentPropertyService::class)->setPropertyId((string) Str::ulid()),
+            'inactive_property_context' => fn () => $this->property->forceFill(['is_active' => false])->save(),
+            'cross_company_property_context' => function (): void {
+                $otherCompany = \Database\Factories\CompanyFactory::new()->create(['is_active' => true]);
+                $otherProperty = \Database\Factories\PropertyFactory::new()->create([
+                    'company_id' => $otherCompany->id,
+                    'timezone' => 'Asia/Makassar',
+                    'currency' => 'USD',
+                    'is_active' => true,
+                ]);
+                $this->actor->properties()->attach($otherProperty->id, [
+                    'is_default' => false,
+                    'status' => 'active',
+                    'joined_at' => now(),
+                ]);
+                app(CurrentPropertyService::class)->setPropertyId($otherProperty->id);
+            },
+            'property_without_active_membership' => function (): void {
+                $otherProperty = \Database\Factories\PropertyFactory::new()->create([
+                    'company_id' => $this->company->id,
+                    'timezone' => 'Asia/Makassar',
+                    'currency' => 'USD',
+                    'is_active' => true,
+                ]);
+                app(CurrentPropertyService::class)->setPropertyId($otherProperty->id);
+            },
+            'stale_active_property_id_alone' => function (): void {
+                $this->actor = \Database\Factories\UserFactory::new()->create(['is_active' => true]);
+                $this->actor->givePermissionTo([
+                    PropertyBusinessDateAuthorizationService::VIEW_PERMISSION,
+                    PropertyBusinessDateAuthorizationService::INITIALIZE_PERMISSION,
+                ]);
+                auth()->login($this->actor);
+                $this->actingAs($this->actor);
+                app(CurrentPropertyService::class)->clear();
+                session([
+                    'active_company_id' => $this->company->id,
+                    'active_property_id' => $this->property->id,
+                ]);
+                session()->forget('current_property_id');
             },
             'inactive_membership' => fn () => $this->actor->properties()->updateExistingPivot($this->property->id, ['status' => 'inactive']),
             'inactive_actor' => fn () => $this->actor->forceFill(['is_active' => false])->save(),
@@ -190,13 +240,44 @@ class PropertyBusinessDateFoundationTest extends PostgresTestCase
                 $this->fail("Authorization case {$name} reached Business Date logic: {$e->getMessage()}");
             }
 
-            $sql = implode("\n", array_column(DB::getQueryLog(), 'query'));
-            $this->assertStringNotContainsString('property_business_dates', $sql, $name);
-            foreach (['folios', 'payments', 'deposits', 'refunds', 'cashier_sessions', 'inventory_transactions', 'front_desk_stays'] as $table) {
-                $this->assertStringNotContainsString($table, $sql, $name);
-            }
+            $this->assertNoBusinessDateOrForeignDomainQueries($name);
             DB::disableQueryLog();
         }
+    }
+
+    public function test_canonical_property_context_matrix_authorizes_only_trusted_resolver_tiers(): void
+    {
+        $this->createAuthorizedContext();
+        $this->assertSame($this->property->id, app(PropertyBusinessDateAuthorizationService::class)->authorizeView($this->actor)->id);
+
+        $this->createAuthorizedContext();
+        app(CurrentPropertyService::class)->clear();
+        session()->forget('active_property_id');
+        session(['current_property_id' => $this->property->id]);
+        $this->assertSame($this->property->id, app(PropertyBusinessDateAuthorizationService::class)->authorizeView($this->actor)->id);
+
+        $this->createAuthorizedContext();
+        app(CurrentPropertyService::class)->clear();
+        session()->forget(['active_property_id', 'current_property_id']);
+        $this->assertSame($this->property->id, app(PropertyBusinessDateAuthorizationService::class)->authorizeView($this->actor)->id);
+
+        $this->createAuthorizedContext();
+        $staleProperty = $this->authorizedSiblingProperty();
+        app(CurrentPropertyService::class)->clear();
+        session([
+            'active_property_id' => $staleProperty->id,
+            'current_property_id' => $this->property->id,
+        ]);
+        $this->assertSame($this->property->id, app(PropertyBusinessDateAuthorizationService::class)->authorizeView($this->actor)->id);
+
+        $this->createAuthorizedContext();
+        $staleProperty = $this->authorizedSiblingProperty();
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+        session([
+            'active_property_id' => $staleProperty->id,
+            'current_property_id' => $staleProperty->id,
+        ]);
+        $this->assertSame($this->property->id, app(PropertyBusinessDateAuthorizationService::class)->authorizeView($this->actor)->id);
     }
 
     public function test_projection_is_zero_write_and_exposes_no_later_lifecycle_behavior(): void
@@ -270,10 +351,10 @@ class PropertyBusinessDateFoundationTest extends PostgresTestCase
 
     private function authenticate(User $actor, Company $company, Property $property): void
     {
+        app(CurrentPropertyService::class)->clear();
         app(CurrentPropertyService::class)->setPropertyId($property->id);
+        session()->forget(['active_property_id', 'current_property_id']);
         session([
-            'active_property_id' => $property->id,
-            'current_property_id' => $property->id,
             'active_company_id' => $company->id,
         ]);
         auth()->login($actor);
@@ -318,5 +399,47 @@ class PropertyBusinessDateFoundationTest extends PostgresTestCase
         }
 
         return $counts;
+    }
+
+    private function authorizedSiblingProperty(): Property
+    {
+        $property = \Database\Factories\PropertyFactory::new()->create([
+            'company_id' => $this->company->id,
+            'timezone' => 'Asia/Makassar',
+            'currency' => 'USD',
+            'is_active' => true,
+        ]);
+        $this->actor->properties()->attach($property->id, [
+            'is_default' => false,
+            'status' => 'active',
+            'joined_at' => now(),
+        ]);
+
+        return $property;
+    }
+
+    private function assertNoBusinessDateOrForeignDomainQueries(string $case): void
+    {
+        $sql = implode("\n", array_column(DB::getQueryLog(), 'query'));
+
+        foreach ([
+            'property_business_dates',
+            'front_desk',
+            'folios',
+            'guest_ledger',
+            'guest_payment',
+            'guest_deposit',
+            'guest_refund',
+            'cashier_sessions',
+            'cashbook',
+            'bank_',
+            'journal_entries',
+            'accounts_receivable',
+            'inventory_',
+            'housekeeping',
+            'engineering',
+        ] as $table) {
+            $this->assertStringNotContainsString($table, $sql, $case);
+        }
     }
 }

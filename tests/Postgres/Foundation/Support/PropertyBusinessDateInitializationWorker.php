@@ -80,7 +80,6 @@ try {
     auth()->login($actor);
     app(CurrentPropertyService::class)->setPropertyId($propertyId);
     session([
-        'active_property_id' => $propertyId,
         'current_property_id' => $propertyId,
         'active_company_id' => $companyId,
     ]);
@@ -105,6 +104,7 @@ try {
         'opened_by' => (string) $businessDate->opened_by,
         'opened_at' => $businessDate->opened_at?->toISOString(),
         'row_count' => PropertyBusinessDate::withoutGlobalScopes()->where('property_id', $propertyId)->count(),
+        'active_property_id_present' => session()->has('active_property_id'),
     ]));
 } catch (Throwable $e) {
     file_put_contents($resultFile, json_encode([
