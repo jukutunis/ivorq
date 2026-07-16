@@ -43,7 +43,7 @@ Every package must consult:
 - Relevant `.agents/skills/**/SKILL.md` files for the domain.
 - Approved ADRs / source-backed architecture records.
 - Current validation baseline registry (`scripts/validation/ivorq-regression-baselines.json`).
-- Current active package sequence as recorded in this contract (Section 5).
+- Current active package sequence as recorded in this contract (Section 6).
 
 ## 4. Architecture reference summary
 
