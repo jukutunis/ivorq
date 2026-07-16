@@ -10,6 +10,12 @@ This approval activates ADR-034 as the architectural authority for Business Date
 
 This activation does not authorize Night Audit execution, business-date advancement, business-date reopen, checkout execution, financial-period close, tax finalization, ledger posting, or mutation of Folio, payment, cashier, settlement, tax, revenue, GL, AR, Inventory, Front Desk stay, or any other foreign-domain state.
 
+## BD-A1 Implementation Note
+
+BD-A1 retains the existing `property_business_dates` persistence and `PropertyBusinessDate` aggregate as the canonical Property Business Date source. It provides controlled first initialization and read-only current-date evidence only. Initialization is first-history-only, server-derived from the persisted Property timezone and server clock, idempotent, and serialized by a locked active Property row. Active Company and active Property authorization is mandatory before Business Date history is queried.
+
+BD-A1 captures timezone evidence server-side in `timezone_snapshot`, preserves legacy rows without fabricated evidence, and enforces foundational opening evidence immutability through PostgreSQL triggers. Legacy Inventory close services remain candidate-only, non-authoritative boundaries. BD-A1 activates no close, advancement, reopen, Night Audit, FD-B11, FD-B12, checkout execution, or foreign-domain mutation behavior.
+
 ## Current Implementation Context
 IVORQ now has accepted PMS Guest Ledger, PMS Cashiering, General Cashier, and Front Desk readiness foundations. Those accepted domains remain the owners of their existing states, source evidence, and controlled outcomes.
 

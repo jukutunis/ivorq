@@ -67,6 +67,10 @@ class PermissionSeeder extends Seeder
             'accounting.ar.guest-transfer.reject',
             'accounting.ar.guest-transfer.reverse',
 
+            // Business Date — Authoritative Property Foundation
+            'business-date.current.view',
+            'business-date.initialize',
+
             // Engineering - Controlled Room Availability
             'engineering.room-availability.view',
             'engineering.room-availability.block',

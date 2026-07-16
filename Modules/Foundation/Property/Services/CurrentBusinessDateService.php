@@ -6,12 +6,15 @@ use Shared\Services\CurrentPropertyService;
 use Modules\Foundation\Property\Models\PropertyBusinessDate;
 use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
 use Shared\Exceptions\PropertyNotResolvedException;
-use Shared\Exceptions\NotFoundException;
-use Shared\Exceptions\BusinessLogicException;
 use Illuminate\Database\QueryException;
+use RuntimeException;
 
 class CurrentBusinessDateService
 {
+    public const ERROR_NOT_INITIALIZED = 'BD_A1_BUSINESS_DATE_NOT_INITIALIZED';
+    public const ERROR_OPEN_UNAVAILABLE = 'BD_A1_OPEN_BUSINESS_DATE_UNAVAILABLE';
+    public const ERROR_MULTIPLE_OPEN = 'BD_A1_MULTIPLE_OPEN_BUSINESS_DATES';
+
     public function __construct(
         private CurrentPropertyService $currentPropertyService
     ) {}
@@ -30,20 +33,27 @@ class CurrentBusinessDateService
         try {
             $hasHistory = PropertyBusinessDate::where('property_id', $propertyId)->exists();
             if (!$hasHistory) {
-                throw new NotFoundException("Business Date record");
+                throw new RuntimeException(self::ERROR_NOT_INITIALIZED);
             }
 
-            $businessDate = PropertyBusinessDate::where('property_id', $propertyId)
+            $openDates = PropertyBusinessDate::where('property_id', $propertyId)
                 ->where('status', PropertyBusinessDateStatusEnum::Open->value)
-                ->first();
+                ->where('is_open', true)
+                ->orderBy('business_date')
+                ->limit(2)
+                ->get();
 
-            if (!$businessDate) {
-                throw new BusinessLogicException("Business Date history exists but no Open Business Date exists.");
+            if ($openDates->count() === 0) {
+                throw new RuntimeException(self::ERROR_OPEN_UNAVAILABLE);
             }
 
-            return $businessDate;
+            if ($openDates->count() > 1) {
+                throw new RuntimeException(self::ERROR_MULTIPLE_OPEN);
+            }
+
+            return $openDates->first();
         } catch (QueryException $e) {
-            throw new BusinessLogicException("Unexpected persistence failure: " . $e->getMessage());
+            throw new RuntimeException(self::ERROR_OPEN_UNAVAILABLE, 0, $e);
         }
     }
 }

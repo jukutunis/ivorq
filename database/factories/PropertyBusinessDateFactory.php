@@ -17,8 +17,10 @@ class PropertyBusinessDateFactory extends Factory
         return [
             'property_id' => \Database\Factories\PropertyFactory::new(),
             'business_date' => Carbon::today(),
+            'timezone_snapshot' => 'UTC',
             'status' => PropertyBusinessDateStatusEnum::Open,
             'is_open' => true,
+            'opened_by' => null,
             'opened_at' => now(),
         ];
     }

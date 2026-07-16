@@ -10,6 +10,7 @@ use Modules\Foundation\Property\Services\CurrentBusinessDateService;
 use Shared\Services\CurrentPropertyService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Database\QueryException;
+use RuntimeException;
 
 class PropertyBusinessDateTest extends TestCase
 {
@@ -135,8 +136,8 @@ class PropertyBusinessDateTest extends TestCase
 
         $resolver = app(\Modules\Foundation\Property\Services\CurrentBusinessDateService::class);
 
-        $this->expectException(\Shared\Exceptions\NotFoundException::class);
-        $this->expectExceptionMessage("Business Date record not found");
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage(CurrentBusinessDateService::ERROR_NOT_INITIALIZED);
 
         $resolver->getActiveBusinessDate();
     }
@@ -153,8 +154,8 @@ class PropertyBusinessDateTest extends TestCase
 
         $resolver = app(\Modules\Foundation\Property\Services\CurrentBusinessDateService::class);
 
-        $this->expectException(\Shared\Exceptions\BusinessLogicException::class);
-        $this->expectExceptionMessage("Business Date history exists but no Open Business Date exists.");
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage(CurrentBusinessDateService::ERROR_OPEN_UNAVAILABLE);
 
         $resolver->getActiveBusinessDate();
     }
@@ -173,7 +174,8 @@ class PropertyBusinessDateTest extends TestCase
 
         $resolver = app(\Modules\Foundation\Property\Services\CurrentBusinessDateService::class);
 
-        $this->expectException(\Shared\Exceptions\NotFoundException::class);
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage(CurrentBusinessDateService::ERROR_NOT_INITIALIZED);
         $resolver->getActiveBusinessDate();
     }
 
@@ -251,7 +253,10 @@ class PropertyBusinessDateTest extends TestCase
         $date1 = PropertyBusinessDate::factory()->create([
             'property_id' => $property->id,
             'business_date' => '2026-06-01',
+            'timezone_snapshot' => 'UTC',
         ]);
+
+        $this->assertEquals('UTC', $date1->timezone_snapshot);
 
         $this->expectException(\Shared\Exceptions\BusinessLogicException::class);
         $this->expectExceptionMessage("Business Dates cannot be deleted. They must be transitioned through the standard lifecycle.");
@@ -271,7 +276,7 @@ class PropertyBusinessDateTest extends TestCase
         $this->expectException(\Shared\Exceptions\BusinessLogicException::class);
         $this->expectExceptionMessage("Business Dates cannot be deleted. They must be transitioned through the standard lifecycle.");
 
-        $date1->delete();
+        $date1->forceDelete();
     }
 
     public function test_historical_closed_dates_remain_queryable()

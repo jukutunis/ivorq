@@ -21,6 +21,7 @@ class PropertyBusinessDate extends Model
     protected $fillable = [
         'property_id',
         'business_date',
+        'timezone_snapshot',
         'status',
         'is_open',
         'opened_by',
@@ -31,6 +32,7 @@ class PropertyBusinessDate extends Model
 
     protected $casts = [
         'business_date' => 'date',
+        'timezone_snapshot' => 'string',
         'status' => PropertyBusinessDateStatusEnum::class,
         'is_open' => 'boolean',
         'opened_at' => 'datetime',
@@ -38,6 +40,11 @@ class PropertyBusinessDate extends Model
     ];
 
     public function delete()
+    {
+        throw new \Shared\Exceptions\BusinessLogicException("Business Dates cannot be deleted. They must be transitioned through the standard lifecycle.");
+    }
+
+    public function forceDelete()
     {
         throw new \Shared\Exceptions\BusinessLogicException("Business Dates cannot be deleted. They must be transitioned through the standard lifecycle.");
     }
