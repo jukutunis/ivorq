@@ -187,6 +187,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
 
         // Gate 6: Business Date evidence (BD-A1 read-only dependency)
         $businessDate = $this->businessDateDependency->project($actor);
+        $this->assertBusinessDateMatchesProperty($businessDate, $propertyId);
         $businessDateGateSatisfied = $this->applyBusinessDate($businessDate, $blockerCodes, $blockerMessages);
         $authoritativeGates['business_date'] = [
             'gate' => 'Authoritative Property Business Date is OPEN',
@@ -261,6 +262,20 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'business_date_marker' => 'Business Date evidence is evaluated read-only from the authoritative BD-A1 Property source. Front Desk does not initialize, close, advance, reopen, or mutate Business Date.',
             'evaluated_at' => now()->toISOString(),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $businessDate
+     */
+    private function assertBusinessDateMatchesProperty(array $businessDate, string $propertyId): void
+    {
+        if (($businessDate['status'] ?? null) !== FrontDeskBusinessDateDependencyService::BUSINESS_DATE_OPEN) {
+            return;
+        }
+
+        if (($businessDate['property_id'] ?? null) !== $propertyId) {
+            throw new DomainException(FrontDeskBusinessDateDependencyService::INVALID_PROJECTION);
+        }
     }
 
     private function authorizeView(User $actor): string

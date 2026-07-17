@@ -150,6 +150,47 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         return $folio->fresh();
     }
 
+    /**
+     * @param array<string, mixed> $overrides
+     * @return array<string, mixed>
+     */
+    private function validBusinessDateSourceProjection(array $overrides = []): array
+    {
+        return array_merge([
+            'status' => 'BUSINESS_DATE_OPEN',
+            'source_classification' => 'PROPERTY_BUSINESS_DATE_SOURCE_PROVEN',
+            'owner' => 'Business Date / Night Audit',
+            'read_only' => true,
+            'property_business_date_id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'business_date' => '2026-07-17',
+            'lifecycle_status' => 'Open',
+            'property_timezone' => $this->property->timezone,
+            'opened_at' => '2026-07-16T23:30:00.000000Z',
+            'opened_by' => $this->frontDeskActor->id,
+            'source_fingerprint' => hash('sha256', 'fd-b11-valid-business-date-source'),
+            'evaluated_at' => '2026-07-17T02:00:00.000000Z',
+        ], $overrides);
+    }
+
+    /**
+     * @param array<string, mixed> $projection
+     */
+    private function fakeBusinessDateSource(array $projection): PropertyBusinessDateProjectionService
+    {
+        return new class($projection) extends PropertyBusinessDateProjectionService {
+            /**
+             * @param array<string, mixed> $projection
+             */
+            public function __construct(private readonly array $projection) {}
+
+            public function project(User $actor): array
+            {
+                return $this->projection;
+            }
+        };
+    }
+
     private function createCrossPropertyStayId(): string
     {
         $otherGuestId = $this->guest($this->otherProperty, 'Cross-Property Guest');
@@ -538,6 +579,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertTrue($b['authoritative_gates']['business_date']['satisfied']);
         $this->assertSame('2026-07-17', $b['authoritative_gates']['business_date']['business_date']);
         $this->assertSame($businessDate->id, $b['property_business_date']['property_business_date_id']);
+        $this->assertSame($this->property->id, $b['property_business_date']['property_id']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_BUSINESS_DATE_UNAVAILABLE, $b['blocker_codes']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE, $b['blocker_codes']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CHECKOUT_NOT_IMPLEMENTED, $b['blocker_codes']);
@@ -656,6 +698,75 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->expectExceptionMessage(FrontDeskBusinessDateDependencyService::INVALID_PROJECTION);
 
         (new FrontDeskBusinessDateDependencyService($source))->project($this->frontDeskActor);
+    }
+
+    /**
+     * @param array<string, mixed> $overrides
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('semanticallyMalformedBusinessDateProjectionCases')]
+    public function test_semantically_malformed_successful_business_date_projection_fails_closed(string $case, array $overrides): void
+    {
+        $source = $this->fakeBusinessDateSource($this->validBusinessDateSourceProjection($overrides));
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(FrontDeskBusinessDateDependencyService::INVALID_PROJECTION);
+
+        (new FrontDeskBusinessDateDependencyService($source))->project($this->frontDeskActor);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: array<string, mixed>}>
+     */
+    public static function semanticallyMalformedBusinessDateProjectionCases(): array
+    {
+        return [
+            'closed lifecycle while open status' => ['closed lifecycle while open status', ['lifecycle_status' => 'Closed']],
+            'read only false' => ['read only false', ['read_only' => false]],
+            'owner mismatch' => ['owner mismatch', ['owner' => 'Front Desk']],
+            'source classification mismatch' => ['source classification mismatch', ['source_classification' => 'PROPERTY_BUSINESS_DATE_SOURCE_UNAVAILABLE']],
+            'invalid date format' => ['invalid date format', ['business_date' => '17-07-2026']],
+            'impossible date' => ['impossible date', ['business_date' => '2026-02-30']],
+            'invalid timezone' => ['invalid timezone', ['property_timezone' => 'Not/A_Timezone']],
+            'invalid opened at' => ['invalid opened at', ['opened_at' => 'not-a-timestamp']],
+            'relative evaluated at' => ['relative evaluated at', ['evaluated_at' => 'tomorrow']],
+            'malformed sha256 fingerprint' => ['malformed sha256 fingerprint', ['source_fingerprint' => 'not-sha-256']],
+            'malformed property business date id' => ['malformed property business date id', ['property_business_date_id' => 'pbd']],
+            'malformed property id' => ['malformed property id', ['property_id' => 'property']],
+            'malformed opened actor id' => ['malformed opened actor id', ['opened_by' => 'actor']],
+        ];
+    }
+
+    public function test_successful_business_date_projection_from_another_property_fails_without_disclosure_or_mutation(): void
+    {
+        $this->bindClearGuestLedgerPorts();
+        $s = $this->checkedInStay('8252');
+        $this->makeGuestLedgerFolio($s);
+        $this->seedB3B4B5B6B7Ready($s);
+
+        $businessDate = new FrontDeskBusinessDateDependencyService(
+            $this->fakeBusinessDateSource($this->validBusinessDateSourceProjection([
+                'property_id' => $this->otherProperty->id,
+            ]))
+        );
+
+        $service = new FrontDeskDepartureCheckoutExecutionBoundaryProjectionService(
+            app(FrontDeskGuestLedgerSettlementReadinessDependencyService::class),
+            app(FrontDeskGeneralCashierCheckoutObligationDependencyService::class),
+            $businessDate
+        );
+
+        $before = $this->domainTableCounts();
+        $boundary = null;
+
+        try {
+            $boundary = $service->boundary($this->frontDeskActor, $s[0]->id);
+            $this->fail('Cross-property Business Date source evidence must fail closed.');
+        } catch (DomainException $exception) {
+            $this->assertSame(FrontDeskBusinessDateDependencyService::INVALID_PROJECTION, $exception->getMessage());
+        }
+
+        $this->assertNull($boundary, 'Boundary output must not disclose mismatched source property evidence.');
+        $this->assertSame($before, $this->domainTableCounts());
     }
 
     public function test_unknown_business_date_runtime_failure_is_not_normalized(): void

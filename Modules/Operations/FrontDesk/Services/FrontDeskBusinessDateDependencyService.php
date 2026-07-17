@@ -2,6 +2,9 @@
 
 namespace Modules\Operations\FrontDesk\Services;
 
+use DateTimeImmutable;
+use DateTimeInterface;
+use DateTimeZone;
 use DomainException;
 use Modules\Foundation\Property\Services\PropertyBusinessDateAuthorizationService;
 use Modules\Foundation\Property\Services\PropertyBusinessDateProjectionService;
@@ -63,6 +66,10 @@ class FrontDeskBusinessDateDependencyService
     private function open(array $projection): array
     {
         foreach ([
+            'status',
+            'source_classification',
+            'owner',
+            'read_only',
             'property_business_date_id',
             'property_id',
             'business_date',
@@ -78,7 +85,25 @@ class FrontDeskBusinessDateDependencyService
             }
         }
 
-        if (($projection['source_classification'] ?? null) !== self::SOURCE_CLASSIFICATION_PROVEN) {
+        if ($projection['status'] !== self::BUSINESS_DATE_OPEN
+            || $projection['source_classification'] !== self::SOURCE_CLASSIFICATION_PROVEN
+            || $projection['owner'] !== 'Business Date / Night Audit'
+            || $projection['read_only'] !== true
+            || $projection['lifecycle_status'] !== 'Open') {
+            throw new DomainException(self::INVALID_PROJECTION);
+        }
+
+        foreach (['property_business_date_id', 'property_id', 'opened_by'] as $field) {
+            if (! $this->isUlid((string) $projection[$field])) {
+                throw new DomainException(self::INVALID_PROJECTION);
+            }
+        }
+
+        if (! $this->isValidBusinessDate((string) $projection['business_date'])
+            || ! $this->isValidTimezone((string) $projection['property_timezone'])
+            || ! $this->isAbsoluteTimestamp((string) $projection['opened_at'])
+            || ! $this->isAbsoluteTimestamp((string) $projection['evaluated_at'])
+            || ! preg_match('/\A[0-9a-fA-F]{64}\z/', (string) $projection['source_fingerprint'])) {
             throw new DomainException(self::INVALID_PROJECTION);
         }
 
@@ -101,6 +126,36 @@ class FrontDeskBusinessDateDependencyService
             'evaluated_at' => (string) $projection['evaluated_at'],
             'markers' => $this->markers(),
         ];
+    }
+
+    private function isUlid(string $value): bool
+    {
+        return preg_match('/\A[0-9A-HJKMNP-TV-Z]{26}\z/i', $value) === 1;
+    }
+
+    private function isValidBusinessDate(string $value): bool
+    {
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+
+        return $date instanceof DateTimeImmutable && $date->format('Y-m-d') === $value;
+    }
+
+    private function isValidTimezone(string $value): bool
+    {
+        return $value !== '' && in_array($value, DateTimeZone::listIdentifiers(), true);
+    }
+
+    private function isAbsoluteTimestamp(string $value): bool
+    {
+        if (preg_match('/\A\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})\z/', $value) !== 1) {
+            return false;
+        }
+
+        $timestamp = DateTimeImmutable::createFromFormat(DateTimeInterface::ATOM, $value)
+            ?: DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.u\Z', $value)
+            ?: DateTimeImmutable::createFromFormat('Y-m-d H:i:sP', $value);
+
+        return $timestamp instanceof DateTimeImmutable;
     }
 
     /**

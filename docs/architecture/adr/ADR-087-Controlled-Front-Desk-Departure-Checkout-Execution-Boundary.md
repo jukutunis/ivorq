@@ -56,19 +56,19 @@ The following FD-B7 states must not permit execution:
 
 ### Required Authoritative Gates
 
-Each gate must be re-resolved independently at execution time. FD-B8 evaluates available gates now as a read-only projection.
+Each gate must be re-resolved independently at execution time. The original FD-B8 package established the read-only checkout execution boundary; current implementation through FD-B11 evaluates accepted read-only dependencies where their source contracts now exist.
 
-| Gate | Owner | Available in Repository | FD-B8 Behavior |
+| Gate | Owner | Current Repository Availability | Current FD-B11 Behavior |
 |---|---|---|---|
 | Stay belongs to current property | Front Desk | Yes — FrontDeskStay.property_id | Resolved server-side |
 | Stay is IN_HOUSE | Front Desk | Yes — FrontDeskStayStatusEnum | Verified |
 | Latest FD-B7 is CHECKOUT_FINAL_REVIEW_READY | Front Desk | Yes — FrontDeskDepartureCheckoutFinalReview | Verified |
 | Actor is authorized | Foundation/Authorization | Yes — Spatie Permission | Verified server-side |
 | No existing completed checkout execution | Front Desk (future) | No — future checkout execution package | Blocked: CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED |
-| Folio balance settled or transferred | PMS Guest Ledger | Folio/FolioItem models exist in PMS module but no authoritative PMS Guest Ledger settlement projection exists | Blocked: FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE |
-| Guest payment allocation terminal and resolved | PMS Cashiering | No authoritative PMS Cashiering guest payment-allocation projection exists | Blocked: FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE |
-| Cashier session/accountability obligations resolved | General Cashier | General Cashier module exists but no Front Desk-accessible cashier session/accountability projection exists | Blocked: CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE |
-| AR transfer accepted when applicable | Accounting / AR | No Front Desk-accessible accepted-transfer projection exists | Blocked: FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE |
+| Folio balance settled or transferred | PMS Guest Ledger | Yes - GLF-D accepted checkout settlement readiness projection is available as a read-only Front Desk dependency through FD-B9 | GLF-D source status drives ready, blocked, review-required, or evidence-unavailable behavior without Front Desk mutating folios, payments, deposits, refunds, AR transfers, or ledger state |
+| Guest payment allocation terminal and resolved | PMS Cashiering / PMS Guest Ledger | PMS Cashiering retains payment command and allocation lifecycle ownership; GLF-D consumes only accepted settlement/allocation evidence according to its source contract | Evaluated only through GLF-D settlement readiness evidence; Front Desk does not infer allocation lifecycle beyond the accepted GLF-D contract |
+| Cashier session/accountability obligations resolved | General Cashier | Yes - GC-A1 checkout obligation readiness projection is available as a read-only Front Desk dependency through FD-B10 | GC-A1 source status drives clear, blocked, review-required, or evidence-unavailable behavior without Front Desk mutating cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion |
+| AR transfer accepted when applicable | Accounting / AR through PMS Guest Ledger evidence | GLF-D consumes accepted AR-transfer settlement evidence according to its source contract | Evaluated only through GLF-D settlement readiness evidence; Front Desk does not claim or mutate Accounting / AR decisions |
 | Business date permits checkout | Business Date/Night Audit | Yes - BD-A1 authoritative Property Business Date projection | `BUSINESS_DATE_OPEN` satisfies the Business Date evidence gate; incomplete or unavailable source evidence maps to `BUSINESS_DATE_EVIDENCE_UNAVAILABLE`; Front Desk does not own lifecycle |
 | No active Night Audit close lock | Night Audit | ADR-034 is Approved, but NA-A1 has not been implemented | Blocked: NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE |
 | Room readiness (Housekeeping) | Housekeeping | Yes — HousekeepingRoomReadinessProjectionService | Read-only dependency available |
@@ -84,11 +84,11 @@ Each gate must be re-resolved independently at execution time. FD-B8 evaluates a
 
 ### Execution Boundary Statuses
 
-FD-B8 exposes these projection statuses:
+The checkout execution boundary exposes these projection statuses:
 
-- `EXECUTION_BOUNDARY_READY` — every repository-backed mandatory gate is resolved and satisfied. **Cannot be returned in FD-B8** because authoritative financial settlement, cashier, business date, and Night Audit evidence is unavailable.
-- `EXECUTION_BOUNDARY_BLOCKED` — at least one mandatory gate is not satisfied and no review reason exists requiring explicit human review action.
-- `EXECUTION_BOUNDARY_REVIEW_REQUIRED` — at least one gate requires a specific human review decision before execution can proceed (e.g., FD-B7 CHECKOUT_FINAL_REVIEW_REVIEWED).
+- `EXECUTION_BOUNDARY_READY` - every mandatory gate is resolved and satisfied. This remains unreachable in the current FD-B11 implementation because Night Audit close-lock evidence is unavailable, checkout execution is not implemented, and `can_execute` remains explicitly false.
+- `EXECUTION_BOUNDARY_BLOCKED` - at least one mandatory gate is not satisfied and no review reason exists requiring explicit human review action.
+- `EXECUTION_BOUNDARY_REVIEW_REQUIRED` - at least one gate requires a specific human review decision before execution can proceed (for example, FD-B7 CHECKOUT_FINAL_REVIEW_REVIEWED, GLF-D review-required evidence, or GC-A1 review-required evidence).
 
 ### Stay Resolution and Non-Disclosure
 
@@ -112,12 +112,12 @@ In FD-B11, READY and execution remain unreachable because Night Audit close-lock
 
 ### Stable Blocker Codes
 
-When authoritative evidence is missing, FD-B8 returns stable, non-fabricated blocker codes:
+When authoritative evidence is missing or incomplete, the current boundary returns stable, non-fabricated blocker codes:
 
 | Blocker Code | Meaning | Source |
 |---|---|---|
-| `FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE` | No authoritative PMS Guest Ledger settlement projection exists for Front Desk. Current folio totals cannot prove settlement readiness. | PMS Guest Ledger owns this evidence; PMS Cashiering owns guest payment allocation evidence; Accounting / AR owns accepted transfer evidence where applicable |
-| `CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE` | No authoritative cashier session, cashier responsibility, cash accountability, close, or handover source exists for Front Desk | General Cashier owns this evidence |
+| `FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE` | The accepted GLF-D source cannot provide complete authoritative settlement evidence for the evaluated stay. This does not mean no GLF-D projection exists. | PMS Guest Ledger owns this evidence; PMS Cashiering owns guest payment allocation lifecycle; Accounting / AR owns accepted transfer decisions where applicable |
+| `CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE` | The accepted GC-A1 source cannot provide complete authoritative cashier-accountability evidence. This does not mean no GC-A1 projection exists. | General Cashier owns this evidence |
 | `BUSINESS_DATE_EVIDENCE_UNAVAILABLE` | The implemented BD-A1 source cannot provide complete authoritative Property Business Date evidence | Business Date / Night Audit owns this evidence through BD-A1 |
 | `NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE` | No implemented Night Audit close-lock source exists | ADR-034 is approved; NA-A1 is not implemented |
 | `FD_B7_NOT_READY` | Latest FD-B7 final review is not CHECKOUT_FINAL_REVIEW_READY | Front Desk owns this evidence |
