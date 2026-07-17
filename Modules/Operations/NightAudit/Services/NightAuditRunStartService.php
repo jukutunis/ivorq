@@ -3,6 +3,7 @@
 namespace Modules\Operations\NightAudit\Services;
 
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
 use Modules\Foundation\Property\Models\PropertyBusinessDate;
@@ -26,34 +27,43 @@ class NightAuditRunStartService
     public function start(User $actor): NightAuditRun
     {
         $this->authorization->authorizeStart($actor);
-        $this->currentBusinessDateOrFail($actor);
+        $preLockEvidence = $this->currentBusinessDateOrFail($actor);
 
-        return DB::transaction(function () use ($actor): NightAuditRun {
-            $property = $this->authorization->authorizeStart($actor);
-            $evidence = $this->currentBusinessDateOrFail($actor);
-            $this->assertEvidenceProperty($evidence, $property->id);
+        return DB::transaction(function () use ($actor, $preLockEvidence): NightAuditRun {
+            $authorizedProperty = $this->authorization->authorizeStart($actor);
+            $insideEvidence = $this->currentBusinessDateOrFail($actor);
+            $this->assertSameSourceIdentity($preLockEvidence, $insideEvidence);
+            $this->assertEvidenceProperty($insideEvidence, $authorizedProperty->id);
 
-            DB::table('properties')
-                ->where('id', $property->id)
+            $lockedProperty = DB::table('properties')
+                ->where('id', $authorizedProperty->id)
                 ->lockForUpdate()
                 ->first();
 
-            $businessDate = PropertyBusinessDate::withoutGlobalScopes()
-                ->whereKey($evidence['property_business_date_id'])
-                ->where('property_id', $property->id)
-                ->lockForUpdate()
-                ->first();
-
-            if (! $businessDate
-                || $businessDate->status !== PropertyBusinessDateStatusEnum::Open
-                || $businessDate->is_open !== true
-                || $businessDate->business_date->format('Y-m-d') !== $evidence['business_date']
-                || (string) $businessDate->timezone_snapshot !== $evidence['property_timezone']) {
-                throw new DomainException(self::ERROR_INVALID_BUSINESS_DATE);
+            if (! $lockedProperty) {
+                throw new AuthorizationException(NightAuditAuthorizationService::FAILURE_MESSAGE);
             }
 
+            $postLockProperty = $this->authorization->authorizeStart($actor);
+            if ((string) $postLockProperty->id !== (string) $authorizedProperty->id
+                || ! $this->isTrue($lockedProperty->is_active)
+                || (string) $lockedProperty->company_id !== (string) $postLockProperty->company_id) {
+                throw new AuthorizationException(NightAuditAuthorizationService::FAILURE_MESSAGE);
+            }
+
+            $businessDate = PropertyBusinessDate::withoutGlobalScopes()
+                ->whereKey($insideEvidence['property_business_date_id'])
+                ->where('property_id', $postLockProperty->id)
+                ->lockForUpdate()
+                ->first();
+
+            $finalEvidence = $this->currentBusinessDateOrFail($actor);
+            $this->assertSameSourceIdentity($insideEvidence, $finalEvidence);
+            $this->assertEvidenceProperty($finalEvidence, $postLockProperty->id);
+            $this->assertLockedBusinessDate($businessDate, $finalEvidence);
+
             $activeRuns = NightAuditRun::withoutGlobalScopes()
-                ->where('property_id', $property->id)
+                ->where('property_id', $postLockProperty->id)
                 ->where('status', NightAuditRunStatusEnum::InProgress->value)
                 ->lockForUpdate()
                 ->orderBy('created_at')
@@ -65,10 +75,7 @@ class NightAuditRunStartService
 
             if ($activeRuns->count() === 1) {
                 $existing = $activeRuns->first();
-                if ((string) $existing->property_business_date_id !== (string) $businessDate->id) {
-                    throw new RuntimeException(self::ERROR_CONTEXT_CONFLICT);
-                }
-
+                NightAuditLockProjectionService::assertRunEvidence($existing, $finalEvidence);
                 return $existing;
             }
 
@@ -77,10 +84,10 @@ class NightAuditRunStartService
                 ->max('attempt_number')) + 1;
 
             return NightAuditRun::create([
-                'property_id' => $property->id,
+                'property_id' => $postLockProperty->id,
                 'property_business_date_id' => $businessDate->id,
-                'business_date_snapshot' => $evidence['business_date'],
-                'property_timezone_snapshot' => $evidence['property_timezone'],
+                'business_date_snapshot' => $finalEvidence['business_date'],
+                'property_timezone_snapshot' => $finalEvidence['property_timezone'],
                 'attempt_number' => $attemptNumber,
                 'status' => NightAuditRunStatusEnum::InProgress,
                 'started_by' => $actor->id,
@@ -117,5 +124,41 @@ class NightAuditRunStartService
         if (($evidence['property_id'] ?? null) !== $propertyId) {
             throw new DomainException(self::ERROR_INVALID_BUSINESS_DATE);
         }
+    }
+
+    /**
+     * @param array<string, mixed> $expected
+     * @param array<string, mixed> $actual
+     */
+    private function assertSameSourceIdentity(array $expected, array $actual): void
+    {
+        foreach (['property_id', 'property_business_date_id', 'source_fingerprint'] as $field) {
+            if ((string) ($expected[$field] ?? '') !== (string) ($actual[$field] ?? '')) {
+                throw new DomainException(self::ERROR_INVALID_BUSINESS_DATE);
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $evidence
+     */
+    private function assertLockedBusinessDate(?PropertyBusinessDate $businessDate, array $evidence): void
+    {
+        if (! $businessDate
+            || (string) $businessDate->id !== (string) $evidence['property_business_date_id']
+            || (string) $businessDate->property_id !== (string) $evidence['property_id']
+            || $businessDate->business_date?->format('Y-m-d') !== (string) $evidence['business_date']
+            || (string) $businessDate->timezone_snapshot !== (string) $evidence['property_timezone']
+            || $businessDate->status !== PropertyBusinessDateStatusEnum::Open
+            || $businessDate->is_open !== true
+            || (string) $businessDate->opened_by !== (string) $evidence['opened_by']
+            || $businessDate->opened_at?->utc()->toISOString() !== (string) $evidence['opened_at']) {
+            throw new DomainException(self::ERROR_INVALID_BUSINESS_DATE);
+        }
+    }
+
+    private function isTrue(mixed $value): bool
+    {
+        return $value === true || $value === 1 || $value === '1' || $value === 't' || $value === 'true';
     }
 }
