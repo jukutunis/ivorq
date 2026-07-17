@@ -286,16 +286,16 @@
         "NightAuditRunMigrationProofTest"
       ],
       "expected": {
-        "tests": 7,
-        "assertions": 298,
+        "tests": 11,
+        "assertions": 388,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-17",
         "branch": "sprint-na-a1-night-audit-run-lock-foundation",
-        "sha": "9fa54d27cfed1cb14bda0280a2c04b4674a34f19",
-        "note": "NA-A1 source commit measurement: 3 exact PostgreSQL classes / 7 tests / 298 assertions / 0 failures / 0 errors. Establishes authoritative Property-scoped Night Audit run identity, active close-lock projection, BD-A1 read-only dependency, authorization-first behavior, idempotent start, real PostgreSQL concurrency, controlled abort, and immutable evidence. No Business Date close or advancement, no Business Date reopen, no checkpoint orchestration, no checkout execution, no BusinessDateCloseExecutionService authority, and zero foreign-domain mutation."
+        "sha": "bc2f9a0849c3a93bcb0092d07de637e12d1ccf6f",
+        "note": "NA-A1 lock-contract correction measurement: 3 exact PostgreSQL classes / 11 tests / 388 assertions / 0 failures / 0 errors. Restamps the complete projection whitelist with projection_version, status, source_status, source_classification, owner, read_only, close_lock_active, Property and Business Date identifiers, persisted run evidence, evidence_unavailable_codes, source_fingerprint, evaluated_at, and markers. Separates lock status from run lifecycle: active and clear source_status use NIGHT_AUDIT_LOCK_* values while run_status carries IN_PROGRESS only. Adds strict persisted snapshot validation for Property, Property Business Date, business_date, timezone, starter, created evidence, abort-null evidence, and positive attempt. Adds locked Property and Business Date revalidation with post-lock authorization, exact NA_A1_ACTIVE_RUN_NOT_FOUND for absent active runs, valid idempotent start, controlled abort, and stable fingerprint evidence excluding evaluated_at. No Business Date close, advancement, reopen, checkpoints, FD-B12, checkout execution, BusinessDateCloseExecutionService authority, or foreign-domain mutation."
       },
       "accepted_debt": [],
       "status": "active"

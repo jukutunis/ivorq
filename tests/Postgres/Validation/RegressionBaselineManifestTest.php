@@ -611,20 +611,28 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'NightAuditRunConcurrencyProofTest',
             'NightAuditRunMigrationProofTest',
         ], $baseline->classes);
-        $this->assertEquals(7, $baseline->expected->tests ?? null);
-        $this->assertEquals(298, $baseline->expected->assertions ?? null);
+        $this->assertEquals(11, $baseline->expected->tests ?? null);
+        $this->assertEquals(388, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('9fa54d27cfed1cb14bda0280a2c04b4674a34f19', $baseline->provenance->sha ?? null);
+        $this->assertEquals('bc2f9a0849c3a93bcb0092d07de637e12d1ccf6f', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-na-a1-night-audit-run-lock-foundation', $baseline->provenance->branch ?? null);
         $this->assertStringContainsString('NA-A1', $baseline->description ?? '');
         $this->assertStringContainsString('BD-A1 read-only dependency', $baseline->description ?? '');
         $this->assertStringContainsString('authorization-first', $baseline->description ?? '');
-        $this->assertStringContainsString('No Business Date close or advancement', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('no checkpoint orchestration', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('no checkout execution', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('zero foreign-domain mutation', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('complete projection whitelist', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Separates lock status from run lifecycle', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('strict persisted snapshot validation', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('locked Property and Business Date revalidation', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('NA_A1_ACTIVE_RUN_NOT_FOUND', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('valid idempotent start', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('controlled abort', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No Business Date close, advancement, reopen', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No Business Date close, advancement, reopen, checkpoints, FD-B12, checkout execution', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('checkpoints', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('checkout execution', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('foreign-domain mutation', $baseline->provenance->note ?? '');
         $this->assertNotContains('BusinessDateCloseExecutionServiceTest', $baseline->classes);
     }
 
