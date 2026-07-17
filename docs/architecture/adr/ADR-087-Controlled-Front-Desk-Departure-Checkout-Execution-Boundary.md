@@ -17,11 +17,13 @@ This ADR establishes the governance-backed Front Desk checkout execution boundar
 
 Ownership clarified by ADR-088: guest folio settlement and canonical folio balance are owned by PMS Guest Ledger; guest payment-allocation command and transaction lifecycle are owned by PMS Cashiering; PMS Guest Ledger consumes accepted allocation evidence and owns the folio-side financial effect; cashier session and cash accountability are owned by General Cashier; AR transfer after accepted transfer is owned by Accounting / AR; revenue, tax, and GL posting are downstream accounting outcomes owned by Accounting; Finance governs and consumes financial outcomes.
 
-## Current Implementation Synchronization Through FD-B11
+## Current Implementation Synchronization Through NA-A1
 
 FD-B9 accepted the PMS Guest Ledger GLF-D checkout settlement readiness projection as a read-only Front Desk dependency. FD-B10 accepted the GC-A1 General Cashier checkout obligation projection as a read-only Front Desk dependency. BD-A1 accepted the authoritative Property Business Date projection as a read-only source owned by Business Date / Night Audit.
 
-FD-B11 integrates BD-A1 evidence read-only into the Front Desk checkout execution boundary and departure queue. Night Audit close-lock evidence remains unavailable because NA-A1 has not been implemented. Checkout execution remains unavailable and `can_execute` remains explicitly false.
+FD-B11 integrates BD-A1 evidence read-only into the Front Desk checkout execution boundary and departure queue. FD-B11 is accepted and canonical. NA-A1 introduces the future authoritative Night Audit lock source, but Front Desk does not consume it in NA-A1. FD-B12 remains required before Front Desk can evaluate Night Audit lock active/clear.
+
+Until FD-B12 is implemented, `NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE` remains the current Front Desk runtime blocker, `can_execute=false`, and checkout execution remains unavailable.
 
 The original FD-B8 decision remains historical source truth for the first boundary package. Progressive implementation through FD-B9, FD-B10, and FD-B11 narrows source-unavailable blockers as authoritative sources are accepted, without transferring source-domain ownership to Front Desk.
 
@@ -70,7 +72,7 @@ Each gate must be re-resolved independently at execution time. The original FD-B
 | Cashier session/accountability obligations resolved | General Cashier | Yes - GC-A1 checkout obligation readiness projection is available as a read-only Front Desk dependency through FD-B10 | GC-A1 source status drives clear, blocked, review-required, or evidence-unavailable behavior without Front Desk mutating cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion |
 | AR transfer accepted when applicable | Accounting / AR through PMS Guest Ledger evidence | GLF-D consumes accepted AR-transfer settlement evidence according to its source contract | Evaluated only through GLF-D settlement readiness evidence; Front Desk does not claim or mutate Accounting / AR decisions |
 | Business date permits checkout | Business Date/Night Audit | Yes - BD-A1 authoritative Property Business Date projection | `BUSINESS_DATE_OPEN` satisfies the Business Date evidence gate; incomplete or unavailable source evidence maps to `BUSINESS_DATE_EVIDENCE_UNAVAILABLE`; Front Desk does not own lifecycle |
-| No active Night Audit close lock | Night Audit | ADR-034 is Approved, but NA-A1 has not been implemented | Blocked: NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE |
+| No active Night Audit close lock | Night Audit | NA-A1 package introduces the future authoritative source; Front Desk does not consume it until FD-B12 | Blocked: NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE |
 | Room readiness (Housekeeping) | Housekeeping | Yes — HousekeepingRoomReadinessProjectionService | Read-only dependency available |
 | Engineering availability | Engineering | Yes — EngineeringRoomAvailabilityProjectionService | Read-only dependency available |
 
@@ -86,7 +88,7 @@ Each gate must be re-resolved independently at execution time. The original FD-B
 
 The checkout execution boundary exposes these projection statuses:
 
-- `EXECUTION_BOUNDARY_READY` - every mandatory gate is resolved and satisfied. This remains unreachable in the current FD-B11 implementation because Night Audit close-lock evidence is unavailable, checkout execution is not implemented, and `can_execute` remains explicitly false.
+- `EXECUTION_BOUNDARY_READY` - every mandatory gate is resolved and satisfied. This remains unreachable until FD-B12 consumes Night Audit close-lock evidence and a later checkout execution package exists; `can_execute` remains explicitly false.
 - `EXECUTION_BOUNDARY_BLOCKED` - at least one mandatory gate is not satisfied and no review reason exists requiring explicit human review action.
 - `EXECUTION_BOUNDARY_REVIEW_REQUIRED` - at least one gate requires a specific human review decision before execution can proceed (for example, FD-B7 CHECKOUT_FINAL_REVIEW_REVIEWED, GLF-D review-required evidence, or GC-A1 review-required evidence).
 
@@ -108,7 +110,7 @@ Specific B7 mappings:
 - No B7 evidence → `EXECUTION_BOUNDARY_BLOCKED` (can_execute false, no review_reasons).
 - `CHECKOUT_FINAL_REVIEW_READY` → does not automatically imply READY. Remaining unavailable gates keep can_execute false.
 
-In FD-B11, READY and execution remain unreachable because Night Audit close-lock evidence is unavailable, checkout execution is not implemented, and `can_execute` remains explicitly false. The future READY contract is preserved without fabricating readiness.
+In the current Front Desk runtime, READY and execution remain unreachable because Night Audit close-lock evidence is still unavailable to Front Desk until FD-B12, checkout execution is not implemented, and `can_execute` remains explicitly false. The future READY contract is preserved without fabricating readiness.
 
 ### Stable Blocker Codes
 
@@ -119,7 +121,7 @@ When authoritative evidence is missing or incomplete, the current boundary retur
 | `FINANCIAL_SETTLEMENT_EVIDENCE_UNAVAILABLE` | The accepted GLF-D source cannot provide complete authoritative settlement evidence for the evaluated stay. This does not mean no GLF-D projection exists. | PMS Guest Ledger owns this evidence; PMS Cashiering owns guest payment allocation lifecycle; Accounting / AR owns accepted transfer decisions where applicable |
 | `CASHIER_OBLIGATION_EVIDENCE_UNAVAILABLE` | The accepted GC-A1 source cannot provide complete authoritative cashier-accountability evidence. This does not mean no GC-A1 projection exists. | General Cashier owns this evidence |
 | `BUSINESS_DATE_EVIDENCE_UNAVAILABLE` | The implemented BD-A1 source cannot provide complete authoritative Property Business Date evidence | Business Date / Night Audit owns this evidence through BD-A1 |
-| `NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE` | No implemented Night Audit close-lock source exists | ADR-034 is approved; NA-A1 is not implemented |
+| `NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE` | Front Desk has no accepted Night Audit close-lock dependency yet | ADR-034 is approved; NA-A1 introduces the future authoritative source; FD-B12 remains required before Front Desk consumes it |
 | `FD_B7_NOT_READY` | Latest FD-B7 final review is not CHECKOUT_FINAL_REVIEW_READY | Front Desk owns this evidence |
 | `FD_B7_EVIDENCE_MISSING` | No FD-B7 final review evidence exists | Front Desk owns this evidence |
 | `STAY_NOT_IN_HOUSE` | Stay is not in IN_HOUSE status | Front Desk owns this evidence |
@@ -192,5 +194,5 @@ FD-B8 is a read-only projection. No write path exists. `CONCURRENCY_NOT_REQUIRED
 
 * **Positive:** Establishes a clear, governance-backed boundary that tells Front Desk operators exactly why checkout cannot proceed, without fabricating readiness.
 * **Positive:** Identifies all missing authoritative sources explicitly, guiding future PMS Guest Ledger, PMS Cashiering, General Cashier, Accounting / AR, Accounting, Business Date, and Night Audit package implementation.
-* **Negative:** FD-B11 still cannot execute checkout because Night Audit close-lock evidence is unavailable, checkout execution is not implemented, and `can_execute` remains explicitly false. This is correct behavior because it prevents premature checkout.
+* **Negative:** Front Desk still cannot execute checkout because Night Audit close-lock evidence remains unavailable to Front Desk until FD-B12, checkout execution is not implemented, and `can_execute` remains explicitly false. This is correct behavior because it prevents premature checkout.
 * **Tradeoffs:** The projection is intentionally pessimistic. It defers to authoritative domains rather than inventing settlement evidence.

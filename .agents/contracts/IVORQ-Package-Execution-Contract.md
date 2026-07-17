@@ -1,13 +1,14 @@
 # IVORQ Package Execution Contract
 
 Status: APPROVED
-Version: 1.2
+Version: 1.3
 Created: 2026-07-10
 Last amended: 2026-07-17
 
 Amendment note:
   - Version 1.1 was explicitly approved by the IVORQ Owner for ADR-034 activation and controlled Business Date / Night Audit sequencing.
   - Version 1.2 was explicitly approved by the IVORQ Owner for FD-B11 authorization, accepted-baseline synchronization, and baseline-snapshot semantics.
+  - Version 1.3 was explicitly approved by the IVORQ Owner for NA-A1 authorization, FD-B11 accepted-predecessor synchronization, and Night Audit run/active-lock foundation sequencing.
 
 Amendment protocol:
   - Only Owner may approve amendments to this contract.
@@ -67,21 +68,22 @@ Concise source-backed architecture summary — not a full ADR dump.
 - Current baseline counts must always be verified from the canonical regression manifest.
 - This section records the accepted predecessor state at the time a package is authorized.
 - Later merge results must not be inferred before independent merge verification.
-- `ivorq-enterprise-core` accepted predecessor @ `e9f3d4e3938ccc53f4420efeb86f789869e15916`
+- Canonical predecessor: `79455667d37bc6a8ce51f3347435cba8a1c5ac04`
 - ADR-034 merged and accepted.
 - BD-A1 merged and accepted.
+- FD-B11 merged and accepted.
 - GLF-D merged and accepted.
 - FD-B9 merged and accepted.
 - GC-A1 merged and accepted.
 - FD-B10 merged and accepted.
-- Front Desk active baseline: 409 tests / 1702 assertions / 0 failures / 0 errors
+- Front Desk active baseline: 440 tests / 1812 assertions / 0 failures / 0 errors
 - GC-A1: 38 tests / 231 assertions
 - GLF-D: 60 tests / 253 assertions
 - BD-A1: 11 tests / 318 assertions
-- RegressionBaselineManifestTest: 30 tests / 806 assertions
+- RegressionBaselineManifestTest: 30 tests / 813 assertions
 - Complete active runner: 10 active baselines PASS
 - Inventory Reversal inherited debt remains: 8 tests / 72 assertions / 2 accepted errors
-- FD-B11 is the current authorized package and is not accepted until review and merge.
+- NA-A1 is the current authorized package and is not accepted until independent review and merge.
 
 ## 6. Package sequencing model
 
@@ -91,8 +93,8 @@ Packages must run sequentially. One package may depend on earlier package eviden
 
 1. ADR-034 - accepted and merged.
 2. BD-A1 - accepted and merged.
-3. FD-B11 - current authorized package, not accepted until review and merge.
-4. NA-A1 - locked.
+3. FD-B11 - accepted and merged.
+4. NA-A1 - current authorized package.
 5. FD-B12 - locked.
 6. Checkout execution readiness review - locked.
 7. Checkout execution - separately unauthorized.

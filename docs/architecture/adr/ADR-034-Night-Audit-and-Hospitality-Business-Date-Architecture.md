@@ -22,10 +22,16 @@ FD-B11 consumes accepted BD-A1 Property Business Date evidence read-only inside 
 
 Business Date evidence unavailability remains fail-closed through stable source codes. Night Audit close-lock evidence remains unavailable until NA-A1 implements an authoritative source. Checkout execution remains unauthorized and unimplemented in FD-B11, and `can_execute` remains explicitly false. This note describes the FD-B11 pull request scope and must not be read as FD-B11 acceptance before independent review and merge.
 
+## NA-A1 Implementation Note
+
+NA-A1 introduces Property-scoped Night Audit run evidence and one authoritative active close lock per Property. One In Progress Night Audit run is the authoritative close-lock source. Repeated start is idempotent for the current open Property Business Date, and abort creates immutable evidence while releasing the active lock so a later start can create the next attempt.
+
+NA-A1 consumes accepted BD-A1 Property Business Date evidence read-only. It does not close or advance Business Date, does not reopen Business Date, does not evaluate checkpoints, does not mutate foreign domains, and does not perform checkout integration. FD-B12 remains a separate future package before Front Desk consumes Night Audit lock evidence. Checkout execution remains separately unauthorized. This note describes the NA-A1 pull request scope and must not be read as NA-A1 acceptance before independent review and merge.
+
 ## Current Implementation Context
 IVORQ now has accepted PMS Guest Ledger, PMS Cashiering, General Cashier, and Front Desk readiness foundations. Those accepted domains remain the owners of their existing states, source evidence, and controlled outcomes.
 
-BD-A1 is now accepted and canonical as the authoritative Property Business Date runtime foundation. It provides current open Business Date evidence but no close, advancement, reopen, or Night Audit runtime behavior.
+BD-A1 is accepted and canonical as the authoritative Property Business Date runtime foundation. FD-B11 is accepted and canonical as the Front Desk read-only Business Date dependency integration. NA-A1 is the current authorized package and introduces Night Audit run and close-lock foundation behavior only. Business Date close, advancement, and reopen remain unimplemented.
 
 Business Date and Night Audit consume source-owned attestations. ADR-034 does not transfer Folio, payment, cashier, settlement, tax, revenue, GL, AR, Inventory, Front Desk stay, or checkout ownership to Business Date or Night Audit. Future implementation must remain incremental, package-scoped, and source-domain respectful.
 
@@ -79,8 +85,8 @@ Exact implementation details belong to the later BD-A1 delivery package and must
 ## Controlled Program Sequence
 1. ADR-034 activation - accepted and merged.
 2. BD-A1 - authoritative Property Business Date foundation, accepted and canonical.
-3. FD-B11 - Front Desk Business Date read dependency integration, current authorized package and not accepted until review and merge.
-4. NA-A1 - first controlled Night Audit foundation, locked until FD-B11 is accepted and merged.
+3. FD-B11 - Front Desk Business Date read dependency integration, accepted and canonical.
+4. NA-A1 - first controlled Night Audit run and close-lock foundation, current authorized package and not accepted until review and merge.
 5. FD-B12 - Front Desk Night Audit lock/read dependency integration, locked.
 6. Checkout execution readiness review, locked.
 7. checkout execution remains separately unauthorized until a future explicit Owner decision.

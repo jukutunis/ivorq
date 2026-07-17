@@ -71,6 +71,11 @@ class PermissionSeeder extends Seeder
             'business-date.current.view',
             'business-date.initialize',
 
+            // Night Audit — Authoritative Run and Close-Lock Foundation
+            'night-audit.current.view',
+            'night-audit.run.start',
+            'night-audit.run.abort',
+
             // Engineering - Controlled Room Availability
             'engineering.room-availability.view',
             'engineering.room-availability.block',
