@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 420,
-        "assertions": 1766,
+        "tests": 434,
+        "assertions": 1796,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-17",
         "branch": "sprint-fd-b11-business-date-read-integration",
-        "sha": "8300c359f3080f0a26d884d1318707cc4f194367",
-        "note": "FD-B11 Business Date read integration measured at source commit 8300c359f3080f0a26d884d1318707cc4f194367: 53 exact Front Desk classes / 420 tests / 1766 assertions / 0 failures / 0 errors. Dedicated execution-boundary and departure-queue paths require business-date.current.view before BD-A1 source evidence queries, read the authoritative BD-A1 Property Business Date projection only, map known BD-A1 unavailable evidence to BUSINESS_DATE_EVIDENCE_UNAVAILABLE, and preserve FD-B9 Guest Ledger plus FD-B10 General Cashier read-only dependencies. Checkout execution remains can_execute=false; no Front Desk cashier session, guest cash transaction, count, handover, reconciliation, accountability, Guest Ledger, General Cashier, Business Date, Night Audit, folio, settlement, close, advance, reopen, or posting mutation added."
+        "sha": "55625ee8354b007c6551c642552fcbb04f49de4d",
+        "note": "FD-B11 semantic source-contract correction measured at source commit 55625ee8354b007c6551c642552fcbb04f49de4d: 53 exact Front Desk classes / 434 tests / 1796 assertions / 0 failures / 0 errors. Successful BD-A1 source evidence must be BUSINESS_DATE_OPEN, lifecycle Open, read-only, owned by Business Date / Night Audit, source-classified as PROPERTY_BUSINESS_DATE_SOURCE_PROVEN, and carry valid YYYY-MM-DD date, IANA timezone, absolute opened_at/evaluated_at timestamps, SHA-256-shaped source fingerprint, and ULID identifiers. The authorized Front Desk Property must strictly equal the source Property before the Business Date gate is satisfied or evidence is exposed. Known unavailable BD-A1 codes remain normalized to BUSINESS_DATE_EVIDENCE_UNAVAILABLE. Night Audit remains unavailable, checkout execution remains can_execute=false, and the projection remains zero-mutation across Front Desk, Guest Ledger, General Cashier, Business Date, Night Audit, folio, settlement, close, advance, reopen, and posting state."
       },
       "accepted_debt": [],
       "status": "active"
