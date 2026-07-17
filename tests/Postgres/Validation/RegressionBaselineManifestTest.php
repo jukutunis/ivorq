@@ -59,6 +59,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'inventory-reversal-inherited-debt-v1',
             'banking-master-baseline-v2-candidate',
             'business-date-foundation-baseline',
+            'night-audit-run-lock-foundation-baseline',
         ];
 
         $actualIds = array_map(fn($b) => $b->id, $this->manifest->baselines);
@@ -463,12 +464,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'inventory-reversal-inherited-debt-v1',
             'guest-ledger-settlement-readiness-baseline',
             'business-date-foundation-baseline',
+            'night-audit-run-lock-foundation-baseline',
         ];
 
         $this->assertCount(
-            10,
+            11,
             $activeIds,
-            "Must have exactly 10 active baselines. Found: " . implode(', ', $activeIds)
+            "Must have exactly 11 active baselines. Found: " . implode(', ', $activeIds)
         );
 
         foreach ($expectedActiveIds as $id) {
@@ -569,7 +571,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
     {
         $ids = array_map(fn($b) => $b->id, $this->manifest->baselines);
 
-        $expectedCount = 12;
+        $expectedCount = 13;
         $this->assertCount(
             $expectedCount,
             $ids,
@@ -596,6 +598,33 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals('sprint-bd-a1-authoritative-property-business-date-foundation', $baseline->provenance->branch ?? null);
         $this->assertStringContainsString('BD-A1', $baseline->description ?? '');
         $this->assertStringContainsString('timezone evidence', $baseline->description ?? '');
+        $this->assertNotContains('BusinessDateCloseExecutionServiceTest', $baseline->classes);
+    }
+
+    public function test_night_audit_run_lock_foundation_baseline_matches_na_a1_measurement(): void
+    {
+        $baseline = $this->findBaseline('night-audit-run-lock-foundation-baseline');
+        $this->assertNotNull($baseline, 'NA-A1 baseline must exist.');
+        $this->assertEquals('active', $baseline->status);
+        $this->assertSame([
+            'NightAuditRunFoundationTest',
+            'NightAuditRunConcurrencyProofTest',
+            'NightAuditRunMigrationProofTest',
+        ], $baseline->classes);
+        $this->assertEquals(7, $baseline->expected->tests ?? null);
+        $this->assertEquals(298, $baseline->expected->assertions ?? null);
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertSame([], $baseline->accepted_debt ?? null);
+        $this->assertEquals('9fa54d27cfed1cb14bda0280a2c04b4674a34f19', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-na-a1-night-audit-run-lock-foundation', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('NA-A1', $baseline->description ?? '');
+        $this->assertStringContainsString('BD-A1 read-only dependency', $baseline->description ?? '');
+        $this->assertStringContainsString('authorization-first', $baseline->description ?? '');
+        $this->assertStringContainsString('No Business Date close or advancement', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no checkpoint orchestration', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no checkout execution', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero foreign-domain mutation', $baseline->provenance->note ?? '');
         $this->assertNotContains('BusinessDateCloseExecutionServiceTest', $baseline->classes);
     }
 

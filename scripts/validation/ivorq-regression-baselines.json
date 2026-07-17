@@ -274,6 +274,33 @@
       "status": "active"
     },
     {
+      "id": "night-audit-run-lock-foundation-baseline",
+      "description": "NA-A1 Night Audit run-lock foundation PostgreSQL tests covering authoritative Property-scoped run identity, active close-lock projection, BD-A1 read-only dependency, authorization-first behavior, idempotent start, real PostgreSQL concurrency, controlled abort, and immutable evidence. NA-A1 does not activate Business Date close or advancement, checkpoint orchestration, checkout execution, or foreign-domain mutation. All 3 exact PostgreSQL classes pass cleanly as a single batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "NightAuditRunFoundationTest",
+        "NightAuditRunConcurrencyProofTest",
+        "NightAuditRunMigrationProofTest"
+      ],
+      "expected": {
+        "tests": 7,
+        "assertions": 298,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-17",
+        "branch": "sprint-na-a1-night-audit-run-lock-foundation",
+        "sha": "9fa54d27cfed1cb14bda0280a2c04b4674a34f19",
+        "note": "NA-A1 source commit measurement: 3 exact PostgreSQL classes / 7 tests / 298 assertions / 0 failures / 0 errors. Establishes authoritative Property-scoped Night Audit run identity, active close-lock projection, BD-A1 read-only dependency, authorization-first behavior, idempotent start, real PostgreSQL concurrency, controlled abort, and immutable evidence. No Business Date close or advancement, no Business Date reopen, no checkpoint orchestration, no checkout execution, no BusinessDateCloseExecutionService authority, and zero foreign-domain mutation."
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
       "id": "engineering-availability-baseline",
       "description": "Engineering room availability operational tests covering authorization, block lifecycle, Front Desk read boundary, projections, and concurrency (ENG-A1). All 5 test classes pass cleanly as a single batch.",
       "type": "phpunit",
