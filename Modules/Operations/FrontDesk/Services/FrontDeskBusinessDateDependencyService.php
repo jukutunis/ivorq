@@ -147,15 +147,44 @@ class FrontDeskBusinessDateDependencyService
 
     private function isAbsoluteTimestamp(string $value): bool
     {
-        if (preg_match('/\A\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})\z/', $value) !== 1) {
+        $supportedFormats = [
+            '/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\z/' => 'Y-m-d\TH:i:s.u\Z',
+            '/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/' => 'Y-m-d\TH:i:s\Z',
+            '/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}[+-]\d{2}:\d{2}\z/' => 'Y-m-d\TH:i:s.uP',
+            '/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\z/' => DateTimeInterface::ATOM,
+            '/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}[+-]\d{4}\z/' => 'Y-m-d\TH:i:s.uO',
+            '/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}\z/' => 'Y-m-d\TH:i:sO',
+            '/\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}[+-]\d{2}:\d{2}\z/' => 'Y-m-d H:i:s.uP',
+            '/\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\z/' => 'Y-m-d H:i:sP',
+            '/\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}[+-]\d{4}\z/' => 'Y-m-d H:i:s.uO',
+            '/\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{4}\z/' => 'Y-m-d H:i:sO',
+        ];
+
+        foreach ($supportedFormats as $shape => $format) {
+            if (preg_match($shape, $value) !== 1) {
+                continue;
+            }
+
+            return $this->timestampRoundTripsWithoutParserWarnings($value, $format);
+        }
+
+        return false;
+    }
+
+    private function timestampRoundTripsWithoutParserWarnings(string $value, string $format): bool
+    {
+        $timestamp = DateTimeImmutable::createFromFormat('!' . $format, $value);
+        $errors = DateTimeImmutable::getLastErrors();
+
+        if (! $timestamp instanceof DateTimeImmutable) {
             return false;
         }
 
-        $timestamp = DateTimeImmutable::createFromFormat(DateTimeInterface::ATOM, $value)
-            ?: DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s.u\Z', $value)
-            ?: DateTimeImmutable::createFromFormat('Y-m-d H:i:sP', $value);
+        if ($errors !== false && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0)) {
+            return false;
+        }
 
-        return $timestamp instanceof DateTimeImmutable;
+        return $timestamp->format($format) === $value;
     }
 
     /**

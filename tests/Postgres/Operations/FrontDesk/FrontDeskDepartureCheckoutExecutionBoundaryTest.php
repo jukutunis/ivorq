@@ -714,6 +714,29 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         (new FrontDeskBusinessDateDependencyService($source))->project($this->frontDeskActor);
     }
 
+    public function test_valid_canonical_utc_and_leap_day_business_date_timestamps_are_accepted(): void
+    {
+        $validSources = [
+            'canonical utc' => $this->validBusinessDateSourceProjection([
+                'opened_at' => '2026-07-16T23:30:00.000000Z',
+                'evaluated_at' => '2026-07-17T02:00:00.000000Z',
+            ]),
+            'real leap day' => $this->validBusinessDateSourceProjection([
+                'opened_at' => '2028-02-29T00:30:00.000000Z',
+                'evaluated_at' => '2028-02-29T02:00:00.000000Z',
+            ]),
+        ];
+
+        foreach ($validSources as $case => $projection) {
+            $source = $this->fakeBusinessDateSource($projection);
+            $result = (new FrontDeskBusinessDateDependencyService($source))->project($this->frontDeskActor);
+
+            $this->assertSame('BUSINESS_DATE_OPEN', $result['status'], $case);
+            $this->assertSame($projection['opened_at'], $result['opened_at'], $case);
+            $this->assertSame($projection['evaluated_at'], $result['evaluated_at'], $case);
+        }
+    }
+
     /**
      * @return array<string, array{0: string, 1: array<string, mixed>}>
      */
@@ -729,6 +752,11 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             'invalid timezone' => ['invalid timezone', ['property_timezone' => 'Not/A_Timezone']],
             'invalid opened at' => ['invalid opened at', ['opened_at' => 'not-a-timestamp']],
             'relative evaluated at' => ['relative evaluated at', ['evaluated_at' => 'tomorrow']],
+            'impossible opened at calendar date' => ['impossible opened at calendar date', ['opened_at' => '2026-02-30T23:30:00.000000Z']],
+            'impossible evaluated at calendar date' => ['impossible evaluated at calendar date', ['evaluated_at' => '2026-02-30T02:00:00.000000Z']],
+            'impossible opened at hour' => ['impossible opened at hour', ['opened_at' => '2026-07-17T25:30:00.000000Z']],
+            'impossible evaluated at minute' => ['impossible evaluated at minute', ['evaluated_at' => '2026-07-17T02:60:00.000000Z']],
+            'impossible opened at second' => ['impossible opened at second', ['opened_at' => '2026-07-17T02:00:60.000000Z']],
             'malformed sha256 fingerprint' => ['malformed sha256 fingerprint', ['source_fingerprint' => 'not-sha-256']],
             'malformed property business date id' => ['malformed property business date id', ['property_business_date_id' => 'pbd']],
             'malformed property id' => ['malformed property id', ['property_id' => 'property']],
