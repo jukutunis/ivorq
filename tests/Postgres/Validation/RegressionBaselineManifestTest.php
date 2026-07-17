@@ -232,13 +232,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals('active', $baseline->status ?? null);
         $this->assertCount(53, $baseline->classes, 'Front Desk baseline must keep exactly 53 classes.');
         $this->assertEquals('FrontDeskDepartureCheckoutExecutionBoundaryTest', $baseline->classes[count($baseline->classes) - 1]);
-        $this->assertEquals(434, $baseline->expected->tests ?? null);
-        $this->assertEquals(1796, $baseline->expected->assertions ?? null);
+        $this->assertEquals(440, $baseline->expected->tests ?? null);
+        $this->assertEquals(1812, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '55625ee8354b007c6551c642552fcbb04f49de4d',
+            '57439a840aad3081b17cba398f6f2562e136dd47',
             $baseline->provenance->sha ?? null
         );
         $this->assertEquals(
@@ -248,6 +248,9 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('FD-B11', $baseline->description ?? '');
         $this->assertStringContainsString('BD-A1', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('lifecycle Open', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('parser warnings/errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('impossible calendar dates/times', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('canonical BD-A1 UTC timestamps', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('authorized Front Desk Property', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
     }

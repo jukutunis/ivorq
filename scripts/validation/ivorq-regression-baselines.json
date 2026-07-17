@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 434,
-        "assertions": 1796,
+        "tests": 440,
+        "assertions": 1812,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-17",
         "branch": "sprint-fd-b11-business-date-read-integration",
-        "sha": "55625ee8354b007c6551c642552fcbb04f49de4d",
-        "note": "FD-B11 semantic source-contract correction measured at source commit 55625ee8354b007c6551c642552fcbb04f49de4d: 53 exact Front Desk classes / 434 tests / 1796 assertions / 0 failures / 0 errors. Successful BD-A1 source evidence must be BUSINESS_DATE_OPEN, lifecycle Open, read-only, owned by Business Date / Night Audit, source-classified as PROPERTY_BUSINESS_DATE_SOURCE_PROVEN, and carry valid YYYY-MM-DD date, IANA timezone, absolute opened_at/evaluated_at timestamps, SHA-256-shaped source fingerprint, and ULID identifiers. The authorized Front Desk Property must strictly equal the source Property before the Business Date gate is satisfied or evidence is exposed. Known unavailable BD-A1 codes remain normalized to BUSINESS_DATE_EVIDENCE_UNAVAILABLE. Night Audit remains unavailable, checkout execution remains can_execute=false, and the projection remains zero-mutation across Front Desk, Guest Ledger, General Cashier, Business Date, Night Audit, folio, settlement, close, advance, reopen, and posting state."
+        "sha": "57439a840aad3081b17cba398f6f2562e136dd47",
+        "note": "FD-B11 timestamp validation correction measured at source commit 57439a840aad3081b17cba398f6f2562e136dd47: 53 exact Front Desk classes / 440 tests / 1812 assertions / 0 failures / 0 errors. Timestamp parser warnings/errors are rejected, impossible calendar dates/times cannot be normalized, and valid canonical BD-A1 UTC timestamps remain accepted, including leap-day source evidence. All previous FD-B11 semantic invariants remain intact: successful BD-A1 source evidence must be BUSINESS_DATE_OPEN, lifecycle Open, read-only, owned by Business Date / Night Audit, source-classified as PROPERTY_BUSINESS_DATE_SOURCE_PROVEN, and carry valid YYYY-MM-DD date, IANA timezone, absolute opened_at/evaluated_at timestamps, SHA-256-shaped source fingerprint, and ULID identifiers. The authorized Front Desk Property must strictly equal the source Property before the Business Date gate is satisfied or evidence is exposed. Known unavailable BD-A1 codes remain normalized to BUSINESS_DATE_EVIDENCE_UNAVAILABLE. Night Audit remains unavailable, checkout execution remains can_execute=false, and the projection remains zero-mutation across Front Desk, Guest Ledger, General Cashier, Business Date, Night Audit, folio, settlement, close, advance, reopen, and posting state."
       },
       "accepted_debt": [],
       "status": "active"
