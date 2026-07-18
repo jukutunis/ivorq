@@ -5,14 +5,22 @@
 * **ADR Number:** ADR-089
 * **ADR Title:** Atomic Hospitality Checkout Execution Orchestration and Attestation Boundary
 * **Date:** 2026-07-19
-* **Status:** Proposed
+* **Status:** Approved
 * **Related ADRs:** ADR-001, ADR-002, ADR-004, ADR-029, ADR-034, ADR-040, ADR-066, ADR-067, ADR-084, ADR-085, ADR-086, ADR-087, ADR-088
 * **Accepted predecessor:** FD-B13 Checkout Execution Readiness Review at `fbb289abf4bbfeb2f3ae801e05e98619a61f7814`
-* **Runtime implementation:** Not authorized
+* **Runtime implementation:** NA-A2 prerequisite slice under implementation; checkout execution remains unauthorized
 
 ## Status
 
-Proposed
+Approved
+
+Accepted and fast-forward merged at:
+
+```text
+1682dec0fb7f654e77888a476b4ec55a1507610b
+```
+
+NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. Financial, cashier, Front Desk terminal evidence, Housekeeping handoff, confirmation, permission, and checkout command packages remain unimplemented. NA-A2 is not accepted until independent review and canonical merge.
 
 ## Context
 
@@ -101,7 +109,7 @@ SINGLE_POSTGRESQL_TRANSACTION_WITH_OWNER_DOMAIN_PARTICIPATING_ATTESTATION_PORTS
 
 Future checkout execution must run as one approved Front Desk-owned orchestration transaction on the same PostgreSQL connection. Front Desk may call owner-domain participating attestation ports inside that transaction, but those calls do not transfer lifecycle ownership. Readiness projections remain display/review evidence; execution-time participating attestations are transaction-bound evidence while authoritative locks remain held.
 
-This ADR is governance only. It does not authorize runtime implementation, migrations, routes, permissions, services, ports, jobs, events, tests, baseline restamps, or enum changes.
+This ADR is approved architecture. Approval permits separately authorized prerequisite packages to implement bounded owner-domain participation. It does not authorize checkout execution, migrations outside an approved package, routes, permissions, jobs, events, or enum changes. NA-A2 is authorized only for shared Property / Business Date operational locking and Night Audit checkout concurrency participation.
 
 ## Ownership Matrix
 
@@ -154,6 +162,8 @@ High-level global lock order:
 10. Transactional handoff/outbox record.
 
 The global order controls cross-domain acquisition. Owner domains retain their internal lock order after the orchestrator reaches that owner-domain step. Immutable evidence reads may use source identity verification without row locks when source immutability is PostgreSQL-proven; mutable source rows that can affect terminal readiness must use `FOR UPDATE`. A service must not acquire an earlier global lock after it has acquired a later global lock.
+
+NA-A2 implements only steps 1, 2, and 5. Future Front Desk checkout orchestration must explicitly acquire its approved Front Desk stay and checkout identity locks between the shared Property / Business Date locks and the Night Audit active-run scope. No convenience method may jump directly from Business Date to Night Audit for future checkout.
 
 PMS-owned financial locks remain held while General Cashier validates its owner-domain obligations. General Cashier consumes PMS attestation references after the PMS lock step and must not reacquire earlier PMS locks after the General Cashier step. This preserves PMS Cashiering ownership, prevents General Cashier from becoming a second source of truth for guest payment facts, and avoids lock inversion.
 

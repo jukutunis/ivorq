@@ -1,7 +1,7 @@
 # IVORQ Package Execution Contract
 
 Status: APPROVED
-Version: 1.6
+Version: 1.7
 Created: 2026-07-10
 Last amended: 2026-07-19
 
@@ -12,6 +12,7 @@ Amendment note:
   - Version 1.4 was explicitly approved by the IVORQ Owner for FD-B12 authorization, NA-A1 accepted-predecessor synchronization, and Front Desk authoritative Night Audit close-lock read integration.
   - Version 1.5 was explicitly approved by the IVORQ Owner for FD-B12 accepted-predecessor synchronization, FD-B13 Checkout Execution Readiness Review authorization, command-contract freeze review, and continued prohibition on checkout execution.
   - Version 1.6 was explicitly approved by the IVORQ Owner for FD-B13 accepted-predecessor synchronization, ADR-089 architecture package authorization, atomic checkout orchestration decision, owner-domain attestation participation, shared Business Date / Night Audit lock coordination, and continued prohibition on runtime checkout implementation.
+  - Version 1.7 is explicitly Owner-authorized for ADR-089 accepted-predecessor synchronization, ADR-089 approval status synchronization, NA-A2 runtime authorization, shared Property / Business Date operational locking, Night Audit checkout transaction participation, and continued prohibition on checkout execution.
 
 Amendment protocol:
   - Only Owner may approve amendments to this contract.
@@ -71,7 +72,7 @@ Concise source-backed architecture summary — not a full ADR dump.
 - Current baseline counts must always be verified from the canonical regression manifest.
 - This section records the accepted predecessor state at the time a package is authorized.
 - Later merge results must not be inferred before independent merge verification.
-- Canonical predecessor: `fbb289abf4bbfeb2f3ae801e05e98619a61f7814`
+- Canonical predecessor: `1682dec0fb7f654e77888a476b4ec55a1507610b`
 - ADR-034 merged and accepted.
 - BD-A1 merged and accepted.
 - FD-B11 merged and accepted.
@@ -92,7 +93,12 @@ Concise source-backed architecture summary — not a full ADR dump.
 - RegressionBaselineManifestTest: 31 tests / 883 assertions
 - Complete active runner: 11 active baselines PASS
 - Inventory Reversal inherited debt remains: 8 tests / 72 assertions / 2 accepted errors
-- ADR-089 Atomic Hospitality Checkout Execution Orchestration and Attestation Boundary is the current authorized package and is architecture/governance only.
+- ADR-089 accepted and merged.
+- ADR-089 architecture status: Approved.
+- NA-A2 current authorized package.
+- NA-A2 does not authorize checkout execution.
+- Full access does not bypass later packages.
+- `can_execute=false` remains binding.
 
 ## 6. Package sequencing model
 
@@ -100,17 +106,16 @@ Packages must run sequentially. One package may depend on earlier package eviden
 
 ### Current controlled sequence
 
-1. ADR-034 - accepted and merged.
-2. BD-A1 - accepted and merged.
-3. FD-B11 - accepted and merged.
-4. NA-A1 - accepted and merged.
-5. FD-B12 - accepted and merged.
-6. FD-B13 - accepted and merged.
-7. ADR-089 atomic checkout orchestration architecture - current authorized package.
-8. Runtime prerequisite packages - locked.
-9. Checkout execution command - locked and separately unauthorized.
+1. ADR-089 - accepted, Approved, and merged.
+2. NA-A2 shared transaction and Night Audit concurrency foundation - current.
+3. PMS Guest Ledger terminal financial attestation - locked.
+4. General Cashier terminal obligation attestation - locked.
+5. Front Desk terminal state and immutable checkout evidence - locked.
+6. Transactional Housekeeping handoff/outbox - locked.
+7. Checkout sensitive confirmation and execute permission - locked.
+8. Final checkout command and interaction layer - locked.
 
-Only the next package may start after its predecessor is reviewed, accepted, and merged into the canonical branch. BD-A1 is accepted as the authoritative Property Business Date foundation; NA-A1 is accepted as the authoritative Night Audit run and active close-lock foundation. FD-B12 consumes NA-A1 read-only inside Front Desk, but checkout execution remains unauthorized. FD-B13 is accepted and records `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES` and `NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION`. ADR-089 is architecture/governance only, creates no runtime checkout authority, and does not authorize runtime implementation. No prerequisite runtime package may start until ADR-089 is independently reviewed, Owner-accepted, and merged. A favorable ADR-089 review does not itself authorize checkout execution. Checkout execution requires a later Owner-approved package; `can_execute=false` remains the canonical runtime behavior until that separately authorized package changes it. No AI agent may interpret full access as permission to skip package sequencing. Business Date and Night Audit must never absorb source-domain ownership. Package implementation remains sequential.
+Only the next package may start after its predecessor is reviewed, accepted, and merged into the canonical branch. BD-A1 is accepted as the authoritative Property Business Date foundation; NA-A1 is accepted as the authoritative Night Audit run and active close-lock foundation. FD-B12 consumes NA-A1 read-only inside Front Desk, but checkout execution remains unauthorized. FD-B13 is accepted and records `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES` and `NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION`. ADR-089 is accepted, Approved, and merged at `1682dec0fb7f654e77888a476b4ec55a1507610b`. NA-A2 is the current runtime prerequisite package and is limited to shared Property / Business Date operational locking plus Night Audit checkout transaction participation. NA-A2 does not authorize checkout execution. Checkout execution requires later Owner-approved packages; `can_execute=false` remains the canonical runtime behavior until that separately authorized package changes it. No AI agent may interpret full access as permission to skip package sequencing. Business Date and Night Audit must never absorb source-domain ownership. Package implementation remains sequential.
 
 ### A. Domain-owned package
 

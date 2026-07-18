@@ -36,7 +36,7 @@ FD-B12 consumes accepted NA-A1 Night Audit close-lock evidence read-only inside 
 
 ## ADR-089 Synchronization Note
 
-ADR-089 is a Proposed architecture/governance package and does not transfer Business Date or Night Audit ownership to Front Desk. Future checkout execution and Night Audit start must share compatible Property and Business Date lock ordering so Night Audit cannot become active between checkout's final close-lock validation and checkout commit. Business Date close, advance, and reopen remain unauthorized. Night Audit checkpoints remain unauthorized.
+ADR-089 is Approved and does not transfer Business Date or Night Audit ownership to Front Desk. NA-A2 is the current runtime package. It introduces shared Property and Business Date operational locking as a serialization primitive only; this is not an ownership transfer. Business Date and Night Audit ownership remains unchanged. NA-A2 does not authorize close, advance, reopen, checkpoints, or checkout execution. Future checkout execution and Night Audit start must share compatible Property and Business Date lock ordering so Night Audit cannot become active between checkout's final close-lock validation and checkout commit.
 
 ## Current Implementation Context
 IVORQ now has accepted PMS Guest Ledger, PMS Cashiering, General Cashier, and Front Desk readiness foundations. Those accepted domains remain the owners of their existing states, source evidence, and controlled outcomes.
