@@ -5,8 +5,8 @@ namespace Modules\Operations\NightAudit\Services;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
-use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
-use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService;
+use Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\NightAudit\Enums\NightAuditRunStatusEnum;
 use Modules\Operations\NightAudit\Models\NightAuditRun;
@@ -22,6 +22,7 @@ class NightAuditRunStartService
     public function __construct(
         private readonly NightAuditAuthorizationService $authorization,
         private readonly NightAuditBusinessDateDependencyService $businessDateDependency,
+        private readonly PropertyBusinessDateOperationalLockService $operationalLock,
     ) {}
 
     public function start(User $actor): NightAuditRun
@@ -35,32 +36,22 @@ class NightAuditRunStartService
             $this->assertSameSourceIdentity($preLockEvidence, $insideEvidence);
             $this->assertEvidenceProperty($insideEvidence, $authorizedProperty->id);
 
-            $lockedProperty = DB::table('properties')
-                ->where('id', $authorizedProperty->id)
-                ->lockForUpdate()
-                ->first();
-
-            if (! $lockedProperty) {
-                throw new AuthorizationException(NightAuditAuthorizationService::FAILURE_MESSAGE);
-            }
+            $lockContext = $this->acquireOperationalLock(
+                $actor,
+                (string) $authorizedProperty->company_id,
+                (string) $authorizedProperty->id,
+                $insideEvidence
+            );
 
             $postLockProperty = $this->authorization->authorizeStart($actor);
             if ((string) $postLockProperty->id !== (string) $authorizedProperty->id
-                || ! $this->isTrue($lockedProperty->is_active)
-                || (string) $lockedProperty->company_id !== (string) $postLockProperty->company_id) {
+                || (string) $postLockProperty->company_id !== (string) $authorizedProperty->company_id) {
                 throw new AuthorizationException(NightAuditAuthorizationService::FAILURE_MESSAGE);
             }
-
-            $businessDate = PropertyBusinessDate::withoutGlobalScopes()
-                ->whereKey($insideEvidence['property_business_date_id'])
-                ->where('property_id', $postLockProperty->id)
-                ->lockForUpdate()
-                ->first();
 
             $finalEvidence = $this->currentBusinessDateOrFail($actor);
             $this->assertSameSourceIdentity($insideEvidence, $finalEvidence);
             $this->assertEvidenceProperty($finalEvidence, $postLockProperty->id);
-            $this->assertLockedBusinessDate($businessDate, $finalEvidence);
 
             $activeRuns = NightAuditRun::withoutGlobalScopes()
                 ->where('property_id', $postLockProperty->id)
@@ -80,12 +71,12 @@ class NightAuditRunStartService
             }
 
             $attemptNumber = ((int) NightAuditRun::withoutGlobalScopes()
-                ->where('property_business_date_id', $businessDate->id)
+                ->where('property_business_date_id', $lockContext->property_business_date_id)
                 ->max('attempt_number')) + 1;
 
             return NightAuditRun::create([
                 'property_id' => $postLockProperty->id,
-                'property_business_date_id' => $businessDate->id,
+                'property_business_date_id' => $lockContext->property_business_date_id,
                 'business_date_snapshot' => $finalEvidence['business_date'],
                 'property_timezone_snapshot' => $finalEvidence['property_timezone'],
                 'attempt_number' => $attemptNumber,
@@ -96,6 +87,25 @@ class NightAuditRunStartService
                 'updated_by' => $actor->id,
             ]);
         }, 1);
+    }
+
+    /**
+     * @param array<string, mixed> $evidence
+     */
+    private function acquireOperationalLock(User $actor, string $companyId, string $propertyId, array $evidence): PropertyBusinessDateOperationalLockContext
+    {
+        try {
+            return $this->operationalLock->acquire($companyId, $propertyId, $evidence);
+        } catch (DomainException|RuntimeException $exception) {
+            if ($exception->getMessage() !== PropertyBusinessDateOperationalLockService::ERROR_CONTEXT_CHANGED
+                && $exception->getMessage() !== PropertyBusinessDateOperationalLockService::ERROR_PROPERTY_LOCK_UNAVAILABLE
+                && $exception->getMessage() !== PropertyBusinessDateOperationalLockService::ERROR_BUSINESS_DATE_LOCK_UNAVAILABLE) {
+                throw $exception;
+            }
+
+            $this->authorization->authorizeStart($actor);
+            throw new DomainException(self::ERROR_INVALID_BUSINESS_DATE, 0, $exception);
+        }
     }
 
     /**
@@ -139,26 +149,4 @@ class NightAuditRunStartService
         }
     }
 
-    /**
-     * @param array<string, mixed> $evidence
-     */
-    private function assertLockedBusinessDate(?PropertyBusinessDate $businessDate, array $evidence): void
-    {
-        if (! $businessDate
-            || (string) $businessDate->id !== (string) $evidence['property_business_date_id']
-            || (string) $businessDate->property_id !== (string) $evidence['property_id']
-            || $businessDate->business_date?->format('Y-m-d') !== (string) $evidence['business_date']
-            || (string) $businessDate->timezone_snapshot !== (string) $evidence['property_timezone']
-            || $businessDate->status !== PropertyBusinessDateStatusEnum::Open
-            || $businessDate->is_open !== true
-            || (string) $businessDate->opened_by !== (string) $evidence['opened_by']
-            || $businessDate->opened_at?->utc()->toISOString() !== (string) $evidence['opened_at']) {
-            throw new DomainException(self::ERROR_INVALID_BUSINESS_DATE);
-        }
-    }
-
-    private function isTrue(mixed $value): bool
-    {
-        return $value === true || $value === 1 || $value === '1' || $value === 't' || $value === 'true';
-    }
 }
