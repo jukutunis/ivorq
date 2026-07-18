@@ -233,13 +233,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals('active', $baseline->status ?? null);
         $this->assertCount(53, $baseline->classes, 'Front Desk baseline must keep exactly 53 classes.');
         $this->assertEquals('FrontDeskDepartureCheckoutExecutionBoundaryTest', $baseline->classes[count($baseline->classes) - 1]);
-        $this->assertEquals(465, $baseline->expected->tests ?? null);
-        $this->assertEquals(1927, $baseline->expected->assertions ?? null);
+        $this->assertEquals(483, $baseline->expected->tests ?? null);
+        $this->assertEquals(1983, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '69a779a1e0ed5a501a569dd2dc58e48a5dc61f55',
+            '359cdf01e044c469771dd4663cb225a19ab219a1',
             $baseline->provenance->sha ?? null
         );
         $this->assertEquals(
@@ -248,12 +248,20 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
         $this->assertStringContainsString('FD-B12', $baseline->description ?? '');
         $this->assertStringContainsString('FD-B11', $baseline->description ?? '');
+        $this->assertStringContainsString('Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2)', $baseline->description ?? '');
         $this->assertStringContainsString('NA-A1', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('complete accepted NA-A1 source-key presence', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Missing keys are not equivalent to explicit null values', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('strict positive integer attempt_number', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Gate 7 exposes the exact whitelist', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('NIGHT_AUDIT_LOCK_CLEAR', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('NIGHT_AUDIT_CLOSE_LOCK_ACTIVE', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Queue rows expose only summarized Night Audit lock evidence', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Queue minimization remains unchanged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('authorization-first behavior remains unchanged', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero-mutation', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No checkout execution, Night Audit command, or Business Date command is activated', $baseline->provenance->note ?? '');
     }
 
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void
