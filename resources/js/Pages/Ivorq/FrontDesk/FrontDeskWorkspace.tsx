@@ -328,6 +328,21 @@ type PropertyBusinessDateSummary = {
   source_fingerprint: string | null;
 };
 
+type NightAuditCloseLockSummary = {
+  status: string;
+  source_status: string;
+  source_classification: string;
+  close_lock_active: boolean | null;
+  business_date: string | null;
+  property_timezone: string | null;
+  attempt_number: number | null;
+  run_status: string | null;
+  started_at: string | null;
+  evidence_unavailable_codes: string[];
+  evaluated_at: string;
+  source_fingerprint: string | null;
+};
+
 type CheckoutExecutionBoundarySummary = {
   execution_boundary_status: string;
   can_execute: boolean;
@@ -338,9 +353,11 @@ type CheckoutExecutionBoundarySummary = {
   financial_settlement_marker: string;
   cashier_obligation_marker: string;
   business_date_marker: string;
+  night_audit_lock_marker: string;
   guest_ledger_settlement_readiness: GuestLedgerSettlementReadinessSummary;
   general_cashier_checkout_obligation: GeneralCashierCheckoutObligationSummary;
   property_business_date: PropertyBusinessDateSummary;
+  night_audit_close_lock: NightAuditCloseLockSummary;
 } | null;
 
 type AllowedCheckoutFinalReviewStatus = {
@@ -387,6 +404,7 @@ type DepartureRow = {
   financial_marker: string;
   cashier_marker: string;
   business_date_marker: string;
+  night_audit_lock_marker: string;
   evaluated_at: string;
 };
 
@@ -411,6 +429,7 @@ type DepartureWorkspace = {
   financial_marker: string;
   cashier_marker: string;
   business_date_marker: string;
+  night_audit_lock_marker: string;
 };
 
 type Props = {
@@ -473,6 +492,7 @@ const emptyDepartureWorkspace: DepartureWorkspace = {
   financial_marker: 'Financial settlement: Not evaluated in Front Desk Package B2.',
   cashier_marker: 'Cashier obligation readiness is available when authorized.',
   business_date_marker: 'Business Date evidence is available from BD-A1 when authorized.',
+  night_audit_lock_marker: 'Night Audit close-lock evidence is available from NA-A1 when authorized.',
 };
 
 const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWorkspace, inHouseWorkspace = emptyInHouseWorkspace, departureWorkspace = emptyDepartureWorkspace }: Props) => {
@@ -541,10 +561,16 @@ const FrontDeskWorkspace = ({ activeTab = 'arrivals', arrivalWorkspace = emptyWo
             <div className="filter-hint">{(activeTab === 'in_house' ? inHouseWorkspace.financeMarker : activeTab === 'departures' ? departureWorkspace.financial_marker : arrivalWorkspace.financeMarker).replace('Financial settlement: ', '')}</div>
           </div>
           {activeTab === 'departures' ? (
-            <div className="filter-group">
-              <label className="filter-label">Business Date</label>
-              <div className="filter-hint">{departureWorkspace.business_date_marker}</div>
-            </div>
+            <>
+              <div className="filter-group">
+                <label className="filter-label">Business Date</label>
+                <div className="filter-hint">{departureWorkspace.business_date_marker}</div>
+              </div>
+              <div className="filter-group">
+                <label className="filter-label">Night Audit</label>
+                <div className="filter-hint">{departureWorkspace.night_audit_lock_marker}</div>
+              </div>
+            </>
           ) : null}
         </QuickFilterPanel>
 
@@ -1433,7 +1459,7 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
           Execution boundary evidence could not be resolved for this stay.
         </div>
         <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
-          Checkout execution is not performed in FD-B11.
+          Checkout execution is not performed in FD-B12.
         </div>
       </div>
     );
@@ -1446,6 +1472,7 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
   const guestLedger = boundary.guest_ledger_settlement_readiness;
   const cashierObligation = boundary.general_cashier_checkout_obligation;
   const businessDate = boundary.property_business_date;
+  const nightAuditLock = boundary.night_audit_close_lock;
   const settlementStatus: import('../../../Components/Ivorq/primitives/StatusBadge').BadgeStatus =
     guestLedger.status === 'GUEST_LEDGER_SETTLEMENT_READY' ? 'success'
     : guestLedger.status === 'GUEST_LEDGER_SETTLEMENT_BLOCKED' ? 'warning'
@@ -1459,6 +1486,10 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
   const businessDateStatus: import('../../../Components/Ivorq/primitives/StatusBadge').BadgeStatus =
     businessDate.status === 'BUSINESS_DATE_OPEN' ? 'success'
     : businessDate.status === 'BUSINESS_DATE_EVIDENCE_UNAVAILABLE' ? 'warning'
+    : 'neutral';
+  const nightAuditStatus: import('../../../Components/Ivorq/primitives/StatusBadge').BadgeStatus =
+    nightAuditLock.status === 'NIGHT_AUDIT_LOCK_CLEAR' ? 'success'
+    : nightAuditLock.status === 'NIGHT_AUDIT_LOCK_ACTIVE' ? 'warning'
     : 'neutral';
 
   return (
@@ -1477,7 +1508,7 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
 
       {boundary.can_execute ? (
         <div style={{ marginBottom: '6px', color: 'var(--text-success)', fontWeight: 500 }}>
-          Authoritative read gates are satisfied. Checkout execution remains unavailable in FD-B11.
+          Authoritative read gates are satisfied. Checkout execution remains unavailable in FD-B12.
         </div>
       ) : (
         <>
@@ -1621,6 +1652,39 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
         ) : null}
       </div>
 
+      <div style={{
+        marginTop: '10px',
+        padding: '8px 10px',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: '6px',
+        background: 'var(--surface-base)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Night Audit Close Lock</span>
+          <StatusBadge status={nightAuditStatus} style={{ fontSize: '10px', padding: '2px 7px' }}>
+            {nightAuditLock.status.replace(/_/g, ' ')}
+          </StatusBadge>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+          <span>Close lock: {nightAuditLock.close_lock_active === true ? 'Active' : nightAuditLock.close_lock_active === false ? 'Clear' : 'Not proven'}</span>
+          <span>Run status: {nightAuditLock.run_status ?? 'Not proven'}</span>
+          <span>Business date: {nightAuditLock.business_date ?? 'Not proven'}</span>
+          <span>Timezone: {nightAuditLock.property_timezone ?? 'Not proven'}</span>
+          <span>Attempt: {nightAuditLock.attempt_number ?? 'Not proven'}</span>
+          <span>Started: {nightAuditLock.started_at ?? 'Not proven'}</span>
+          <span>Evaluated: {nightAuditLock.evaluated_at}</span>
+          <span>Fingerprint: {nightAuditLock.source_fingerprint ?? 'Not proven'}</span>
+        </div>
+        {nightAuditLock.evidence_unavailable_codes.length > 0 ? (
+          <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-dimmed)' }}>
+            Evidence unavailable: {nightAuditLock.evidence_unavailable_codes.join(', ')}
+          </div>
+        ) : null}
+        <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+          {boundary.night_audit_lock_marker}
+        </div>
+      </div>
+
       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}>
         <div style={{
           padding: '4px 10px',
@@ -1647,6 +1711,9 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
       </div>
       <div style={{ fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
         {boundary.business_date_marker}
+      </div>
+      <div style={{ fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
+        {boundary.night_audit_lock_marker}
       </div>
     </div>
   );

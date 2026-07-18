@@ -30,6 +30,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     public const BLOCKER_CASHIER_OBLIGATION_REVIEW_REQUIRED = 'CASHIER_OBLIGATION_REVIEW_REQUIRED';
     public const BLOCKER_BUSINESS_DATE_UNAVAILABLE = 'BUSINESS_DATE_EVIDENCE_UNAVAILABLE';
     public const BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE = 'NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE';
+    public const BLOCKER_NIGHT_AUDIT_CLOSE_LOCK_ACTIVE = 'NIGHT_AUDIT_CLOSE_LOCK_ACTIVE';
     public const BLOCKER_FD_B7_NOT_READY = 'FD_B7_NOT_READY';
     public const BLOCKER_FD_B7_EVIDENCE_MISSING = 'FD_B7_EVIDENCE_MISSING';
     public const BLOCKER_STAY_NOT_IN_HOUSE = 'STAY_NOT_IN_HOUSE';
@@ -37,12 +38,14 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     public const UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS = 'FD_B9_UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS';
     public const UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS = 'FD_B10_UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS';
     public const UNKNOWN_BUSINESS_DATE_STATUS = 'FD_B11_UNKNOWN_BUSINESS_DATE_STATUS';
+    public const UNKNOWN_NIGHT_AUDIT_LOCK_STATUS = 'FD_B12_UNKNOWN_NIGHT_AUDIT_LOCK_STATUS';
     private const AUTHORIZATION_FAILURE_MESSAGE = 'Front Desk checkout execution boundary view is not authorized.';
 
     public function __construct(
         private readonly FrontDeskGuestLedgerSettlementReadinessDependencyService $guestLedgerSettlementReadiness,
         private readonly FrontDeskGeneralCashierCheckoutObligationDependencyService $generalCashierCheckoutObligation,
         private readonly FrontDeskBusinessDateDependencyService $businessDateDependency,
+        private readonly FrontDeskNightAuditLockDependencyService $nightAuditLockDependency,
     ) {}
 
     /**
@@ -206,14 +209,26 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'evidence_unavailable_codes' => $businessDate['evidence_unavailable_codes'],
         ];
 
-        // Gate 7: Night Audit close-lock evidence (MISSING — NA-A1 not implemented)
-        $blockerCodes[] = self::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE;
-        $blockerMessages[] = 'Authoritative Night Audit close-lock evidence is not available. ADR-034 is Approved and BD-A1 exists, but NA-A1 has not been implemented and no authoritative Night Audit close-lock source exists yet.';
+        // Gate 7: Night Audit close-lock evidence (NA-A1 read-only dependency)
+        $nightAuditLock = $this->nightAuditLockDependency->project($actor);
+        $this->assertNightAuditMatchesBoundaryContext($nightAuditLock, $businessDate, $propertyId);
+        $nightAuditGateSatisfied = $this->applyNightAuditLock($nightAuditLock, $blockerCodes, $blockerMessages);
         $authoritativeGates['night_audit_lock'] = [
             'gate' => 'No active Night Audit close lock',
-            'owner' => 'Night Audit (ADR-034)',
-            'satisfied' => false,
-            'detail' => 'ADR-034 is Approved. BD-A1 exists. NA-A1 has not been implemented, so no authoritative Night Audit close-lock source exists yet.',
+            'owner' => 'Business Date / Night Audit',
+            'satisfied' => $nightAuditGateSatisfied,
+            'detail' => $nightAuditGateSatisfied
+                ? 'NA-A1 Night Audit close lock status: NIGHT_AUDIT_LOCK_CLEAR.'
+                : 'NA-A1 Night Audit close lock source status: ' . $nightAuditLock['source_status'] . '.',
+            'status' => $nightAuditLock['status'],
+            'source_status' => $nightAuditLock['source_status'],
+            'close_lock_active' => $nightAuditLock['close_lock_active'],
+            'run_status' => $nightAuditLock['run_status'],
+            'business_date' => $nightAuditLock['business_date'],
+            'property_timezone' => $nightAuditLock['property_timezone'],
+            'evaluated_at' => $nightAuditLock['evaluated_at'],
+            'source_fingerprint' => $nightAuditLock['source_fingerprint'],
+            'evidence_unavailable_codes' => $nightAuditLock['evidence_unavailable_codes'],
         ];
 
         // Gate 8: No existing completed checkout execution (not yet implemented)
@@ -230,7 +245,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         $blockerMessages = $this->sortedUnique($blockerMessages);
         $reviewReasons = $this->sortedUnique($reviewReasons);
 
-        // Determine overall status. FD-B11 never executes checkout.
+        // Determine overall status. FD-B12 never executes checkout.
         $canExecute = false;
         if (empty($blockerCodes)) {
             $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryReady->value;
@@ -256,10 +271,12 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'guest_ledger_settlement_readiness' => $guestLedger,
             'general_cashier_checkout_obligation' => $cashierObligation,
             'property_business_date' => $businessDate,
-            'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B11.',
+            'night_audit_close_lock' => $nightAuditLock,
+            'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B12.',
             'financial_settlement_marker' => 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.',
             'cashier_obligation_marker' => 'Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.',
             'business_date_marker' => 'Business Date evidence is evaluated read-only from the authoritative BD-A1 Property source. Front Desk does not initialize, close, advance, reopen, or mutate Business Date.',
+            'night_audit_lock_marker' => 'Night Audit close-lock evidence is evaluated read-only from the authoritative NA-A1 lock projection. Front Desk does not start, abort, close, advance, reopen, run checkpoints, or execute checkout.',
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -275,6 +292,28 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
 
         if (($businessDate['property_id'] ?? null) !== $propertyId) {
             throw new DomainException(FrontDeskBusinessDateDependencyService::INVALID_PROJECTION);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $nightAuditLock
+     * @param array<string, mixed> $businessDate
+     */
+    private function assertNightAuditMatchesBoundaryContext(array $nightAuditLock, array $businessDate, string $propertyId): void
+    {
+        if (($nightAuditLock['status'] ?? null) === FrontDeskNightAuditLockDependencyService::STATUS_UNAVAILABLE) {
+            return;
+        }
+
+        if (($businessDate['status'] ?? null) !== FrontDeskBusinessDateDependencyService::BUSINESS_DATE_OPEN) {
+            throw new DomainException(FrontDeskNightAuditLockDependencyService::INVALID_PROJECTION);
+        }
+
+        if (($nightAuditLock['property_id'] ?? null) !== $propertyId
+            || ($nightAuditLock['property_business_date_id'] ?? null) !== ($businessDate['property_business_date_id'] ?? null)
+            || ($nightAuditLock['business_date'] ?? null) !== ($businessDate['business_date'] ?? null)
+            || ($nightAuditLock['property_timezone'] ?? null) !== ($businessDate['property_timezone'] ?? null)) {
+            throw new DomainException(FrontDeskNightAuditLockDependencyService::INVALID_PROJECTION);
         }
     }
 
@@ -333,7 +372,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         if (! $this->actorCan($fresh, self::VIEW_PERMISSION)
             || ! $this->actorCan($fresh, FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION)
             || ! $this->actorCan($fresh, FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION)
-            || ! $this->actorCan($fresh, FrontDeskBusinessDateDependencyService::VIEW_PERMISSION)) {
+            || ! $this->actorCan($fresh, FrontDeskBusinessDateDependencyService::VIEW_PERMISSION)
+            || ! $this->actorCan($fresh, FrontDeskNightAuditLockDependencyService::VIEW_PERMISSION)) {
             throw new AuthorizationException(self::AUTHORIZATION_FAILURE_MESSAGE);
         }
 
@@ -366,6 +406,43 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     {
         $blockerCodes[] = self::BLOCKER_BUSINESS_DATE_UNAVAILABLE;
         $blockerMessages[] = 'Authoritative Business Date evidence is unavailable from BD-A1 source status ' . $sourceStatus . '.';
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $nightAuditLock
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     */
+    private function applyNightAuditLock(array $nightAuditLock, array &$blockerCodes, array &$blockerMessages): bool
+    {
+        return match ($nightAuditLock['status']) {
+            FrontDeskNightAuditLockDependencyService::STATUS_CLEAR => true,
+            FrontDeskNightAuditLockDependencyService::STATUS_ACTIVE => $this->appendNightAuditBlocker(
+                $blockerCodes,
+                $blockerMessages,
+                self::BLOCKER_NIGHT_AUDIT_CLOSE_LOCK_ACTIVE,
+                'Night Audit close lock is active for the current Property Business Date.'
+            ),
+            FrontDeskNightAuditLockDependencyService::STATUS_UNAVAILABLE => $this->appendNightAuditBlocker(
+                $blockerCodes,
+                $blockerMessages,
+                self::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE,
+                'Authoritative Night Audit close-lock evidence is unavailable from NA-A1 source status ' . $nightAuditLock['source_status'] . '.'
+            ),
+            default => throw new DomainException(self::UNKNOWN_NIGHT_AUDIT_LOCK_STATUS),
+        };
+    }
+
+    /**
+     * @param string[] $blockerCodes
+     * @param string[] $blockerMessages
+     */
+    private function appendNightAuditBlocker(array &$blockerCodes, array &$blockerMessages, string $code, string $message): bool
+    {
+        $blockerCodes[] = $code;
+        $blockerMessages[] = $message;
 
         return false;
     }

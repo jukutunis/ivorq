@@ -17,8 +17,10 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureQueueProjectionServi
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBoundaryProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskGeneralCashierCheckoutObligationDependencyService;
 use Modules\Operations\FrontDesk\Services\FrontDeskGuestLedgerSettlementReadinessDependencyService;
+use Modules\Operations\FrontDesk\Services\FrontDeskNightAuditLockDependencyService;
 use Modules\Operations\FrontDesk\Services\FrontDeskRoomAssignmentService;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutObligationProjectionService;
+use Modules\Operations\NightAudit\Services\NightAuditAuthorizationService;
 use Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService;
 use Spatie\Permission\PermissionRegistrar;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -480,8 +482,10 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertNull($row['departure_checkout_execution_boundary']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_SUPPRESSED, $row['night_audit_lock_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_CAPABILITY, $queue['financial_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_CAPABILITY, $queue['cashier_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_CAPABILITY, $queue['night_audit_lock_marker']);
     }
 
     public function test_queue_boundary_summary_is_null_when_general_cashier_permission_is_missing_without_cashier_queries(): void
@@ -502,6 +506,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertNull($row['departure_checkout_execution_boundary']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::BUSINESS_DATE_MARKER_SUPPRESSED, $row['business_date_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_SUPPRESSED, $row['night_audit_lock_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_CAPABILITY, $queue['cashier_marker']);
         $this->assertNoCashierSourceQueries($queries);
     }
@@ -525,7 +530,29 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::BUSINESS_DATE_MARKER_SUPPRESSED, $row['business_date_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_SUPPRESSED, $row['night_audit_lock_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::BUSINESS_DATE_MARKER_CAPABILITY, $queue['business_date_marker']);
+        $this->assertNoExecutionBoundarySourceQueries($queries);
+    }
+
+    public function test_queue_boundary_summary_is_null_when_night_audit_permission_is_missing_without_source_queries(): void
+    {
+        [$stay] = $this->checkedInStay('1732');
+        $this->frontDeskActor->revokePermissionTo(NightAuditAuthorizationService::VIEW_PERMISSION);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $queries = [];
+        DB::listen(function ($query) use (&$queries): void {
+            $queries[] = $query->sql;
+        });
+
+        $queue = app(FrontDeskDepartureQueueProjectionService::class)->queue($this->frontDeskActor->fresh());
+        $row = $this->findStayInQueue($queue, $stay->id);
+
+        $this->assertFalse($row['can_view_execution_boundary']);
+        $this->assertNull($row['departure_checkout_execution_boundary']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_SUPPRESSED, $row['night_audit_lock_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_CAPABILITY, $queue['night_audit_lock_marker']);
         $this->assertNoExecutionBoundarySourceQueries($queries);
     }
 
@@ -543,6 +570,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::BUSINESS_DATE_MARKER_SUPPRESSED, $row['business_date_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_SUPPRESSED, $row['night_audit_lock_marker']);
     }
 
     public function test_queue_boundary_summary_is_null_for_actor_auth_mismatch(): void
@@ -554,6 +582,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
             FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION,
             FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION,
             FrontDeskBusinessDateDependencyService::VIEW_PERMISSION,
+            FrontDeskNightAuditLockDependencyService::VIEW_PERMISSION,
         ]);
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
@@ -565,6 +594,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::BUSINESS_DATE_MARKER_SUPPRESSED, $row['business_date_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_SUPPRESSED, $row['night_audit_lock_marker']);
     }
 
     public function test_queue_boundary_summary_is_null_during_parent_transaction(): void
@@ -579,6 +609,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_SUPPRESSED, $row['financial_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_SUPPRESSED, $row['cashier_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::BUSINESS_DATE_MARKER_SUPPRESSED, $row['business_date_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_SUPPRESSED, $row['night_audit_lock_marker']);
     }
 
     public function test_queue_boundary_summary_requires_all_view_permissions_and_omits_full_source_identifiers(): void
@@ -621,10 +652,31 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertArrayNotHasKey('property_business_date_id', $summary['property_business_date']);
         $this->assertArrayNotHasKey('property_id', $summary['property_business_date']);
         $this->assertArrayNotHasKey('opened_by', $summary['property_business_date']);
-        $this->assertSame('Checkout execution is not performed in FD-B11.', $summary['execution_not_performed_marker']);
+        $this->assertArrayHasKey('night_audit_close_lock', $summary);
+        $this->assertArrayHasKey('status', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('source_status', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('source_classification', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('close_lock_active', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('business_date', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('property_timezone', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('attempt_number', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('run_status', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('started_at', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('evidence_unavailable_codes', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('evaluated_at', $summary['night_audit_close_lock']);
+        $this->assertArrayHasKey('source_fingerprint', $summary['night_audit_close_lock']);
+        $this->assertArrayNotHasKey('property_id', $summary['night_audit_close_lock']);
+        $this->assertArrayNotHasKey('property_business_date_id', $summary['night_audit_close_lock']);
+        $this->assertArrayNotHasKey('night_audit_run_id', $summary['night_audit_close_lock']);
+        $this->assertArrayNotHasKey('started_by', $summary['night_audit_close_lock']);
+        $this->assertArrayNotHasKey('owner', $summary['night_audit_close_lock']);
+        $this->assertArrayNotHasKey('read_only', $summary['night_audit_close_lock']);
+        $this->assertArrayNotHasKey('markers', $summary['night_audit_close_lock']);
+        $this->assertSame('Checkout execution is not performed in FD-B12.', $summary['execution_not_performed_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_AUTHORIZED, $row['financial_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_AUTHORIZED, $row['cashier_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::BUSINESS_DATE_MARKER_AUTHORIZED, $row['business_date_marker']);
+        $this->assertSame(FrontDeskDepartureQueueProjectionService::NIGHT_AUDIT_MARKER_AUTHORIZED, $row['night_audit_lock_marker']);
     }
 
     public function test_queue_does_not_hide_authorized_execution_boundary_source_failure(): void
@@ -634,7 +686,8 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $boundary = new class(
             app(FrontDeskGuestLedgerSettlementReadinessDependencyService::class),
             app(FrontDeskGeneralCashierCheckoutObligationDependencyService::class),
-            app(FrontDeskBusinessDateDependencyService::class)
+            app(FrontDeskBusinessDateDependencyService::class),
+            app(FrontDeskNightAuditLockDependencyService::class)
         ) extends FrontDeskDepartureCheckoutExecutionBoundaryProjectionService {
             public function boundary(\Modules\Foundation\User\Models\User $actor, string $frontDeskStayId): array
             {
@@ -699,6 +752,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
             'guest_deposit_reversals',
             'guest_refund_transactions',
             'property_business_dates',
+            'night_audit_runs',
         ];
 
         $sourceQueries = [];
@@ -758,6 +812,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
             'guest_ar_transfer_decisions',
             'cashier_sessions',
             'property_business_dates',
+            'night_audit_runs',
         ];
 
         $domainQueries = [];
@@ -792,6 +847,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
             'guest_ar_transfer_decisions',
             'cashier_sessions',
             'property_business_dates',
+            'night_audit_runs',
         ];
 
         $sourceQueries = [];

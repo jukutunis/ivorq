@@ -49,6 +49,9 @@ class FrontDeskDepartureQueueProjectionService
     public const BUSINESS_DATE_MARKER_AUTHORIZED = 'Business Date evidence is evaluated read-only from the authoritative BD-A1 Property source. Front Desk does not initialize, close, advance, reopen, or mutate Business Date.';
     public const BUSINESS_DATE_MARKER_SUPPRESSED = 'Business Date evidence is not exposed in this queue row.';
     public const BUSINESS_DATE_MARKER_CAPABILITY = 'Business Date evidence is sourced read-only from BD-A1 when authorized.';
+    public const NIGHT_AUDIT_MARKER_AUTHORIZED = 'Night Audit close-lock evidence is evaluated read-only from the authoritative NA-A1 lock projection. Front Desk does not start, abort, close, advance, reopen, run checkpoints, or execute checkout.';
+    public const NIGHT_AUDIT_MARKER_SUPPRESSED = 'Night Audit close-lock evidence is not exposed in this queue row.';
+    public const NIGHT_AUDIT_MARKER_CAPABILITY = 'Night Audit close-lock evidence is sourced read-only from NA-A1 when authorized.';
 
     public function __construct(
         private readonly EngineeringAvailabilityDependencyService $engineeringAvailability,
@@ -112,6 +115,7 @@ class FrontDeskDepartureQueueProjectionService
             'financial_marker' => self::FINANCIAL_MARKER_CAPABILITY,
             'cashier_marker' => self::CASHIER_MARKER_CAPABILITY,
             'business_date_marker' => self::BUSINESS_DATE_MARKER_CAPABILITY,
+            'night_audit_lock_marker' => self::NIGHT_AUDIT_MARKER_CAPABILITY,
         ];
     }
 
@@ -208,6 +212,7 @@ class FrontDeskDepartureQueueProjectionService
             'financial_marker' => $executionBoundarySummary['financial_settlement_marker'] ?? self::FINANCIAL_MARKER_SUPPRESSED,
             'cashier_marker' => $executionBoundarySummary['cashier_obligation_marker'] ?? self::CASHIER_MARKER_SUPPRESSED,
             'business_date_marker' => $executionBoundarySummary['business_date_marker'] ?? self::BUSINESS_DATE_MARKER_SUPPRESSED,
+            'night_audit_lock_marker' => $executionBoundarySummary['night_audit_lock_marker'] ?? self::NIGHT_AUDIT_MARKER_SUPPRESSED,
             'evaluated_at' => now()->toISOString(),
         ];
     }
@@ -747,6 +752,7 @@ class FrontDeskDepartureQueueProjectionService
             'financial_settlement_marker' => $boundary['financial_settlement_marker'],
             'cashier_obligation_marker' => $boundary['cashier_obligation_marker'],
             'business_date_marker' => $boundary['business_date_marker'],
+            'night_audit_lock_marker' => $boundary['night_audit_lock_marker'],
             'guest_ledger_settlement_readiness' => [
                 'status' => $boundary['guest_ledger_settlement_readiness']['status'],
                 'canonical_aggregate_balance' => $boundary['guest_ledger_settlement_readiness']['canonical_aggregate_balance'],
@@ -778,6 +784,20 @@ class FrontDeskDepartureQueueProjectionService
                 'evidence_unavailable_codes' => $boundary['property_business_date']['evidence_unavailable_codes'],
                 'evaluated_at' => $boundary['property_business_date']['evaluated_at'],
                 'source_fingerprint' => $boundary['property_business_date']['source_fingerprint'],
+            ],
+            'night_audit_close_lock' => [
+                'status' => $boundary['night_audit_close_lock']['status'],
+                'source_status' => $boundary['night_audit_close_lock']['source_status'],
+                'source_classification' => $boundary['night_audit_close_lock']['source_classification'],
+                'close_lock_active' => $boundary['night_audit_close_lock']['close_lock_active'],
+                'business_date' => $boundary['night_audit_close_lock']['business_date'],
+                'property_timezone' => $boundary['night_audit_close_lock']['property_timezone'],
+                'attempt_number' => $boundary['night_audit_close_lock']['attempt_number'],
+                'run_status' => $boundary['night_audit_close_lock']['run_status'],
+                'started_at' => $boundary['night_audit_close_lock']['started_at'],
+                'evidence_unavailable_codes' => $boundary['night_audit_close_lock']['evidence_unavailable_codes'],
+                'evaluated_at' => $boundary['night_audit_close_lock']['evaluated_at'],
+                'source_fingerprint' => $boundary['night_audit_close_lock']['source_fingerprint'],
             ],
         ];
     }
@@ -813,7 +833,8 @@ class FrontDeskDepartureQueueProjectionService
             return $fresh->can(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::VIEW_PERMISSION)
                 && $fresh->can(FrontDeskGuestLedgerSettlementReadinessDependencyService::VIEW_PERMISSION)
                 && $fresh->can(FrontDeskGeneralCashierCheckoutObligationDependencyService::VIEW_PERMISSION)
-                && $fresh->can(FrontDeskBusinessDateDependencyService::VIEW_PERMISSION);
+                && $fresh->can(FrontDeskBusinessDateDependencyService::VIEW_PERMISSION)
+                && $fresh->can(FrontDeskNightAuditLockDependencyService::VIEW_PERMISSION);
         } catch (Throwable) {
             return false;
         }

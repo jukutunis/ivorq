@@ -34,6 +34,7 @@ use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutObligationProjectionService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessProjectionService;
+use Modules\Operations\NightAudit\Services\NightAuditAuthorizationService;
 use Modules\Operations\PMS\Enums\GuestDepositLifecycleStatusEnum;
 use Modules\Operations\PMS\Enums\GuestPaymentLifecycleStatusEnum;
 use Modules\Operations\PMS\Models\Guest;
@@ -100,6 +101,7 @@ trait CreatesFrontDeskFdA2Data
             GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
             GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION,
             PropertyBusinessDateAuthorizationService::VIEW_PERMISSION,
+            NightAuditAuthorizationService::VIEW_PERMISSION,
         ]);
 
         $this->frontDeskViewOnlyActor->givePermissionTo([
@@ -278,6 +280,7 @@ trait CreatesFrontDeskFdA2Data
             'guest_ar_transfer_requests',
             'guest_ar_transfer_decisions',
             'cashier_sessions',
+            'night_audit_runs',
             'journal_candidates',
             'journal_candidate_lines',
             'gl_journal_entries',
@@ -323,6 +326,7 @@ trait CreatesFrontDeskFdA2Data
             GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
             GeneralCashierCheckoutObligationProjectionService::VIEW_PERMISSION,
             PropertyBusinessDateAuthorizationService::VIEW_PERMISSION,
+            NightAuditAuthorizationService::VIEW_PERMISSION,
         ];
     }
 
