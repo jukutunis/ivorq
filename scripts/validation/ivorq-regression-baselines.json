@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, FD-B10 read-only General Cashier obligation integration, and FD-B11 read-only authoritative Business Date integration. All 53 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, FD-B10 read-only General Cashier obligation integration, FD-B11 read-only authoritative Business Date integration, and FD-B12 read-only authoritative Night Audit close-lock integration. All 53 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -67,16 +67,16 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest"
       ],
       "expected": {
-        "tests": 440,
-        "assertions": 1812,
+        "tests": 465,
+        "assertions": 1927,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-17",
-        "branch": "sprint-fd-b11-business-date-read-integration",
-        "sha": "57439a840aad3081b17cba398f6f2562e136dd47",
-        "note": "FD-B11 timestamp validation correction measured at source commit 57439a840aad3081b17cba398f6f2562e136dd47: 53 exact Front Desk classes / 440 tests / 1812 assertions / 0 failures / 0 errors. Timestamp parser warnings/errors are rejected, impossible calendar dates/times cannot be normalized, and valid canonical BD-A1 UTC timestamps remain accepted, including leap-day source evidence. All previous FD-B11 semantic invariants remain intact: successful BD-A1 source evidence must be BUSINESS_DATE_OPEN, lifecycle Open, read-only, owned by Business Date / Night Audit, source-classified as PROPERTY_BUSINESS_DATE_SOURCE_PROVEN, and carry valid YYYY-MM-DD date, IANA timezone, absolute opened_at/evaluated_at timestamps, SHA-256-shaped source fingerprint, and ULID identifiers. The authorized Front Desk Property must strictly equal the source Property before the Business Date gate is satisfied or evidence is exposed. Known unavailable BD-A1 codes remain normalized to BUSINESS_DATE_EVIDENCE_UNAVAILABLE. Night Audit remains unavailable, checkout execution remains can_execute=false, and the projection remains zero-mutation across Front Desk, Guest Ledger, General Cashier, Business Date, Night Audit, folio, settlement, close, advance, reopen, and posting state."
+        "measured_at": "2026-07-18",
+        "branch": "sprint-fd-b12-night-audit-lock-read-integration",
+        "sha": "69a779a1e0ed5a501a569dd2dc58e48a5dc61f55",
+        "note": "FD-B12 Night Audit close-lock read integration measured at source commit 69a779a1e0ed5a501a569dd2dc58e48a5dc61f55: 53 exact Front Desk classes / 465 tests / 1927 assertions / 0 failures / 0 errors. FD-B12 adapts accepted NA-A1 Night Audit close-lock evidence read-only into the Front Desk checkout execution boundary and departure queue. Successful NA-A1 source evidence must use projection version NA-A1-NIGHT-AUDIT-LOCK-v1, owner Business Date / Night Audit, read_only=true, proven source classification, strict current Property and Property Business Date context, valid business date, timezone, timestamps, ULID identifiers, and SHA-256-shaped source fingerprint. NIGHT_AUDIT_LOCK_CLEAR satisfies only the Night Audit gate; NIGHT_AUDIT_LOCK_ACTIVE blocks with NIGHT_AUDIT_CLOSE_LOCK_ACTIVE; unavailable source evidence remains fail-closed with NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE and preserves the source unavailable code. Queue rows expose only summarized Night Audit lock evidence when the actor has all required view permissions and omit source identifiers. Checkout execution remains unauthorized, can_execute=false, and the projection remains zero-mutation across Front Desk, Guest Ledger, General Cashier, Business Date, Night Audit, folio, settlement, close, advance, reopen, checkpoints, and posting state."
       },
       "accepted_debt": [],
       "status": "active"

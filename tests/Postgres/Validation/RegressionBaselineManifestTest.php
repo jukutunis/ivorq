@@ -226,33 +226,33 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_fd_b11_measurement(): void
+    public function test_frontdesk_operational_baseline_matches_fd_b12_measurement(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
         $this->assertEquals('active', $baseline->status ?? null);
         $this->assertCount(53, $baseline->classes, 'Front Desk baseline must keep exactly 53 classes.');
         $this->assertEquals('FrontDeskDepartureCheckoutExecutionBoundaryTest', $baseline->classes[count($baseline->classes) - 1]);
-        $this->assertEquals(440, $baseline->expected->tests ?? null);
-        $this->assertEquals(1812, $baseline->expected->assertions ?? null);
+        $this->assertEquals(465, $baseline->expected->tests ?? null);
+        $this->assertEquals(1927, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '57439a840aad3081b17cba398f6f2562e136dd47',
+            '69a779a1e0ed5a501a569dd2dc58e48a5dc61f55',
             $baseline->provenance->sha ?? null
         );
         $this->assertEquals(
-            'sprint-fd-b11-business-date-read-integration',
+            'sprint-fd-b12-night-audit-lock-read-integration',
             $baseline->provenance->branch ?? null
         );
+        $this->assertStringContainsString('FD-B12', $baseline->description ?? '');
         $this->assertStringContainsString('FD-B11', $baseline->description ?? '');
-        $this->assertStringContainsString('BD-A1', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('lifecycle Open', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('parser warnings/errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('impossible calendar dates/times', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('canonical BD-A1 UTC timestamps', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('authorized Front Desk Property', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('NA-A1', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('NIGHT_AUDIT_LOCK_CLEAR', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('NIGHT_AUDIT_CLOSE_LOCK_ACTIVE', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Queue rows expose only summarized Night Audit lock evidence', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
     }
 
