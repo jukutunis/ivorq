@@ -76,7 +76,8 @@ return new class extends Migration
                     RAISE EXCEPTION 'NA_A1_NIGHT_AUDIT_RUN_DELETE_REJECTED' USING ERRCODE = 'P0001';
                 END IF;
 
-                IF NEW.property_id IS DISTINCT FROM OLD.property_id
+                IF NEW.id IS DISTINCT FROM OLD.id
+                    OR NEW.property_id IS DISTINCT FROM OLD.property_id
                     OR NEW.property_business_date_id IS DISTINCT FROM OLD.property_business_date_id
                     OR NEW.business_date_snapshot IS DISTINCT FROM OLD.business_date_snapshot
                     OR NEW.property_timezone_snapshot IS DISTINCT FROM OLD.property_timezone_snapshot

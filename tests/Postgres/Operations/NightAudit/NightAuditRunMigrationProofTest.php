@@ -70,6 +70,34 @@ class NightAuditRunMigrationProofTest extends PostgresTestCase
             $this->assertRawInsertFails($propertyId, $businessDateId, $actorId, 2, 'COMPLETED', 'violates check constraint');
             $this->assertRawInsertFails($propertyId, $businessDateId, $actorId, 2, 'IN_PROGRESS', 'uq_night_audit_runs_one_active_per_property');
 
+            $originalEvidence = $this->runFoundationEvidence($runId);
+            $replacementId = (string) Str::ulid();
+            $this->assertRawUpdateFails(
+                $runId,
+                ['id' => $replacementId],
+                'NA_A1_NIGHT_AUDIT_RUN_FOUNDATION_IMMUTABLE',
+                false
+            );
+            $this->assertRunIdentityPreserved($runId, $replacementId);
+            $this->assertSame('IN_PROGRESS', DB::table('night_audit_runs')->where('id', $runId)->value('status'));
+            $this->assertSame($originalEvidence, $this->runFoundationEvidence($runId));
+
+            $abortReplacementId = (string) Str::ulid();
+            $this->assertRawUpdateFails($runId, [
+                'id' => $abortReplacementId,
+                'status' => 'ABORTED',
+                'aborted_by' => $actorId,
+                'aborted_at' => now(),
+                'abort_reason' => 'Rejected identity-smuggling abort.',
+                'updated_by' => $actorId,
+                'updated_at' => now(),
+            ], 'NA_A1_NIGHT_AUDIT_RUN_FOUNDATION_IMMUTABLE');
+            $this->assertRunIdentityPreserved($runId, $abortReplacementId);
+            $this->assertSame('IN_PROGRESS', DB::table('night_audit_runs')->where('id', $runId)->value('status'));
+            $this->assertNull(DB::table('night_audit_runs')->where('id', $runId)->value('aborted_by'));
+            $this->assertNull(DB::table('night_audit_runs')->where('id', $runId)->value('aborted_at'));
+            $this->assertNull(DB::table('night_audit_runs')->where('id', $runId)->value('abort_reason'));
+
             DB::table('night_audit_runs')->where('id', $runId)->update([
                 'status' => 'ABORTED',
                 'aborted_by' => $actorId,
@@ -78,7 +106,12 @@ class NightAuditRunMigrationProofTest extends PostgresTestCase
                 'updated_by' => $actorId,
                 'updated_at' => now(),
             ]);
+            $this->assertRunIdentityPreserved($runId, $replacementId);
+            $this->assertSame(0, DB::table('night_audit_runs')->where('id', $abortReplacementId)->count());
             $this->assertSame('ABORTED', DB::table('night_audit_runs')->where('id', $runId)->value('status'));
+            $this->assertSame($actorId, DB::table('night_audit_runs')->where('id', $runId)->value('aborted_by'));
+            $this->assertNotNull(DB::table('night_audit_runs')->where('id', $runId)->value('aborted_at'));
+            $this->assertSame('Controlled migration proof abort.', DB::table('night_audit_runs')->where('id', $runId)->value('abort_reason'));
 
             $this->assertRawUpdateFails($runId, ['status' => 'IN_PROGRESS'], 'NA_A1_NIGHT_AUDIT_RUN_UPDATE_REJECTED');
             $this->assertRawUpdateFails($runId, ['abort_reason' => 'Second update'], 'NA_A1_NIGHT_AUDIT_RUN_UPDATE_REJECTED');
@@ -181,14 +214,47 @@ class NightAuditRunMigrationProofTest extends PostgresTestCase
     /**
      * @param array<string, mixed> $values
      */
-    private function assertRawUpdateFails(string $runId, array $values, string $message): void
+    private function assertRawUpdateFails(string $runId, array $values, string $message, bool $touchUpdatedAt = true): void
     {
         try {
-            DB::table('night_audit_runs')->where('id', $runId)->update($values + ['updated_at' => now()]);
+            DB::table('night_audit_runs')->where('id', $runId)->update(
+                $touchUpdatedAt ? $values + ['updated_at' => now()] : $values
+            );
             $this->fail('Raw update should have failed.');
         } catch (QueryException $exception) {
             $this->assertStringContainsString($message, $exception->getMessage());
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function runFoundationEvidence(string $runId): array
+    {
+        return (array) DB::table('night_audit_runs')->where('id', $runId)->first([
+            'id',
+            'property_id',
+            'property_business_date_id',
+            'business_date_snapshot',
+            'property_timezone_snapshot',
+            'attempt_number',
+            'status',
+            'started_by',
+            'started_at',
+            'aborted_by',
+            'aborted_at',
+            'abort_reason',
+            'created_by',
+            'updated_by',
+            'created_at',
+            'updated_at',
+        ]);
+    }
+
+    private function assertRunIdentityPreserved(string $runId, string $replacementId): void
+    {
+        $this->assertSame(1, DB::table('night_audit_runs')->where('id', $runId)->count());
+        $this->assertSame(0, DB::table('night_audit_runs')->where('id', $replacementId)->count());
     }
 
     private function assertRawDeleteFails(string $runId): void
