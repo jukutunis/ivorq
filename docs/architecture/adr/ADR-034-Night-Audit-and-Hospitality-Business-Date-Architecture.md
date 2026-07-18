@@ -34,6 +34,10 @@ FD-B12 consumes accepted NA-A1 Night Audit close-lock evidence read-only inside 
 
 `NIGHT_AUDIT_LOCK_CLEAR` satisfies the Front Desk Night Audit gate. `NIGHT_AUDIT_LOCK_ACTIVE` blocks checkout readiness with `NIGHT_AUDIT_CLOSE_LOCK_ACTIVE`, and unavailable source evidence remains fail-closed with `NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE`. Checkout execution remains unauthorized and unimplemented in FD-B12, and `can_execute` remains explicitly false.
 
+## ADR-089 Synchronization Note
+
+ADR-089 is a Proposed architecture/governance package and does not transfer Business Date or Night Audit ownership to Front Desk. Future checkout execution and Night Audit start must share compatible Property and Business Date lock ordering so Night Audit cannot become active between checkout's final close-lock validation and checkout commit. Business Date close, advance, and reopen remain unauthorized. Night Audit checkpoints remain unauthorized.
+
 ## Current Implementation Context
 IVORQ now has accepted PMS Guest Ledger, PMS Cashiering, General Cashier, and Front Desk readiness foundations. Those accepted domains remain the owners of their existing states, source evidence, and controlled outcomes.
 

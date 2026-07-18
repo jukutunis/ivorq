@@ -20,6 +20,10 @@ The current supplier/AP payment execution runtime is not guest-folio evidence. `
 
 This ADR is triggered by the blocked FD-B9 investigation. It records the Owner decision that PMS Guest Ledger owns guest folio settlement evidence, PMS Cashiering owns guest tender and guest payment allocation lifecycle, General Cashier owns cashier accountability and cash custody, Accounting/AR owns receivables after accepted transfer, Accounting/GL owns accounting postings, Finance governs and consumes outcomes, and Front Desk consumes settlement readiness read-only.
 
+## ADR-089 Synchronization Note
+
+ADR-089 does not transfer PMS Guest Ledger or PMS Cashiering financial ownership to Front Desk. A future execution-time participating attestation port is a distinct runtime contract and does not make Front Desk the owner of folios, payments, deposits, refunds, reversals, AR transfer, settlement, or cashier lifecycle facts. Current GLF-D remains a read-only projection for readiness/review evidence. Front Desk must not mutate folio, payment, deposit, refund, reversal, AR, or settlement tables.
+
 ## Ownership Matrix
 
 | Domain | Owned facts | Permitted commands | Consumed evidence | Prohibited mutation |

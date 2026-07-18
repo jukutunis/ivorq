@@ -27,6 +27,10 @@ In FD-B12, `NIGHT_AUDIT_LOCK_CLEAR` satisfies the Night Audit close-lock gate. `
 
 The original FD-B8 decision remains historical source truth for the first boundary package. Progressive implementation through FD-B9, FD-B10, FD-B11, and FD-B12 narrows source-unavailable blockers as authoritative sources are accepted, without transferring source-domain ownership to Front Desk.
 
+## ADR-089 Synchronization Note
+
+FD-B13 is accepted at canonical SHA `fbb289abf4bbfeb2f3ae801e05e98619a61f7814` with verdict `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES`. ADR-089 is the required Proposed architecture decision before runtime prerequisite packages may begin. Future Front Desk checkout owns orchestration and terminal Front Desk evidence, but it must not mutate foreign-domain tables; owner domains participate through approved transaction-bound attestation ports. `can_execute=false` remains canonical, and runtime checkout remains unauthorized until a later separately approved package.
+
 ## Decision
 
 ### Ownership
