@@ -287,7 +287,7 @@
       ],
       "expected": {
         "tests": 11,
-        "assertions": 406,
+        "assertions": 422,
         "failures": 0,
         "errors": 0
       },
@@ -295,7 +295,33 @@
         "measured_at": "2026-07-18",
         "branch": "sprint-na-a1-night-audit-run-lock-foundation",
         "sha": "3b79657ddbbf24b7e2a51886f7e91d00cd957d37",
-        "note": "NA-A1 immutable run-identity correction measurement: 3 exact PostgreSQL classes / 11 tests / 406 assertions / 0 failures / 0 errors. Night Audit run primary key is immutable audit evidence. ID-only mutation is rejected with NA_A1_NIGHT_AUDIT_RUN_FOUNDATION_IMMUTABLE, the original run remains addressable under its original ID, and replacement IDs are never created. ID mutation cannot be smuggled through the allowed IN_PROGRESS to ABORTED transition even when valid abort evidence is supplied. Valid abort with unchanged identity remains permitted and populates abort evidence. All lock projection and locked-context corrections remain intact, including complete projection whitelist. Separates lock status from run lifecycle with strict persisted snapshot validation, locked Property and Business Date revalidation, NA_A1_ACTIVE_RUN_NOT_FOUND behavior, valid idempotent start, controlled abort, and stable fingerprint evidence excluding evaluated_at. No Business Date close, advancement, reopen, checkpoints, FD-B12, checkout execution, BusinessDateCloseExecutionService authority, or foreign-domain mutation."
+        "note": "NA-A1 immutable run-identity correction measurement: 3 exact PostgreSQL classes / 11 tests / 406 assertions / 0 failures / 0 errors. Night Audit run primary key is immutable audit evidence. ID-only mutation is rejected with NA_A1_NIGHT_AUDIT_RUN_FOUNDATION_IMMUTABLE, the original run remains addressable under its original ID, and replacement IDs are never created. ID mutation cannot be smuggled through the allowed IN_PROGRESS to ABORTED transition even when valid abort evidence is supplied. Valid abort with unchanged identity remains permitted and populates abort evidence. All lock projection and locked-context corrections remain intact, including complete projection whitelist. Separates lock status from run lifecycle with strict persisted snapshot validation, locked Property and Business Date revalidation, NA_A1_ACTIVE_RUN_NOT_FOUND behavior, valid idempotent start, controlled abort, and stable fingerprint evidence excluding evaluated_at. No Business Date close, advancement, reopen, checkpoints, FD-B12, checkout execution, BusinessDateCloseExecutionService authority, or foreign-domain mutation. NA-A2 additive security coverage restamp measured at runtime source commit c126728d329070aae5f8d87c7c6ac8b94449c0eb: the previous accepted measurement was 11 tests / 406 assertions; NA-A2 added exactly two Night Audit PHP files and the unchanged module-wide static boundary coverage applies eight assertions per file, adding exactly 16 assertions for a final 11 tests / 422 assertions. No NA-A1 test case was added or removed and no static boundary was weakened."
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
+      "id": "night-audit-checkout-concurrency-foundation-baseline",
+      "description": "NA-A2 checkout transaction participation and close-lock concurrency foundation PostgreSQL tests covering the shared Property and Business Date operational lock context, transaction-bound Night Audit concurrency attestation, active close-lock detection, fail-closed context validation, zero-write behavior, and real Property-scoped process concurrency. NA-A2 establishes participation and attestation only; it does not authorize or implement checkout execution.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "NightAuditCheckoutConcurrencyFoundationTest",
+        "NightAuditCheckoutConcurrencyProofTest"
+      ],
+      "expected": {
+        "tests": 14,
+        "assertions": 862,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-19",
+        "branch": "sprint-na-a2-checkout-transaction-concurrency-foundation",
+        "sha": "c126728d329070aae5f8d87c7c6ac8b94449c0eb",
+        "note": "NA-A2 runtime source measurement: 2 exact PostgreSQL classes / 14 tests / 862 assertions / 0 failures / 0 errors. Real PostgreSQL concurrency proof uses separate PHP processes and distinct PostgreSQL backend PIDs. Participant-clear-first blocks Night Audit start while the Property and Business Date operational locks are held, then permits start after participant commit. Active-first reports the active close lock; participant rollback persists no evidence; different Properties do not globally block. Locking is Property-scoped with finite worker timeout and cleanup. No migration, route, controller, permission, confirmation intent, checkout command, checkout UI, or checkout execution is added; can_execute=false and checkout remains unauthorized."
       },
       "accepted_debt": [],
       "status": "active"

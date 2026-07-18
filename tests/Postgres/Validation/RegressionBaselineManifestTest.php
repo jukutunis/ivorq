@@ -60,6 +60,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'banking-master-baseline-v2-candidate',
             'business-date-foundation-baseline',
             'night-audit-run-lock-foundation-baseline',
+            'night-audit-checkout-concurrency-foundation-baseline',
         ];
 
         $actualIds = array_map(fn($b) => $b->id, $this->manifest->baselines);
@@ -473,12 +474,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'guest-ledger-settlement-readiness-baseline',
             'business-date-foundation-baseline',
             'night-audit-run-lock-foundation-baseline',
+            'night-audit-checkout-concurrency-foundation-baseline',
         ];
 
         $this->assertCount(
-            11,
+            12,
             $activeIds,
-            "Must have exactly 11 active baselines. Found: " . implode(', ', $activeIds)
+            "Must have exactly 12 active baselines. Found: " . implode(', ', $activeIds)
         );
 
         foreach ($expectedActiveIds as $id) {
@@ -579,7 +581,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
     {
         $ids = array_map(fn($b) => $b->id, $this->manifest->baselines);
 
-        $expectedCount = 13;
+        $expectedCount = 14;
         $this->assertCount(
             $expectedCount,
             $ids,
@@ -620,7 +622,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'NightAuditRunMigrationProofTest',
         ], $baseline->classes);
         $this->assertEquals(11, $baseline->expected->tests ?? null);
-        $this->assertEquals(406, $baseline->expected->assertions ?? null);
+        $this->assertEquals(422, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
@@ -646,7 +648,38 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('checkpoints', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout execution', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('foreign-domain mutation', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('previous accepted measurement was 11 tests / 406 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('added exactly two Night Audit PHP files', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('eight assertions per file', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('adding exactly 16 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('final 11 tests / 422 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No NA-A1 test case was added or removed', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no static boundary was weakened', $baseline->provenance->note ?? '');
         $this->assertNotContains('BusinessDateCloseExecutionServiceTest', $baseline->classes);
+    }
+
+    public function test_night_audit_checkout_concurrency_foundation_baseline_matches_na_a2_measurement(): void
+    {
+        $baseline = $this->findBaseline('night-audit-checkout-concurrency-foundation-baseline');
+        $this->assertNotNull($baseline, 'NA-A2 baseline must exist.');
+        $this->assertEquals('active', $baseline->status);
+        $this->assertSame([
+            'NightAuditCheckoutConcurrencyFoundationTest',
+            'NightAuditCheckoutConcurrencyProofTest',
+        ], $baseline->classes);
+        $this->assertEquals(14, $baseline->expected->tests ?? null);
+        $this->assertEquals(862, $baseline->expected->assertions ?? null);
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertSame([], $baseline->accepted_debt ?? null);
+        $this->assertEquals('c126728d329070aae5f8d87c7c6ac8b94449c0eb', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-na-a2-checkout-transaction-concurrency-foundation', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('separate PHP processes', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('distinct PostgreSQL backend PIDs', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Property-scoped', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('finite worker timeout and cleanup', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('checkout remains unauthorized', $baseline->provenance->note ?? '');
     }
 
     public function test_glf_d_baseline_has_exact_three_classes_and_correct_counts(): void
