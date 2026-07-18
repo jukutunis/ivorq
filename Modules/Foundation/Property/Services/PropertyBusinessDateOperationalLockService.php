@@ -20,9 +20,15 @@ class PropertyBusinessDateOperationalLockService
     public const ERROR_BUSINESS_DATE_LOCK_UNAVAILABLE = 'NA_A2_BUSINESS_DATE_LOCK_UNAVAILABLE';
     public const ERROR_CONTEXT_CHANGED = 'NA_A2_PROPERTY_BUSINESS_DATE_CONTEXT_CHANGED';
     public const ERROR_OPERATIONAL_LOCK_TIMEOUT = 'NA_A2_OPERATIONAL_LOCK_TIMEOUT';
+    public const ERROR_INVALID_CONTEXT = 'NA_A2_INVALID_OPERATIONAL_LOCK_CONTEXT';
 
     private const LOCK_TIMEOUT = '5s';
     private const LOCK_TIMEOUT_SQLSTATE = '55P03';
+
+    /**
+     * @var \WeakMap<PropertyBusinessDateOperationalLockContext, array<string, int|string>>|null
+     */
+    private static ?\WeakMap $issuedContexts = null;
 
     /**
      * @param array<string, mixed> $expectedEvidence
@@ -65,7 +71,9 @@ class PropertyBusinessDateOperationalLockService
                 throw new DomainException(self::ERROR_CONTEXT_CHANGED);
             }
 
-            return new PropertyBusinessDateOperationalLockContext(
+            $sourceFingerprint = $this->fingerprint($businessDate, $openedAt);
+            $transactionProof = $this->postgresTransactionProof();
+            $context = new PropertyBusinessDateOperationalLockContext(
                 company_id: $companyId,
                 property_id: (string) $property->id,
                 property_business_date_id: (string) $businessDate->id,
@@ -73,16 +81,58 @@ class PropertyBusinessDateOperationalLockService
                 property_timezone: (string) $businessDate->timezone_snapshot,
                 opened_by: (string) $businessDate->opened_by,
                 opened_at: $openedAt,
-                source_fingerprint: $this->fingerprint($businessDate, $openedAt),
-                postgres_backend_pid: $this->postgresBackendPid(),
+                source_fingerprint: $sourceFingerprint,
+                postgres_backend_pid: $transactionProof['backend_pid'],
+                postgres_transaction_id: $transactionProof['transaction_id'],
                 lock_acquired_at: CarbonImmutable::now('UTC')->toISOString(),
             );
+
+            self::issuedContexts()[$context] = [
+                'postgres_backend_pid' => $transactionProof['backend_pid'],
+                'postgres_transaction_id' => $transactionProof['transaction_id'],
+                'company_id' => $companyId,
+                'property_id' => (string) $property->id,
+                'property_business_date_id' => (string) $businessDate->id,
+                'business_date' => $businessDate->business_date->format('Y-m-d'),
+                'property_timezone' => (string) $businessDate->timezone_snapshot,
+                'source_fingerprint' => $sourceFingerprint,
+            ];
+
+            return $context;
         } catch (QueryException $exception) {
             if ($this->sqlState($exception) === self::LOCK_TIMEOUT_SQLSTATE) {
                 throw new RuntimeException(self::ERROR_OPERATIONAL_LOCK_TIMEOUT, 0, $exception);
             }
 
             throw $exception;
+        }
+    }
+
+    public function assertIssuedForCurrentTransaction(PropertyBusinessDateOperationalLockContext $context): void
+    {
+        $this->assertParticipatingPostgresTransaction();
+
+        $issuedContexts = self::issuedContexts();
+        if (! isset($issuedContexts[$context])) {
+            throw new DomainException(self::ERROR_INVALID_CONTEXT);
+        }
+
+        $issuance = $issuedContexts[$context];
+        $currentProof = $this->postgresTransactionProof();
+
+        $matches = $currentProof['backend_pid'] === $issuance['postgres_backend_pid']
+            && $currentProof['transaction_id'] === $issuance['postgres_transaction_id']
+            && $context->postgres_backend_pid === $issuance['postgres_backend_pid']
+            && $context->postgres_transaction_id === $issuance['postgres_transaction_id']
+            && $context->company_id === $issuance['company_id']
+            && $context->property_id === $issuance['property_id']
+            && $context->property_business_date_id === $issuance['property_business_date_id']
+            && $context->business_date === $issuance['business_date']
+            && $context->property_timezone === $issuance['property_timezone']
+            && $context->source_fingerprint === $issuance['source_fingerprint'];
+
+        if (! $matches) {
+            throw new DomainException(self::ERROR_INVALID_CONTEXT);
         }
     }
 
@@ -136,13 +186,38 @@ class PropertyBusinessDateOperationalLockService
         ], JSON_UNESCAPED_SLASHES));
     }
 
-    private function postgresBackendPid(): ?int
+    /**
+     * @return array{backend_pid: int, transaction_id: string}
+     */
+    private function postgresTransactionProof(): array
     {
         try {
-            return (int) DB::selectOne('SELECT pg_backend_pid() as pid')->pid;
-        } catch (Throwable) {
-            return null;
+            $row = DB::selectOne(
+                'SELECT pg_backend_pid() AS backend_pid, txid_current()::text AS transaction_id'
+            );
+        } catch (Throwable $exception) {
+            throw new DomainException(self::ERROR_INVALID_CONTEXT, 0, $exception);
         }
+
+        $backendPid = (int) ($row->backend_pid ?? 0);
+        $transactionId = trim((string) ($row->transaction_id ?? ''));
+
+        if ($backendPid < 1 || $transactionId === '') {
+            throw new DomainException(self::ERROR_INVALID_CONTEXT);
+        }
+
+        return [
+            'backend_pid' => $backendPid,
+            'transaction_id' => $transactionId,
+        ];
+    }
+
+    /**
+     * @return \WeakMap<PropertyBusinessDateOperationalLockContext, array<string, int|string>>
+     */
+    private static function issuedContexts(): \WeakMap
+    {
+        return self::$issuedContexts ??= new \WeakMap();
     }
 
     private function sqlState(Throwable $exception): ?string

@@ -15,7 +15,8 @@ final readonly class PropertyBusinessDateOperationalLockContext
         public string $opened_by,
         public string $opened_at,
         public string $source_fingerprint,
-        public ?int $postgres_backend_pid,
+        public int $postgres_backend_pid,
+        public string $postgres_transaction_id,
         public string $lock_acquired_at,
     ) {}
 
@@ -58,6 +59,7 @@ final readonly class PropertyBusinessDateOperationalLockContext
             'opened_at' => $this->opened_at,
             'source_fingerprint' => $this->source_fingerprint,
             'postgres_backend_pid' => $this->postgres_backend_pid,
+            'postgres_transaction_id' => $this->postgres_transaction_id,
             'lock_acquired_at' => $this->lock_acquired_at,
         ];
     }

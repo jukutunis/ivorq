@@ -3,14 +3,13 @@
 namespace Modules\Operations\NightAudit\Services;
 
 use Carbon\CarbonImmutable;
-use DomainException;
 use Illuminate\Support\Facades\DB;
+use Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService;
 use Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext;
 use Modules\Operations\NightAudit\Enums\NightAuditRunStatusEnum;
 use Modules\Operations\NightAudit\Models\NightAuditRun;
 use Modules\Operations\NightAudit\ValueObjects\NightAuditCheckoutConcurrencyAttestation;
 use RuntimeException;
-use Throwable;
 
 class NightAuditCheckoutConcurrencyGuardService
 {
@@ -19,10 +18,14 @@ class NightAuditCheckoutConcurrencyGuardService
     public const ERROR_MULTIPLE_ACTIVE_RUNS = 'NA_A2_MULTIPLE_ACTIVE_RUNS';
     public const ERROR_ACTIVE_RUN_CONTEXT_CONFLICT = 'NA_A2_ACTIVE_RUN_CONTEXT_CONFLICT';
 
+    public function __construct(
+        private readonly PropertyBusinessDateOperationalLockService $operationalLockService,
+    ) {}
+
     public function attest(PropertyBusinessDateOperationalLockContext $context): NightAuditCheckoutConcurrencyAttestation
     {
         $this->assertActivePostgresTransaction();
-        $this->assertSameBackend($context);
+        $this->operationalLockService->assertIssuedForCurrentTransaction($context);
 
         // Future checkout must acquire its Front Desk locks between the shared
         // Property/Business Date locks and this owner-domain Night Audit step.
@@ -63,23 +66,6 @@ class NightAuditCheckoutConcurrencyGuardService
 
         if (DB::connection()->getDriverName() !== 'pgsql') {
             throw new RuntimeException(self::ERROR_INVALID_CONTEXT);
-        }
-    }
-
-    private function assertSameBackend(PropertyBusinessDateOperationalLockContext $context): void
-    {
-        if ($context->postgres_backend_pid === null) {
-            return;
-        }
-
-        try {
-            $current = (int) DB::selectOne('SELECT pg_backend_pid() as pid')->pid;
-        } catch (Throwable) {
-            throw new DomainException(self::ERROR_INVALID_CONTEXT);
-        }
-
-        if ($current !== $context->postgres_backend_pid) {
-            throw new DomainException(self::ERROR_INVALID_CONTEXT);
         }
     }
 
@@ -128,6 +114,10 @@ class NightAuditCheckoutConcurrencyGuardService
             'business_date' => $context->business_date,
             'property_timezone' => $context->property_timezone,
             'business_date_source_fingerprint' => $context->source_fingerprint,
+            'transaction_proof_fingerprint' => hash('sha256', json_encode([
+                'postgres_backend_pid' => $context->postgres_backend_pid,
+                'postgres_transaction_id' => $context->postgres_transaction_id,
+            ], JSON_UNESCAPED_SLASHES)),
             'close_lock_active' => $run !== null,
         ];
 
