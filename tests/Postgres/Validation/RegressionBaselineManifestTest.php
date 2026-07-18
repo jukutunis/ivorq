@@ -612,15 +612,20 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'NightAuditRunMigrationProofTest',
         ], $baseline->classes);
         $this->assertEquals(11, $baseline->expected->tests ?? null);
-        $this->assertEquals(388, $baseline->expected->assertions ?? null);
+        $this->assertEquals(406, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('bc2f9a0849c3a93bcb0092d07de637e12d1ccf6f', $baseline->provenance->sha ?? null);
+        $this->assertEquals('3b79657ddbbf24b7e2a51886f7e91d00cd957d37', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-na-a1-night-audit-run-lock-foundation', $baseline->provenance->branch ?? null);
         $this->assertStringContainsString('NA-A1', $baseline->description ?? '');
         $this->assertStringContainsString('BD-A1 read-only dependency', $baseline->description ?? '');
         $this->assertStringContainsString('authorization-first', $baseline->description ?? '');
+        $this->assertStringContainsString('Night Audit run primary key is immutable', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('ID-only mutation is rejected', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('ID mutation cannot be smuggled through the allowed IN_PROGRESS to ABORTED transition', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Valid abort with unchanged identity remains permitted', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('All lock projection and locked-context corrections remain intact', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('complete projection whitelist', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Separates lock status from run lifecycle', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('strict persisted snapshot validation', $baseline->provenance->note ?? '');

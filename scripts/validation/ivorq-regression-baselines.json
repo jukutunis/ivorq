@@ -287,15 +287,15 @@
       ],
       "expected": {
         "tests": 11,
-        "assertions": 388,
+        "assertions": 406,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-17",
+        "measured_at": "2026-07-18",
         "branch": "sprint-na-a1-night-audit-run-lock-foundation",
-        "sha": "bc2f9a0849c3a93bcb0092d07de637e12d1ccf6f",
-        "note": "NA-A1 lock-contract correction measurement: 3 exact PostgreSQL classes / 11 tests / 388 assertions / 0 failures / 0 errors. Restamps the complete projection whitelist with projection_version, status, source_status, source_classification, owner, read_only, close_lock_active, Property and Business Date identifiers, persisted run evidence, evidence_unavailable_codes, source_fingerprint, evaluated_at, and markers. Separates lock status from run lifecycle: active and clear source_status use NIGHT_AUDIT_LOCK_* values while run_status carries IN_PROGRESS only. Adds strict persisted snapshot validation for Property, Property Business Date, business_date, timezone, starter, created evidence, abort-null evidence, and positive attempt. Adds locked Property and Business Date revalidation with post-lock authorization, exact NA_A1_ACTIVE_RUN_NOT_FOUND for absent active runs, valid idempotent start, controlled abort, and stable fingerprint evidence excluding evaluated_at. No Business Date close, advancement, reopen, checkpoints, FD-B12, checkout execution, BusinessDateCloseExecutionService authority, or foreign-domain mutation."
+        "sha": "3b79657ddbbf24b7e2a51886f7e91d00cd957d37",
+        "note": "NA-A1 immutable run-identity correction measurement: 3 exact PostgreSQL classes / 11 tests / 406 assertions / 0 failures / 0 errors. Night Audit run primary key is immutable audit evidence. ID-only mutation is rejected with NA_A1_NIGHT_AUDIT_RUN_FOUNDATION_IMMUTABLE, the original run remains addressable under its original ID, and replacement IDs are never created. ID mutation cannot be smuggled through the allowed IN_PROGRESS to ABORTED transition even when valid abort evidence is supplied. Valid abort with unchanged identity remains permitted and populates abort evidence. All lock projection and locked-context corrections remain intact, including complete projection whitelist. Separates lock status from run lifecycle with strict persisted snapshot validation, locked Property and Business Date revalidation, NA_A1_ACTIVE_RUN_NOT_FOUND behavior, valid idempotent start, controlled abort, and stable fingerprint evidence excluding evaluated_at. No Business Date close, advancement, reopen, checkpoints, FD-B12, checkout execution, BusinessDateCloseExecutionService authority, or foreign-domain mutation."
       },
       "accepted_debt": [],
       "status": "active"
