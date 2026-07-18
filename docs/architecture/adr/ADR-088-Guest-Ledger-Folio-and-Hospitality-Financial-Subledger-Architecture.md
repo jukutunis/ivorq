@@ -24,6 +24,8 @@ This ADR is triggered by the blocked FD-B9 investigation. It records the Owner d
 
 ADR-089 does not transfer PMS Guest Ledger or PMS Cashiering financial ownership to Front Desk. A future execution-time participating attestation port is a distinct runtime contract and does not make Front Desk the owner of folios, payments, deposits, refunds, reversals, AR transfer, settlement, or cashier lifecycle facts. Current GLF-D remains a read-only projection for readiness/review evidence. Front Desk must not mutate folio, payment, deposit, refund, reversal, AR, or settlement tables.
 
+ADR-089 correction preserves PMS Cashiering ownership of payments, allocations, deposits, refunds, reversals, and AR-related settlement facts while preserving General Cashier ownership of cashier sessions, cash custody, cashier accountability, handover, count, close, reconciliation, and unresolved cashier obligations. The future PMS attestation must run before General Cashier participation, lock PMS-owned payment/allocation/deposit/refund/reversal/AR/folio/settlement rows, return a minimized terminal financial result and approved cash-linked transaction/cashier-session references, and keep PMS locks held until checkout commit or rollback. General Cashier must consume those PMS references, re-resolve approved cashier-session relationships, lock only General Cashier-owned rows, and must not mutate or recalculate PMS-owned financial lifecycle facts.
+
 ## Ownership Matrix
 
 | Domain | Owned facts | Permitted commands | Consumed evidence | Prohibited mutation |
@@ -138,6 +140,8 @@ General Cashier owns cashier session ownership, cash custody, till accountabilit
 A cash guest payment may require evidence from both domains: PMS Cashiering for the guest payment and folio allocation, and General Cashier for the cash-session and cash-custody evidence. Neither domain may fabricate the other's evidence.
 
 PMS Guest Ledger must not be described as owning the guest payment-allocation command or lifecycle. PMS Cashiering must not be described as owning the folio aggregate or canonical balance.
+
+For ADR-089 checkout execution, the lock order remains PMS Guest Ledger / PMS Cashiering owner rows before General Cashier owner rows. PMS locks remain held while General Cashier validates; General Cashier consumes PMS-provided cash-linked references after the PMS lock step and must not reacquire PMS rows after acquiring General Cashier locks. If General Cashier needs additional PMS-owned information, the PMS attestation contract must be extended later rather than creating a second General Cashier financial source of truth.
 
 ## AR Transfer Boundary
 

@@ -147,13 +147,15 @@ High-level global lock order:
 3. Front Desk stay row.
 4. Checkout idempotency/execution identity.
 5. Night Audit active-run scope.
-6. PMS Guest Ledger owner-domain rows.
+6. PMS Guest Ledger / PMS Cashiering owner-domain rows.
 7. General Cashier owner-domain rows.
 8. Immutable Front Desk checkout evidence identity.
 9. Terminal stay transition.
 10. Transactional handoff/outbox record.
 
 The global order controls cross-domain acquisition. Owner domains retain their internal lock order after the orchestrator reaches that owner-domain step. Immutable evidence reads may use source identity verification without row locks when source immutability is PostgreSQL-proven; mutable source rows that can affect terminal readiness must use `FOR UPDATE`. A service must not acquire an earlier global lock after it has acquired a later global lock.
+
+PMS-owned financial locks remain held while General Cashier validates its owner-domain obligations. General Cashier consumes PMS attestation references after the PMS lock step and must not reacquire earlier PMS locks after the General Cashier step. This preserves PMS Cashiering ownership, prevents General Cashier from becoming a second source of truth for guest payment facts, and avoids lock inversion.
 
 Future runtime packages must define lock timeout and deadlock/serialization retry policy. The allowed default is a short transaction with bounded retry for PostgreSQL deadlock or serialization failures, never an unbounded automatic retry loop. A retry must re-enter through the same idempotency identity and revalidate all authoritative state. Lock timeout fails closed with no partial stay closure.
 
@@ -179,29 +181,24 @@ The PMS-owned execution-time terminal financial attestation must determine under
 - refund state;
 - payment reversal state;
 - accepted AR transfer when applicable;
+- checkout-relevant settlement rows and facts;
 - settlement holds;
 - posting completeness;
 - completed-settlement conflict;
 - relationship consistency;
 - property and stay identity.
 
-It must not transfer folio, payment, deposit, refund, reversal, AR, or settlement ownership to Front Desk.
+The PMS participating attestation runs before General Cashier participation. It must lock and evaluate PMS Guest Ledger and PMS Cashiering-owned payment, allocation, deposit, refund, reversal, AR, folio, and settlement rows needed for terminal checkout evaluation; return only the minimized terminal financial result required by Front Desk; return approved cash-linked transaction and cashier-session references required by General Cashier; and keep the PMS owner-domain locks held until checkout commit or rollback.
+
+It must not transfer folio, payment, deposit, refund, reversal, AR, or settlement ownership to Front Desk or General Cashier.
 
 ### General Cashier Attestation
 
-The General Cashier-owned execution-time terminal obligation attestation must determine under owner-domain locks:
+The General Cashier-owned execution-time terminal obligation attestation must consume the PMS terminal financial attestation before participating. It must independently re-resolve the property, stay, reservation, and approved cashier-session relationships from the minimized PMS references; lock only General Cashier-owned cashier-session and accountability rows; determine unresolved cashier custody, handover, count, close, reconciliation, and accountability obligations; and return only the minimized status and fingerprint required for checkout evidence.
 
-- guest, stay, and reservation identity;
-- cashier session obligations;
-- cash-related guest payment lifecycle;
-- refunds;
-- deposits;
-- reversals;
-- unresolved cashier accountability;
-- source relationship conflicts;
-- source fingerprint and minimized status.
+General Cashier must perform no PMS mutation, must not independently re-own or recalculate PMS payment, allocation, deposit, refund, reversal, AR, folio, or settlement lifecycle facts, and must not acquire PMS rows outside the PMS owner-domain lock step. If PMS attestation lacks the approved cash-linked transaction or cashier-session linkage evidence required for General Cashier evaluation, General Cashier must fail closed.
 
-Front Desk receives only the result and fingerprint required for checkout evidence, not cashier internals.
+When General Cashier needs additional PMS-owned facts, the PMS attestation contract must be extended in a later approved package. General Cashier must not bypass ownership boundaries by creating a second financial source of truth.
 
 ## Front Desk Terminal Outcome
 
@@ -271,10 +268,26 @@ Future execution ordering:
 2. Authorize execute permission before querying or resolving the requested stay.
 3. Resolve same-property stay after authorization.
 4. Return non-disclosing 404 for unknown or cross-property stay.
-5. Validate a fresh sensitive confirmation bound to actor, company, property, intent, and session.
+5. Validate a fresh sensitive confirmation bound to actor, company, property, intent, session, and the future server-generated confirmation identity.
 6. Enter the controlled transaction.
+7. Acquire all approved global and owner-domain locks.
+8. Obtain and validate all execution-time attestations.
+9. Revalidate the same sensitive confirmation immediately before the first persistent checkout mutation.
+10. Persist checkout evidence, the terminal stay transition, and the transactional handoff.
+11. Commit.
+12. Complete the approved confirmation-consumption procedure.
 
-Confirmation expiry must be revalidated immediately before transaction entry. Successful checkout must consume/invalidate the confirmation. Idempotent replay after response loss may return the already-committed checkout outcome with the same idempotency identity without requiring a fresh confirmation, because no new mutation occurs. A new checkout attempt, changed idempotency identity, or uncommitted retry requires a valid fresh confirmation. Broad administrators require explicit operational assignment or break-glass policy, not implicit checkout authority.
+The pre-transaction confirmation validation prevents unnecessary lock acquisition for stale or unauthorized confirmation attempts. The final validation occurs after lock waits and immediately before the first persistent checkout mutation. If the confirmation expires while waiting for locks or attestations, the transaction must roll back and fail closed. No checkout evidence, terminal stay transition, or handoff may be persisted when final confirmation validation fails. Broad administrators require explicit operational assignment or break-glass policy, not implicit checkout authority.
+
+Current session-based `SensitiveActionConfirmation` invalidation does not prove atomic one-time successful-use consumption with the PostgreSQL checkout commit. ADR-089 therefore must not claim that the current session `invalidate()` behavior alone guarantees durable atomic consumption for successful checkout execution.
+
+The runtime prerequisite remains frozen inside the Checkout Sensitive Action Confirmation intent and execute permission package as:
+
+```text
+CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED
+```
+
+The later checkout Sensitive Action Confirmation package must introduce an approved server-generated confirmation identity or nonce and a durable consumption contract. No password may be persisted. Immutable checkout evidence must record the approved confirmation identity or a safe fingerprint, confirmation time, and expiry. One confirmation identity must not authorize two different successful checkout mutations. Consumption must remain effective if the HTTP response is lost after the database commit. A same-idempotency replay of an already committed checkout requires and consumes no new confirmation because it performs no new mutation. A new checkout attempt, changed stay, changed idempotency identity, or uncommitted retry requires a fresh unconsumed confirmation. Session invalidation may occur after successful commit, but it is not the sole durable replay defense; failure to complete session cleanup must not allow the confirmation identity to authorize another checkout.
 
 ## Failure Recovery
 
@@ -282,8 +295,9 @@ Required semantics:
 
 - validation failure before transaction: fail closed, no success evidence;
 - authorization failure: controlled failure before stay lookup;
-- sensitive confirmation failure: fail before mutation;
+- sensitive confirmation failure: fail or roll back before mutation;
 - lock timeout: rollback and fail closed;
+- confirmation expiry while waiting for locks or attestations: rollback and fail closed;
 - deadlock/serialization: rollback and retry only through bounded idempotent policy;
 - changed Business Date: rollback and fail closed;
 - Night Audit activation: rollback and fail closed;
@@ -360,7 +374,7 @@ Runtime prerequisite categories must remain locked until ADR-089 is independentl
 4. General Cashier execution-time terminal obligation attestation.
 5. Front Desk terminal stay state and immutable checkout execution evidence foundation.
 6. Transactional Housekeeping room-turnover handoff/outbox.
-7. Checkout Sensitive Action Confirmation intent and execute permission.
+7. Checkout Sensitive Action Confirmation intent and execute permission, including `CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED`.
 8. Final Front Desk checkout execution command and interaction layer.
 
 The final checkout command remains last. Runtime package codes are not assigned by this ADR.
@@ -373,6 +387,9 @@ Source inspection for this ADR verified:
 - `origin/ivorq-enterprise-core` was `fbb289abf4bbfeb2f3ae801e05e98619a61f7814`.
 - same Laravel/PostgreSQL topology is source-proven.
 - GLF-D and GC-A1 are read-only top-level projections and not participating execution attestations.
+- confirmation validation is dual-phase: pre-transaction and final immediately before mutation.
+- durable one-time confirmation consumption remains a frozen runtime prerequisite, not implemented by this ADR.
+- PMS Guest Ledger / PMS Cashiering locks precede General Cashier locks and remain held while General Cashier validates.
 - Night Audit start locks `properties`, then `property_business_dates`, then active Night Audit run scope.
 - `can_execute=false` remains canonical in current Front Desk runtime.
 - no checkout execution write route exists.

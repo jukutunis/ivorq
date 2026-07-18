@@ -31,6 +31,8 @@ The original FD-B8 decision remains historical source truth for the first bounda
 
 FD-B13 is accepted at canonical SHA `fbb289abf4bbfeb2f3ae801e05e98619a61f7814` with verdict `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES`. ADR-089 is the required Proposed architecture decision before runtime prerequisite packages may begin. Future Front Desk checkout owns orchestration and terminal Front Desk evidence, but it must not mutate foreign-domain tables; owner domains participate through approved transaction-bound attestation ports. `can_execute=false` remains canonical, and runtime checkout remains unauthorized until a later separately approved package.
 
+ADR-089 correction freezes dual sensitive-confirmation validation and durable one-time confirmation consumption as future runtime prerequisites. Confirmation must be validated before transaction entry and revalidated after lock waits immediately before the first persistent checkout mutation; expiry during lock waits rolls back without checkout evidence, terminal stay transition, or handoff. PMS Guest Ledger / PMS Cashiering financial attestation must run before General Cashier participation so General Cashier consumes approved PMS references rather than re-owning payment, deposit, refund, reversal, AR, folio, or settlement facts. This synchronization note changes no runtime authority, and `can_execute=false` remains canonical.
+
 ## Decision
 
 ### Ownership
@@ -254,14 +256,24 @@ Future checkout execution command ordering is frozen as:
 2. Authorize `frontdesk.checkout-execution.execute` before querying or resolving the requested stay.
 3. Resolve `front_desk_stay_id` scoped to the active property.
 4. Return non-disclosing 404 for an unknown or cross-property stay, but only after the actor has passed the execute authorization gate.
-5. Require a valid `frontdesk-checkout-execution` Sensitive Action Confirmation bound to the actor, company, property, intent, and session.
-6. Enter the controlled transaction, acquire the approved locks, and independently revalidate every authoritative gate.
+5. Validate a fresh `frontdesk-checkout-execution` Sensitive Action Confirmation bound to the actor, company, property, intent, session, and future server-generated confirmation identity.
+6. Enter the controlled transaction.
+7. Acquire all approved global and owner-domain locks.
+8. Obtain and validate all execution-time attestations.
+9. Revalidate the same Sensitive Action Confirmation immediately before the first persistent checkout mutation.
+10. Persist immutable checkout evidence, the terminal stay transition, and the transactional handoff.
+11. Commit.
+12. Complete the approved confirmation-consumption procedure.
+
+The future checkout Sensitive Action Confirmation package must include `CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED`. Current session invalidation alone is not a durable replay defense for atomic successful-use consumption with the PostgreSQL checkout commit. Same-idempotency replay of an already committed checkout requires and consumes no new confirmation; a new checkout attempt, changed stay, changed idempotency identity, or uncommitted retry requires a fresh unconsumed confirmation.
 
 Future idempotency requirement is frozen as:
 
 - `property_id + idempotency_key` permits at most one checkout execution outcome;
 - successful terminal checkout evidence must also prevent a second successful checkout for the same `front_desk_stay_id`;
 - retries after response loss must return the committed immutable outcome;
+- same-idempotency replay after a committed checkout must not require or consume a new sensitive confirmation because no new mutation occurs;
+- a new checkout attempt, changed stay, changed idempotency identity, or uncommitted retry requires fresh unconsumed confirmation;
 - downstream handoff retries must not re-close the stay.
 
 Future mutation and handoff requirements are frozen as:
@@ -284,7 +296,7 @@ FD-B13 records these source-backed prerequisite categories before checkout imple
 - PMS Guest Ledger checkout financial terminal attestation/freeze contract.
 - General Cashier checkout obligation terminalization/attestation contract.
 - Transactional Housekeeping room-turnover handoff/outbox or event contract for room-turnover recovery.
-- Sensitive Action Confirmation registration for `frontdesk-checkout-execution`.
+- Sensitive Action Confirmation registration for `frontdesk-checkout-execution`, including durable one-time confirmation consumption for checkout successful use.
 - Checkout execution permission and command package after all prerequisite owner-domain packages are accepted.
 
 Material architecture boundary:
