@@ -73,8 +73,10 @@ Each gate must be re-resolved independently at execution time. The original FD-B
 | AR transfer accepted when applicable | Accounting / AR through PMS Guest Ledger evidence | GLF-D consumes accepted AR-transfer settlement evidence according to its source contract | Evaluated only through GLF-D settlement readiness evidence; Front Desk does not claim or mutate Accounting / AR decisions |
 | Business date permits checkout | Business Date/Night Audit | Yes - BD-A1 authoritative Property Business Date projection | `BUSINESS_DATE_OPEN` satisfies the Business Date evidence gate; incomplete or unavailable source evidence maps to `BUSINESS_DATE_EVIDENCE_UNAVAILABLE`; Front Desk does not own lifecycle |
 | No active Night Audit close lock | Night Audit | Yes - NA-A1 authoritative Night Audit close-lock projection | `NIGHT_AUDIT_LOCK_CLEAR` satisfies the gate; `NIGHT_AUDIT_LOCK_ACTIVE` blocks with `NIGHT_AUDIT_CLOSE_LOCK_ACTIVE`; unavailable source evidence blocks with `NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE`; Front Desk does not mutate Night Audit |
-| Room readiness (Housekeeping) | Housekeeping | Yes — HousekeepingRoomReadinessProjectionService | Read-only dependency available |
-| Engineering availability | Engineering | Yes — EngineeringRoomAvailabilityProjectionService | Read-only dependency available |
+| Housekeeping readiness gate | Housekeeping | Yes — HousekeepingRoomReadinessProjectionService | NOT_REQUIRED for allowing guest departure unless a later approved ADR explicitly creates such a gate |
+| Housekeeping post-checkout turnover handoff | Housekeeping | No — no checkout-complete handoff/outbox contract exists | IMPLEMENTATION_PREREQUISITE_REQUIRED before production checkout implementation; Housekeeping owns room-turnover recovery |
+| Engineering availability gate | Engineering | Yes — EngineeringRoomAvailabilityProjectionService | NOT_REQUIRED for allowing guest departure; maintenance or Engineering blocks generally affect availability and turnover |
+| Engineering checkout handoff | Engineering | No mandatory checkout handoff required | NOT_REQUIRED unless a later approved Engineering workflow consumes a future event |
 
 ### Downstream Accounting Ownership
 
@@ -94,7 +96,8 @@ The checkout execution boundary exposes these projection statuses:
 
 ### Stay Resolution and Non-Disclosure
 
-- **Unknown stay ID or cross-property stay**: return 404. Do not disclose whether the stay exists in another property.
+- **Future execution authorization precondition**: authorize `frontdesk.checkout-execution.execute` before querying or resolving the requested stay. An actor without execute authority receives controlled authorization failure without a stay lookup.
+- **Unknown stay ID or cross-property stay for an authorized execute actor**: return 404. Do not disclose whether the stay exists in another property.
 - **Same-property stay found but status is not IN_HOUSE**: return the boundary projection with `can_execute = false`, status `EXECUTION_BOUNDARY_BLOCKED`, blocker `STAY_NOT_IN_HOUSE`, and the actual server-resolved stay status. Do not fabricate B7 or other readiness evidence for non-IN_HOUSE stays.
 - **Same-property IN_HOUSE stay**: proceed to evaluate all authoritative gates.
 
@@ -236,7 +239,19 @@ Future authorization and sensitive-confirmation requirements are frozen as:
 - execute permission: `frontdesk.checkout-execution.execute`, pending later package creation;
 - sensitive intent: `frontdesk-checkout-execution`, pending later package registration;
 - boundary-view permission never implies execute permission;
-- Finance, Cashier, Night Audit, Housekeeping, Engineering, Banking, GL, AR, tax, revenue, and broad operational roles do not receive execute authority by default.
+- Finance, Cashier, Night Audit, Housekeeping, Engineering, Banking, GL, AR, tax, revenue, and broad operational roles do not receive execute authority by default;
+- browser-supplied property, actor, permission, or authorization state is never trusted;
+- sensitive confirmation is a prerequisite, not a permission grant;
+- all authorization and property membership must be revalidated server-side.
+
+Future checkout execution command ordering is frozen as:
+
+1. Resolve the authenticated actor and server-owned active company/property context.
+2. Authorize `frontdesk.checkout-execution.execute` before querying or resolving the requested stay.
+3. Resolve `front_desk_stay_id` scoped to the active property.
+4. Return non-disclosing 404 for an unknown or cross-property stay, but only after the actor has passed the execute authorization gate.
+5. Require a valid `frontdesk-checkout-execution` Sensitive Action Confirmation bound to the actor, company, property, intent, and session.
+6. Enter the controlled transaction, acquire the approved locks, and independently revalidate every authoritative gate.
 
 Future idempotency requirement is frozen as:
 
@@ -250,9 +265,11 @@ Future mutation and handoff requirements are frozen as:
 - no direct foreign-domain table mutation;
 - no partial stay closure;
 - no fabricated financial, cashier, Business Date, or Night Audit readiness;
-- post-commit room-turnover handoff must go through an approved event/outbox or owner-domain handoff contract;
-- Housekeeping owns post-checkout room-turnover transition;
-- Engineering remains read-only unless a later approved Engineering workflow consumes the handoff.
+- post-commit Housekeeping room-turnover handoff must go through an approved event/outbox or owner-domain handoff contract before checkout implementation can be production-safe;
+- Housekeeping owns post-checkout room-turnover transition, and Front Desk must not mutate Housekeeping room readiness directly;
+- Housekeeping readiness is not currently a checkout execution gate;
+- Engineering availability is not currently a checkout execution gate;
+- Engineering checkout handoff is optional and requires separate approval when applicable.
 
 ### Unresolved Prerequisites
 
@@ -262,7 +279,7 @@ FD-B13 records these source-backed prerequisite categories before checkout imple
 - Night Audit / checkout shared concurrency guard using the source-proven Property and Business Date lock order or a new approved shared primitive.
 - PMS Guest Ledger checkout financial terminal attestation/freeze contract.
 - General Cashier checkout obligation terminalization/attestation contract.
-- Transactional checkout handoff/outbox or event contract for room-turnover recovery.
+- Transactional Housekeeping room-turnover handoff/outbox or event contract for room-turnover recovery.
 - Sensitive Action Confirmation registration for `frontdesk-checkout-execution`.
 - Checkout execution permission and command package after all prerequisite owner-domain packages are accepted.
 
