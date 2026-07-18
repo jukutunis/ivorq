@@ -265,17 +265,20 @@ Both remain unimplemented and unauthorized in this package.
 Future execution ordering:
 
 1. Resolve authenticated server context.
-2. Authorize execute permission before querying or resolving the requested stay.
-3. Resolve same-property stay after authorization.
-4. Return non-disclosing 404 for unknown or cross-property stay.
-5. Validate a fresh sensitive confirmation bound to actor, company, property, intent, session, and the future server-generated confirmation identity.
-6. Enter the controlled transaction.
-7. Acquire all approved global and owner-domain locks.
+2. Authorize execute permission before stay lookup.
+3. Resolve same-property stay.
+4. Return non-disclosing 404 where applicable.
+5. Perform pre-transaction confirmation validation.
+6. Enter the controlled PostgreSQL transaction.
+7. Acquire Property, Business Date, stay, idempotency, Night Audit, PMS, and General Cashier locks in the approved order.
 8. Obtain and validate all execution-time attestations.
-9. Revalidate the same sensitive confirmation immediately before the first persistent checkout mutation.
-10. Persist checkout evidence, the terminal stay transition, and the transactional handoff.
-11. Commit.
-12. Complete the approved confirmation-consumption procedure.
+9. Revalidate the same confirmation identity immediately before mutation.
+10. Lock or atomically claim the confirmation identity as unconsumed and bind it to this property, stay, and idempotency identity.
+11. Persist immutable checkout evidence, including the confirmation identity or safe fingerprint.
+12. Persist the terminal stay transition.
+13. Persist the transactional Housekeeping handoff/outbox record.
+14. Commit the transaction.
+15. Perform idempotent session confirmation cleanup after commit.
 
 The pre-transaction confirmation validation prevents unnecessary lock acquisition for stale or unauthorized confirmation attempts. The final validation occurs after lock waits and immediately before the first persistent checkout mutation. If the confirmation expires while waiting for locks or attestations, the transaction must roll back and fail closed. No checkout evidence, terminal stay transition, or handoff may be persisted when final confirmation validation fails. Broad administrators require explicit operational assignment or break-glass policy, not implicit checkout authority.
 
@@ -287,7 +290,17 @@ The runtime prerequisite remains frozen inside the Checkout Sensitive Action Con
 CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED
 ```
 
-The later checkout Sensitive Action Confirmation package must introduce an approved server-generated confirmation identity or nonce and a durable consumption contract. No password may be persisted. Immutable checkout evidence must record the approved confirmation identity or a safe fingerprint, confirmation time, and expiry. One confirmation identity must not authorize two different successful checkout mutations. Consumption must remain effective if the HTTP response is lost after the database commit. A same-idempotency replay of an already committed checkout requires and consumes no new confirmation because it performs no new mutation. A new checkout attempt, changed stay, changed idempotency identity, or uncommitted retry requires a fresh unconsumed confirmation. Session invalidation may occur after successful commit, but it is not the sole durable replay defense; failure to complete session cleanup must not allow the confirmation identity to authorize another checkout.
+Durable confirmation consumption and session confirmation cleanup are separate concepts.
+
+Durable confirmation consumption must occur inside the same PostgreSQL checkout transaction. It happens after all approved global and owner-domain locks are acquired, after execution-time attestations are obtained, after final confirmation expiry and binding validation, before or atomically with the first persistent checkout mutation, and before transaction commit. The future checkout Sensitive Action Confirmation package must introduce an approved server-generated confirmation identity or nonce and a durable consumption contract. No password may be persisted.
+
+The durable consumption contract must lock or atomically claim the authoritative confirmation identity; verify actor, company, property, intent, session, expiry, and unconsumed state; bind consumption to the checkout `property_id`, stay identity, and idempotency identity; prevent one confirmation identity from authorizing two successful checkout mutations; remain effective after response loss, process termination, or failed session cleanup; roll back the consumption claim when the checkout transaction rolls back; and commit the consumption claim together with immutable checkout evidence, terminal stay transition, and transactional handoff.
+
+Database-enforced duplicate protection is required through a unique successful checkout confirmation identity, a unique safe confirmation fingerprint on successful checkout evidence, or both. The exact schema remains runtime-package scope. Immutable checkout evidence must record the approved confirmation identity or safe fingerprint, confirmation time, and expiry.
+
+Post-commit session invalidation is cleanup only, not durable consumption, and is non-authoritative for successful-use replay defense. Session cleanup may occur after successful commit, but failure of session cleanup must not make the consumed confirmation reusable. Session cleanup must not reopen or roll back a committed checkout, and retrying cleanup must be idempotent.
+
+A same-idempotency replay of an already committed checkout requires and consumes no new confirmation because it returns immutable committed checkout evidence and performs no new mutation. A new checkout attempt, changed stay, changed idempotency identity, or uncommitted retry requires a fresh unconsumed confirmation. An uncommitted retry after rollback may reuse the same confirmation only when the durable consumption claim also rolled back and the confirmation remains unexpired; when it expired after rollback, fresh confirmation is required. A confirmation bound to one checkout idempotency identity must not authorize a different identity.
 
 ## Failure Recovery
 
@@ -296,6 +309,7 @@ Required semantics:
 - validation failure before transaction: fail closed, no success evidence;
 - authorization failure: controlled failure before stay lookup;
 - sensitive confirmation failure: fail or roll back before mutation;
+- durable confirmation claim or consumption failure because the identity is already consumed: rollback, persist no checkout success, persist no terminal stay transition, persist no handoff, and return a controlled replay/conflict result;
 - lock timeout: rollback and fail closed;
 - confirmation expiry while waiting for locks or attestations: rollback and fail closed;
 - deadlock/serialization: rollback and retry only through bounded idempotent policy;
@@ -388,7 +402,9 @@ Source inspection for this ADR verified:
 - same Laravel/PostgreSQL topology is source-proven.
 - GLF-D and GC-A1 are read-only top-level projections and not participating execution attestations.
 - confirmation validation is dual-phase: pre-transaction and final immediately before mutation.
-- durable one-time confirmation consumption remains a frozen runtime prerequisite, not implemented by this ADR.
+- durable one-time confirmation consumption remains a frozen runtime prerequisite, occurs inside the future PostgreSQL checkout transaction, and is not implemented by this ADR.
+- post-commit session invalidation is cleanup only and is not durable confirmation consumption.
+- successful checkout evidence must include the confirmation identity or safe fingerprint with database-enforced duplicate reuse protection.
 - PMS Guest Ledger / PMS Cashiering locks precede General Cashier locks and remain held while General Cashier validates.
 - Night Audit start locks `properties`, then `property_business_dates`, then active Night Audit run scope.
 - `can_execute=false` remains canonical in current Front Desk runtime.

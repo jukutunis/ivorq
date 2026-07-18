@@ -31,7 +31,7 @@ The original FD-B8 decision remains historical source truth for the first bounda
 
 FD-B13 is accepted at canonical SHA `fbb289abf4bbfeb2f3ae801e05e98619a61f7814` with verdict `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES`. ADR-089 is the required Proposed architecture decision before runtime prerequisite packages may begin. Future Front Desk checkout owns orchestration and terminal Front Desk evidence, but it must not mutate foreign-domain tables; owner domains participate through approved transaction-bound attestation ports. `can_execute=false` remains canonical, and runtime checkout remains unauthorized until a later separately approved package.
 
-ADR-089 correction freezes dual sensitive-confirmation validation and durable one-time confirmation consumption as future runtime prerequisites. Confirmation must be validated before transaction entry and revalidated after lock waits immediately before the first persistent checkout mutation; expiry during lock waits rolls back without checkout evidence, terminal stay transition, or handoff. PMS Guest Ledger / PMS Cashiering financial attestation must run before General Cashier participation so General Cashier consumes approved PMS references rather than re-owning payment, deposit, refund, reversal, AR, folio, or settlement facts. This synchronization note changes no runtime authority, and `can_execute=false` remains canonical.
+ADR-089 correction freezes dual sensitive-confirmation validation and durable one-time confirmation consumption as future runtime prerequisites. Durable confirmation consumption must occur inside the PostgreSQL checkout transaction after locks, attestations, and final confirmation validation, and before or atomically with the first persistent checkout mutation. Session invalidation is post-commit cleanup only, not durable consumption. Expiry or failed durable claim rolls back without checkout evidence, terminal stay transition, or handoff. PMS Guest Ledger / PMS Cashiering financial attestation must run before General Cashier participation so General Cashier consumes approved PMS references rather than re-owning payment, deposit, refund, reversal, AR, folio, or settlement facts. This synchronization note changes no runtime authority, and `can_execute=false` remains canonical.
 
 ## Decision
 
@@ -253,19 +253,22 @@ Future authorization and sensitive-confirmation requirements are frozen as:
 Future checkout execution command ordering is frozen as:
 
 1. Resolve the authenticated actor and server-owned active company/property context.
-2. Authorize `frontdesk.checkout-execution.execute` before querying or resolving the requested stay.
+2. Authorize `frontdesk.checkout-execution.execute` before stay lookup.
 3. Resolve `front_desk_stay_id` scoped to the active property.
-4. Return non-disclosing 404 for an unknown or cross-property stay, but only after the actor has passed the execute authorization gate.
-5. Validate a fresh `frontdesk-checkout-execution` Sensitive Action Confirmation bound to the actor, company, property, intent, session, and future server-generated confirmation identity.
-6. Enter the controlled transaction.
-7. Acquire all approved global and owner-domain locks.
+4. Return non-disclosing 404 where applicable, but only after the actor has passed the execute authorization gate.
+5. Perform pre-transaction confirmation validation.
+6. Enter the controlled PostgreSQL transaction.
+7. Acquire Property, Business Date, stay, idempotency, Night Audit, PMS, and General Cashier locks in the approved order.
 8. Obtain and validate all execution-time attestations.
-9. Revalidate the same Sensitive Action Confirmation immediately before the first persistent checkout mutation.
-10. Persist immutable checkout evidence, the terminal stay transition, and the transactional handoff.
-11. Commit.
-12. Complete the approved confirmation-consumption procedure.
+9. Revalidate the same confirmation identity immediately before mutation.
+10. Lock or atomically claim the confirmation identity as unconsumed and bind it to this property, stay, and idempotency identity.
+11. Persist immutable checkout evidence, including the confirmation identity or safe fingerprint.
+12. Persist the terminal stay transition.
+13. Persist the transactional Housekeeping handoff/outbox record.
+14. Commit the transaction.
+15. Perform idempotent session confirmation cleanup after commit.
 
-The future checkout Sensitive Action Confirmation package must include `CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED`. Current session invalidation alone is not a durable replay defense for atomic successful-use consumption with the PostgreSQL checkout commit. Same-idempotency replay of an already committed checkout requires and consumes no new confirmation; a new checkout attempt, changed stay, changed idempotency identity, or uncommitted retry requires a fresh unconsumed confirmation.
+The future checkout Sensitive Action Confirmation package must include `CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED`. Durable confirmation consumption occurs inside the checkout transaction; session invalidation occurs only after commit as idempotent cleanup and is not authoritative durable consumption. The future contract must lock or atomically claim the authoritative confirmation identity, verify actor/company/property/intent/session/expiry/unconsumed state, bind consumption to property, stay, and idempotency identity, commit the consumption claim with checkout evidence and handoff, and roll back the claim when the checkout transaction rolls back. Database-enforced duplicate protection is required through a unique successful checkout confirmation identity, a unique safe confirmation fingerprint on successful checkout evidence, or both. Same-idempotency replay of an already committed checkout requires and consumes no new confirmation; it returns immutable committed checkout evidence and must not attempt to consume the confirmation again. A new checkout attempt, changed stay, changed idempotency identity, or uncommitted retry requires a fresh unconsumed confirmation unless a rollback also rolled back the durable consumption claim and the same confirmation remains unexpired. A confirmation bound to one checkout idempotency identity must not authorize a different identity.
 
 Future idempotency requirement is frozen as:
 
@@ -273,7 +276,9 @@ Future idempotency requirement is frozen as:
 - successful terminal checkout evidence must also prevent a second successful checkout for the same `front_desk_stay_id`;
 - retries after response loss must return the committed immutable outcome;
 - same-idempotency replay after a committed checkout must not require or consume a new sensitive confirmation because no new mutation occurs;
-- a new checkout attempt, changed stay, changed idempotency identity, or uncommitted retry requires fresh unconsumed confirmation;
+- same-idempotency replay after a committed checkout must not attempt to consume the confirmation again;
+- a new checkout attempt, changed stay, changed idempotency identity, or uncommitted retry requires fresh unconsumed confirmation unless the uncommitted retry follows a rollback that also rolled back the durable consumption claim and the same confirmation remains unexpired;
+- a confirmation bound to one checkout idempotency identity must not authorize a different identity;
 - downstream handoff retries must not re-close the stay.
 
 Future mutation and handoff requirements are frozen as:
