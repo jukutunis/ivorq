@@ -191,6 +191,91 @@ The projection service:
 
 FD-B8 is a read-only projection. No write path exists. `CONCURRENCY_NOT_REQUIRED_READ_ONLY_PROJECTION` is recorded and proven by the absence of any mutation path in the service, controller, or route layer.
 
+## FD-B13 Checkout Execution Readiness Review Synchronization
+
+Canonical reviewed SHA: `286c7f491ea82385ee369ff0020625448eea671d`
+
+Contract version: 1.5
+
+Readiness verdict:
+
+```text
+CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES
+```
+
+FD-B13 is a source-backed readiness review only. It creates no runtime checkout authority, does not set `can_execute=true`, does not register a checkout route, permission, sensitive-confirmation intent, command, service, migration, seeder, or UI action, and does not mutate Front Desk, PMS Guest Ledger, PMS Cashiering, General Cashier, Business Date, Night Audit, Housekeeping, Engineering, Accounting, GL, AR, tax, revenue, or room-turnover state.
+
+### Source-Proven Findings
+
+- Front Desk source contains `FrontDeskStay` and the active stay enum, but `FrontDeskStayStatusEnum` currently contains only `ARRIVAL_READY`, `ROOM_ASSIGNED`, `CHECK_IN_CONFIRMATION_PENDING`, and `IN_HOUSE`. A checked-out/departed terminal state is not source-proven.
+- FD-B3 through FD-B7 provide immutable operational evidence patterns with `property_id + idempotency_key`, `property_id + front_desk_stay_id + source_hash`, stay-row locks, app-level immutability, and PostgreSQL immutability triggers. Those packages do not close a stay.
+- FD-B8 through FD-B12 provide read-only checkout execution boundary behavior. The boundary consumes GLF-D, GC-A1, BD-A1, and NA-A1 evidence without foreign-domain mutation and still returns `can_execute=false`.
+- GLF-D proves settlement readiness as a PMS Guest Ledger-owned read-only projection, but it is a top-level `REPEATABLE READ, READ ONLY` transaction and rejects nested transaction participation. It does not provide checkout-time folio/settlement freeze or terminal financial attestation.
+- GC-A1 proves General Cashier checkout-obligation readiness as a General Cashier-owned read-only projection, but it is also a top-level `REPEATABLE READ, READ ONLY` transaction and rejects nested transaction participation. It does not provide checkout-time cashier obligation terminalization.
+- BD-A1 proves the current open Property Business Date projection. NA-A1 proves active close-lock projection and Night Audit run identity. Night Audit start locks the active `properties` row and `property_business_dates` row; current Front Desk boundary reads this evidence but does not share those locks.
+- `SensitiveActionConfirmationService::REGISTERED_INTENTS` does not include `frontdesk-checkout-execution`; the future checkout intent remains unregistered.
+- `PermissionSeeder` registers `frontdesk.checkout-execution-boundary.view`, but no `frontdesk.checkout-execution.execute` permission is source-proven.
+- `routes/web.php` has only a GET `departure-checkout-execution-boundary` route. No POST, PUT, PATCH, or DELETE checkout execution route exists.
+- Current `outbox_messages` schema is inventory-shaped through `source_inventory_transaction_id`; a checkout room-turnover handoff/outbox contract is not source-proven.
+
+### Frozen Future Command Contract
+
+The future browser input contract remains identifier-only:
+
+```json
+{
+  "front_desk_stay_id": "ULID",
+  "idempotency_key": "opaque client-generated key"
+}
+```
+
+The browser must not supply property, company, tenant, actor, guest, reservation, room, status, business date, amount, currency, folio balance, payment result, cashier result, Night Audit result, source fingerprint, audit timestamp, or execution result.
+
+Future authorization and sensitive-confirmation requirements are frozen as:
+
+- execute permission: `frontdesk.checkout-execution.execute`, pending later package creation;
+- sensitive intent: `frontdesk-checkout-execution`, pending later package registration;
+- boundary-view permission never implies execute permission;
+- Finance, Cashier, Night Audit, Housekeeping, Engineering, Banking, GL, AR, tax, revenue, and broad operational roles do not receive execute authority by default.
+
+Future idempotency requirement is frozen as:
+
+- `property_id + idempotency_key` permits at most one checkout execution outcome;
+- successful terminal checkout evidence must also prevent a second successful checkout for the same `front_desk_stay_id`;
+- retries after response loss must return the committed immutable outcome;
+- downstream handoff retries must not re-close the stay.
+
+Future mutation and handoff requirements are frozen as:
+
+- no direct foreign-domain table mutation;
+- no partial stay closure;
+- no fabricated financial, cashier, Business Date, or Night Audit readiness;
+- post-commit room-turnover handoff must go through an approved event/outbox or owner-domain handoff contract;
+- Housekeeping owns post-checkout room-turnover transition;
+- Engineering remains read-only unless a later approved Engineering workflow consumes the handoff.
+
+### Unresolved Prerequisites
+
+FD-B13 records these source-backed prerequisite categories before checkout implementation can be authorized:
+
+- Front Desk terminal checkout state and immutable checkout execution evidence foundation.
+- Night Audit / checkout shared concurrency guard using the source-proven Property and Business Date lock order or a new approved shared primitive.
+- PMS Guest Ledger checkout financial terminal attestation/freeze contract.
+- General Cashier checkout obligation terminalization/attestation contract.
+- Transactional checkout handoff/outbox or event contract for room-turnover recovery.
+- Sensitive Action Confirmation registration for `frontdesk-checkout-execution`.
+- Checkout execution permission and command package after all prerequisite owner-domain packages are accepted.
+
+Material architecture boundary:
+
+```text
+NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION
+```
+
+Reason: current ADRs establish read-only projections and ownership boundaries, but they do not fully define the cross-domain execution-time freeze/attestation and shared lock/orchestration primitive required to atomically combine Front Desk checkout with PMS Guest Ledger, General Cashier, Business Date, and Night Audit.
+
+Checkout implementation remains unauthorized.
+
 ## Consequences
 
 * **Positive:** Establishes a clear, governance-backed boundary that tells Front Desk operators exactly why checkout cannot proceed, without fabricating readiness.
