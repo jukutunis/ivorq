@@ -248,6 +248,73 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         return new FrontDeskNightAuditLockDependencyService($this->fakeNightAuditSource($projection));
     }
 
+    /**
+     * @param array<string, mixed> $overrides
+     * @return array<string, mixed>
+     */
+    private function validActiveNightAuditSourceProjection(array $overrides = []): array
+    {
+        return $this->validNightAuditSourceProjection(array_merge([
+            'status' => NightAuditLockProjectionService::STATUS_ACTIVE,
+            'source_status' => NightAuditLockProjectionService::STATUS_ACTIVE,
+            'close_lock_active' => true,
+            'night_audit_run_id' => (string) Str::ulid(),
+            'attempt_number' => 1,
+            'run_status' => 'IN_PROGRESS',
+            'started_at' => '2026-07-17T01:30:00.000000Z',
+            'started_by' => $this->frontDeskActor->id,
+            'source_fingerprint' => hash('sha256', 'fd-b12-valid-active-source'),
+        ], $overrides));
+    }
+
+    /**
+     * @param array<string, mixed> $overrides
+     * @return array<string, mixed>
+     */
+    private function validUnavailableNightAuditSourceProjection(array $overrides = []): array
+    {
+        return $this->validNightAuditSourceProjection(array_merge([
+            'status' => NightAuditLockProjectionService::STATUS_UNAVAILABLE,
+            'source_status' => PropertyBusinessDateProjectionService::ERROR_NOT_INITIALIZED,
+            'source_classification' => NightAuditLockProjectionService::SOURCE_UNAVAILABLE,
+            'close_lock_active' => null,
+            'property_id' => null,
+            'property_business_date_id' => null,
+            'business_date' => null,
+            'property_timezone' => null,
+            'source_fingerprint' => null,
+            'evidence_unavailable_codes' => [PropertyBusinessDateProjectionService::ERROR_NOT_INITIALIZED],
+        ], $overrides));
+    }
+
+    /**
+     * @param array<string, mixed> $gate
+     */
+    private function assertExactNightAuditGateContract(array $gate): void
+    {
+        $this->assertSame([
+            'gate',
+            'owner',
+            'satisfied',
+            'detail',
+            'status',
+            'source_status',
+            'close_lock_active',
+            'business_date',
+            'property_timezone',
+            'attempt_number',
+            'run_status',
+            'started_at',
+            'evidence_unavailable_codes',
+            'evaluated_at',
+            'source_fingerprint',
+        ], array_keys($gate));
+
+        foreach (['night_audit_run_id', 'started_by', 'property_id', 'property_business_date_id'] as $rawKey) {
+            $this->assertArrayNotHasKey($rawKey, $gate);
+        }
+    }
+
     private function createActiveNightAuditRun(PropertyBusinessDate $businessDate): NightAuditRun
     {
         $run = new NightAuditRun();
@@ -866,37 +933,52 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
     public function test_front_desk_night_audit_adapter_accepts_active_and_unavailable_source_shapes(): void
     {
-        $active = $this->fakeNightAuditDependency($this->validNightAuditSourceProjection([
-            'status' => NightAuditLockProjectionService::STATUS_ACTIVE,
-            'source_status' => NightAuditLockProjectionService::STATUS_ACTIVE,
-            'close_lock_active' => true,
-            'night_audit_run_id' => (string) Str::ulid(),
+        $active = $this->fakeNightAuditDependency($this->validActiveNightAuditSourceProjection([
             'attempt_number' => 2,
-            'run_status' => 'IN_PROGRESS',
-            'started_at' => '2026-07-17T01:30:00.000000Z',
-            'started_by' => $this->frontDeskActor->id,
-            'source_fingerprint' => hash('sha256', 'fd-b12-valid-active-source'),
         ]))->project($this->frontDeskActor);
 
         $this->assertSame(FrontDeskNightAuditLockDependencyService::STATUS_ACTIVE, $active['status']);
         $this->assertTrue($active['close_lock_active']);
 
-        $unavailable = $this->fakeNightAuditDependency($this->validNightAuditSourceProjection([
-            'status' => NightAuditLockProjectionService::STATUS_UNAVAILABLE,
-            'source_status' => PropertyBusinessDateProjectionService::ERROR_NOT_INITIALIZED,
-            'source_classification' => NightAuditLockProjectionService::SOURCE_UNAVAILABLE,
-            'close_lock_active' => null,
-            'property_id' => null,
-            'property_business_date_id' => null,
-            'business_date' => null,
-            'property_timezone' => null,
-            'source_fingerprint' => null,
-            'evidence_unavailable_codes' => [PropertyBusinessDateProjectionService::ERROR_NOT_INITIALIZED],
-        ]))->project($this->frontDeskActor);
+        $unavailable = $this->fakeNightAuditDependency($this->validUnavailableNightAuditSourceProjection())->project($this->frontDeskActor);
 
         $this->assertSame(FrontDeskNightAuditLockDependencyService::STATUS_UNAVAILABLE, $unavailable['status']);
         $this->assertNull($unavailable['close_lock_active']);
         $this->assertSame([PropertyBusinessDateProjectionService::ERROR_NOT_INITIALIZED], $unavailable['evidence_unavailable_codes']);
+    }
+
+    public function test_front_desk_night_audit_adapter_accepts_only_strict_positive_integer_attempt_number(): void
+    {
+        $result = $this->fakeNightAuditDependency($this->validActiveNightAuditSourceProjection([
+            'attempt_number' => 1,
+        ]))->project($this->frontDeskActor);
+
+        $this->assertSame(1, $result['attempt_number']);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidNightAuditAttemptNumbers')]
+    public function test_front_desk_night_audit_adapter_rejects_non_integer_attempt_numbers(string $case, mixed $attemptNumber): void
+    {
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(FrontDeskNightAuditLockDependencyService::INVALID_PROJECTION);
+
+        $this->fakeNightAuditDependency($this->validActiveNightAuditSourceProjection([
+            'attempt_number' => $attemptNumber,
+        ]))->project($this->frontDeskActor);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('missingNightAuditSourceKeyCases')]
+    public function test_front_desk_night_audit_adapter_requires_exact_source_key_presence(string $case, string $shape, string $missingKey): void
+    {
+        $projection = $shape === 'unavailable'
+            ? $this->validUnavailableNightAuditSourceProjection()
+            : $this->validNightAuditSourceProjection();
+        unset($projection[$missingKey]);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(FrontDeskNightAuditLockDependencyService::INVALID_PROJECTION);
+
+        $this->fakeNightAuditDependency($projection)->project($this->frontDeskActor);
     }
 
     /**
@@ -920,9 +1002,13 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->createValidAuthoritativeBusinessDate();
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+        $gate = $b['authoritative_gates']['night_audit_lock'];
 
         $this->assertSame(FrontDeskNightAuditLockDependencyService::STATUS_CLEAR, $b['night_audit_close_lock']['status']);
-        $this->assertTrue($b['authoritative_gates']['night_audit_lock']['satisfied']);
+        $this->assertExactNightAuditGateContract($gate);
+        $this->assertTrue($gate['satisfied']);
+        $this->assertNull($gate['attempt_number']);
+        $this->assertNull($gate['started_at']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_CLOSE_LOCK_ACTIVE, $b['blocker_codes']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE, $b['blocker_codes']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CHECKOUT_NOT_IMPLEMENTED, $b['blocker_codes']);
@@ -940,11 +1026,15 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $before = $this->domainTableCounts();
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+        $gate = $b['authoritative_gates']['night_audit_lock'];
 
         $this->assertSame($run->id, $b['night_audit_close_lock']['night_audit_run_id']);
         $this->assertSame(FrontDeskNightAuditLockDependencyService::STATUS_ACTIVE, $b['night_audit_close_lock']['status']);
         $this->assertTrue($b['night_audit_close_lock']['close_lock_active']);
-        $this->assertFalse($b['authoritative_gates']['night_audit_lock']['satisfied']);
+        $this->assertExactNightAuditGateContract($gate);
+        $this->assertFalse($gate['satisfied']);
+        $this->assertSame($b['night_audit_close_lock']['attempt_number'], $gate['attempt_number']);
+        $this->assertSame($b['night_audit_close_lock']['started_at'], $gate['started_at']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_CLOSE_LOCK_ACTIVE, $b['blocker_codes']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE, $b['blocker_codes']);
         $this->assertFalse($b['can_execute']);
@@ -957,12 +1047,16 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->seedB3B4B5B6B7Ready($s);
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
+        $gate = $b['authoritative_gates']['night_audit_lock'];
 
         $this->assertSame(FrontDeskNightAuditLockDependencyService::STATUS_UNAVAILABLE, $b['night_audit_close_lock']['status']);
         $this->assertSame(PropertyBusinessDateProjectionService::ERROR_NOT_INITIALIZED, $b['night_audit_close_lock']['source_status']);
         $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE, $b['blocker_codes']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_CLOSE_LOCK_ACTIVE, $b['blocker_codes']);
-        $this->assertFalse($b['authoritative_gates']['night_audit_lock']['satisfied']);
+        $this->assertExactNightAuditGateContract($gate);
+        $this->assertFalse($gate['satisfied']);
+        $this->assertNull($gate['attempt_number']);
+        $this->assertNull($gate['started_at']);
         $this->assertFalse($b['can_execute']);
     }
 
@@ -1087,6 +1181,41 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
                 'source_fingerprint' => null,
                 'evidence_unavailable_codes' => [PropertyBusinessDateProjectionService::ERROR_NOT_INITIALIZED],
             ], FrontDeskNightAuditLockDependencyService::INVALID_PROJECTION],
+        ];
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: mixed}>
+     */
+    public static function invalidNightAuditAttemptNumbers(): array
+    {
+        return [
+            'string one' => ['string one', '1'],
+            'alphanumeric string' => ['alphanumeric string', '1abc'],
+            'float one' => ['float one', 1.0],
+            'float fractional' => ['float fractional', 1.5],
+            'boolean true' => ['boolean true', true],
+            'boolean false' => ['boolean false', false],
+            'array' => ['array', []],
+            'zero' => ['zero', 0],
+            'negative one' => ['negative one', -1],
+        ];
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string, 2: string}>
+     */
+    public static function missingNightAuditSourceKeyCases(): array
+    {
+        return [
+            'clear missing night audit run id' => ['clear missing night audit run id', 'clear', 'night_audit_run_id'],
+            'clear missing attempt number' => ['clear missing attempt number', 'clear', 'attempt_number'],
+            'clear missing started by' => ['clear missing started by', 'clear', 'started_by'],
+            'unavailable missing source fingerprint' => ['unavailable missing source fingerprint', 'unavailable', 'source_fingerprint'],
+            'unavailable missing property id' => ['unavailable missing property id', 'unavailable', 'property_id'],
+            'clear missing source status' => ['clear missing source status', 'clear', 'source_status'],
+            'clear missing markers' => ['clear missing markers', 'clear', 'markers'],
+            'clear missing evaluated at' => ['clear missing evaluated at', 'clear', 'evaluated_at'],
         ];
     }
 

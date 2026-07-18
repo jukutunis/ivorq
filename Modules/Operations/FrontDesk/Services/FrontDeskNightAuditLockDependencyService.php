@@ -33,6 +33,29 @@ class FrontDeskNightAuditLockDependencyService
         PropertyBusinessDateProjectionService::ERROR_TIMEZONE_MISMATCH,
     ];
 
+    private const SOURCE_KEYS = [
+        'projection_version',
+        'status',
+        'source_status',
+        'source_classification',
+        'owner',
+        'read_only',
+        'close_lock_active',
+        'property_id',
+        'property_business_date_id',
+        'business_date',
+        'property_timezone',
+        'night_audit_run_id',
+        'attempt_number',
+        'run_status',
+        'started_at',
+        'started_by',
+        'evidence_unavailable_codes',
+        'source_fingerprint',
+        'evaluated_at',
+        'markers',
+    ];
+
     public function __construct(
         private readonly NightAuditLockProjectionService $projectionService,
     ) {}
@@ -58,18 +81,7 @@ class FrontDeskNightAuditLockDependencyService
      */
     private function assertCommonProjection(array $projection): void
     {
-        foreach ([
-            'projection_version',
-            'status',
-            'source_status',
-            'source_classification',
-            'owner',
-            'read_only',
-            'close_lock_active',
-            'evidence_unavailable_codes',
-            'evaluated_at',
-            'markers',
-        ] as $field) {
+        foreach (self::SOURCE_KEYS as $field) {
             if (! array_key_exists($field, $projection)) {
                 throw new DomainException(self::INVALID_PROJECTION);
             }
@@ -121,7 +133,8 @@ class FrontDeskNightAuditLockDependencyService
             || ! $this->isUlid((string) $projection['property_business_date_id'])
             || ! $this->isUlid((string) $projection['night_audit_run_id'])
             || ! $this->isUlid((string) $projection['started_by'])
-            || (int) $projection['attempt_number'] < 1
+            || ! is_int($projection['attempt_number'])
+            || $projection['attempt_number'] < 1
             || ! $this->isBusinessDate((string) $projection['business_date'])
             || ! $this->isTimezone((string) $projection['property_timezone'])
             || ! $this->isAbsoluteTimestamp((string) $projection['started_at'])
@@ -207,7 +220,11 @@ class FrontDeskNightAuditLockDependencyService
     private function requireValues(array $projection, array $fields): void
     {
         foreach ($fields as $field) {
-            if (! array_key_exists($field, $projection) || $projection[$field] === null || trim((string) $projection[$field]) === '') {
+            if (! array_key_exists($field, $projection) || $projection[$field] === null) {
+                throw new DomainException(self::INVALID_PROJECTION);
+            }
+
+            if (is_string($projection[$field]) && trim($projection[$field]) === '') {
                 throw new DomainException(self::INVALID_PROJECTION);
             }
         }

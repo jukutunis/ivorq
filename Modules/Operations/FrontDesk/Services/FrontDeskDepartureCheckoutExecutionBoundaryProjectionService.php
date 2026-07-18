@@ -223,12 +223,14 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'status' => $nightAuditLock['status'],
             'source_status' => $nightAuditLock['source_status'],
             'close_lock_active' => $nightAuditLock['close_lock_active'],
-            'run_status' => $nightAuditLock['run_status'],
             'business_date' => $nightAuditLock['business_date'],
             'property_timezone' => $nightAuditLock['property_timezone'],
+            'attempt_number' => $nightAuditLock['attempt_number'],
+            'run_status' => $nightAuditLock['run_status'],
+            'started_at' => $nightAuditLock['started_at'],
+            'evidence_unavailable_codes' => $nightAuditLock['evidence_unavailable_codes'],
             'evaluated_at' => $nightAuditLock['evaluated_at'],
             'source_fingerprint' => $nightAuditLock['source_fingerprint'],
-            'evidence_unavailable_codes' => $nightAuditLock['evidence_unavailable_codes'],
         ];
 
         // Gate 8: No existing completed checkout execution (not yet implemented)
