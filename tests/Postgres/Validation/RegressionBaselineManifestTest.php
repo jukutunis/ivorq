@@ -667,17 +667,24 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'NightAuditCheckoutConcurrencyFoundationTest',
             'NightAuditCheckoutConcurrencyProofTest',
         ], $baseline->classes);
-        $this->assertEquals(14, $baseline->expected->tests ?? null);
-        $this->assertEquals(862, $baseline->expected->assertions ?? null);
+        $this->assertEquals(17, $baseline->expected->tests ?? null);
+        $this->assertEquals(889, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('c126728d329070aae5f8d87c7c6ac8b94449c0eb', $baseline->provenance->sha ?? null);
+        $this->assertEquals('a3fc4b82228b7efc9b1868edac7ac7428f9f08a5', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-na-a2-checkout-transaction-concurrency-foundation', $baseline->provenance->branch ?? null);
         $this->assertStringContainsString('separate PHP processes', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('distinct PostgreSQL backend PIDs', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Property-scoped', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('finite worker timeout and cleanup', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('txid_current transaction ID', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('static WeakMap', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('same backend in a new transaction', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('manually constructed but unissued context', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('before any night_audit_runs query', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('previous database exception retained as cause', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Same-transaction repeated attestations keep a deterministic fingerprint', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout remains unauthorized', $baseline->provenance->note ?? '');
     }

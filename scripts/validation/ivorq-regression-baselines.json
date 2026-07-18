@@ -302,7 +302,7 @@
     },
     {
       "id": "night-audit-checkout-concurrency-foundation-baseline",
-      "description": "NA-A2 checkout transaction participation and close-lock concurrency foundation PostgreSQL tests covering the shared Property and Business Date operational lock context, transaction-bound Night Audit concurrency attestation, active close-lock detection, fail-closed context validation, zero-write behavior, and real Property-scoped process concurrency. NA-A2 establishes participation and attestation only; it does not authorize or implement checkout execution.",
+      "description": "NA-A2 checkout transaction participation and close-lock concurrency foundation PostgreSQL tests covering the shared Property and Business Date operational lock context, exact PostgreSQL transaction-bound Night Audit concurrency attestation, service-issued object capability validation, active close-lock detection, fail-closed context validation, zero-write behavior, and real Property-scoped process concurrency. NA-A2 establishes participation and attestation only; it does not authorize or implement checkout execution.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -312,16 +312,16 @@
         "NightAuditCheckoutConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 14,
-        "assertions": 862,
+        "tests": 17,
+        "assertions": 889,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-19",
         "branch": "sprint-na-a2-checkout-transaction-concurrency-foundation",
-        "sha": "c126728d329070aae5f8d87c7c6ac8b94449c0eb",
-        "note": "NA-A2 runtime source measurement: 2 exact PostgreSQL classes / 14 tests / 862 assertions / 0 failures / 0 errors. Real PostgreSQL concurrency proof uses separate PHP processes and distinct PostgreSQL backend PIDs. Participant-clear-first blocks Night Audit start while the Property and Business Date operational locks are held, then permits start after participant commit. Active-first reports the active close lock; participant rollback persists no evidence; different Properties do not globally block. Locking is Property-scoped with finite worker timeout and cleanup. No migration, route, controller, permission, confirmation intent, checkout command, checkout UI, or checkout execution is added; can_execute=false and checkout remains unauthorized."
+        "sha": "a3fc4b82228b7efc9b1868edac7ac7428f9f08a5",
+        "note": "NA-A2 transaction-capability correction measurement: 2 exact PostgreSQL classes / 17 tests / 889 assertions / 0 failures / 0 errors. The operational lock service resolves non-null PostgreSQL backend PID and txid_current transaction ID in one server query and registers the exact context object in a static WeakMap only after Property and Business Date locks are acquired and validated. Guard validation requires the issued object, authoritative Company/Property/Business Date identity fields, the same backend PID, and the same exact PostgreSQL transaction ID before any night_audit_runs query. A stale issued context from a committed transaction is rejected on the same backend in a new transaction with NA_A2_INVALID_OPERATIONAL_LOCK_CONTEXT; an exact-field manually constructed but unissued context is also rejected before Night Audit query. Proof resolution is fail-closed with the previous database exception retained as cause. Same-transaction repeated attestations keep a deterministic fingerprint while different transactions receive different transaction-bound fingerprints without exposing raw PID or transaction ID in attestation output. Real PostgreSQL concurrency proof continues to use separate PHP processes and distinct PostgreSQL backend PIDs. Participant-clear-first blocks Night Audit start while the Property and Business Date operational locks are held, then permits start after participant commit. Active-first reports the active close lock; participant rollback persists no evidence; different Properties do not globally block. Locking is Property-scoped with finite worker timeout and cleanup. No migration, route, controller, permission, confirmation intent, checkout command, checkout UI, or checkout execution is added; can_execute=false and checkout remains unauthorized."
       },
       "accepted_debt": [],
       "status": "active"
