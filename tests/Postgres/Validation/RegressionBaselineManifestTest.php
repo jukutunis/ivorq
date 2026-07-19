@@ -735,7 +735,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertEquals([], $baseline->accepted_debt);
-        $this->assertEquals('e7822658b4408fc675df1098da9a8bcb8687a694', $baseline->provenance->sha ?? null);
+        $this->assertEquals('b6fe3825d6d013a296a084250db856449c960df0', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-glf-e-pms-terminal-financial-attestation', $baseline->provenance->branch ?? null);
     }
 
