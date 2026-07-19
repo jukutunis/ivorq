@@ -449,39 +449,48 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
 
     public function test_different_transaction_different_fingerprint(): void
     {
-        // Within ONE transaction: same data = same fingerprint.
-        // Across transactions: different txid → different fingerprint.
-        // The fingerprint formula is: hash('sha256', implode('|', [...facts..., hash('sha256', txid)]))
-        // Since txid_current() is monotonically increasing and never repeats,
-        // different transactions guarantee different fingerprints.
-        DB::transaction(function () {
-            $context = $this->acquireContext();
+        // Create fixture BEFORE both attestation transactions.
+        $reservation = $this->makeGlfReservation();
+        $guest = $reservation->primaryGuest;
+        $stay = $this->makeStay($reservation->id, $guest->id);
+        $this->makeFolio($reservation->id, $guest->id);
+        $bd = $this->openBusinessDate();
 
-            // Two different stays in the same transaction
-            $r1 = $this->makeGlfReservation(); $s1 = $this->makeStay($r1->id, $r1->primaryGuest->id);
-            $this->makeFolio($r1->id, $r1->primaryGuest->id);
+        $fpA = ''; $fpB = '';
+        $txidA = ''; $txidB = '';
 
-            $r2 = $this->makeGlfReservation(); $s2 = $this->makeStay($r2->id, $r2->primaryGuest->id);
-            $this->makeFolio($r2->id, $r2->primaryGuest->id);
-
-            // Same stay → same fingerprint (same transaction)
-            $a1a = $this->service->attest($context, $s1->id);
-            $a1b = $this->service->attest($context, $s1->id);
-            $this->assertEquals($a1a->source_fingerprint, $a1b->source_fingerprint,
-                'Same transaction + same data = same fingerprint.');
-
-            // Different stay → different fingerprint (same transaction)
-            $a2 = $this->service->attest($context, $s2->id);
-            $this->assertNotEquals($a1a->source_fingerprint, $a2->source_fingerprint,
-                'Different data = different fingerprint.');
+        // Transaction A — real GLF-E attest
+        DB::transaction(function () use (&$fpA, &$txidA, $stay, $bd) {
+            $txidA = DB::selectOne("SELECT txid_current()::text AS txid")->txid;
+            $context = $this->lockService->acquire(
+                $this->glfCompany->id, $this->glfProperty->id,
+                ['property_business_date_id' => $bd->id, 'property_id' => $this->glfProperty->id,
+                 'business_date' => $bd->business_date->format('Y-m-d'), 'property_timezone' => 'UTC',
+                 'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
+            );
+            $fpA = $this->service->attest($context, $stay->id)->source_fingerprint;
         });
 
-        // Cross-transaction: different txid → different sha256(txid) → different fingerprint
-        $txid1 = ''; $txid2 = '';
-        DB::transaction(function () use (&$txid1) { $txid1 = DB::selectOne("SELECT txid_current()::text AS txid")->txid; });
-        DB::transaction(function () use (&$txid2) { $txid2 = DB::selectOne("SELECT txid_current()::text AS txid")->txid; });
-        $this->assertNotEquals($txid1, $txid2);
-        $this->assertNotEquals(hash('sha256', $txid1), hash('sha256', $txid2));
+        // Transaction B — same BD, same stay, same source rows
+        DB::transaction(function () use (&$fpB, &$txidB, $stay, $bd) {
+            $txidB = DB::selectOne("SELECT txid_current()::text AS txid")->txid;
+            $context = $this->lockService->acquire(
+                $this->glfCompany->id, $this->glfProperty->id,
+                ['property_business_date_id' => $bd->id, 'property_id' => $this->glfProperty->id,
+                 'business_date' => $bd->business_date->format('Y-m-d'), 'property_timezone' => 'UTC',
+                 'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
+            );
+            $fpB = $this->service->attest($context, $stay->id)->source_fingerprint;
+        });
+
+        // Transaction IDs differ
+        $this->assertNotEquals($txidA, $txidB, 'Cross-transaction txids must differ.');
+
+        // Same source data, both real GLF-E attest calls
+        $this->assertNotEmpty($fpA); $this->assertNotEmpty($fpB);
+
+        // Different transactions → different fingerprints
+        $this->assertNotEquals($fpA, $fpB, 'Cross-transaction fingerprints must differ over identical source.');
     }
 
     // ═══════════════════════════════════════════════════════════════════════
