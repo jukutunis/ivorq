@@ -1,7 +1,7 @@
 # IVORQ Package Execution Contract
 
 Status: APPROVED
-Version: 1.7
+Version: 1.8
 Created: 2026-07-10
 Last amended: 2026-07-19
 
@@ -13,6 +13,7 @@ Amendment note:
   - Version 1.5 was explicitly approved by the IVORQ Owner for FD-B12 accepted-predecessor synchronization, FD-B13 Checkout Execution Readiness Review authorization, command-contract freeze review, and continued prohibition on checkout execution.
   - Version 1.6 was explicitly approved by the IVORQ Owner for FD-B13 accepted-predecessor synchronization, ADR-089 architecture package authorization, atomic checkout orchestration decision, owner-domain attestation participation, shared Business Date / Night Audit lock coordination, and continued prohibition on runtime checkout implementation.
   - Version 1.7 is explicitly Owner-authorized for ADR-089 accepted-predecessor synchronization, ADR-089 approval status synchronization, NA-A2 runtime authorization, shared Property / Business Date operational locking, Night Audit checkout transaction participation, and continued prohibition on checkout execution.
+  - Version 1.8 is explicitly Owner-authorized for NA-A2 accepted-predecessor synchronization, GLF-E runtime authorization, PMS terminal financial attestation, shared evaluator extraction, participation ports, cash-linked reference contract, exact-object issuance, and continued prohibition on checkout execution.
 
 Amendment protocol:
   - Only Owner may approve amendments to this contract.
@@ -72,7 +73,7 @@ Concise source-backed architecture summary — not a full ADR dump.
 - Current baseline counts must always be verified from the canonical regression manifest.
 - This section records the accepted predecessor state at the time a package is authorized.
 - Later merge results must not be inferred before independent merge verification.
-- Canonical predecessor: `1682dec0fb7f654e77888a476b4ec55a1507610b`
+- Canonical predecessor: `4241e83e6f9e470a7ff5407179cadc166fc7b555`
 - ADR-034 merged and accepted.
 - BD-A1 merged and accepted.
 - FD-B11 merged and accepted.
@@ -89,14 +90,18 @@ Concise source-backed architecture summary — not a full ADR dump.
 - GC-A1: 38 tests / 231 assertions
 - GLF-D: 60 tests / 253 assertions
 - BD-A1: 11 tests / 318 assertions
-- NA-A1: 11 tests / 406 assertions
-- RegressionBaselineManifestTest: 31 tests / 883 assertions
-- Complete active runner: 11 active baselines PASS
+- NA-A1: 11 tests / 422 assertions
+- NA-A2: 20 tests / 914 assertions
+- RegressionBaselineManifestTest: 32 tests / 953 assertions
+- Complete active runner: 12 active baselines PASS
 - Inventory Reversal inherited debt remains: 8 tests / 72 assertions / 2 accepted errors
 - ADR-089 accepted and merged.
 - ADR-089 architecture status: Approved.
-- NA-A2 current authorized package.
+- NA-A2 accepted and fast-forward merged.
 - NA-A2 does not authorize checkout execution.
+- GLF-E current authorized package.
+- General Cashier terminal obligation attestation remains locked.
+- Later Front Desk state/evidence, Housekeeping handoff, confirmation/permission, and final command remain locked.
 - Full access does not bypass later packages.
 - `can_execute=false` remains binding.
 
@@ -107,8 +112,8 @@ Packages must run sequentially. One package may depend on earlier package eviden
 ### Current controlled sequence
 
 1. ADR-089 - accepted, Approved, and merged.
-2. NA-A2 shared transaction and Night Audit concurrency foundation - current.
-3. PMS Guest Ledger terminal financial attestation - locked.
+2. NA-A2 shared transaction and Night Audit concurrency foundation - accepted and merged.
+3. PMS Guest Ledger terminal financial attestation - current.
 4. General Cashier terminal obligation attestation - locked.
 5. Front Desk terminal state and immutable checkout evidence - locked.
 6. Transactional Housekeeping handoff/outbox - locked.

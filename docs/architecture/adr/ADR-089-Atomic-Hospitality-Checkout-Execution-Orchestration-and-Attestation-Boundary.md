@@ -20,7 +20,7 @@ Accepted and fast-forward merged at:
 1682dec0fb7f654e77888a476b4ec55a1507610b
 ```
 
-NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. Financial, cashier, Front Desk terminal evidence, Housekeeping handoff, confirmation, permission, and checkout command packages remain unimplemented. NA-A2 is not accepted until independent review and canonical merge.
+NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. NA-A2 is accepted and fast-forward merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is the current runtime prerequisite under implementation for PMS terminal financial attestation. Financial, cashier, Front Desk terminal evidence, Housekeeping handoff, confirmation, permission, and checkout command packages remain unimplemented.
 
 ## Context
 
@@ -393,13 +393,13 @@ Negative:
 Runtime prerequisite categories must remain locked until ADR-089 is independently reviewed, Owner-accepted, and merged.
 
 1. ADR-089 accepted and merged.
-2. Shared checkout transaction-participation and Property/Business Date/Night Audit concurrency foundation.
-3. PMS Guest Ledger execution-time terminal financial attestation.
-4. General Cashier execution-time terminal obligation attestation.
-5. Front Desk terminal stay state and immutable checkout execution evidence foundation.
-6. Transactional Housekeeping room-turnover handoff/outbox.
-7. Checkout Sensitive Action Confirmation intent and execute permission, including `CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED`.
-8. Final Front Desk checkout execution command and interaction layer.
+2. Shared checkout transaction-participation and Property/Business Date/Night Audit concurrency foundation — NA-A2 implemented and merged.
+3. PMS Guest Ledger execution-time terminal financial attestation — GLF-E current.
+4. General Cashier execution-time terminal obligation attestation — locked.
+5. Front Desk terminal stay state and immutable checkout execution evidence foundation — locked.
+6. Transactional Housekeeping room-turnover handoff/outbox — locked.
+7. Checkout Sensitive Action Confirmation intent and execute permission, including `CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED` — locked.
+8. Final Front Desk checkout execution command and interaction layer — locked.
 
 The final checkout command remains last. Runtime package codes are not assigned by this ADR.
 

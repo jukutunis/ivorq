@@ -20,11 +20,15 @@ The current supplier/AP payment execution runtime is not guest-folio evidence. `
 
 This ADR is triggered by the blocked FD-B9 investigation. It records the Owner decision that PMS Guest Ledger owns guest folio settlement evidence, PMS Cashiering owns guest tender and guest payment allocation lifecycle, General Cashier owns cashier accountability and cash custody, Accounting/AR owns receivables after accepted transfer, Accounting/GL owns accounting postings, Finance governs and consumes outcomes, and Front Desk consumes settlement readiness read-only.
 
-## ADR-089 Synchronization Note
+## ADR-089 / GLF-E Synchronization Note
 
 ADR-089 does not transfer PMS Guest Ledger or PMS Cashiering financial ownership to Front Desk. A future execution-time participating attestation port is a distinct runtime contract and does not make Front Desk the owner of folios, payments, deposits, refunds, reversals, AR transfer, settlement, or cashier lifecycle facts. Current GLF-D remains a read-only projection for readiness/review evidence. Front Desk must not mutate folio, payment, deposit, refund, reversal, AR, or settlement tables.
 
-ADR-089 correction preserves PMS Cashiering ownership of payments, allocations, deposits, refunds, reversals, and AR-related settlement facts while preserving General Cashier ownership of cashier sessions, cash custody, cashier accountability, handover, count, close, reconciliation, and unresolved cashier obligations. The future PMS attestation must run before General Cashier participation, lock PMS-owned payment/allocation/deposit/refund/reversal/AR/folio/settlement rows, return a minimized terminal financial result and approved cash-linked transaction/cashier-session references, and keep PMS locks held until checkout commit or rollback. General Cashier must consume those PMS references, re-resolve approved cashier-session relationships, lock only General Cashier-owned rows, and must not mutate or recalculate PMS-owned financial lifecycle facts.
+ADR-089 correction preserves PMS Cashiering ownership of payments, allocations, deposits, refunds, reversals, and AR-related settlement facts while preserving General Cashier ownership of cashier sessions, cash custody, cashier accountability, handover, count, close, reconciliation, and unresolved cashier obligations. The PMS attestation must run before General Cashier participation, lock PMS-owned payment/allocation/deposit/refund/reversal/AR/folio/settlement rows, return a minimized terminal financial result and approved cash-linked transaction/cashier-session references, and keep PMS locks held until checkout commit or rollback. General Cashier must consume those PMS references, re-resolve approved cashier-session relationships, lock only General Cashier-owned rows, and must not mutate or recalculate PMS-owned financial lifecycle facts.
+
+### GLF-E Activation Note
+
+GLF-E is under implementation as the PMS terminal financial attestation foundation. PMS Guest Ledger and PMS Cashiering retain ownership. GLF-D remains read-only. GLF-E provides transaction-bound value evidence only — no folio closure, no checkout mutation, no General Cashier query, no Front Desk mutation. Cash-linked references are minimized handoff evidence for the next General Cashier package and do not transfer cash-custody or cashier-session ownership to PMS.
 
 ## Ownership Matrix
 
