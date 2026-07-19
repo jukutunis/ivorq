@@ -61,6 +61,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'business-date-foundation-baseline',
             'night-audit-run-lock-foundation-baseline',
             'night-audit-checkout-concurrency-foundation-baseline',
+            'guest-ledger-terminal-financial-attestation-baseline',
         ];
 
         $actualIds = array_map(fn($b) => $b->id, $this->manifest->baselines);
@@ -475,10 +476,11 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'business-date-foundation-baseline',
             'night-audit-run-lock-foundation-baseline',
             'night-audit-checkout-concurrency-foundation-baseline',
+            'guest-ledger-terminal-financial-attestation-baseline',
         ];
 
         $this->assertCount(
-            12,
+            13,
             $activeIds,
             "Must have exactly 12 active baselines. Found: " . implode(', ', $activeIds)
         );
@@ -581,7 +583,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
     {
         $ids = array_map(fn($b) => $b->id, $this->manifest->baselines);
 
-        $expectedCount = 14;
+        $expectedCount = 15;
         $this->assertCount(
             $expectedCount,
             $ids,
@@ -717,6 +719,24 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals([], $baseline->accepted_debt);
         $this->assertEquals('7ebe5eb7063e2ca04ee7c36ad583ea9496c97c37', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-glf-d-checkout-settlement-readiness-projection', $baseline->provenance->branch ?? null);
+    }
+
+    public function test_glf_e_baseline_has_exact_three_classes_and_correct_counts(): void
+    {
+        $baseline = $this->findBaseline('guest-ledger-terminal-financial-attestation-baseline');
+        $this->assertNotNull($baseline, 'GLF-E baseline must exist.');
+        $this->assertEquals('active', $baseline->status);
+        $this->assertCount(3, $baseline->classes, 'GLF-E must have exactly 3 classes.');
+        $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest', $baseline->classes[0]);
+        $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest', $baseline->classes[1]);
+        $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest', $baseline->classes[2]);
+        $this->assertEquals(28, $baseline->expected->tests ?? null, 'GLF-E must have 28 tests.');
+        $this->assertEquals(75, $baseline->expected->assertions ?? null, 'GLF-E must have 75 assertions.');
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertEquals([], $baseline->accepted_debt);
+        $this->assertEquals('a2821573873ca028e8a3d3c074475d5c8194e941', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-glf-e-pms-terminal-financial-attestation', $baseline->provenance->branch ?? null);
     }
 
     private function findBaseline(string $id): ?object

@@ -73,6 +73,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
             settlementHoldPort: $settlementHoldPort,
             completedSettlementPort: $completedSettlementPort,
             useLock: false,
+            includeCashFields: false,
         );
     }
 
@@ -189,6 +190,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
             settlementHoldPort: $settlementHoldPort,
             completedSettlementPort: $completedSettlementPort,
             useLock: true,
+            includeCashFields: true,
         );
     }
 
@@ -206,6 +208,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
         GuestLedgerSettlementHoldReadPort|GuestLedgerSettlementHoldParticipationPort $settlementHoldPort,
         GuestLedgerCompletedSettlementConflictReadPort|GuestLedgerCompletedSettlementConflictParticipationPort $completedSettlementPort,
         bool $useLock,
+        bool $includeCashFields,
     ): array {
         $evaluatedAt = now()->toIsoString();
         $blockers = []; $blockerMsgs = []; $reviews = []; $unavailable = [];
@@ -339,15 +342,15 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
         // Payments
         $paymentFacts = $this->evaluatePayments($reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $folioIds, $blockers, $blockerMsgs, $reviews, $markers);
+            $folioIds, $blockers, $blockerMsgs, $reviews, $markers, $includeCashFields);
 
         // Deposits
         $depositFacts = $this->evaluateDeposits($reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $folioIds, $blockers, $blockerMsgs, $reviews, $markers);
+            $folioIds, $blockers, $blockerMsgs, $reviews, $markers, $includeCashFields);
 
         // Refunds
         $refundFacts = $this->evaluateRefunds($reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $blockers, $blockerMsgs, $reviews, $markers);
+            $blockers, $blockerMsgs, $reviews, $markers, $includeCashFields);
 
         // AR Transfers
         $arFacts = $this->evaluateArTransfers($reservation->id, $propertyId, $guestId, $resolvedCurrency,
@@ -417,7 +420,8 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
     private function evaluatePayments(
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
-        array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers
+        array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers,
+        bool $includeCashFields = false,
     ): array {
         $payments = GuestPaymentTransaction::where('property_id', $propertyId)
             ->where('reservation_id', $reservationId)->get();
@@ -456,12 +460,15 @@ class GuestLedgerCheckoutFinancialEvaluationService
                     $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
                     $blockerMsgs[] = "Payment {$p->id} VOIDED with allocs/refunds.";
                 }
-                $facts[] = ['id' => $p->id, 'lifecycle' => $p->lifecycle_status->value, 'amount' => $pAmount,
+                $fact = ['id' => $p->id, 'lifecycle' => $p->lifecycle_status->value, 'amount' => $pAmount,
                     'void_rev_count' => $voidRevs->count(), 'alloc_count' => $allocations->count(),
                     'refund_count' => $refunds->count(),
-                    'tender_type' => $p->tender_type?->value ?? '',
-                    'cashier_session_id' => $p->cashier_session_id ?? '',
                 ];
+                if ($includeCashFields) {
+                    $fact['tender_type'] = $p->tender_type?->value ?? '';
+                    $fact['cashier_session_id'] = $p->cashier_session_id ?? '';
+                }
+                $facts[] = $fact;
                 continue;
             }
 
@@ -564,12 +571,15 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 $blockerMsgs[] = "Payment {$p->id} unresolved " . bcsub($pAmount, $resolved, 2) . ".";
             }
 
-            $facts[] = ['id' => $p->id, 'lifecycle' => $p->lifecycle_status->value, 'amount' => $pAmount,
+            $fact = ['id' => $p->id, 'lifecycle' => $p->lifecycle_status->value, 'amount' => $pAmount,
                 'resolved' => $resolved, 'active_alloc' => $activeAllocated, 'refunded' => $refundedTotal,
                 'allocations' => $allocFacts,
-                'tender_type' => $p->tender_type?->value ?? '',
-                'cashier_session_id' => $p->cashier_session_id ?? '',
             ];
+            if ($includeCashFields) {
+                $fact['tender_type'] = $p->tender_type?->value ?? '';
+                $fact['cashier_session_id'] = $p->cashier_session_id ?? '';
+            }
+            $facts[] = $fact;
         }
 
         $markers['payment_resolution_marker'] = (! $anyPayment || $allResolved)
@@ -583,7 +593,8 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
     private function evaluateDeposits(
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
-        array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers
+        array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers,
+        bool $includeCashFields = false,
     ): array {
         $deposits = GuestDepositTransaction::where('property_id', $propertyId)
             ->where('reservation_id', $reservationId)->get();
@@ -622,12 +633,15 @@ class GuestLedgerCheckoutFinancialEvaluationService
                     $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
                     $blockerMsgs[] = "Deposit {$d->id} VOIDED with apps/refunds.";
                 }
-                $facts[] = ['id' => $d->id, 'lifecycle' => $d->lifecycle_status->value, 'amount' => $dAmount,
+                $fact = ['id' => $d->id, 'lifecycle' => $d->lifecycle_status->value, 'amount' => $dAmount,
                     'void_rev_count' => $voidRevs->count(), 'app_count' => $applications->count(),
                     'refund_count' => $refunds->count(),
-                    'tender_type' => $d->tender_type?->value ?? '',
-                    'cashier_session_id' => $d->cashier_session_id ?? '',
                 ];
+                if ($includeCashFields) {
+                    $fact['tender_type'] = $d->tender_type?->value ?? '';
+                    $fact['cashier_session_id'] = $d->cashier_session_id ?? '';
+                }
+                $facts[] = $fact;
                 continue;
             }
 
@@ -725,11 +739,14 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 $blockerMsgs[] = "Deposit {$d->id} unresolved " . bcsub($dAmount, $resolved, 2) . ".";
             }
 
-            $facts[] = ['id' => $d->id, 'lifecycle' => $d->lifecycle_status->value, 'amount' => $dAmount,
+            $fact = ['id' => $d->id, 'lifecycle' => $d->lifecycle_status->value, 'amount' => $dAmount,
                 'resolved' => $resolved, 'applications' => $appFacts,
-                'tender_type' => $d->tender_type?->value ?? '',
-                'cashier_session_id' => $d->cashier_session_id ?? '',
             ];
+            if ($includeCashFields) {
+                $fact['tender_type'] = $d->tender_type?->value ?? '';
+                $fact['cashier_session_id'] = $d->cashier_session_id ?? '';
+            }
+            $facts[] = $fact;
         }
 
         $markers['deposit_resolution_marker'] = (! $anyDeposit || $allResolved)
@@ -743,7 +760,8 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
     private function evaluateRefunds(
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
-        array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers
+        array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers,
+        bool $includeCashFields = false,
     ): array {
         $refunds = GuestRefundTransaction::where('property_id', $propertyId)
             ->where('reservation_id', $reservationId)->get();
@@ -808,13 +826,16 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 }
             }
 
-            $facts[] = ['id' => $r->id, 'source_type' => $srcType, 'amount' => $rAmount,
+            $fact = ['id' => $r->id, 'source_type' => $srcType, 'amount' => $rAmount,
                 'payment_id' => $r->guest_payment_transaction_id ?? '',
                 'deposit_id' => $r->guest_deposit_transaction_id ?? '',
                 'currency' => $r->currency, 'guest_id' => $r->guest_id,
-                'tender_type' => $r->tender_type?->value ?? '',
-                'cashier_session_id' => $r->cashier_session_id ?? '',
             ];
+            if ($includeCashFields) {
+                $fact['tender_type'] = $r->tender_type?->value ?? '';
+                $fact['cashier_session_id'] = $r->cashier_session_id ?? '';
+            }
+            $facts[] = $fact;
         }
 
         $markers['refund_resolution_marker'] = $anyIssue

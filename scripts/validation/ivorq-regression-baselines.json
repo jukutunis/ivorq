@@ -327,6 +327,33 @@
       "status": "active"
     },
     {
+      "id": "guest-ledger-terminal-financial-attestation-baseline",
+      "description": "GLF-E PMS terminal financial attestation PostgreSQL tests covering active transaction enforcement, NA-A2 context validation, same-property relationship validation, deterministic same-transaction and different-transaction fingerprints, exact-object issuance, forged attestation rejection, zero-write proof, no-General-Cashier-query proof, locked terminal evaluation (no folio, zero balance, non-zero balance, multiple folios, closed folio, unresolved payment), cash-linked references, GLF-D snapshot equivalence, PMS participant lock holding, participant rollback, property isolation, lock timeout, and distinct transaction identity. All 3 test classes pass cleanly as a single batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest",
+        "GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest",
+        "GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest"
+      ],
+      "expected": {
+        "tests": 28,
+        "assertions": 75,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-19",
+        "branch": "sprint-glf-e-pms-terminal-financial-attestation",
+        "sha": "a2821573873ca028e8a3d3c074475d5c8194e941",
+        "note": "GLF-E measured at runtime source commit: 3 exact classes / 28 tests / 75 assertions / 0 failures / 0 errors. GLF-D shared evaluator extraction preserves exact 60/253 equivalence. Foundation tests: active transaction required, PostgreSQL required, valid NA-A2 context required, stale context rejected, forged context rejected, savepoint release preserves context, cross-property stay rejected, no CurrentPropertyService/actor/session dependency, output whitelist, deterministic same-transaction fingerprint, different-stay different fingerprint, exact-object WeakMap issuance, forged attestation rejected, cross-transaction attestation rejected, zero writes proven, no General Cashier queried, no checkout artifacts. Source integrity: no folio evidence-unavailable, zero balance ready, non-zero balance blocked, multiple folios evaluated, closed folio review required, unresolved payment blocked, GLF-D equivalence preserved. Concurrency proof: participant first holds locks within transaction, participant rollback zero writes, property isolation no global block, lock timeout error code correct, distinct transactions have distinct txid. No route, controller, permission, migration, UI, checkout command, execute permission, or sensitive confirmation added. can_execute=false remains binding."
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
       "id": "engineering-availability-baseline",
       "description": "Engineering room availability operational tests covering authorization, block lifecycle, Front Desk read boundary, projections, and concurrency (ENG-A1). All 5 test classes pass cleanly as a single batch.",
       "type": "phpunit",
