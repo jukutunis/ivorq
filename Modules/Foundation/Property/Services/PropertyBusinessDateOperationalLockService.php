@@ -73,6 +73,7 @@ class PropertyBusinessDateOperationalLockService
 
             $sourceFingerprint = $this->fingerprint($businessDate, $openedAt);
             $transactionProof = $this->postgresTransactionProof();
+            $capabilityTokenHash = $this->issuePostgresLockCapability();
             $context = new PropertyBusinessDateOperationalLockContext(
                 company_id: $companyId,
                 property_id: (string) $property->id,
@@ -96,6 +97,7 @@ class PropertyBusinessDateOperationalLockService
                 'business_date' => $businessDate->business_date->format('Y-m-d'),
                 'property_timezone' => (string) $businessDate->timezone_snapshot,
                 'source_fingerprint' => $sourceFingerprint,
+                'capability_token_hash' => $capabilityTokenHash,
             ];
 
             return $context;
@@ -118,10 +120,14 @@ class PropertyBusinessDateOperationalLockService
         }
 
         $issuance = $issuedContexts[$context];
-        $currentProof = $this->postgresTransactionProof();
+        $currentProof = $this->postgresTransactionCapabilityProof();
 
         $matches = $currentProof['backend_pid'] === $issuance['postgres_backend_pid']
             && $currentProof['transaction_id'] === $issuance['postgres_transaction_id']
+            && hash_equals(
+                (string) $issuance['capability_token_hash'],
+                hash('sha256', $currentProof['capability_token'])
+            )
             && $context->postgres_backend_pid === $issuance['postgres_backend_pid']
             && $context->postgres_transaction_id === $issuance['postgres_transaction_id']
             && $context->company_id === $issuance['company_id']
@@ -209,6 +215,56 @@ class PropertyBusinessDateOperationalLockService
         return [
             'backend_pid' => $backendPid,
             'transaction_id' => $transactionId,
+        ];
+    }
+
+    private function issuePostgresLockCapability(): string
+    {
+        try {
+            $capabilityToken = bin2hex(random_bytes(32));
+            $row = DB::selectOne(
+                "SELECT set_config('ivorq.na_a2_lock_capability', ?, true) AS capability_token",
+                [$capabilityToken]
+            );
+        } catch (Throwable $exception) {
+            throw new DomainException(self::ERROR_INVALID_CONTEXT, 0, $exception);
+        }
+
+        $configuredToken = trim((string) ($row->capability_token ?? ''));
+        if ($configuredToken === '' || ! hash_equals($capabilityToken, $configuredToken)) {
+            throw new DomainException(self::ERROR_INVALID_CONTEXT);
+        }
+
+        // Replacing this transaction-local setting makes only the newest NA-A2 context valid.
+        return hash('sha256', $capabilityToken);
+    }
+
+    /**
+     * @return array{backend_pid: int, transaction_id: string, capability_token: string}
+     */
+    private function postgresTransactionCapabilityProof(): array
+    {
+        try {
+            $row = DB::selectOne(
+                "SELECT pg_backend_pid() AS backend_pid, txid_current()::text AS transaction_id, "
+                . "current_setting('ivorq.na_a2_lock_capability', true) AS capability_token"
+            );
+        } catch (Throwable $exception) {
+            throw new DomainException(self::ERROR_INVALID_CONTEXT, 0, $exception);
+        }
+
+        $backendPid = (int) ($row->backend_pid ?? 0);
+        $transactionId = trim((string) ($row->transaction_id ?? ''));
+        $capabilityToken = trim((string) ($row->capability_token ?? ''));
+
+        if ($backendPid < 1 || $transactionId === '' || $capabilityToken === '') {
+            throw new DomainException(self::ERROR_INVALID_CONTEXT);
+        }
+
+        return [
+            'backend_pid' => $backendPid,
+            'transaction_id' => $transactionId,
+            'capability_token' => $capabilityToken,
         ];
     }
 

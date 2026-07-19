@@ -300,6 +300,131 @@ class NightAuditCheckoutConcurrencyFoundationTest extends PostgresTestCase
         $this->assertSame($before, $this->allCounts());
     }
 
+    public function test_rolled_back_savepoint_invalidates_retained_context_before_night_audit_query(): void
+    {
+        $before = $this->allCounts();
+        $nightAuditQueries = [];
+        DB::listen(function (QueryExecuted $query) use (&$nightAuditQueries): void {
+            if (str_contains(strtolower($query->sql), 'night_audit_runs')) {
+                $nightAuditQueries[] = $query->sql;
+            }
+        });
+
+        DB::beginTransaction();
+        try {
+            $context = null;
+            $nestedProof = null;
+
+            try {
+                DB::transaction(function () use (&$context, &$nestedProof): void {
+                    $context = app(PropertyBusinessDateOperationalLockService::class)
+                        ->acquire($this->company->id, $this->property->id, $this->businessDateEvidence());
+                    app(NightAuditCheckoutConcurrencyGuardService::class)->attest($context);
+                    $nestedProof = $this->postgresCapabilityProof();
+
+                    throw new RuntimeException('NA_A2_FORCE_SAVEPOINT_ROLLBACK');
+                });
+                $this->fail('Nested transaction must roll back to its savepoint.');
+            } catch (RuntimeException $exception) {
+                $this->assertSame('NA_A2_FORCE_SAVEPOINT_ROLLBACK', $exception->getMessage());
+            }
+
+            $this->assertSame(1, DB::transactionLevel());
+            $this->assertInstanceOf(PropertyBusinessDateOperationalLockContext::class, $context);
+            $this->assertNotNull($nestedProof);
+
+            $outerProof = $this->postgresCapabilityProof();
+            $this->assertSame($nestedProof['backend_pid'], $outerProof['backend_pid']);
+            $this->assertSame($nestedProof['transaction_id'], $outerProof['transaction_id']);
+            $this->assertNotSame($nestedProof['capability_token'], $outerProof['capability_token']);
+
+            $nightAuditQueries = [];
+            try {
+                app(NightAuditCheckoutConcurrencyGuardService::class)->attest($context);
+                $this->fail('Context retained after savepoint rollback must be rejected.');
+            } catch (DomainException $exception) {
+                $this->assertSame(NightAuditCheckoutConcurrencyGuardService::ERROR_INVALID_CONTEXT, $exception->getMessage());
+            }
+
+            $this->assertSame([], $nightAuditQueries);
+            DB::commit();
+        } catch (\Throwable $exception) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+
+            throw $exception;
+        }
+
+        $this->assertSame($before, $this->allCounts());
+    }
+
+    public function test_released_savepoint_preserves_capability_and_deterministic_fingerprint(): void
+    {
+        $before = $this->allCounts();
+
+        DB::beginTransaction();
+        try {
+            $context = DB::transaction(fn () => app(PropertyBusinessDateOperationalLockService::class)
+                ->acquire($this->company->id, $this->property->id, $this->businessDateEvidence()));
+
+            $this->assertSame(1, DB::transactionLevel());
+            $proof = $this->postgresCapabilityProof();
+            $this->assertSame($context->postgres_backend_pid, $proof['backend_pid']);
+            $this->assertSame($context->postgres_transaction_id, $proof['transaction_id']);
+            $this->assertNotSame('', $proof['capability_token']);
+
+            $guard = app(NightAuditCheckoutConcurrencyGuardService::class);
+            $first = $guard->attest($context);
+            $second = $guard->attest($context);
+            $this->assertSame($first->source_fingerprint, $second->source_fingerprint);
+            $this->assertSame(NightAuditCheckoutConcurrencyAttestation::STATUS_CLEAR, $second->status);
+            DB::commit();
+        } catch (\Throwable $exception) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+
+            throw $exception;
+        }
+
+        $this->assertSame($before, $this->allCounts());
+    }
+
+    public function test_second_acquisition_invalidates_first_context_before_night_audit_query(): void
+    {
+        $before = $this->allCounts();
+        $nightAuditQueries = [];
+        DB::listen(function (QueryExecuted $query) use (&$nightAuditQueries): void {
+            if (str_contains(strtolower($query->sql), 'night_audit_runs')) {
+                $nightAuditQueries[] = $query->sql;
+            }
+        });
+
+        DB::transaction(function () use (&$nightAuditQueries): void {
+            $lockService = app(PropertyBusinessDateOperationalLockService::class);
+            $guard = app(NightAuditCheckoutConcurrencyGuardService::class);
+            $contextA = $lockService->acquire($this->company->id, $this->property->id, $this->businessDateEvidence());
+            $attestationA = $guard->attest($contextA);
+
+            $contextB = $lockService->acquire($this->company->id, $this->property->id, $this->businessDateEvidence());
+            $attestationB = $guard->attest($contextB);
+            $this->assertSame($attestationA->source_fingerprint, $attestationB->source_fingerprint);
+
+            $nightAuditQueries = [];
+            try {
+                $guard->attest($contextA);
+                $this->fail('A newer acquisition must invalidate the prior context.');
+            } catch (DomainException $exception) {
+                $this->assertSame(NightAuditCheckoutConcurrencyGuardService::ERROR_INVALID_CONTEXT, $exception->getMessage());
+            }
+
+            $this->assertSame([], $nightAuditQueries);
+        });
+
+        $this->assertSame($before, $this->allCounts());
+    }
+
     public function test_transaction_proof_contract_is_non_nullable_and_fail_closed(): void
     {
         $contextReflection = new \ReflectionClass(PropertyBusinessDateOperationalLockContext::class);
@@ -315,6 +440,10 @@ class NightAuditCheckoutConcurrencyFoundationTest extends PostgresTestCase
         $guardSource = file_get_contents(base_path('Modules/Operations/NightAudit/Services/NightAuditCheckoutConcurrencyGuardService.php'));
         $this->assertStringContainsString('txid_current()::text AS transaction_id', $lockSource);
         $this->assertStringContainsString('private static ?\\WeakMap $issuedContexts', $lockSource);
+        $this->assertStringContainsString("set_config('ivorq.na_a2_lock_capability', ?, true)", $lockSource);
+        $this->assertStringContainsString("current_setting('ivorq.na_a2_lock_capability', true)", $lockSource);
+        $this->assertStringContainsString('hash_equals(', $lockSource);
+        $this->assertStringContainsString("'capability_token_hash' =>", $lockSource);
         $this->assertStringContainsString('assertIssuedForCurrentTransaction($context)', $guardSource);
         $this->assertStringNotContainsString('postgres_backend_pid === null', $guardSource);
         $this->assertStringNotContainsString('catch (Throwable) {', $lockSource);
@@ -511,6 +640,23 @@ class NightAuditCheckoutConcurrencyFoundationTest extends PostgresTestCase
                 'updated_at' => now('UTC'),
             ]);
         });
+    }
+
+    /**
+     * @return array{backend_pid: int, transaction_id: string, capability_token: string}
+     */
+    private function postgresCapabilityProof(): array
+    {
+        $row = DB::selectOne(
+            "SELECT pg_backend_pid() AS backend_pid, txid_current()::text AS transaction_id, "
+            . "current_setting('ivorq.na_a2_lock_capability', true) AS capability_token"
+        );
+
+        return [
+            'backend_pid' => (int) $row->backend_pid,
+            'transaction_id' => (string) $row->transaction_id,
+            'capability_token' => (string) ($row->capability_token ?? ''),
+        ];
     }
 
     /**

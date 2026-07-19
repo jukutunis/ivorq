@@ -25,6 +25,7 @@ class NightAuditCheckoutConcurrencyGuardService
     public function attest(PropertyBusinessDateOperationalLockContext $context): NightAuditCheckoutConcurrencyAttestation
     {
         $this->assertActivePostgresTransaction();
+        // This savepoint-aware check also rejects contexts superseded by a later acquisition.
         $this->operationalLockService->assertIssuedForCurrentTransaction($context);
 
         // Future checkout must acquire its Front Desk locks between the shared
