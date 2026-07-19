@@ -731,11 +731,11 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest', $baseline->classes[1]);
         $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest', $baseline->classes[2]);
         $this->assertEquals(49, $baseline->expected->tests ?? null, 'GLF-E must have 49 tests.');
-        $this->assertEquals(153, $baseline->expected->assertions ?? null, 'GLF-E must have 153 assertions.');
+        $this->assertEquals(194, $baseline->expected->assertions ?? null, 'GLF-E must have 194 assertions.');
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertEquals([], $baseline->accepted_debt);
-        $this->assertEquals('4c513ac57c27c3a90fc5cbd9a2aeeb07166f8514', $baseline->provenance->sha ?? null);
+        $this->assertEquals('f390527966e43010f07844a9ca6cf90ad2fff7e2', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-glf-e-pms-terminal-financial-attestation', $baseline->provenance->branch ?? null);
     }
 
