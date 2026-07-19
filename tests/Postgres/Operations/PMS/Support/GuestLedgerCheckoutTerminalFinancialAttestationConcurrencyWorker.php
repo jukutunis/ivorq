@@ -75,9 +75,10 @@ function extractStructuredError(\Throwable $e, array &$out): void
     $cursor = $e;
     while ($cursor !== null) {
         if ($cursor instanceof \Illuminate\Database\QueryException) {
-            $out['sqlstate'] = $cursor->errorInfo[0] ?? null;
-            $out['database_message'] = $cursor->getMessage();
-            if ($cursor->getPrevious()) $out['previous_exception_class'] = get_class($cursor->getPrevious());
+            if (empty($out['sqlstate'])) $out['sqlstate'] = $cursor->errorInfo[0] ?? null;
+            if (empty($out['database_message'])) $out['database_message'] = $cursor->getMessage();
+            // Only set previous_exception_class if not already captured from GLF_E_ wrapper
+            if ($cursor->getPrevious() && empty($out['previous_exception_class'])) $out['previous_exception_class'] = get_class($cursor->getPrevious());
         }
         if ($cursor instanceof \DomainException && empty($out['domain_error'])) $out['domain_error'] = $cursor->getMessage();
         // GLF_E_FINANCIAL_SOURCE_LOCK_TIMEOUT is a RuntimeException wrapping QueryException
