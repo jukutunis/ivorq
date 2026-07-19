@@ -20,6 +20,9 @@
     $startedAt = date('c');
     $phpPid = getmypid();
 
+    // Bind CLEAR participation ports for concurrency workers
+    bindClearParticipationPorts($app);
+
     try {
         $result = match ($mode) {
             'attest'             => doAttest($p),
@@ -36,12 +39,36 @@
     } catch (\Throwable $e) {
         $out = ['mode'=>$mode,'error'=>$e->getMessage(),'class'=>get_class($e),
                 'php_pid'=>$phpPid,'started_at'=>$startedAt,'completed_at'=>date('c')];
+        // Use captured pre-rollback identity if available
+        if (isset($e->workerPid)) $out['postgres_backend_pid'] = $e->workerPid;
+        if (isset($e->workerTxid)) $out['postgres_transaction_id'] = $e->workerTxid;
         extractStructuredError($e, $out);
-        captureFailedTxIdentity($out);
         echo json_encode($out, JSON_UNESCAPED_SLASHES) . "\n";
         exit(1);
     }
 })();
+
+function bindClearParticipationPorts($app): void
+{
+    $app->singleton(
+        \Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessParticipationPort::class,
+        fn() => new class implements \Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessParticipationPort {
+            public function participate(string $r, string $p): array { return ['status'=>'AVAILABLE_CLEAR','code'=>null,'source_fingerprint'=>'fp_pc','source_identifiers'=>[]]; }
+        }
+    );
+    $app->singleton(
+        \Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldParticipationPort::class,
+        fn() => new class implements \Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldParticipationPort {
+            public function participate(string $r, string $p): array { return ['status'=>'AVAILABLE_CLEAR','code'=>null,'source_fingerprint'=>'fp_sh','source_identifiers'=>[]]; }
+        }
+    );
+    $app->singleton(
+        \Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort::class,
+        fn() => new class implements \Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort {
+            public function participate(string $r, string $p): array { return ['status'=>'AVAILABLE_CLEAR','code'=>null,'source_fingerprint'=>'fp_cs','source_identifiers'=>[]]; }
+        }
+    );
+}
 
 function extractStructuredError(\Throwable $e, array &$out): void
 {
@@ -50,111 +77,111 @@ function extractStructuredError(\Throwable $e, array &$out): void
         if ($cursor instanceof \Illuminate\Database\QueryException) {
             $out['sqlstate'] = $cursor->errorInfo[0] ?? null;
             $out['database_message'] = $cursor->getMessage();
-            $out['previous_exception_class'] = $cursor->getPrevious() ? get_class($cursor->getPrevious()) : null;
+            if ($cursor->getPrevious()) $out['previous_exception_class'] = get_class($cursor->getPrevious());
         }
-        if ($cursor instanceof \DomainException && empty($out['domain_error'])) {
+        if ($cursor instanceof \DomainException && empty($out['domain_error'])) $out['domain_error'] = $cursor->getMessage();
+        // GLF_E_FINANCIAL_SOURCE_LOCK_TIMEOUT is a RuntimeException wrapping QueryException
+        if ($cursor instanceof \RuntimeException && str_contains($cursor->getMessage(), 'GLF_E_') && empty($out['domain_error'])) {
             $out['domain_error'] = $cursor->getMessage();
+            if ($cursor->getPrevious()) {
+                $prevClass = get_class($cursor->getPrevious());
+                $out['previous_exception_class'] = $prevClass;
+                // Walk into QueryException for sqlstate (it's the immediate previous)
+                if ($cursor->getPrevious() instanceof \Illuminate\Database\QueryException) {
+                    $out['sqlstate'] = $cursor->getPrevious()->errorInfo[0] ?? null;
+                    $out['database_message'] = $cursor->getPrevious()->getMessage();
+                }
+            }
         }
         $cursor = $cursor->getPrevious();
     }
 }
 
-function captureFailedTxIdentity(array &$out): void
-{
-    try {
-        $row = \Illuminate\Support\Facades\DB::selectOne('SELECT pg_backend_pid() AS pid, txid_current()::text AS txid');
-        $out['postgres_backend_pid'] = (int)($row->pid ?? 0);
-        $out['postgres_transaction_id'] = trim((string)($row->txid ?? ''));
-    } catch (\Throwable) {}
-}
-
-function txIdentity(): array
-{
-    $row = \Illuminate\Support\Facades\DB::selectOne('SELECT pg_backend_pid() AS pid, txid_current()::text AS txid');
-    return [(int)($row->pid ?? 0), trim((string)($row->txid ?? ''))];
-}
-
-function barrier(string $path, int $timeoutS): void
-{
-    $deadline = time() + $timeoutS;
-    $released = false;
-    while (time() < $deadline) {
-        if (file_exists($path)) { @unlink($path); $released = true; break; }
-        usleep(100000);
-    }
-    if (!$released) throw new \RuntimeException("Barrier timeout after {$timeoutS}s: {$path}");
-}
-
-function signal(string $path, array $data): void { if ($path !== '') file_put_contents($path, json_encode($data)); }
+function txIdentity(): array { $row = \Illuminate\Support\Facades\DB::selectOne('SELECT pg_backend_pid() AS pid, txid_current()::text AS txid'); return [(int)($row->pid ?? 0), trim((string)($row->txid ?? ''))]; }
+function barrier(string $path, int $timeoutS): void { $dl=time()+$timeoutS; $ok=false; while(time()<$dl){if(file_exists($path)){@unlink($path);$ok=true;break;}usleep(100000);} if(!$ok)throw new \RuntimeException("Barrier timeout after {$timeoutS}s: {$path}"); }
+function signal(string $path, array $data): void { if($path!=='')file_put_contents($path,json_encode($data)); }
 
 function doAttest(array $p): array
 {
-    $lockSvc = app(\Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService::class);
-    $attSvc  = app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService::class);
-    return \Illuminate\Support\Facades\DB::transaction(function () use ($lockSvc, $attSvc, $p) {
+    \Illuminate\Support\Facades\DB::beginTransaction();
+    // Capture identity BEFORE lock attempt (survives rollback)
+    [$pid, $txid] = txIdentity();
+    try {
+        $lockSvc = app(\Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService::class);
+        $attSvc  = app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService::class);
         $ctx = $lockSvc->acquire($p['company_id'], $p['property_id'], $p['expected_evidence']);
         $att = $attSvc->attest($ctx, $p['stay_id']);
-        [$pid, $txid] = txIdentity();
-        $r = ['status'=>$att->status->value,'fingerprint'=>$att->source_fingerprint,'postgres_backend_pid'=>$pid,'postgres_transaction_id'=>$txid];
+        $r = ['status'=>$att->status->value,'fingerprint'=>$att->source_fingerprint,'canonical_aggregate_balance'=>$att->canonical_aggregate_balance,'blocker_codes'=>$att->blocker_codes,'review_reasons'=>$att->review_reasons,'evidence_unavailable_codes'=>$att->evidence_unavailable_codes,'postgres_backend_pid'=>$pid,'postgres_transaction_id'=>$txid];
         signal($p['ready_marker'] ?? '', ['mode'=>'attest','status'=>$r['status'],'pg_pid'=>$pid,'txid'=>$txid]);
         if (!empty($p['hold_until_path'])) barrier($p['hold_until_path'], $p['hold_timeout'] ?? 30);
+        \Illuminate\Support\Facades\DB::commit();
         return $r;
-    });
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\DB::rollBack();
+        // Attach captured identity to exception so extractStructuredError can use it
+        $e->workerPid = $pid;
+        $e->workerTxid = $txid;
+        throw $e;
+    }
 }
 
 function doMutateAndHold(array $p): array
 {
-    return \Illuminate\Support\Facades\DB::transaction(function () use ($p) {
-        $row = \Illuminate\Support\Facades\DB::table($p['table'])->where('id', $p['row_id'])->lockForUpdate()->first();
+    \Illuminate\Support\Facades\DB::beginTransaction();
+    try {
+        \Illuminate\Support\Facades\DB::table($p['table'])->where('id', $p['row_id'])->lockForUpdate()->first();
         \Illuminate\Support\Facades\DB::table($p['table'])->where('id', $p['row_id'])->update([$p['column'] => $p['value']]);
         [$pid, $txid] = txIdentity();
         $r = ['mutated'=>true,'postgres_backend_pid'=>$pid,'postgres_transaction_id'=>$txid];
         signal($p['ready_marker'] ?? '', ['mode'=>'mutate_and_hold','pg_pid'=>$pid,'txid'=>$txid,'column'=>$p['column'],'value'=>$p['value']]);
         if (!empty($p['hold_until_path'])) barrier($p['hold_until_path'], $p['hold_timeout'] ?? 30);
+        \Illuminate\Support\Facades\DB::commit();
         return $r;
-    });
+    } catch (\Throwable $e) { \Illuminate\Support\Facades\DB::rollBack(); throw $e; }
 }
 
 function doAttestOther(array $p): array
 {
-    $lockSvc = app(\Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService::class);
-    $attSvc  = app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService::class);
-    return \Illuminate\Support\Facades\DB::transaction(function () use ($lockSvc, $attSvc, $p) {
+    \Illuminate\Support\Facades\DB::beginTransaction();
+    try {
+        $lockSvc = app(\Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService::class);
+        $attSvc  = app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService::class);
         $ctx = $lockSvc->acquire($p['company_id'], $p['property_id'], $p['expected_evidence']);
-        $att = $attSvc->attest($ctx, $p['stay_id']);
         [$pid, $txid] = txIdentity();
-        return ['status'=>$att->status->value,'postgres_backend_pid'=>$pid,'postgres_transaction_id'=>$txid];
-    });
+        $att = $attSvc->attest($ctx, $p['stay_id']);
+        $r = ['status'=>$att->status->value,'postgres_backend_pid'=>$pid,'postgres_transaction_id'=>$txid];
+        \Illuminate\Support\Facades\DB::commit();
+        return $r;
+    } catch (\Throwable $e) { \Illuminate\Support\Facades\DB::rollBack(); throw $e; }
 }
 
 function doHoldSource(array $p): array
 {
-    return \Illuminate\Support\Facades\DB::transaction(function () use ($p) {
+    \Illuminate\Support\Facades\DB::beginTransaction();
+    try {
         \Illuminate\Support\Facades\DB::table($p['table'])->where('id', $p['row_id'])->lockForUpdate()->first();
         [$pid, $txid] = txIdentity();
         $r = ['held'=>true,'postgres_backend_pid'=>$pid,'postgres_transaction_id'=>$txid];
         signal($p['ready_marker'] ?? '', ['mode'=>'hold_source','pg_pid'=>$pid,'txid'=>$txid]);
         if (!empty($p['hold_until_path'])) barrier($p['hold_until_path'], $p['hold_timeout'] ?? 30);
+        \Illuminate\Support\Facades\DB::commit();
         return $r;
-    });
+    } catch (\Throwable $e) { \Illuminate\Support\Facades\DB::rollBack(); throw $e; }
 }
 
 function doAttestAndRollback(array $p): array
 {
-    $lockSvc = app(\Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService::class);
-    $attSvc  = app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService::class);
     \Illuminate\Support\Facades\DB::beginTransaction();
     try {
+        $lockSvc = app(\Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService::class);
+        $attSvc  = app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService::class);
         $ctx = $lockSvc->acquire($p['company_id'], $p['property_id'], $p['expected_evidence']);
-        $att = $attSvc->attest($ctx, $p['stay_id']);
         [$pid, $txid] = txIdentity();
+        $att = $attSvc->attest($ctx, $p['stay_id']);
         $r = ['rolled_back'=>true,'fingerprint'=>$att->source_fingerprint,'postgres_backend_pid'=>$pid,'postgres_transaction_id'=>$txid];
         signal($p['ready_marker'] ?? '', ['mode'=>'attest_and_rollback','pg_pid'=>$pid,'txid'=>$txid]);
         barrier($p['hold_until_path'] ?? '', $p['hold_timeout'] ?? 30);
         \Illuminate\Support\Facades\DB::rollBack();
         return $r;
-    } catch (\Throwable $e) {
-        \Illuminate\Support\Facades\DB::rollBack();
-        throw $e;
-    }
+    } catch (\Throwable $e) { \Illuminate\Support\Facades\DB::rollBack(); throw $e; }
 }

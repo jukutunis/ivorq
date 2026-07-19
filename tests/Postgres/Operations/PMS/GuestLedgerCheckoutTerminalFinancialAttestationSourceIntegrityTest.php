@@ -72,8 +72,8 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
             'opened_by' => $this->glfActor->id,
         ])->save();
 
-        // Default: all ports CLEAR
-        $this->buildServiceWithPorts('CLEAR', 'CLEAR', 'CLEAR');
+        // Default: all ports AVAILABLE_CLEAR
+        $this->buildServiceWithPorts('AVAILABLE_CLEAR', 'AVAILABLE_CLEAR', 'AVAILABLE_CLEAR');
     }
 
     private function buildServiceWithPorts(
@@ -418,7 +418,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
         });
 
         // Restore clear ports
-        $this->buildServiceWithPorts('CLEAR', 'CLEAR', 'CLEAR');
+        $this->buildServiceWithPorts('AVAILABLE_CLEAR', 'AVAILABLE_CLEAR', 'AVAILABLE_CLEAR');
     }
 
     public function test_posting_blocked():     void { $this->doPortTest('pc','AVAILABLE_BLOCKED','MANDATORY_POSTINGS_INCOMPLETE','blocker_codes'); }
@@ -458,7 +458,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
             );
         });
 
-        $this->buildServiceWithPorts('CLEAR', 'CLEAR', 'CLEAR');
+        $this->buildServiceWithPorts('AVAILABLE_CLEAR', 'AVAILABLE_CLEAR', 'AVAILABLE_CLEAR');
     }
 
     // ═══════════════════════════════════════════════════════════════════════

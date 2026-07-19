@@ -51,39 +51,61 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyCoordinator
         return ['exited'=>$exited,'stdout'=>$out,'stderr'=>$err,'timed_out'=>time()>=$dl];
     }
 
-    public function waitForWorker(int $idx, int $timeoutS): array
+    private function decodeAndValidate(int $idx): array
     {
-        if (!isset($this->workers[$idx])) throw new \InvalidArgumentException("Worker {$idx} not found.");
-        $w = $this->workers[$idx]; $c = $this->collect($idx, $timeoutS);
+        $w = $this->workers[$idx];
+        $c = $this->collect($idx, 30);
         @fclose($w['pipes'][1]); @fclose($w['pipes'][2]);
 
         if (!$c['exited']) {
             @proc_terminate($w['process'], 9); usleep(100000); @proc_close($w['process']);
             @unlink($w['data_file']); unset($this->workers[$idx]);
-            throw new \RuntimeException("Worker {$idx} ({$w['mode']}) timed out after {$timeoutS}s. Stderr: {$c['stderr']}");
+            throw new \RuntimeException("Worker {$idx} ({$w['mode']}) timed out. Stderr: {$c['stderr']}");
         }
 
         $exit = proc_close($w['process']); @unlink($w['data_file']); unset($this->workers[$idx]);
         $d = json_decode(trim($c['stdout']), true);
-        if (!is_array($d) || json_last_error() !== JSON_ERROR_NONE) throw new \RuntimeException("Worker {$idx} ({$w['mode']}) malformed JSON. Exit:{$exit}. Stdout:{$c['stdout']}");
+        if (!is_array($d) || json_last_error() !== JSON_ERROR_NONE) throw new \RuntimeException("Worker {$idx} ({$w['mode']}) malformed JSON. Exit:{$exit}.");
+        return ['exit'=>$exit,'data'=>$d,'stderr'=>$c['stderr']];
+    }
 
-        // Validate required fields
+    public function waitForWorker(int $idx, int $timeoutS): array
+    {
+        $r = $this->decodeAndValidate($idx);
+
+        // Validate required fields before checking exit code
         $required = ['php_pid','mode'];
-        foreach ($required as $f) { if (empty($d[$f])) throw new \RuntimeException("Worker {$idx} missing {$f}"); }
+        foreach ($required as $f) if (empty($r['data'][$f])) throw new \RuntimeException("Worker {$idx} missing {$f}");
 
-        if ($exit !== 0) {
-            $msg = "Worker {$idx} ({$w['mode']}) failed exit:{$exit}.";
-            foreach (['domain_error','sqlstate','database_message','previous_exception_class'] as $f) { if (!empty($d[$f])) $msg .= " {$f}:{$d[$f]}"; }
+        if ($r['exit'] !== 0) {
+            $msg = "Worker {$idx} ({$r['data']['mode']}) failed exit:{$r['exit']}.";
+            foreach (['domain_error','sqlstate','database_message','previous_exception_class'] as $f) if (!empty($r['data'][$f])) $msg .= " {$f}:{$r['data'][$f]}";
             throw new \RuntimeException($msg);
         }
 
-        // Transaction workers must have PG evidence
+        // Transaction workers: require PG evidence
         $txModes = ['attest','mutate_and_hold','hold_source','attest_and_rollback','attest_other'];
-        if (in_array($d['mode'] ?? '', $txModes, true)) {
-            foreach (['postgres_backend_pid','postgres_transaction_id','started_at','completed_at'] as $f) { if (empty($d[$f])) throw new \RuntimeException("Worker {$idx} missing {$f}"); }
+        if (in_array($r['data']['mode'] ?? '', $txModes, true)) {
+            foreach (['postgres_backend_pid','postgres_transaction_id','started_at','completed_at'] as $f) if (empty($r['data'][$f])) throw new \RuntimeException("Worker {$idx} missing {$f}");
         }
 
-        return $d;
+        return $r['data'];
+    }
+
+    /**
+     * Wait for a worker that is EXPECTED to fail (non-zero exit).
+     * Returns the structured failure data with all required fields validated.
+     */
+    public function waitForFailedWorker(int $idx, int $timeoutS): array
+    {
+        $r = $this->decodeAndValidate($idx);
+
+        if ($r['exit'] === 0) throw new \RuntimeException("Worker {$idx} ({$r['data']['mode']}) succeeded but was expected to fail.");
+
+        $required = ['php_pid','mode','started_at','completed_at','postgres_backend_pid','postgres_transaction_id','domain_error','sqlstate','database_message','previous_exception_class'];
+        foreach ($required as $f) if (empty($r['data'][$f])) throw new \RuntimeException("Worker {$idx} missing failure field {$f}. Data: ".json_encode($r['data']));
+
+        return $r['data'];
     }
 
     public function terminateWorker(int $idx): void
