@@ -199,12 +199,12 @@ class GuestLedgerCheckoutFinancialEvaluationService
             'folios'                => $folios,
             'folios_by_id'          => $folios->keyBy('id'),
             'folio_items_by_folio'  => $allFolioItems->groupBy('folio_id'),
-            'folio_items_by_pay_alloc' => $allFolioItems->filter(fn($i) => !empty($i->guest_payment_allocation_id))->keyBy('guest_payment_allocation_id'),
-            'folio_items_by_pay_rev'   => $allFolioItems->filter(fn($i) => !empty($i->guest_payment_reversal_id))->keyBy('guest_payment_reversal_id'),
-            'folio_items_by_dep_app'   => $allFolioItems->filter(fn($i) => !empty($i->guest_deposit_application_id))->keyBy('guest_deposit_application_id'),
-            'folio_items_by_dep_rev'   => $allFolioItems->filter(fn($i) => !empty($i->guest_deposit_reversal_id))->keyBy('guest_deposit_reversal_id'),
-            'folio_items_by_ar_decision' => $allFolioItems->filter(fn($i) => !empty($i->guest_ar_transfer_decision_id))->keyBy('guest_ar_transfer_decision_id'),
-            'folio_items_by_reverses' => $allFolioItems->filter(fn($i) => !empty($i->reverses_folio_item_id))->keyBy('reverses_folio_item_id'),
+            'folio_items_by_pay_alloc' => $allFolioItems->filter(fn($i) => !empty($i->guest_payment_allocation_id))->groupBy('guest_payment_allocation_id'),
+            'folio_items_by_pay_rev'   => $allFolioItems->filter(fn($i) => !empty($i->guest_payment_reversal_id))->groupBy('guest_payment_reversal_id'),
+            'folio_items_by_dep_app'   => $allFolioItems->filter(fn($i) => !empty($i->guest_deposit_application_id))->groupBy('guest_deposit_application_id'),
+            'folio_items_by_dep_rev'   => $allFolioItems->filter(fn($i) => !empty($i->guest_deposit_reversal_id))->groupBy('guest_deposit_reversal_id'),
+            'folio_items_by_ar_decision' => $allFolioItems->filter(fn($i) => !empty($i->guest_ar_transfer_decision_id))->groupBy('guest_ar_transfer_decision_id'),
+            'folio_items_by_reverses' => $allFolioItems->filter(fn($i) => !empty($i->reverses_folio_item_id))->groupBy('reverses_folio_item_id'),
 
             'payments'              => $payments,
             'payments_by_id'        => $payments->keyBy('id'),
@@ -583,10 +583,10 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 if ($revs->count() === 1) {
                     $rev = $revs[0];
                     if ($lockedCollections !== null) {
-                        $origItem = $lockedCollections['folio_items_by_pay_alloc']->get($alloc->id);
-                        $origItems = $origItem && !$origItem->is_void ? collect([$origItem]) : collect();
-                        $revItem = $lockedCollections['folio_items_by_pay_rev']->get($rev->id);
-                        $revItems = $revItem && !$revItem->is_void ? collect([$revItem]) : collect();
+                        $origItems = ($lockedCollections['folio_items_by_pay_alloc']->get($alloc->id) ?? collect())
+                            ->filter(fn($i) => !$i->is_void);
+                        $revItems = ($lockedCollections['folio_items_by_pay_rev']->get($rev->id) ?? collect())
+                            ->filter(fn($i) => !$i->is_void);
                     } else {
                         $origItems = FolioItem::where('guest_payment_allocation_id', $alloc->id)
                             ->where('is_void', false)->get();
@@ -618,8 +618,8 @@ class GuestLedgerCheckoutFinancialEvaluationService
                         'reversed' => true, 'rev_id' => $rev->id];
                 } else {
                     if ($lockedCollections !== null) {
-                        $item = $lockedCollections['folio_items_by_pay_alloc']->get($alloc->id);
-                        $items = $item && !$item->is_void ? collect([$item]) : collect();
+                        $items = ($lockedCollections['folio_items_by_pay_alloc']->get($alloc->id) ?? collect())
+                            ->filter(fn($i) => !$i->is_void);
                     } else {
                         $items = FolioItem::where('guest_payment_allocation_id', $alloc->id)
                             ->where('is_void', false)->get();
@@ -786,10 +786,10 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 if ($revs->count() === 1) {
                     $rev = $revs[0];
                     if ($lockedCollections !== null) {
-                        $origItem = $lockedCollections['folio_items_by_dep_app']->get($app->id);
-                        $origItems = $origItem && !$origItem->is_void ? collect([$origItem]) : collect();
-                        $revItem = $lockedCollections['folio_items_by_dep_rev']->get($rev->id);
-                        $revItems = $revItem && !$revItem->is_void ? collect([$revItem]) : collect();
+                        $origItems = ($lockedCollections['folio_items_by_dep_app']->get($app->id) ?? collect())
+                            ->filter(fn($i) => !$i->is_void);
+                        $revItems = ($lockedCollections['folio_items_by_dep_rev']->get($rev->id) ?? collect())
+                            ->filter(fn($i) => !$i->is_void);
                     } else {
                         $origItems = FolioItem::where('guest_deposit_application_id', $app->id)
                             ->where('is_void', false)->get();
@@ -820,8 +820,8 @@ class GuestLedgerCheckoutFinancialEvaluationService
                         'reversed' => true, 'rev_id' => $rev->id];
                 } else {
                     if ($lockedCollections !== null) {
-                        $item = $lockedCollections['folio_items_by_dep_app']->get($app->id);
-                        $items = $item && !$item->is_void ? collect([$item]) : collect();
+                        $items = ($lockedCollections['folio_items_by_dep_app']->get($app->id) ?? collect())
+                            ->filter(fn($i) => !$i->is_void);
                     } else {
                         $items = FolioItem::where('guest_deposit_application_id', $app->id)
                             ->where('is_void', false)->get();
@@ -946,8 +946,12 @@ class GuestLedgerCheckoutFinancialEvaluationService
             }
 
             if ($hasPay) {
-                $src = GuestPaymentTransaction::whereKey($r->guest_payment_transaction_id)
-                    ->where('property_id', $propertyId)->first();
+                if ($lockedCollections !== null) {
+                    $src = $lockedCollections['payments_by_id']->get($r->guest_payment_transaction_id);
+                } else {
+                    $src = GuestPaymentTransaction::whereKey($r->guest_payment_transaction_id)
+                        ->where('property_id', $propertyId)->first();
+                }
                 if (! $src || $src->reservation_id !== $reservationId
                     || $src->guest_id !== $guestId
                     || ($currency !== null && $src->currency !== $currency)) {
@@ -956,8 +960,12 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 }
             }
             if ($hasDep) {
-                $src = GuestDepositTransaction::whereKey($r->guest_deposit_transaction_id)
-                    ->where('property_id', $propertyId)->first();
+                if ($lockedCollections !== null) {
+                    $src = $lockedCollections['deposits_by_id']->get($r->guest_deposit_transaction_id);
+                } else {
+                    $src = GuestDepositTransaction::whereKey($r->guest_deposit_transaction_id)
+                        ->where('property_id', $propertyId)->first();
+                }
                 if (! $src || $src->reservation_id !== $reservationId
                     || $src->guest_id !== $guestId
                     || ($currency !== null && $src->currency !== $currency)) {
@@ -1029,9 +1037,9 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
             match ($req->lifecycle_status) {
                 GuestArTransferStatusEnum::Requested => $this->arRequested($req, $decisions, $blockers, $blockerMsgs, $reviews, $anyBlock, $anyReview),
-                GuestArTransferStatusEnum::Accepted  => $this->arAccepted($req, $accepted, $rejected, $reversed, $propertyId, $folioIds, $blockers, $blockerMsgs, $reviews, $anyReview),
+                GuestArTransferStatusEnum::Accepted  => $this->arAccepted($req, $accepted, $rejected, $reversed, $propertyId, $folioIds, $blockers, $blockerMsgs, $reviews, $anyReview, $lockedCollections),
                 GuestArTransferStatusEnum::Rejected  => $this->arRejected($req, $accepted, $rejected, $reviews, $blockerMsgs, $anyReview),
-                GuestArTransferStatusEnum::Reversed  => $this->arReversed($req, $accepted, $reversed, $propertyId, $blockers, $blockerMsgs, $reviews, $anyReview),
+                GuestArTransferStatusEnum::Reversed  => $this->arReversed($req, $accepted, $reversed, $propertyId, $blockers, $blockerMsgs, $reviews, $anyReview, $lockedCollections),
             };
 
             if ($accepted->count() > 0 && $rejected->count() > 0) {
@@ -1061,7 +1069,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
         }
     }
 
-    private function arAccepted($req, $accepted, $rejected, $reversed, $propertyId, $folioIds, &$blockers, &$blockerMsgs, &$reviews, &$anyReview): void {
+    private function arAccepted($req, $accepted, $rejected, $reversed, $propertyId, $folioIds, &$blockers, &$blockerMsgs, &$reviews, &$anyReview, ?array $lockedCollections = null): void {
         if ($rejected->isNotEmpty() || $reversed->isNotEmpty()) {
             $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
             $blockerMsgs[] = "AR {$req->id} ACCEPTED with conflicting decisions."; $anyReview = true;
@@ -1072,7 +1080,12 @@ class GuestLedgerCheckoutFinancialEvaluationService
             return;
         }
         $acc = $accepted->first();
-        $items = FolioItem::where('guest_ar_transfer_decision_id', $acc->id)->where('is_void', false)->get();
+        if ($lockedCollections !== null) {
+            $items = ($lockedCollections['folio_items_by_ar_decision']->get($acc->id) ?? collect())
+                ->filter(fn($i) => !$i->is_void);
+        } else {
+            $items = FolioItem::where('guest_ar_transfer_decision_id', $acc->id)->where('is_void', false)->get();
+        }
         if ($items->count() !== 1) {
             $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
             $blockerMsgs[] = "AR {$req->id} ACCEPTED has {$items->count()} ArTransfer items, expected 1.";
@@ -1101,7 +1114,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
         }
     }
 
-    private function arReversed($req, $accepted, $reversed, $propertyId, &$blockers, &$blockerMsgs, &$reviews, &$anyReview): void {
+    private function arReversed($req, $accepted, $reversed, $propertyId, &$blockers, &$blockerMsgs, &$reviews, &$anyReview, ?array $lockedCollections = null): void {
         if ($accepted->count() !== 1 || $reversed->count() !== 1) {
             $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
             $blockerMsgs[] = "AR {$req->id} REVERSED needs 1 accepted + 1 reversed."; $anyReview = true;
@@ -1112,8 +1125,15 @@ class GuestLedgerCheckoutFinancialEvaluationService
             $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
             $blockerMsgs[] = "AR {$req->id} reversal not linked to accepted."; $anyReview = true;
         }
-        $origItems = FolioItem::where('guest_ar_transfer_decision_id', $acc->id)->where('is_void', false)->get();
-        $revItems  = FolioItem::where('guest_ar_transfer_decision_id', $rev->id)->where('is_void', false)->get();
+        if ($lockedCollections !== null) {
+            $origItems = ($lockedCollections['folio_items_by_ar_decision']->get($acc->id) ?? collect())
+                ->filter(fn($i) => !$i->is_void);
+            $revItems = ($lockedCollections['folio_items_by_ar_decision']->get($rev->id) ?? collect())
+                ->filter(fn($i) => !$i->is_void);
+        } else {
+            $origItems = FolioItem::where('guest_ar_transfer_decision_id', $acc->id)->where('is_void', false)->get();
+            $revItems  = FolioItem::where('guest_ar_transfer_decision_id', $rev->id)->where('is_void', false)->get();
+        }
         if ($origItems->count() !== 1) {
             $reviews[] = 'AR_TRANSFER_SOURCE_CONFLICT';
             $blockerMsgs[] = "AR {$req->id} REVERSED has {$origItems->count()} orig items, expected 1."; $anyReview = true;
