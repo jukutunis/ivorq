@@ -32,10 +32,16 @@ use Modules\Operations\PMS\Policies\ReservationPolicy;
 use Modules\Operations\PMS\Policies\RoomBlockPolicy;
 use Modules\Operations\PMS\Policies\StayPolicy;
 use Modules\Operations\PMS\Services\Adapters\UnavailableCompletedSettlementConflictAdapter;
+use Modules\Operations\PMS\Services\Adapters\UnavailableCompletedSettlementConflictParticipationAdapter;
 use Modules\Operations\PMS\Services\Adapters\UnavailablePostingCompletenessAdapter;
+use Modules\Operations\PMS\Services\Adapters\UnavailablePostingCompletenessParticipationAdapter;
 use Modules\Operations\PMS\Services\Adapters\UnavailableSettlementHoldAdapter;
+use Modules\Operations\PMS\Services\Adapters\UnavailableSettlementHoldParticipationAdapter;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort;
 use Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictReadPort;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessParticipationPort;
 use Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessReadPort;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldParticipationPort;
 use Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldReadPort;
 
 class PMSServiceProvider extends ServiceProvider
@@ -55,6 +61,21 @@ class PMSServiceProvider extends ServiceProvider
         $this->app->singleton(
             GuestLedgerCompletedSettlementConflictReadPort::class,
             UnavailableCompletedSettlementConflictAdapter::class,
+        );
+
+        // GLF-E production bindings — fail-closed unavailable participation adapters.
+        // Tests may override these with CLEAR/BLOCKED/REVIEW_REQUIRED/EVIDENCE_UNAVAILABLE stubs.
+        $this->app->singleton(
+            GuestLedgerPostingCompletenessParticipationPort::class,
+            UnavailablePostingCompletenessParticipationAdapter::class,
+        );
+        $this->app->singleton(
+            GuestLedgerSettlementHoldParticipationPort::class,
+            UnavailableSettlementHoldParticipationAdapter::class,
+        );
+        $this->app->singleton(
+            GuestLedgerCompletedSettlementConflictParticipationPort::class,
+            UnavailableCompletedSettlementConflictParticipationAdapter::class,
         );
     }
 
