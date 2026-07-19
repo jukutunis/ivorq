@@ -449,41 +449,39 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
 
     public function test_different_transaction_different_fingerprint(): void
     {
-        // The terminal fingerprint includes hash('sha256', $postgresTransactionId).
+        // Within ONE transaction: same data = same fingerprint.
+        // Across transactions: different txid → different fingerprint.
+        // The fingerprint formula is: hash('sha256', implode('|', [...facts..., hash('sha256', txid)]))
         // Since txid_current() is monotonically increasing and never repeats,
-        // different transactions MUST produce different fingerprints.
-        // Prove two distinct txid_current() values exist across transactions.
-        $txid1 = '';
-        $txid2 = '';
-
-        DB::transaction(function () use (&$txid1) {
-            $row = DB::selectOne("SELECT txid_current()::text AS txid");
-            $txid1 = $row->txid;
-        });
-
-        DB::transaction(function () use (&$txid2) {
-            $row = DB::selectOne("SELECT txid_current()::text AS txid");
-            $txid2 = $row->txid;
-        });
-
-        $this->assertNotEquals($txid1, $txid2, 'Different transactions have different txid.');
-
-        // Verify the fingerprint would differ by checking the hash function
-        $h1 = hash('sha256', $txid1);
-        $h2 = hash('sha256', $txid2);
-        $this->assertNotEquals($h1, $h2, 'Different txid produces different hash.');
-
-        // Also prove: same transaction, same data = same fingerprint
+        // different transactions guarantee different fingerprints.
         DB::transaction(function () {
             $context = $this->acquireContext();
-            $reservation = $this->makeGlfReservation();
-            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
-            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
 
-            $a1 = $this->service->attest($context, $stay->id);
-            $a2 = $this->service->attest($context, $stay->id);
-            $this->assertEquals($a1->source_fingerprint, $a2->source_fingerprint);
+            // Two different stays in the same transaction
+            $r1 = $this->makeGlfReservation(); $s1 = $this->makeStay($r1->id, $r1->primaryGuest->id);
+            $this->makeFolio($r1->id, $r1->primaryGuest->id);
+
+            $r2 = $this->makeGlfReservation(); $s2 = $this->makeStay($r2->id, $r2->primaryGuest->id);
+            $this->makeFolio($r2->id, $r2->primaryGuest->id);
+
+            // Same stay → same fingerprint (same transaction)
+            $a1a = $this->service->attest($context, $s1->id);
+            $a1b = $this->service->attest($context, $s1->id);
+            $this->assertEquals($a1a->source_fingerprint, $a1b->source_fingerprint,
+                'Same transaction + same data = same fingerprint.');
+
+            // Different stay → different fingerprint (same transaction)
+            $a2 = $this->service->attest($context, $s2->id);
+            $this->assertNotEquals($a1a->source_fingerprint, $a2->source_fingerprint,
+                'Different data = different fingerprint.');
         });
+
+        // Cross-transaction: different txid → different sha256(txid) → different fingerprint
+        $txid1 = ''; $txid2 = '';
+        DB::transaction(function () use (&$txid1) { $txid1 = DB::selectOne("SELECT txid_current()::text AS txid")->txid; });
+        DB::transaction(function () use (&$txid2) { $txid2 = DB::selectOne("SELECT txid_current()::text AS txid")->txid; });
+        $this->assertNotEquals($txid1, $txid2);
+        $this->assertNotEquals(hash('sha256', $txid1), hash('sha256', $txid2));
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -520,6 +518,8 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
 
     public function test_zero_writes_snapshot_proof(): void
     {
+        // Full-row hash comparison — not just ID counts.
+        // Hash the complete canonical state of every protected table before and after attest().
         DB::transaction(function () {
             $context = $this->acquireContext();
             $reservation = $this->makeGlfReservation();
@@ -536,17 +536,22 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
                 'guest_ar_transfer_decisions', 'cashier_sessions', 'night_audit_runs',
             ];
 
-            $before = [];
+            $beforeHashes = [];
             foreach ($tables as $table) {
-                $before[$table] = DB::table($table)->select('id')->orderBy('id')->pluck('id')->toArray();
+                $rows = DB::table($table)->select('*')->orderBy('id')->get()->toArray();
+                $beforeHashes[$table] = hash('sha256', json_encode($rows, JSON_UNESCAPED_SLASHES));
             }
 
             $this->service->attest($context, $stay->id);
 
             foreach ($tables as $table) {
-                $after = DB::table($table)->select('id')->orderBy('id')->pluck('id')->toArray();
-                $this->assertEquals($before[$table], $after,
-                    "Table {$table} was mutated during attest.");
+                $rows = DB::table($table)->select('*')->orderBy('id')->get()->toArray();
+                $afterHash = hash('sha256', json_encode($rows, JSON_UNESCAPED_SLASHES));
+                $this->assertEquals(
+                    $beforeHashes[$table],
+                    $afterHash,
+                    "Table {$table} full-row snapshot was mutated during attest."
+                );
             }
         });
     }

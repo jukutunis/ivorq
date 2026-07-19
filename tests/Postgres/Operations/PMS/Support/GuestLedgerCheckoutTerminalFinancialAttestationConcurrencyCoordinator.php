@@ -2,46 +2,31 @@
 
 namespace Tests\Postgres\Operations\PMS\Support;
 
-/**
- * Concurrency coordinator for GLF-E terminal financial attestation tests.
- *
- * Coordinates separate PHP worker processes through shared PostgreSQL state.
- * Each worker runs in its own process with its own DB connection.
- */
 class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyCoordinator
 {
-    private string $phpBinary;
-    private string $phpunitXml;
-    private string $basePath;
-
     /** @var array<int, array{process: resource, pipes: array}> */
     private array $workers = [];
 
+    private string $basePath;
+    private string $workerScript;
+
     public function __construct()
     {
-        $this->phpBinary = PHP_BINARY;
-        $this->phpunitXml = base_path('phpunit.pg.xml');
         $this->basePath = base_path();
+        $this->workerScript = __DIR__ . '/GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyWorker.php';
     }
 
-    /**
-     * Spawn a worker process and return its PID.
-     *
-     * @param array<string, string> $env Extra env vars
-     */
-    public function spawnWorker(string $workerScript, array $env = []): int
+    public function spawnWorker(string $mode, array $payload, array $environment = []): int
     {
-        $envStr = '';
-        foreach ($env as $k => $v) {
-            $envStr .= escapeshellarg($k) . '=' . escapeshellarg($v) . ' ';
-        }
+        $dataFile = tempnam(sys_get_temp_dir(), 'glfe_worker_');
+        file_put_contents($dataFile, json_encode(array_merge($payload, ['mode' => $mode]), JSON_UNESCAPED_SLASHES));
 
         $cmd = sprintf(
             '%s %s %s %s',
-            escapeshellcmd($this->phpBinary),
-            escapeshellarg($workerScript),
+            escapeshellarg(PHP_BINARY),
+            escapeshellarg($this->workerScript),
             escapeshellarg($this->basePath),
-            escapeshellarg($this->phpunitXml)
+            escapeshellarg($dataFile)
         );
 
         $descriptorSpec = [
@@ -50,68 +35,124 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyCoordinator
             2 => ['pipe', 'w'],
         ];
 
-        $process = proc_open($cmd, $descriptorSpec, $pipes);
+        $env = array_merge(getenv(), $environment);
+        $process = proc_open($cmd, $descriptorSpec, $pipes, null, $env);
 
         if (! is_resource($process)) {
+            unlink($dataFile);
             throw new \RuntimeException('Failed to spawn worker process.');
         }
 
-        $this->workers[] = ['process' => $process, 'pipes' => $pipes];
+        fclose($pipes[0]);
+
+        $this->workers[] = [
+            'process' => $process,
+            'pipes' => $pipes,
+            'data_file' => $dataFile,
+            'mode' => $mode,
+        ];
 
         return count($this->workers) - 1;
     }
 
-    /**
-     * Wait for worker to complete and return its stdout.
-     */
-    public function waitForWorker(int $workerIndex, int $timeoutSeconds = 30): string
+    public function waitForMarker(string $markerPath, int $timeoutSeconds): array
+    {
+        $deadline = time() + $timeoutSeconds;
+        while (time() < $deadline) {
+            if (file_exists($markerPath)) {
+                $content = file_get_contents($markerPath);
+                @unlink($markerPath);
+                $decoded = json_decode($content, true);
+                return is_array($decoded) ? $decoded : ['raw' => $content];
+            }
+            usleep(100000);
+        }
+        throw new \RuntimeException("Marker timeout after {$timeoutSeconds}s: {$markerPath}");
+    }
+
+    public function isWorkerRunning(int $workerIndex): bool
     {
         if (! isset($this->workers[$workerIndex])) {
-            throw new \InvalidArgumentException("Worker index {$workerIndex} not found.");
+            return false;
+        }
+        $status = proc_get_status($this->workers[$workerIndex]['process']);
+        return $status['running'] ?? false;
+    }
+
+    public function releaseWorker(string $releasePath): void
+    {
+        file_put_contents($releasePath, 'release');
+    }
+
+    public function waitForWorker(int $workerIndex, int $timeoutSeconds): array
+    {
+        if (! isset($this->workers[$workerIndex])) {
+            throw new \InvalidArgumentException("Worker {$workerIndex} not found.");
         }
 
         $worker = $this->workers[$workerIndex];
-        fclose($worker['pipes'][0]);
-
-        $output = '';
+        $stdout = '';
+        $stderr = '';
         $deadline = time() + $timeoutSeconds;
 
         while (time() < $deadline) {
-            $r = [$worker['pipes'][1]];
+            $r = [$worker['pipes'][1], $worker['pipes'][2]];
             $w = null; $e = null;
-            $changed = stream_select($r, $w, $e, 1, 0);
+            $changed = @stream_select($r, $w, $e, 1, 0);
             if ($changed > 0) {
-                $output .= stream_get_contents($worker['pipes'][1]);
+                $stdout .= stream_get_contents($worker['pipes'][1]);
+                $stderr .= stream_get_contents($worker['pipes'][2]);
             }
             $status = proc_get_status($worker['process']);
             if (! $status['running']) {
-                $output .= stream_get_contents($worker['pipes'][1]);
+                $stdout .= stream_get_contents($worker['pipes'][1]);
+                $stderr .= stream_get_contents($worker['pipes'][2]);
                 break;
             }
         }
 
         fclose($worker['pipes'][1]);
         fclose($worker['pipes'][2]);
-        proc_close($worker['process']);
 
-        return $output;
+        if (file_exists($worker['data_file'])) {
+            unlink($worker['data_file']);
+        }
+
+        $exitCode = proc_close($worker['process']);
+        unset($this->workers[$workerIndex]);
+
+        if ($exitCode !== 0) {
+            throw new \RuntimeException("Worker {$workerIndex} exited with code {$exitCode}: {$stderr}");
+        }
+
+        $result = json_decode(trim($stdout), true);
+        if (! is_array($result) || json_last_error() !== JSON_ERROR_NONE) {
+            throw new \RuntimeException("Worker {$workerIndex} returned malformed JSON: {$stdout}");
+        }
+
+        return $result;
     }
 
-    /**
-     * Clean up all workers, rolling back any open transactions.
-     */
+    public function terminateWorker(int $workerIndex): void
+    {
+        if (! isset($this->workers[$workerIndex])) {
+            return;
+        }
+        @proc_terminate($this->workers[$workerIndex]['process'], 9);
+        @fclose($this->workers[$workerIndex]['pipes'][1]);
+        @fclose($this->workers[$workerIndex]['pipes'][2]);
+        @proc_close($this->workers[$workerIndex]['process']);
+        if (file_exists($this->workers[$workerIndex]['data_file'])) {
+            unlink($this->workers[$workerIndex]['data_file']);
+        }
+        unset($this->workers[$workerIndex]);
+    }
+
     public function cleanup(): void
     {
-        foreach ($this->workers as $worker) {
-            if (is_resource($worker['process'])) {
-                @fclose($worker['pipes'][0]);
-                @fclose($worker['pipes'][1]);
-                @fclose($worker['pipes'][2]);
-                @proc_terminate($worker['process'], 9);
-                @proc_close($worker['process']);
-            }
+        foreach (array_keys($this->workers) as $i) {
+            $this->terminateWorker($i);
         }
-        $this->workers = [];
     }
 
     public function __destruct()
