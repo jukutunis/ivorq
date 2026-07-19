@@ -667,12 +667,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'NightAuditCheckoutConcurrencyFoundationTest',
             'NightAuditCheckoutConcurrencyProofTest',
         ], $baseline->classes);
-        $this->assertEquals(17, $baseline->expected->tests ?? null);
-        $this->assertEquals(889, $baseline->expected->assertions ?? null);
+        $this->assertEquals(20, $baseline->expected->tests ?? null);
+        $this->assertEquals(914, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('a3fc4b82228b7efc9b1868edac7ac7428f9f08a5', $baseline->provenance->sha ?? null);
+        $this->assertEquals('4b098c62bb2ecfaa49fb0c1e92fb5d4726bc7882', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-na-a2-checkout-transaction-concurrency-foundation', $baseline->provenance->branch ?? null);
         $this->assertStringContainsString('separate PHP processes', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('distinct PostgreSQL backend PIDs', $baseline->provenance->note ?? '');
@@ -680,11 +680,23 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('finite worker timeout and cleanup', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('txid_current transaction ID', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('static WeakMap', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('parameterized set_config with transaction-local scope', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('only its SHA-256 hash is retained', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('hash_equals verifies the private issuance evidence', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('same backend PID and same outer transaction ID', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('PostgreSQL reverts the capability state', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('before any Night Audit query and all tracked tables remain write-free', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Successful nested savepoint release preserves the capability', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('repeated outer-transaction attestations keep a deterministic fingerprint', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('the newest context succeeds and the prior context is rejected', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('one active NA-A2 capability per transaction', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('generated capability value is absent from the public lock context', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('same backend in a new transaction', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('manually constructed but unissued context', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('before any night_audit_runs query', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('previous database exception retained as cause', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Same-transaction repeated attestations keep a deterministic fingerprint', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('checkout runtime', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout remains unauthorized', $baseline->provenance->note ?? '');
     }
