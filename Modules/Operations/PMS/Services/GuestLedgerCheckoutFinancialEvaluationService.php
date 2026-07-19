@@ -183,6 +183,21 @@ class GuestLedgerCheckoutFinancialEvaluationService
             ->orderBy('created_at')
             ->get();
 
+        // Build locked-collection maps to avoid re-query
+        $lockedCollections = [
+            'folios_map' => $folios->keyBy('id'),
+            'folio_items_grouped' => $folioItems->groupBy('folio_id'),
+            'payments_map' => $payments->keyBy('id'),
+            'allocations_grouped' => $paymentAllocations->groupBy('guest_payment_transaction_id'),
+            'payment_reversals_grouped' => $paymentReversals->groupBy('guest_payment_transaction_id'),
+            'deposits_map' => $deposits->keyBy('id'),
+            'deposit_applications_grouped' => $depositApplications->groupBy('guest_deposit_transaction_id'),
+            'deposit_reversals_grouped' => $depositReversals->groupBy('guest_deposit_transaction_id'),
+            'refunds_grouped' => $refunds->groupBy('reservation_id'),
+            'ar_requests_grouped' => $arRequests->keyBy('id'),
+            'ar_decisions_grouped' => $arDecisions->groupBy('guest_ar_transfer_request_id'),
+        ];
+
         return $this->evaluate(
             $frontDeskStayId,
             $propertyId,
@@ -191,6 +206,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
             completedSettlementPort: $completedSettlementPort,
             useLock: true,
             includeCashFields: true,
+            lockedCollections: $lockedCollections,
         );
     }
 
@@ -199,6 +215,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
     // ═════════════════════════════════════════════════════════════════════
 
     /**
+     * @param array<string, mixed>|null $lockedCollections
      * @return array<string, mixed>
      */
     private function evaluate(
@@ -209,6 +226,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
         GuestLedgerCompletedSettlementConflictReadPort|GuestLedgerCompletedSettlementConflictParticipationPort $completedSettlementPort,
         bool $useLock,
         bool $includeCashFields,
+        ?array $lockedCollections = null,
     ): array {
         $evaluatedAt = now()->toIsoString();
         $blockers = []; $blockerMsgs = []; $reviews = []; $unavailable = [];
@@ -247,12 +265,21 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
         $markers['stay_relationship_marker'] = 'STAY_RESERVATION_GUEST_RESOLVED';
 
-        // Folios
-        $folios = Folio::withoutGlobalScope('property')
-            ->where('property_id', $propertyId)
-            ->where('reservation_id', $reservation->id)
-            ->orderBy('window_number')
-            ->get();
+        // Folios — use locked collections when available, else query
+        $folios = null;
+        if ($lockedCollections !== null) {
+            $folios = $lockedCollections['folios_map']
+                ->filter(fn($f) => $f->property_id === $propertyId && $f->reservation_id === $reservation->id)
+                ->sortBy('window_number')
+                ->values();
+        } else {
+            $folios = Folio::withoutGlobalScope('property')
+                ->where('property_id', $propertyId)
+                ->where('reservation_id', $reservation->id)
+                ->orderBy('window_number')
+                ->orderBy('id')
+                ->get();
+        }
 
         if ($folios->isEmpty()) {
             return $this->evidenceUnavailableResult($propertyId, $frontDeskStayId, $reservation->id, $guestId, [], null,
@@ -276,10 +303,19 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 $blockerMsgs[] = "Folio {$folio->id} is {$folio->status->value}.";
             }
 
-            $activeItems = FolioItem::where('folio_id', $folio->id)
-                ->where('is_void', false)
-                ->orderBy('posted_at')
-                ->get();
+            $activeItems = null;
+            if ($lockedCollections !== null) {
+                $grouped = $lockedCollections['folio_items_grouped']->get($folio->id, collect());
+                $activeItems = $grouped->filter(fn($i) => ! $i->is_void)
+                    ->sortBy('posted_at')
+                    ->values();
+            } else {
+                $activeItems = FolioItem::where('folio_id', $folio->id)
+                    ->where('is_void', false)
+                    ->orderBy('posted_at')
+                    ->orderBy('id')
+                    ->get();
+            }
             $fresh = $this->calculator->calculate($activeItems);
             $allFolioFreshTotals[$folio->id] = $fresh;
             $cached = [
@@ -365,10 +401,8 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 $postingCompletenessPort, $settlementHoldPort, $completedSettlementPort,
                 $blockers, $blockerMsgs, $reviews, $unavailable, $markers, $sourceIds);
 
-        // Status
-        $statusValue = $this->determineStatusValue($unavailable, $reviews, $blockers);
-
         // Cash-linked references (for locked terminal mode only)
+        // MUST be built and validated BEFORE final status determination
         $cashLinkedRefs = [];
         $cashierSessionIds = [];
 
@@ -380,11 +414,15 @@ class GuestLedgerCheckoutFinancialEvaluationService
             $cashierSessionIds = $cashData['session_ids'];
 
             // Fail closed if a CASH transaction lacks cashier-session linkage
+            // This must set EVIDENCE_UNAVAILABLE BEFORE status is calculated
             if ($cashData['missing_linkage']) {
                 $unavailable[] = 'CASH_LINKED_REFERENCE_EVIDENCE_UNAVAILABLE';
                 $blockerMsgs[] = 'One or more CASH transactions lack cashier-session linkage.';
             }
         }
+
+        // Status — calculated AFTER cash-linkage validation
+        $statusValue = $this->determineStatusValue($unavailable, $reviews, $blockers);
 
         return [
             'property_id' => $propertyId,
@@ -422,9 +460,19 @@ class GuestLedgerCheckoutFinancialEvaluationService
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
         array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers,
         bool $includeCashFields = false,
+        ?array $lockedCollections = null,
     ): array {
-        $payments = GuestPaymentTransaction::where('property_id', $propertyId)
-            ->where('reservation_id', $reservationId)->get();
+        // Use locked collections when available, else query DB
+        $payments = null;
+        if ($lockedCollections !== null) {
+            $payments = $lockedCollections['payments_map']
+                ->filter(fn($p) => $p->property_id === $propertyId && $p->reservation_id === $reservationId)
+                ->sortBy('id')->values();
+        } else {
+            $payments = GuestPaymentTransaction::where('property_id', $propertyId)
+                ->where('reservation_id', $reservationId)->orderBy('id')->get();
+        }
+
         $facts = []; $allResolved = true; $anyPayment = false;
 
         foreach ($payments as $p) {
@@ -440,13 +488,35 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 $blockerMsgs[] = "Payment {$p->id} currency mismatch.";
             }
 
-            $allocations = GuestPaymentAllocation::where('property_id', $propertyId)
-                ->where('guest_payment_transaction_id', $p->id)->get();
-            $refunds = GuestRefundTransaction::where('property_id', $propertyId)
-                ->where('guest_payment_transaction_id', $p->id)->get();
-            $voidRevs = GuestPaymentReversal::where('property_id', $propertyId)
-                ->where('guest_payment_transaction_id', $p->id)
-                ->where('reversal_type', GuestPaymentReversalTypeEnum::PaymentVoid->value)->get();
+            $allocations = collect();
+            $refunds = collect();
+            $voidRevs = collect();
+
+            if ($lockedCollections !== null) {
+                $allocGrouped = $lockedCollections['allocations_grouped'];
+                $allocations = $allocGrouped->get($p->id, collect())
+                    ->filter(fn($a) => $a->property_id === $propertyId)
+                    ->sortBy('id')->values();
+                $revsGrouped = $lockedCollections['payment_reversals_grouped'];
+                $allRevs = $revsGrouped->get($p->id, collect())
+                    ->filter(fn($r) => $r->property_id === $propertyId);
+                $voidRevs = $allRevs->filter(
+                    fn($r) => $r->reversal_type?->value === GuestPaymentReversalTypeEnum::PaymentVoid->value
+                )->sortBy('id')->values();
+                $refunds = $lockedCollections['refunds_grouped']->get($reservationId, collect())
+                    ->filter(fn($r) => ($r->guest_payment_transaction_id ?? '') === $p->id
+                        && $r->property_id === $propertyId)
+                    ->sortBy('id')->values();
+            } else {
+                $allocations = GuestPaymentAllocation::where('property_id', $propertyId)
+                    ->where('guest_payment_transaction_id', $p->id)->orderBy('id')->get();
+                $refunds = GuestRefundTransaction::where('property_id', $propertyId)
+                    ->where('guest_payment_transaction_id', $p->id)->orderBy('id')->get();
+                $voidRevs = GuestPaymentReversal::where('property_id', $propertyId)
+                    ->where('guest_payment_transaction_id', $p->id)
+                    ->where('reversal_type', GuestPaymentReversalTypeEnum::PaymentVoid->value)
+                    ->orderBy('id')->get();
+            }
 
             if ($p->lifecycle_status === GuestPaymentLifecycleStatusEnum::Voided) {
                 if ($voidRevs->count() !== 1) {
@@ -1040,6 +1110,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
         array &$blockers, array &$blockerMsgs, array &$reviews,
         array &$unavailable, array &$markers, array &$sourceIds
     ): array {
+        $allowedStatuses = ['AVAILABLE_CLEAR', 'AVAILABLE_BLOCKED', 'REVIEW_REQUIRED', 'EVIDENCE_UNAVAILABLE'];
         $portFacts = [];
         foreach ([
             ['port' => $postingCompletenessPort, 'blocker' => 'MANDATORY_POSTINGS_INCOMPLETE',
@@ -1053,22 +1124,42 @@ class GuestLedgerCheckoutFinancialEvaluationService
              'key' => 'completed_settlement_conflict'],
         ] as $cfg) {
             $result = $cfg['port']->participate($reservationId, $propertyId);
-            $sourceIds[$cfg['key'] . '_status'] = $result['status'];
+
+            // Validate status against allowed values; reject malformed results
+            $status = $result['status'] ?? '';
+            if (! in_array($status, $allowedStatuses, true)) {
+                $status = 'EVIDENCE_UNAVAILABLE';
+                $result['code'] = $result['code'] ?? strtoupper($cfg['key']) . '_MALFORMED_RESULT';
+                $result['source_fingerprint'] = null;
+            }
+
+            // Deterministically sort and deduplicate source_identifiers
+            $portSourceIds = $result['source_identifiers'] ?? [];
+            if (is_array($portSourceIds)) {
+                $portSourceIds = array_values(array_unique($portSourceIds));
+                sort($portSourceIds);
+            } else {
+                $portSourceIds = [];
+            }
+
+            $sourceIds[$cfg['key'] . '_status'] = $status;
             $sourceIds[$cfg['key'] . '_code'] = $result['code'] ?? 'null';
+            $sourceIds[$cfg['key'] . '_source_identifiers'] = $portSourceIds;
             $portFacts[$cfg['key']] = [
-                'status' => $result['status'],
+                'status' => $status,
                 'code' => $result['code'] ?? 'null',
                 'source_fingerprint' => $result['source_fingerprint'] ?? null,
+                'source_identifiers' => $portSourceIds,
             ];
 
-            match ($result['status']) {
+            match ($status) {
                 'AVAILABLE_CLEAR' => $markers[$cfg['marker']] = strtoupper($cfg['key']) . '_CLEAR',
-                'AVAILABLE_BLOCKED' => (function () use ($cfg, $result, &$blockers, &$blockerMsgs, &$markers) {
+                'AVAILABLE_BLOCKED' => (function () use ($cfg, &$blockers, &$blockerMsgs, &$markers) {
                     $blockers[] = $cfg['blocker'];
                     $blockerMsgs[] = $cfg['blocker'];
                     $markers[$cfg['marker']] = strtoupper($cfg['key']) . '_BLOCKED';
                 })(),
-                'REVIEW_REQUIRED' => (function () use ($cfg, $result, &$reviews, &$blockerMsgs, &$markers) {
+                'REVIEW_REQUIRED' => (function () use ($cfg, &$reviews, &$blockerMsgs, &$markers) {
                     $reviews[] = $cfg['review'];
                     $blockerMsgs[] = $cfg['review'];
                     $markers[$cfg['marker']] = strtoupper($cfg['key']) . '_REVIEW_REQUIRED';
@@ -1152,10 +1243,13 @@ class GuestLedgerCheckoutFinancialEvaluationService
             }
         }
 
-        // Sort deterministically
+        // Sort deterministically using tuple comparison
         usort($references, function (array $a, array $b): int {
-            return ($a['source_type'] . $a['source_id'] . $a['cashier_session_id'])
-                <=> ($b['source_type'] . $b['source_id'] . $b['cashier_session_id']);
+            $cmp = $a['source_type'] <=> $b['source_type'];
+            if ($cmp !== 0) return $cmp;
+            $cmp = $a['source_id'] <=> $b['source_id'];
+            if ($cmp !== 0) return $cmp;
+            return $a['cashier_session_id'] <=> $b['cashier_session_id'];
         });
 
         $sessionIds = array_values(array_unique($sessionIds));

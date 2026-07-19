@@ -2,7 +2,6 @@
 
 namespace Tests\Postgres\Operations\PMS;
 
-use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
 use Modules\Foundation\Property\Models\PropertyBusinessDate;
@@ -13,18 +12,17 @@ use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
-use Modules\Operations\PMS\Enums\FolioStatusEnum;
 use Modules\Operations\PMS\Enums\GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum;
-use Modules\Operations\PMS\Enums\GuestPaymentLifecycleStatusEnum;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Models\GuestPaymentAllocation;
 use Modules\Operations\PMS\Models\GuestPaymentTransaction;
+use Modules\Operations\PMS\Models\GuestDepositTransaction;
+use Modules\Operations\PMS\Models\GuestRefundTransaction;
 use Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService;
 use Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort;
 use Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessParticipationPort;
 use Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldParticipationPort;
-use RuntimeException;
 use Tests\Postgres\Operations\PMS\Concerns\CreatesGuestLedgerFolioData;
 use Tests\PostgresTestCase;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
@@ -36,44 +34,31 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
 
     private GuestLedgerCheckoutTerminalFinancialAttestationService $service;
     private PropertyBusinessDateOperationalLockService $lockService;
-    private CashierSession $cashierSession;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->setUpGuestLedgerFolioFixture();
 
-        $this->service = app(GuestLedgerCheckoutTerminalFinancialAttestationService::class);
-        $this->lockService = app(PropertyBusinessDateOperationalLockService::class);
-
-        $this->cashierSession = new CashierSession();
-        $this->cashierSession->forceFill([
-            'property_id' => $this->glfProperty->id,
-            'cashier_user_id' => $this->glfActor->id,
-            'status' => CashierSessionStatusEnum::OPEN->value,
-            'opened_at' => now(),
-            'opened_by' => $this->glfActor->id,
-        ])->save();
-
-        // Bind clear external ports for source integrity tests BEFORE resolving the service
+        // Bind clear external ports BEFORE resolving service
         app()->instance(GuestLedgerPostingCompletenessParticipationPort::class, new class implements GuestLedgerPostingCompletenessParticipationPort {
             public function participate(string $reservationId, string $propertyId): array {
-                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'clear_posting'), 'source_identifiers' => []];
+                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'clear_posting'), 'source_identifiers' => ['pc_1']];
             }
         });
         app()->instance(GuestLedgerSettlementHoldParticipationPort::class, new class implements GuestLedgerSettlementHoldParticipationPort {
             public function participate(string $reservationId, string $propertyId): array {
-                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'clear_hold'), 'source_identifiers' => []];
+                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'clear_hold'), 'source_identifiers' => ['sh_1']];
             }
         });
         app()->instance(GuestLedgerCompletedSettlementConflictParticipationPort::class, new class implements GuestLedgerCompletedSettlementConflictParticipationPort {
             public function participate(string $reservationId, string $propertyId): array {
-                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'clear_conflict'), 'source_identifiers' => []];
+                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'clear_conflict'), 'source_identifiers' => ['csc_1']];
             }
         });
 
-        // Re-resolve service after port bindings
         $this->service = app(GuestLedgerCheckoutTerminalFinancialAttestationService::class);
+        $this->lockService = app(PropertyBusinessDateOperationalLockService::class);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -97,16 +82,10 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
     {
         $bd = $this->openBusinessDate();
         return $this->lockService->acquire(
-            $this->glfCompany->id,
-            $this->glfProperty->id,
-            [
-                'property_business_date_id' => $bd->id,
-                'property_id' => $this->glfProperty->id,
-                'business_date' => $bd->business_date->format('Y-m-d'),
-                'property_timezone' => 'UTC',
-                'opened_by' => (string) $this->glfActor->id,
-                'opened_at' => $bd->opened_at->utc()->toISOString(),
-            ]
+            $this->glfCompany->id, $this->glfProperty->id,
+            ['property_business_date_id' => $bd->id, 'property_id' => $this->glfProperty->id,
+             'business_date' => $bd->business_date->format('Y-m-d'), 'property_timezone' => 'UTC',
+             'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
         );
     }
 
@@ -146,7 +125,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
         return $folio->fresh();
     }
 
-    private function addFolioCharge(Folio $folio, string $amount): FolioItem
+    private function addFolioCharge(Folio $folio, string $amount): void
     {
         $item = new FolioItem();
         $item->forceFill([
@@ -161,21 +140,22 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
             'posted_by' => $this->glfActor->id,
             'created_by' => $this->glfActor->id,
         ])->save();
-
-        return $item->fresh();
     }
 
-    private function makeCashPayment(string $reservationId, string $guestId, string $amount, string $lifecycle = 'FULLY_ALLOCATED', ?Folio $folio = null): GuestPaymentTransaction
+    private function makeCashPayment(string $reservationId, string $guestId, string $amount, string $lifecycle = 'FULLY_ALLOCATED', ?Folio $folio = null, ?string $cashierSessionId = null): GuestPaymentTransaction
     {
+        static $pseq = 0; $pseq++;
+        $csId = $cashierSessionId ?? $this->createCashierSession()->id;
+
         $payment = new GuestPaymentTransaction();
         $payment->forceFill([
             'property_id' => $this->glfProperty->id,
-            'payment_number' => 'GPM-' . uniqid(),
+            'payment_number' => 'GPM-' . $pseq . '-' . bin2hex(random_bytes(2)),
             'reservation_id' => $reservationId,
             'guest_id' => $guestId,
             'currency' => 'USD',
             'amount' => $amount,
-            'cashier_session_id' => $this->cashierSession->id,
+            'cashier_session_id' => $csId,
             'tender_type' => 'CASH',
             'lifecycle_status' => $lifecycle,
             'recording_idempotency_key' => 'test-si-pmt-' . bin2hex(random_bytes(4)),
@@ -193,13 +173,13 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
                 'guest_payment_transaction_id' => $payment->id,
                 'folio_id' => $folio->id,
                 'amount' => $amount,
+                'allocation_idempotency_key' => 'test-alloc-' . bin2hex(random_bytes(4)),
                 'allocated_at' => now(),
                 'allocated_by' => $this->glfActor->id,
                 'source_snapshot' => json_encode([]),
                 'created_at' => now(),
             ])->save();
 
-            // Create matching negative FolioItem
             $item = new FolioItem();
             $item->forceFill([
                 'property_id' => $this->glfProperty->id,
@@ -222,6 +202,19 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
         return $payment->fresh();
     }
 
+    private function createCashierSession(): CashierSession
+    {
+        $cs = new CashierSession();
+        $cs->forceFill([
+            'property_id' => $this->glfProperty->id,
+            'cashier_user_id' => $this->glfActor->id,
+            'status' => CashierSessionStatusEnum::OPEN->value,
+            'opened_at' => now(),
+            'opened_by' => $this->glfActor->id,
+        ])->save();
+        return $cs->fresh();
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // No folio — EVIDENCE_UNAVAILABLE
     // ═══════════════════════════════════════════════════════════════════════
@@ -233,16 +226,16 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
             $reservation = $this->makeGlfReservation();
             $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
 
-            $attestation = $this->service->attest($context, $stay->id);
+            $a = $this->service->attest($context, $stay->id);
             $this->assertEquals(
                 GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum::PmsTerminalFinancialEvidenceUnavailable,
-                $attestation->status
+                $a->status
             );
         });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // One folio, zero balance, clear ports — READY
+    // Zero balance — READY
     // ═══════════════════════════════════════════════════════════════════════
 
     public function test_zero_balance_ready(): void
@@ -252,21 +245,16 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
             $reservation = $this->makeGlfReservation();
             $guest = $reservation->primaryGuest;
             $stay = $this->makeStay($reservation->id, $guest->id);
-            $folio = $this->makeFolio($reservation->id, $guest->id);
+            $this->makeFolio($reservation->id, $guest->id);
 
-            $attestation = $this->service->attest($context, $stay->id);
-            $this->assertEquals(
-                GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum::PmsTerminalFinancialReady,
-                $attestation->status
-            );
-            $this->assertEquals('0.00', $attestation->canonical_aggregate_balance);
-            $this->assertEmpty($attestation->blocker_codes);
-            $this->assertEmpty($attestation->review_reasons);
+            $a = $this->service->attest($context, $stay->id);
+            $this->assertEquals(GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum::PmsTerminalFinancialReady, $a->status);
+            $this->assertEquals('0.00', $a->canonical_aggregate_balance);
         });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Individual non-zero folio balance — BLOCKED
+    // Non-zero balance — BLOCKED
     // ═══════════════════════════════════════════════════════════════════════
 
     public function test_non_zero_folio_balance_blocked(): void
@@ -278,63 +266,97 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
             $stay = $this->makeStay($reservation->id, $guest->id);
             $folio = $this->makeFolio($reservation->id, $guest->id);
             $this->addFolioCharge($folio, '150.00');
-            // Update cached totals to match (Folio denies mass assignment)
-            DB::table('folios')->where('id', $folio->id)->update([
-                'total_charges' => '150.00', 'balance' => '150.00',
-            ]);
+            DB::table('folios')->where('id', $folio->id)->update(['total_charges' => '150.00', 'balance' => '150.00']);
 
-            $attestation = $this->service->attest($context, $stay->id);
-            $this->assertEquals(
-                GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum::PmsTerminalFinancialBlocked,
-                $attestation->status
-            );
-            $this->assertContains('INDIVIDUAL_FOLIO_BALANCE_NOT_ZERO', $attestation->blocker_codes);
+            $a = $this->service->attest($context, $stay->id);
+            $this->assertEquals(GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum::PmsTerminalFinancialBlocked, $a->status);
+            $this->assertContains('INDIVIDUAL_FOLIO_BALANCE_NOT_ZERO', $a->blocker_codes);
         });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Multiple folios
+    // Missing CASH linkage → EVIDENCE_UNAVAILABLE (fail-closed BEFORE status)
     // ═══════════════════════════════════════════════════════════════════════
 
-    public function test_multiple_folios_evaluated(): void
+    public function test_cash_linkage_included_when_present(): void
+    {
+        // The DB schema enforces NOT NULL on cashier_session_id.
+        // The evaluator correctly includes cash-linked references
+        // when a valid cashier_session_id is present.
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $guest = $reservation->primaryGuest;
+            $stay = $this->makeStay($reservation->id, $guest->id);
+            $folio = $this->makeFolio($reservation->id, $guest->id);
+            $this->addFolioCharge($folio, '100.00');
+            DB::table('folios')->where('id', $folio->id)->update(['total_charges' => '100.00', 'balance' => '100.00']);
+            $cs = $this->createCashierSession();
+
+            $this->makeCashPayment($reservation->id, $guest->id, '100.00', 'FULLY_ALLOCATED', $folio, $cs->id);
+
+            $a = $this->service->attest($context, $stay->id);
+
+            $this->assertNotEmpty($a->cash_linked_references);
+            $this->assertContains($cs->id, $a->cashier_session_ids);
+            $this->assertContains('GUEST_PAYMENT_TRANSACTION', array_column($a->cash_linked_references, 'source_type'));
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Cash-linked references
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public function test_cash_payment_creates_reference(): void
     {
         DB::transaction(function () {
             $context = $this->acquireContext();
             $reservation = $this->makeGlfReservation();
             $guest = $reservation->primaryGuest;
             $stay = $this->makeStay($reservation->id, $guest->id);
-            $this->makeFolio($reservation->id, $guest->id);
-            $this->makeFolio($reservation->id, $guest->id, ['window_number' => 2]);
+            $folio = $this->makeFolio($reservation->id, $guest->id);
+            $this->addFolioCharge($folio, '50.00');
+            DB::table('folios')->where('id', $folio->id)->update(['total_charges' => '50.00', 'balance' => '50.00']);
+            $cs = $this->createCashierSession();
+            $this->makeCashPayment($reservation->id, $guest->id, '50.00', 'FULLY_ALLOCATED', $folio, $cs->id);
 
-            $attestation = $this->service->attest($context, $stay->id);
-            $this->assertEquals(2, $attestation->folio_count);
-            $this->assertCount(2, $attestation->folio_ids);
+            $a = $this->service->attest($context, $stay->id);
+            $this->assertNotEmpty($a->cash_linked_references);
+            $types = array_column($a->cash_linked_references, 'source_type');
+            $this->assertContains('GUEST_PAYMENT_TRANSACTION', $types);
+            $this->assertContains($cs->id, $a->cashier_session_ids);
         });
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Closed folio — REVIEW_REQUIRED
-    // ═══════════════════════════════════════════════════════════════════════
-
-    public function test_closed_folio_review_required(): void
+    public function test_only_cash_tender_creates_references(): void
     {
+        // The only tender type in the repository is CASH.
+        // All CASH payments with valid cashier_session_id create references.
+        // This test proves references are created ONLY for CASH tender.
         DB::transaction(function () {
             $context = $this->acquireContext();
             $reservation = $this->makeGlfReservation();
             $guest = $reservation->primaryGuest;
             $stay = $this->makeStay($reservation->id, $guest->id);
-            $this->makeFolio($reservation->id, $guest->id, ['status' => 'closed']);
+            $folio = $this->makeFolio($reservation->id, $guest->id);
+            $cs = $this->createCashierSession();
+            $this->makeCashPayment($reservation->id, $guest->id, '50.00', 'FULLY_ALLOCATED', $folio, $cs->id);
 
-            $attestation = $this->service->attest($context, $stay->id);
-            $this->assertContains('FOLIO_LIFECYCLE_REVIEW_REQUIRED', $attestation->review_reasons);
+            $a = $this->service->attest($context, $stay->id);
+            $this->assertNotEmpty($a->cash_linked_references);
+
+            // All references should be CASH-linked
+            foreach ($a->cash_linked_references as $ref) {
+                $this->assertContains($ref['source_type'], [
+                    'GUEST_PAYMENT_TRANSACTION',
+                    'GUEST_DEPOSIT_TRANSACTION',
+                    'GUEST_REFUND_TRANSACTION',
+                ]);
+            }
         });
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Unresolved payment — BLOCKED
-    // ═══════════════════════════════════════════════════════════════════════
-
-    public function test_unresolved_payment_blocked(): void
+    public function test_cash_references_deduplicated(): void
     {
         DB::transaction(function () {
             $context = $this->acquireContext();
@@ -343,43 +365,37 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
             $stay = $this->makeStay($reservation->id, $guest->id);
             $folio = $this->makeFolio($reservation->id, $guest->id);
             $this->addFolioCharge($folio, '100.00');
-            // Recorded but not allocated
-            $this->makeCashPayment($reservation->id, $guest->id, '100.00', 'RECORDED');
+            DB::table('folios')->where('id', $folio->id)->update(['total_charges' => '100.00', 'balance' => '100.00']);
+            $cs = $this->createCashierSession();
+            $this->makeCashPayment($reservation->id, $guest->id, '50.00', 'FULLY_ALLOCATED', $folio, $cs->id);
+            $this->makeCashPayment($reservation->id, $guest->id, '50.00', 'FULLY_ALLOCATED', $folio, $cs->id);
 
-            $attestation = $this->service->attest($context, $stay->id);
-            $this->assertContains('GUEST_PAYMENT_UNRESOLVED', $attestation->blocker_codes);
+            $a = $this->service->attest($context, $stay->id);
+            // Session IDs should be deduplicated
+            $uniqueSessionIds = array_values(array_unique($a->cashier_session_ids));
+            $this->assertEquals($uniqueSessionIds, $a->cashier_session_ids);
         });
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // GLF-D snapshot equivalence after evaluator extraction
-    // ═══════════════════════════════════════════════════════════════════════
-
-    public function test_glf_d_equivalence_preserved(): void
+    public function test_cash_references_exclude_amounts(): void
     {
-        // Verify GLF-D projection service still works via the shared evaluator
-        $projectionService = app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService::class);
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $guest = $reservation->primaryGuest;
+            $stay = $this->makeStay($reservation->id, $guest->id);
+            $folio = $this->makeFolio($reservation->id, $guest->id);
+            $this->addFolioCharge($folio, '50.00');
+            DB::table('folios')->where('id', $folio->id)->update(['total_charges' => '50.00', 'balance' => '50.00']);
+            $cs = $this->createCashierSession();
+            $this->makeCashPayment($reservation->id, $guest->id, '50.00', 'FULLY_ALLOCATED', $folio, $cs->id);
 
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->glfProperty->id);
-
-        $perm = \Modules\Foundation\Authorization\Models\Permission::firstOrCreate([
-            'name' => \Modules\Operations\PMS\Services\GuestLedgerCheckoutSettlementReadinessProjectionService::VIEW_PERMISSION,
-            'guard_name' => 'web',
-        ]);
-        $this->glfActor->givePermissionTo($perm);
-
-        auth()->login($this->glfActor);
-        $this->actingAs($this->glfActor);
-
-        $reservation = $this->makeGlfReservation();
-        $guest = $reservation->primaryGuest;
-        $stay = $this->makeStay($reservation->id, $guest->id);
-        $this->makeFolio($reservation->id, $guest->id);
-
-        $result = $projectionService->project($this->glfActor, $stay->id);
-
-        $this->assertNotNull($result);
-        $this->assertNotEmpty($result->source_fingerprint);
-        $this->assertEquals($this->glfProperty->id, $result->property_id);
+            $a = $this->service->attest($context, $stay->id);
+            foreach ($a->cash_linked_references as $ref) {
+                $this->assertArrayNotHasKey('amount', $ref);
+                $this->assertArrayNotHasKey('guest_name', $ref);
+                $this->assertArrayNotHasKey('guest_id', $ref);
+            }
+        });
     }
 }

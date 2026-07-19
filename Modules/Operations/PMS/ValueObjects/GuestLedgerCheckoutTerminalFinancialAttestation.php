@@ -22,7 +22,6 @@ final class GuestLedgerCheckoutTerminalFinancialAttestation
     public const OWNER = 'PMS Guest Ledger / PMS Cashiering';
 
     /**
-     * @param string[] $folio_ids
      * @param string[] $blocker_codes
      * @param string[] $review_reasons
      * @param string[] $evidence_unavailable_codes
@@ -40,7 +39,6 @@ final class GuestLedgerCheckoutTerminalFinancialAttestation
         public readonly string                                              $business_date,
         public readonly string                                              $front_desk_stay_id,
         public readonly string                                              $reservation_id,
-        public readonly array                                               $folio_ids,
         public readonly int                                                 $folio_count,
         public readonly string                                              $canonical_aggregate_balance,
         public readonly ?string                                             $currency,
@@ -58,7 +56,6 @@ final class GuestLedgerCheckoutTerminalFinancialAttestation
      * Named constructor — all fields are server-resolved inside the
      * caller's active PostgreSQL transaction.
      *
-     * @param string[] $folio_ids
      * @param string[] $blocker_codes
      * @param string[] $review_reasons
      * @param string[] $evidence_unavailable_codes
@@ -73,7 +70,6 @@ final class GuestLedgerCheckoutTerminalFinancialAttestation
         string $business_date,
         string $front_desk_stay_id,
         string $reservation_id,
-        array $folio_ids,
         int $folio_count,
         string $canonical_aggregate_balance,
         ?string $currency,
@@ -89,12 +85,14 @@ final class GuestLedgerCheckoutTerminalFinancialAttestation
         sort($blocker_codes);
         sort($review_reasons);
         sort($evidence_unavailable_codes);
-        sort($folio_ids);
         sort($cashier_session_ids);
 
         usort($cash_linked_references, function (array $a, array $b): int {
-            return ($a['source_type'] . $a['source_id'] . $a['cashier_session_id'])
-                <=> ($b['source_type'] . $b['source_id'] . $b['cashier_session_id']);
+            $cmp = $a['source_type'] <=> $b['source_type'];
+            if ($cmp !== 0) return $cmp;
+            $cmp = $a['source_id'] <=> $b['source_id'];
+            if ($cmp !== 0) return $cmp;
+            return $a['cashier_session_id'] <=> $b['cashier_session_id'];
         });
 
         return new self(
@@ -107,7 +105,6 @@ final class GuestLedgerCheckoutTerminalFinancialAttestation
             business_date: $business_date,
             front_desk_stay_id: $front_desk_stay_id,
             reservation_id: $reservation_id,
-            folio_ids: array_values(array_unique($folio_ids)),
             folio_count: $folio_count,
             canonical_aggregate_balance: $canonical_aggregate_balance,
             currency: $currency,

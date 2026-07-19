@@ -65,7 +65,15 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
         $this->assertParticipatingPostgresTransaction();
 
         // 2. Validate NA-A2 context (before any PMS source query)
-        $this->operationalLockService->assertIssuedForCurrentTransaction($operationalContext);
+        try {
+            $this->operationalLockService->assertIssuedForCurrentTransaction($operationalContext);
+        } catch (DomainException $e) {
+            throw new DomainException(
+                self::ERROR_INVALID_OPERATIONAL_LOCK_CONTEXT,
+                0,
+                $e,
+            );
+        }
 
         // 3. Set transaction-local lock timeout
         DB::statement("SET LOCAL lock_timeout = '" . self::LOCK_TIMEOUT . "'");
@@ -91,7 +99,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
                 $this->completedSettlementPort,
             );
         } catch (QueryException $exception) {
-            if ($this->sqlState($exception) === self::LOCK_TIMEOUT_SQLSTATE) {
+            if ($this->isLockTimeout($exception)) {
                 throw new RuntimeException(self::ERROR_FINANCIAL_SOURCE_LOCK_TIMEOUT, 0, $exception);
             }
             throw $exception;
@@ -131,7 +139,6 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
             business_date: $operationalContext->business_date,
             front_desk_stay_id: $frontDeskStayId,
             reservation_id: $reservationId,
-            folio_ids: $result['folio_ids'],
             folio_count: $result['folio_count'],
             canonical_aggregate_balance: $result['canonical_aggregate_balance'],
             currency: $result['currency'],
@@ -173,8 +180,16 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
         PropertyBusinessDateOperationalLockContext $operationalContext,
         GuestLedgerCheckoutTerminalFinancialAttestation $attestation,
     ): void {
-        // 1. Revalidate NA-A2 operational context
-        $this->operationalLockService->assertIssuedForCurrentTransaction($operationalContext);
+        // 1. Revalidate NA-A2 operational context (wrap in GLF-E error)
+        try {
+            $this->operationalLockService->assertIssuedForCurrentTransaction($operationalContext);
+        } catch (DomainException $e) {
+            throw new DomainException(
+                self::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION,
+                0,
+                $e,
+            );
+        }
 
         // 2. Require exact attestation object in WeakMap
         $issuedAttestations = self::issuedAttestations();
@@ -282,15 +297,32 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // SQL state helper
+    // Narrow lock-timeout detection
     // ═════════════════════════════════════════════════════════════════════
 
-    private function sqlState(Throwable $exception): ?string
+    /**
+     * Only map a PostgreSQL lock timeout when BOTH conditions are met:
+     *   - SQLSTATE = 55P03
+     *   - PostgreSQL message contains "canceling statement due to lock timeout"
+     *
+     * A different 55P03, deadlock, serialization failure, or unknown
+     * QueryException must propagate unchanged.
+     */
+    private function isLockTimeout(Throwable $exception): bool
     {
+        $sqlState = null;
         if (isset($exception->errorInfo) && is_array($exception->errorInfo) && isset($exception->errorInfo[0])) {
-            return (string) $exception->errorInfo[0];
+            $sqlState = (string) $exception->errorInfo[0];
+        } else {
+            $sqlState = (string) $exception->getCode() ?: '';
         }
 
-        return (string) $exception->getCode() ?: null;
+        if ($sqlState !== self::LOCK_TIMEOUT_SQLSTATE) {
+            return false;
+        }
+
+        $message = $exception->getMessage();
+
+        return str_contains($message, 'canceling statement due to lock timeout');
     }
 }

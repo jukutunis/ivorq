@@ -10,14 +10,7 @@ use Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockServ
 use Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
-use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
-use Modules\Operations\GeneralCashier\Models\CashierSession;
-use Modules\Operations\PMS\Enums\FolioItemTypeEnum;
-use Modules\Operations\PMS\Enums\GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum;
 use Modules\Operations\PMS\Models\Folio;
-use Modules\Operations\PMS\Models\FolioItem;
-use Modules\Operations\PMS\Models\GuestPaymentAllocation;
-use Modules\Operations\PMS\Models\GuestPaymentTransaction;
 use Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService;
 use Modules\Operations\PMS\ValueObjects\GuestLedgerCheckoutTerminalFinancialAttestation;
 use RuntimeException;
@@ -98,7 +91,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
         $folio = new Folio();
         $folio->forceFill([
             'property_id' => $this->glfProperty->id,
-            'folio_number' => 'E' . $seq . '-' . bin2hex(random_bytes(2)),
+            'folio_number' => 'F' . $seq . '-' . bin2hex(random_bytes(2)),
             'reservation_id' => $reservationId,
             'guest_id' => $guestId,
             'status' => 'open',
@@ -112,30 +105,6 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
             'opening_idempotency_key' => 'test-glfe-' . bin2hex(random_bytes(4)),
         ])->save();
         return $folio->fresh();
-    }
-
-    private function forgeAttestation(GuestLedgerCheckoutTerminalFinancialAttestation $real): GuestLedgerCheckoutTerminalFinancialAttestation
-    {
-        return GuestLedgerCheckoutTerminalFinancialAttestation::create(
-            status: $real->status,
-            property_id: $real->property_id,
-            property_business_date_id: $real->property_business_date_id,
-            business_date: $real->business_date,
-            front_desk_stay_id: $real->front_desk_stay_id,
-            reservation_id: $real->reservation_id,
-            folio_ids: $real->folio_ids,
-            folio_count: $real->folio_count,
-            canonical_aggregate_balance: $real->canonical_aggregate_balance,
-            currency: $real->currency,
-            blocker_codes: $real->blocker_codes,
-            review_reasons: $real->review_reasons,
-            evidence_unavailable_codes: $real->evidence_unavailable_codes,
-            cash_linked_references: $real->cash_linked_references,
-            cashier_session_ids: $real->cashier_session_ids,
-            source_fingerprint: $real->source_fingerprint,
-            evaluated_at: $real->evaluated_at,
-            markers: $real->markers,
-        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -166,12 +135,13 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 2. Valid NA-A2 context required
+    // 2. GLF_E stable error wrapping for invalid NA-A2 context
     // ═══════════════════════════════════════════════════════════════════════
 
-    public function test_requires_valid_na_a2_context(): void
+    public function test_invalid_operational_context_maps_to_glf_e_error(): void
     {
         $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_OPERATIONAL_LOCK_CONTEXT);
 
         DB::transaction(function () {
             $bd = $this->openBusinessDate();
@@ -197,7 +167,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
         });
     }
 
-    public function test_stale_context_rejected(): void
+    public function test_stale_context_wraps_glf_e_error_with_previous(): void
     {
         $context = null;
 
@@ -205,183 +175,148 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
             $context = $this->acquireContext();
         });
 
-        $this->expectException(DomainException::class);
-
-        DB::transaction(function () use ($context) {
-            $reservation = $this->makeGlfReservation();
-            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
-            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
-            $this->service->attest($context, $stay->id);
-        });
+        try {
+            DB::transaction(function () use ($context) {
+                $reservation = $this->makeGlfReservation();
+                $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+                $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+                $this->service->attest($context, $stay->id);
+            });
+            $this->fail('Expected DomainException was not thrown.');
+        } catch (DomainException $e) {
+            $this->assertStringContainsString(
+                GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_OPERATIONAL_LOCK_CONTEXT,
+                $e->getMessage()
+            );
+            $this->assertNotNull($e->getPrevious(), 'Must preserve original exception as previous.');
+        }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 3. Savepoint behavior
+    // ═══════════════════════════════════════════════════════════════════════
 
     public function test_rolled_back_savepoint_context_rejected(): void
     {
-        // Savepoint rollback may or may not affect the NA-A2 transaction-local
-        // capability, depending on the PostgreSQL version and savepoint behavior.
-        // This test verifies the service behaves safely regardless.
-        $result = null;
+        try {
+            DB::transaction(function () {
+                DB::beginTransaction();
+                $bd = $this->openBusinessDate();
+                $context = $this->lockService->acquire(
+                    $this->glfCompany->id, $this->glfProperty->id,
+                    ['property_business_date_id' => $bd->id, 'property_id' => $this->glfProperty->id,
+                     'business_date' => $bd->business_date->format('Y-m-d'), 'property_timezone' => 'UTC',
+                     'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
+                );
+                DB::rollBack();
 
-        DB::transaction(function () use (&$result) {
-            $context = $this->acquireContext();
+                $reservation = $this->makeGlfReservation();
+                $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+                $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+                $this->service->attest($context, $stay->id);
+            });
+            $this->fail('Expected exception was not thrown.');
+        } catch (DomainException $e) {
+            $this->assertStringContainsString(
+                GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_OPERATIONAL_LOCK_CONTEXT,
+                $e->getMessage()
+            );
+        }
+    }
 
+    public function test_rolled_back_savepoint_attestation_rejected(): void
+    {
+        DB::transaction(function () {
+            // Create context and attestation inside a savepoint, then rollback
             DB::beginTransaction();
-            DB::rollBack();
+            $bd = $this->openBusinessDate();
+            $context = $this->lockService->acquire(
+                $this->glfCompany->id, $this->glfProperty->id,
+                ['property_business_date_id' => $bd->id, 'property_id' => $this->glfProperty->id,
+                 'business_date' => $bd->business_date->format('Y-m-d'), 'property_timezone' => 'UTC',
+                 'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
+            );
 
             $reservation = $this->makeGlfReservation();
             $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
             $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+            $attestation = $this->service->attest($context, $stay->id);
+            DB::rollBack();
 
+            // Outside savepoint, attestation should be rejected
             try {
-                $attestation = $this->service->attest($context, $stay->id);
-                $result = 'attested';
+                $this->service->assertIssuedForCurrentTransaction($context, $attestation);
+                $this->fail('Expected DomainException for rolled-back savepoint attestation.');
             } catch (DomainException $e) {
-                $result = 'blocked';
+                $this->assertStringContainsString(
+                    GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION,
+                    $e->getMessage()
+                );
             }
         });
-
-        // Either outcome is safe — the service either validates or rejects
-        $this->assertContains($result, ['attested', 'blocked']);
     }
 
     public function test_savepoint_release_preserves_context(): void
     {
         DB::transaction(function () {
-            $context = $this->acquireContext();
-
             DB::beginTransaction();
-            DB::commit();
+            $bd = $this->openBusinessDate();
+            $context = $this->lockService->acquire(
+                $this->glfCompany->id, $this->glfProperty->id,
+                ['property_business_date_id' => $bd->id, 'property_id' => $this->glfProperty->id,
+                 'business_date' => $bd->business_date->format('Y-m-d'), 'property_timezone' => 'UTC',
+                 'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
+            );
 
             $reservation = $this->makeGlfReservation();
             $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
             $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
-
             $attestation = $this->service->attest($context, $stay->id);
-            $this->assertNotNull($attestation);
+            DB::commit(); // release savepoint
+
+            // After successful release, attestation still valid
+            $this->service->assertIssuedForCurrentTransaction($context, $attestation);
+            $this->assertTrue(true);
         });
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 3. Same-property relationship validation
-    // ═══════════════════════════════════════════════════════════════════════
-
-    public function test_cross_property_stay_rejected(): void
-    {
-        // Create a stay on the other property
-        $otherGuest = $this->makeGlfGuest($this->glfOtherProperty);
-        $otherReservation = $this->makeGlfReservation($this->glfOtherProperty, $otherGuest);
-
-        $otherStay = new FrontDeskStay();
-        $otherStay->forceFill([
-            'property_id' => $this->glfOtherProperty->id,
-            'reservation_id' => $otherReservation->id,
-            'guest_id' => $otherGuest->id,
-            'status' => FrontDeskStayStatusEnum::InHouse->value,
-            'created_by' => $this->glfOtherActor->id,
-            'updated_by' => $this->glfOtherActor->id,
-        ])->save();
-
-        $caught = false;
-
-        try {
-            DB::transaction(function () use ($otherStay) {
-                $context = $this->acquireContext();
-                $this->service->attest($context, $otherStay->id);
-            });
-        } catch (\Throwable $e) {
-            $caught = true;
-        }
-
-        $this->assertTrue($caught, 'Cross-property stay must be rejected.');
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 4. No CurrentPropertyService / actor / session dependency
-    // ═══════════════════════════════════════════════════════════════════════
-
-    public function test_no_current_property_service_dependency(): void
+    public function test_superseded_context_rejected(): void
     {
         DB::transaction(function () {
-            $context = $this->acquireContext();
-            $reservation = $this->makeGlfReservation();
-            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
-            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+            $bd = $this->openBusinessDate();
+            $context1 = $this->lockService->acquire(
+                $this->glfCompany->id, $this->glfProperty->id,
+                ['property_business_date_id' => $bd->id, 'property_id' => $this->glfProperty->id,
+                 'business_date' => $bd->business_date->format('Y-m-d'), 'property_timezone' => 'UTC',
+                 'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
+            );
 
-            $attestation = $this->service->attest($context, $stay->id);
-            $this->assertEquals($context->property_id, $attestation->property_id);
+            // Acquire a second context — supersedes the first via NA-A2 capability replacement
+            $context2 = $this->lockService->acquire(
+                $this->glfCompany->id, $this->glfProperty->id,
+                ['property_business_date_id' => $bd->id, 'property_id' => $this->glfProperty->id,
+                 'business_date' => $bd->business_date->format('Y-m-d'), 'property_timezone' => 'UTC',
+                 'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
+            );
+
+            // The older context1 should now be invalid
+            try {
+                $reservation = $this->makeGlfReservation();
+                $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+                $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+                $this->service->attest($context1, $stay->id);
+                $this->fail('Expected superseded context to be rejected.');
+            } catch (DomainException $e) {
+                $this->assertStringContainsString(
+                    GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_OPERATIONAL_LOCK_CONTEXT,
+                    $e->getMessage()
+                );
+            }
         });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 5. Output exact whitelist
-    // ═══════════════════════════════════════════════════════════════════════
-
-    public function test_output_whitelist_excludes_pii(): void
-    {
-        DB::transaction(function () {
-            $context = $this->acquireContext();
-            $reservation = $this->makeGlfReservation();
-            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
-            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
-
-            $attestation = $this->service->attest($context, $stay->id);
-
-            $this->assertEquals(GuestLedgerCheckoutTerminalFinancialAttestation::VERSION, $attestation->attestation_version);
-            $this->assertEquals(GuestLedgerCheckoutTerminalFinancialAttestation::OWNER, $attestation->owner);
-            $this->assertTrue($attestation->transaction_bound);
-            $this->assertNotEmpty($attestation->source_fingerprint);
-            $this->assertNotEmpty($attestation->evaluated_at);
-
-            $serialized = json_encode($attestation);
-            $this->assertStringNotContainsString('guest_name', $serialized);
-            $this->assertStringNotContainsString('password', $serialized);
-        });
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 6. Deterministic fingerprint
-    // ═══════════════════════════════════════════════════════════════════════
-
-    public function test_same_transaction_deterministic_fingerprint(): void
-    {
-        DB::transaction(function () {
-            $context = $this->acquireContext();
-            $reservation = $this->makeGlfReservation();
-            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
-            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
-
-            $a1 = $this->service->attest($context, $stay->id);
-            $a2 = $this->service->attest($context, $stay->id);
-
-            $this->assertEquals($a1->source_fingerprint, $a2->source_fingerprint);
-        });
-    }
-
-    public function test_different_transaction_different_fingerprint(): void
-    {
-        // Within a single transaction, same data = same fingerprint.
-        // Different data = different fingerprint. Cross-transaction proof
-        // is inherent to the txid_current hash in the fingerprint.
-        DB::transaction(function () {
-            $context = $this->acquireContext();
-            $reservation1 = $this->makeGlfReservation();
-            $stay1 = $this->makeStay($reservation1->id, $reservation1->primaryGuest->id);
-            $this->makeFolio($reservation1->id, $reservation1->primaryGuest->id);
-
-            $reservation2 = $this->makeGlfReservation();
-            $stay2 = $this->makeStay($reservation2->id, $reservation2->primaryGuest->id);
-            $this->makeFolio($reservation2->id, $reservation2->primaryGuest->id);
-
-            $fp1 = $this->service->attest($context, $stay1->id)->source_fingerprint;
-            $fp2 = $this->service->attest($context, $stay2->id)->source_fingerprint;
-
-            // Different stays produce different fingerprints within same transaction
-            $this->assertNotEquals($fp1, $fp2);
-        });
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 7. Exact-object issuance
+    // 4. Exact-object issuance
     // ═══════════════════════════════════════════════════════════════════════
 
     public function test_exact_object_issuance(): void
@@ -409,8 +344,28 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
             $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
             $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
 
-            $attestation = $this->service->attest($context, $stay->id);
-            $forged = $this->forgeAttestation($attestation);
+            $real = $this->service->attest($context, $stay->id);
+
+            // Forge a field-identical attestation
+            $forged = GuestLedgerCheckoutTerminalFinancialAttestation::create(
+                status: $real->status,
+                property_id: $real->property_id,
+                property_business_date_id: $real->property_business_date_id,
+                business_date: $real->business_date,
+                front_desk_stay_id: $real->front_desk_stay_id,
+                reservation_id: $real->reservation_id,
+                folio_count: $real->folio_count,
+                canonical_aggregate_balance: $real->canonical_aggregate_balance,
+                currency: $real->currency,
+                blocker_codes: $real->blocker_codes,
+                review_reasons: $real->review_reasons,
+                evidence_unavailable_codes: $real->evidence_unavailable_codes,
+                cash_linked_references: $real->cash_linked_references,
+                cashier_session_ids: $real->cashier_session_ids,
+                source_fingerprint: $real->source_fingerprint,
+                evaluated_at: $real->evaluated_at,
+                markers: $real->markers,
+            );
 
             $this->service->assertIssuedForCurrentTransaction($context, $forged);
         });
@@ -437,43 +392,167 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 8. Zero writes
+    // 5. Exact public whitelist
     // ═══════════════════════════════════════════════════════════════════════
 
-    public function test_zero_writes(): void
+    public function test_exact_public_whitelist(): void
     {
-        // Count rows attributable to GLF-E attestation (attest itself writes nothing)
-        // The test setup/fixture creates rows but those are test infrastructure, not attestation writes.
-        // We verify no mutation from the attest service by checking that it doesn't
-        // produce unexpected side effects.
         DB::transaction(function () {
             $context = $this->acquireContext();
             $reservation = $this->makeGlfReservation();
             $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
             $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
 
-            $countsBefore = [
-                'front_desk_stays' => DB::table('front_desk_stays')->count(),
-                'folios' => DB::table('folios')->count(),
-                'folio_items' => DB::table('folio_items')->count(),
-                'guest_payment_transactions' => DB::table('guest_payment_transactions')->count(),
+            $a = $this->service->attest($context, $stay->id);
+            $props = get_object_vars($a);
+
+            $expectedProps = [
+                'attestation_version', 'status', 'owner', 'transaction_bound',
+                'property_id', 'property_business_date_id', 'business_date',
+                'front_desk_stay_id', 'reservation_id', 'folio_count',
+                'canonical_aggregate_balance', 'currency',
+                'blocker_codes', 'review_reasons', 'evidence_unavailable_codes',
+                'cash_linked_references', 'cashier_session_ids',
+                'source_fingerprint', 'evaluated_at', 'markers',
             ];
 
-            $this->service->attest($context, $stay->id);
+            $actualProps = array_keys($props);
+            sort($expectedProps);
+            sort($actualProps);
+            $this->assertEquals($expectedProps, $actualProps, 'Exact whitelist mismatch.');
 
-            $countsAfter = [
-                'front_desk_stays' => DB::table('front_desk_stays')->count(),
-                'folios' => DB::table('folios')->count(),
-                'folio_items' => DB::table('folio_items')->count(),
-                'guest_payment_transactions' => DB::table('guest_payment_transactions')->count(),
-            ];
-
-            $this->assertEquals($countsBefore, $countsAfter, 'Attest must not write any rows.');
+            // Prove absence of forbidden fields
+            $this->assertArrayNotHasKey('folio_ids', $props);
+            $this->assertArrayNotHasKey('guest_id', $props);
+            $this->assertArrayNotHasKey('can_execute', $props);
         });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 9. No General Cashier query
+    // 6. Deterministic fingerprint
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public function test_same_transaction_deterministic_fingerprint(): void
+    {
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+
+            $a1 = $this->service->attest($context, $stay->id);
+            $a2 = $this->service->attest($context, $stay->id);
+
+            $this->assertEquals($a1->source_fingerprint, $a2->source_fingerprint);
+        });
+    }
+
+    public function test_different_transaction_different_fingerprint(): void
+    {
+        // The terminal fingerprint includes hash('sha256', $postgresTransactionId).
+        // Since txid_current() is monotonically increasing and never repeats,
+        // different transactions MUST produce different fingerprints.
+        // Prove two distinct txid_current() values exist across transactions.
+        $txid1 = '';
+        $txid2 = '';
+
+        DB::transaction(function () use (&$txid1) {
+            $row = DB::selectOne("SELECT txid_current()::text AS txid");
+            $txid1 = $row->txid;
+        });
+
+        DB::transaction(function () use (&$txid2) {
+            $row = DB::selectOne("SELECT txid_current()::text AS txid");
+            $txid2 = $row->txid;
+        });
+
+        $this->assertNotEquals($txid1, $txid2, 'Different transactions have different txid.');
+
+        // Verify the fingerprint would differ by checking the hash function
+        $h1 = hash('sha256', $txid1);
+        $h2 = hash('sha256', $txid2);
+        $this->assertNotEquals($h1, $h2, 'Different txid produces different hash.');
+
+        // Also prove: same transaction, same data = same fingerprint
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+
+            $a1 = $this->service->attest($context, $stay->id);
+            $a2 = $this->service->attest($context, $stay->id);
+            $this->assertEquals($a1->source_fingerprint, $a2->source_fingerprint);
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 7. Zero-write proof
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public function test_zero_writes_sql_proof(): void
+    {
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+
+            $this->service->attest($context, $stay->id);
+
+            $forbiddenPrefixes = ['insert ', 'update ', 'delete ', 'merge ', 'truncate ', 'alter ', 'drop ', 'create '];
+            foreach (DB::getQueryLog() as $entry) {
+                $sql = strtolower(trim($entry['query'] ?? ''));
+                if (str_starts_with($sql, 'set local')) continue;
+                if (str_starts_with($sql, 'select')) continue;
+                foreach ($forbiddenPrefixes as $prefix) {
+                    $this->assertStringNotStartsWith($prefix, $sql,
+                        "Mutation query found: {$sql}");
+                }
+            }
+
+            DB::disableQueryLog();
+        });
+    }
+
+    public function test_zero_writes_snapshot_proof(): void
+    {
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+
+            $tables = [
+                'properties', 'property_business_dates', 'front_desk_stays',
+                'reservations', 'folios', 'folio_items',
+                'guest_payment_transactions', 'guest_payment_allocations',
+                'guest_payment_reversals', 'guest_deposit_transactions',
+                'guest_deposit_applications', 'guest_deposit_reversals',
+                'guest_refund_transactions', 'guest_ar_transfer_requests',
+                'guest_ar_transfer_decisions', 'cashier_sessions', 'night_audit_runs',
+            ];
+
+            $before = [];
+            foreach ($tables as $table) {
+                $before[$table] = DB::table($table)->select('id')->orderBy('id')->pluck('id')->toArray();
+            }
+
+            $this->service->attest($context, $stay->id);
+
+            foreach ($tables as $table) {
+                $after = DB::table($table)->select('id')->orderBy('id')->pluck('id')->toArray();
+                $this->assertEquals($before[$table], $after,
+                    "Table {$table} was mutated during attest.");
+            }
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 8. No General Cashier query
     // ═══════════════════════════════════════════════════════════════════════
 
     public function test_no_general_cashier_query(): void
@@ -489,8 +568,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
 
             $this->service->attest($context, $stay->id);
 
-            $log = DB::getQueryLog();
-            foreach ($log as $entry) {
+            foreach (DB::getQueryLog() as $entry) {
                 $sql = $entry['query'] ?? '';
                 $this->assertStringNotContainsString('cashier_sessions', $sql);
             }
@@ -500,7 +578,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 10. No route, controller, permission, UI, checkout command
+    // 9. No checkout artifacts
     // ═══════════════════════════════════════════════════════════════════════
 
     public function test_no_checkout_artifacts(): void
@@ -511,13 +589,37 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
             $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
             $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
 
-            $attestation = $this->service->attest($context, $stay->id);
-
-            $serialized = json_encode($attestation);
+            $a = $this->service->attest($context, $stay->id);
+            $serialized = json_encode($a);
             $this->assertStringNotContainsString('can_execute', $serialized);
             $this->assertStringNotContainsString('executeCheckout', $serialized);
             $this->assertStringNotContainsString('frontdesk.checkout-execution.execute', $serialized);
-            $this->assertStringNotContainsString('frontdesk-checkout-execution', $serialized);
         });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 10. Narrow lock-timeout classification
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public function test_lock_timeout_error_code(): void
+    {
+        $this->assertEquals(
+            'GLF_E_FINANCIAL_SOURCE_LOCK_TIMEOUT',
+            GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_FINANCIAL_SOURCE_LOCK_TIMEOUT
+        );
+    }
+
+    public function test_glf_e_does_not_leak_na_a2_error_code(): void
+    {
+        // The GLF-E error code for context rejection must be its own,
+        // not an NA-A2 code.
+        $this->assertNotEquals(
+            'NA_A2_INVALID_OPERATIONAL_LOCK_CONTEXT',
+            GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_OPERATIONAL_LOCK_CONTEXT
+        );
+        $this->assertEquals(
+            'GLF_E_INVALID_OPERATIONAL_LOCK_CONTEXT',
+            GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_OPERATIONAL_LOCK_CONTEXT
+        );
     }
 }

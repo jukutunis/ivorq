@@ -9,9 +9,6 @@ use Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockServ
 use Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
-use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
-use Modules\Operations\GeneralCashier\Models\CashierSession;
-use Modules\Operations\PMS\Enums\GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService;
 use Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort;
@@ -34,20 +31,19 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
         parent::setUp();
         $this->setUpGuestLedgerFolioFixture();
 
-        // Bind clear external ports BEFORE resolving the service
         app()->instance(GuestLedgerPostingCompletenessParticipationPort::class, new class implements GuestLedgerPostingCompletenessParticipationPort {
             public function participate(string $reservationId, string $propertyId): array {
-                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'cp_posting'), 'source_identifiers' => []];
+                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'cp_p'), 'source_identifiers' => []];
             }
         });
         app()->instance(GuestLedgerSettlementHoldParticipationPort::class, new class implements GuestLedgerSettlementHoldParticipationPort {
             public function participate(string $reservationId, string $propertyId): array {
-                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'cp_hold'), 'source_identifiers' => []];
+                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'cp_sh'), 'source_identifiers' => []];
             }
         });
         app()->instance(GuestLedgerCompletedSettlementConflictParticipationPort::class, new class implements GuestLedgerCompletedSettlementConflictParticipationPort {
             public function participate(string $reservationId, string $propertyId): array {
-                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'cp_conflict'), 'source_identifiers' => []];
+                return ['status' => self::AVAILABLE_CLEAR, 'code' => null, 'source_fingerprint' => hash('sha256', 'cp_cs'), 'source_identifiers' => []];
             }
         });
 
@@ -109,10 +105,10 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Scenario A: PMS participant first — holds locks within transaction
+    // Scenario A: Participant holds locks
     // ═══════════════════════════════════════════════════════════════════════
 
-    public function test_pms_participant_first_holds_locks(): void
+    public function test_participant_holds_locks_and_allows_reattest(): void
     {
         DB::transaction(function () {
             $bd = $this->openBusinessDate();
@@ -127,21 +123,20 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
             $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
             $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
 
-            $attestation = $this->service->attest($context, $stay->id);
-            $this->assertNotNull($attestation);
-            $this->assertNotEmpty($attestation->source_fingerprint);
+            $a = $this->service->attest($context, $stay->id);
+            $this->assertNotNull($a);
 
-            // Locks are held until commit — re-attest with same context works
+            // Locks held — re-attest with same context works
             $a2 = $this->service->attest($context, $stay->id);
-            $this->assertEquals($attestation->source_fingerprint, $a2->source_fingerprint);
+            $this->assertEquals($a->source_fingerprint, $a2->source_fingerprint);
         });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Scenario C: participant rollback — zero persistent writes
+    // Scenario C: Rollback zero writes
     // ═══════════════════════════════════════════════════════════════════════
 
-    public function test_participant_rollback_zero_writes(): void
+    public function test_rollback_zero_writes(): void
     {
         $rolledBack = false;
 
@@ -166,15 +161,14 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
             $rolledBack = true;
         }
 
-        $this->assertTrue($rolledBack, 'Transaction must have rolled back.');
-        // Zero-write proven by the rollback — no attestation data persisted
+        $this->assertTrue($rolledBack);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Scenario D: Property isolation
+    // Scenario D: Different reservations within same property
     // ═══════════════════════════════════════════════════════════════════════
 
-    public function test_property_isolation_no_global_block(): void
+    public function test_different_reservations_no_cross_block(): void
     {
         DB::transaction(function () {
             $bd = $this->openBusinessDate();
@@ -185,17 +179,16 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
                  'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
             );
 
-            // Two different reservations within the same property
-            $reservation1 = $this->makeGlfReservation();
-            $stay1 = $this->makeStay($reservation1->id, $reservation1->primaryGuest->id);
-            $this->makeFolio($reservation1->id, $reservation1->primaryGuest->id);
+            $r1 = $this->makeGlfReservation();
+            $s1 = $this->makeStay($r1->id, $r1->primaryGuest->id);
+            $this->makeFolio($r1->id, $r1->primaryGuest->id);
 
-            $reservation2 = $this->makeGlfReservation();
-            $stay2 = $this->makeStay($reservation2->id, $reservation2->primaryGuest->id);
-            $this->makeFolio($reservation2->id, $reservation2->primaryGuest->id);
+            $r2 = $this->makeGlfReservation();
+            $s2 = $this->makeStay($r2->id, $r2->primaryGuest->id);
+            $this->makeFolio($r2->id, $r2->primaryGuest->id);
 
-            $a1 = $this->service->attest($context, $stay1->id);
-            $a2 = $this->service->attest($context, $stay2->id);
+            $a1 = $this->service->attest($context, $s1->id);
+            $a2 = $this->service->attest($context, $s2->id);
 
             $this->assertNotNull($a1);
             $this->assertNotNull($a2);
@@ -204,10 +197,10 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Scenario E: Lock timeout error code
+    // Scenario E: Lock timeout code and narrow check
     // ═══════════════════════════════════════════════════════════════════════
 
-    public function test_lock_timeout_condition(): void
+    public function test_lock_timeout_error_code(): void
     {
         $this->assertEquals(
             'GLF_E_FINANCIAL_SOURCE_LOCK_TIMEOUT',
@@ -216,10 +209,10 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Distinct transactions have distinct PostgreSQL transaction IDs
+    // Distinct transaction IDs across transactions
     // ═══════════════════════════════════════════════════════════════════════
 
-    public function test_distinct_transactions_have_distinct_pids(): void
+    public function test_distinct_transactions_have_distinct_txids(): void
     {
         $txid1 = '';
         $txid2 = '';
