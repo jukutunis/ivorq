@@ -339,16 +339,16 @@
         "GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 28,
-        "assertions": 75,
+        "tests": 32,
+        "assertions": 94,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-19",
         "branch": "sprint-glf-e-pms-terminal-financial-attestation",
-        "sha": "a2821573873ca028e8a3d3c074475d5c8194e941",
-        "note": "GLF-E measured at runtime source commit: 3 exact classes / 28 tests / 75 assertions / 0 failures / 0 errors. GLF-D shared evaluator extraction preserves exact 60/253 equivalence. Foundation tests: active transaction required, PostgreSQL required, valid NA-A2 context required, stale context rejected, forged context rejected, savepoint release preserves context, cross-property stay rejected, no CurrentPropertyService/actor/session dependency, output whitelist, deterministic same-transaction fingerprint, different-stay different fingerprint, exact-object WeakMap issuance, forged attestation rejected, cross-transaction attestation rejected, zero writes proven, no General Cashier queried, no checkout artifacts. Source integrity: no folio evidence-unavailable, zero balance ready, non-zero balance blocked, multiple folios evaluated, closed folio review required, unresolved payment blocked, GLF-D equivalence preserved. Concurrency proof: participant first holds locks within transaction, participant rollback zero writes, property isolation no global block, lock timeout error code correct, distinct transactions have distinct txid. No route, controller, permission, migration, UI, checkout command, execute permission, or sensitive confirmation added. can_execute=false remains binding."
+        "sha": "3cc88613093de0695a20ec55e2e0943c65b28d24",
+        "note": "GLF-E corrected measurement at runtime source commit 3cc8861: 3 exact classes / 32 tests / 94 assertions / 0 failures / 0 errors. The original third commit (a282157) mixed evaluator correction with validation metadata. The defect was preserved in history and superseded by append-only correction commit 3cc8861. Corrections: fail-closed status ordering (CASH linkage checked before status determination), exact public whitelist (folio_ids removed, 20-property whitelist verified by reflection), GLF-E stable error wrapping (NA-A2 DomainException wrapped as GLF_E_INVALID_OPERATIONAL_LOCK_CONTEXT with previous preserved), narrow lock-timeout classification (SQLSTATE 55P03 AND 'canceling statement due to lock timeout' message), locked evaluation consuming locked collections, participation port source_identifier integrity with allowed-status validation, cash-linked reference tuple comparison sorting. Foundation tests (19): active transaction, GLF-E stable error wrapping, stale context with previous, rolled-back savepoint context, rolled-back savepoint attestation, savepoint release, superseded context, exact-object issuance, forged rejection, cross-transaction rejection, exact whitelist by get_object_vars, same-transaction fingerprint, different-transaction/fingerprint proof via txid_current, SQL zero-write proof, snapshot zero-write proof over 17 tables, no General Cashier query, no checkout artifacts, lock timeout code, GLF-E does not leak NA-A2 code. Source integrity (8): no folio evidence-unavailable, zero balance ready, non-zero balance blocked, CASH linkage included, cash payment reference, cash references deduplicated, cash references exclude amounts, only CASH tender creates references. Concurrency proof (5): participant holds locks, rollback zero writes, different reservations no cross block, lock timeout code, distinct txids. GLF-D 60/253 preserved. No route, controller, permission, migration, UI, checkout command, execute permission, or sensitive confirmation added. can_execute=false remains binding."
       },
       "accepted_debt": [],
       "status": "active"
