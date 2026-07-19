@@ -109,15 +109,16 @@ class GuestLedgerCheckoutFinancialEvaluationService
             ->where('property_id', $propertyId)
             ->where('reservation_id', $reservation->id ?? '')
             ->orderBy('window_number')
+            ->orderBy('id')
             ->lockForUpdate()
             ->get();
 
         $folioIds = $folios->pluck('id')->toArray();
 
-        // 3. Folio Items — deterministically ordered
-        $folioItems = FolioItem::whereIn('folio_id', $folioIds)
-            ->where('is_void', false)
+        // 3. Folio Items — all active + void for complete locked picture
+        $allFolioItems = FolioItem::whereIn('folio_id', $folioIds)
             ->orderBy('posted_at')
+            ->orderBy('id')
             ->lockForUpdate()
             ->get();
 
@@ -128,16 +129,18 @@ class GuestLedgerCheckoutFinancialEvaluationService
             ->lockForUpdate()
             ->get();
 
+        $paymentIds = $payments->pluck('id')->toArray();
+
         // 5. Guest Payment Allocations
         $paymentAllocations = GuestPaymentAllocation::where('property_id', $propertyId)
-            ->whereIn('guest_payment_transaction_id', $payments->pluck('id')->toArray())
+            ->whereIn('guest_payment_transaction_id', $paymentIds)
             ->orderBy('id')
             ->lockForUpdate()
             ->get();
 
         // 6. Guest Payment Reversals
         $paymentReversals = GuestPaymentReversal::where('property_id', $propertyId)
-            ->whereIn('guest_payment_transaction_id', $payments->pluck('id')->toArray())
+            ->whereIn('guest_payment_transaction_id', $paymentIds)
             ->orderBy('id')
             ->lockForUpdate()
             ->get();
@@ -149,16 +152,18 @@ class GuestLedgerCheckoutFinancialEvaluationService
             ->lockForUpdate()
             ->get();
 
+        $depositIds = $deposits->pluck('id')->toArray();
+
         // 8. Guest Deposit Applications
         $depositApplications = GuestDepositApplication::where('property_id', $propertyId)
-            ->whereIn('guest_deposit_transaction_id', $deposits->pluck('id')->toArray())
+            ->whereIn('guest_deposit_transaction_id', $depositIds)
             ->orderBy('id')
             ->lockForUpdate()
             ->get();
 
         // 9. Guest Deposit Reversals
         $depositReversals = GuestDepositReversal::where('property_id', $propertyId)
-            ->whereIn('guest_deposit_transaction_id', $deposits->pluck('id')->toArray())
+            ->whereIn('guest_deposit_transaction_id', $depositIds)
             ->orderBy('id')
             ->lockForUpdate()
             ->get();
@@ -177,25 +182,53 @@ class GuestLedgerCheckoutFinancialEvaluationService
             ->lockForUpdate()
             ->get();
 
+        $arRequestIds = $arRequests->pluck('id')->toArray();
+
         // 12. AR Decisions — read without lock (Finance/AR owned, immutable)
         $arDecisions = GuestArTransferDecision::where('property_id', $propertyId)
-            ->whereIn('guest_ar_transfer_request_id', $arRequests->pluck('id')->toArray())
+            ->whereIn('guest_ar_transfer_request_id', $arRequestIds)
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get();
 
-        // Build locked-collection maps to avoid re-query
+        // Build comprehensive locked-collection maps.
+        // These maps are the ONLY source of locked-mode facts.
+        // No evaluate method may query the database in locked mode.
         $lockedCollections = [
-            'folios_map' => $folios->keyBy('id'),
-            'folio_items_grouped' => $folioItems->groupBy('folio_id'),
-            'payments_map' => $payments->keyBy('id'),
-            'allocations_grouped' => $paymentAllocations->groupBy('guest_payment_transaction_id'),
-            'payment_reversals_grouped' => $paymentReversals->groupBy('guest_payment_transaction_id'),
-            'deposits_map' => $deposits->keyBy('id'),
-            'deposit_applications_grouped' => $depositApplications->groupBy('guest_deposit_transaction_id'),
-            'deposit_reversals_grouped' => $depositReversals->groupBy('guest_deposit_transaction_id'),
-            'refunds_grouped' => $refunds->groupBy('reservation_id'),
-            'ar_requests_grouped' => $arRequests->keyBy('id'),
-            'ar_decisions_grouped' => $arDecisions->groupBy('guest_ar_transfer_request_id'),
+            'reservation'           => $reservation,
+            'folios'                => $folios,
+            'folios_by_id'          => $folios->keyBy('id'),
+            'folio_items_by_folio'  => $allFolioItems->groupBy('folio_id'),
+            'folio_items_by_pay_alloc' => $allFolioItems->filter(fn($i) => !empty($i->guest_payment_allocation_id))->keyBy('guest_payment_allocation_id'),
+            'folio_items_by_pay_rev'   => $allFolioItems->filter(fn($i) => !empty($i->guest_payment_reversal_id))->keyBy('guest_payment_reversal_id'),
+            'folio_items_by_dep_app'   => $allFolioItems->filter(fn($i) => !empty($i->guest_deposit_application_id))->keyBy('guest_deposit_application_id'),
+            'folio_items_by_dep_rev'   => $allFolioItems->filter(fn($i) => !empty($i->guest_deposit_reversal_id))->keyBy('guest_deposit_reversal_id'),
+            'folio_items_by_ar_decision' => $allFolioItems->filter(fn($i) => !empty($i->guest_ar_transfer_decision_id))->keyBy('guest_ar_transfer_decision_id'),
+            'folio_items_by_reverses' => $allFolioItems->filter(fn($i) => !empty($i->reverses_folio_item_id))->keyBy('reverses_folio_item_id'),
+
+            'payments'              => $payments,
+            'payments_by_id'        => $payments->keyBy('id'),
+            'allocations_by_payment'=> $paymentAllocations->groupBy('guest_payment_transaction_id'),
+            'allocations_by_id'     => $paymentAllocations->keyBy('id'),
+            'pay_reversals_by_payment' => $paymentReversals->groupBy('guest_payment_transaction_id'),
+            'pay_reversals_by_alloc'   => $paymentReversals->filter(fn($r) => !empty($r->guest_payment_allocation_id))->groupBy('guest_payment_allocation_id'),
+
+            'deposits'              => $deposits,
+            'deposits_by_id'        => $deposits->keyBy('id'),
+            'dep_applications_by_deposit' => $depositApplications->groupBy('guest_deposit_transaction_id'),
+            'dep_applications_by_id'     => $depositApplications->keyBy('id'),
+            'dep_reversals_by_deposit'   => $depositReversals->groupBy('guest_deposit_transaction_id'),
+            'dep_reversals_by_app'       => $depositReversals->filter(fn($r) => !empty($r->guest_deposit_application_id))->groupBy('guest_deposit_application_id'),
+
+            'refunds_by_payment'    => $refunds->filter(fn($r) => !empty($r->guest_payment_transaction_id))->groupBy('guest_payment_transaction_id'),
+            'refunds_by_deposit'    => $refunds->filter(fn($r) => !empty($r->guest_deposit_transaction_id))->groupBy('guest_deposit_transaction_id'),
+            'refunds_by_id'         => $refunds->keyBy('id'),
+
+            'ar_requests'           => $arRequests,
+            'ar_requests_by_id'     => $arRequests->keyBy('id'),
+            'ar_requests_by_folio'  => $arRequests->groupBy('folio_id'),
+            'ar_decisions_by_request' => $arDecisions->groupBy('guest_ar_transfer_request_id'),
+            'ar_decisions_by_id'      => $arDecisions->keyBy('id'),
         ];
 
         return $this->evaluate(
@@ -245,10 +278,16 @@ class GuestLedgerCheckoutFinancialEvaluationService
         }
 
         // Stay → Reservation → Guest
-        $reservation = Reservation::withoutGlobalScope('property')
-            ->where('id', $stay->reservation_id)
-            ->where('property_id', $propertyId)
-            ->first();
+        // Use locked reservation when available
+        $reservation = null;
+        if ($lockedCollections !== null && isset($lockedCollections['reservation'])) {
+            $reservation = $lockedCollections['reservation'];
+        } else {
+            $reservation = Reservation::withoutGlobalScope('property')
+                ->where('id', $stay->reservation_id)
+                ->where('property_id', $propertyId)
+                ->first();
+        }
 
         if (! $reservation || $stay->reservation_id !== $reservation->id) {
             return $this->evidenceUnavailableResult($propertyId, $frontDeskStayId, '', '', [], null,
@@ -268,10 +307,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
         // Folios — use locked collections when available, else query
         $folios = null;
         if ($lockedCollections !== null) {
-            $folios = $lockedCollections['folios_map']
-                ->filter(fn($f) => $f->property_id === $propertyId && $f->reservation_id === $reservation->id)
-                ->sortBy('window_number')
-                ->values();
+            $folios = $lockedCollections['folios'];
         } else {
             $folios = Folio::withoutGlobalScope('property')
                 ->where('property_id', $propertyId)
@@ -305,7 +341,7 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
             $activeItems = null;
             if ($lockedCollections !== null) {
-                $grouped = $lockedCollections['folio_items_grouped']->get($folio->id, collect());
+                $grouped = $lockedCollections['folio_items_by_folio']->get($folio->id, collect());
                 $activeItems = $grouped->filter(fn($i) => ! $i->is_void)
                     ->sortBy('posted_at')
                     ->values();
@@ -378,19 +414,19 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
         // Payments
         $paymentFacts = $this->evaluatePayments($reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $folioIds, $blockers, $blockerMsgs, $reviews, $markers, $includeCashFields);
+            $folioIds, $blockers, $blockerMsgs, $reviews, $markers, $includeCashFields, $lockedCollections);
 
         // Deposits
         $depositFacts = $this->evaluateDeposits($reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $folioIds, $blockers, $blockerMsgs, $reviews, $markers, $includeCashFields);
+            $folioIds, $blockers, $blockerMsgs, $reviews, $markers, $includeCashFields, $lockedCollections);
 
         // Refunds
         $refundFacts = $this->evaluateRefunds($reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $blockers, $blockerMsgs, $reviews, $markers, $includeCashFields);
+            $blockers, $blockerMsgs, $reviews, $markers, $includeCashFields, $lockedCollections);
 
         // AR Transfers
         $arFacts = $this->evaluateArTransfers($reservation->id, $propertyId, $guestId, $resolvedCurrency,
-            $folioIds, $blockers, $blockerMsgs, $reviews, $markers);
+            $folioIds, $blockers, $blockerMsgs, $reviews, $markers, $lockedCollections);
 
         // External ports — use participation or read port depending on mode
         $portFacts = $useLock
@@ -462,18 +498,13 @@ class GuestLedgerCheckoutFinancialEvaluationService
         bool $includeCashFields = false,
         ?array $lockedCollections = null,
     ): array {
-        // Use locked collections when available, else query DB
-        $payments = null;
-        if ($lockedCollections !== null) {
-            $payments = $lockedCollections['payments_map']
-                ->filter(fn($p) => $p->property_id === $propertyId && $p->reservation_id === $reservationId)
-                ->sortBy('id')->values();
-        } else {
-            $payments = GuestPaymentTransaction::where('property_id', $propertyId)
-                ->where('reservation_id', $reservationId)->orderBy('id')->get();
-        }
-
+        // Use locked collections when available, else query DB (snapshot mode)
         $facts = []; $allResolved = true; $anyPayment = false;
+
+        $payments = $lockedCollections !== null
+            ? $lockedCollections['payments']
+            : GuestPaymentTransaction::where('property_id', $propertyId)
+                ->where('reservation_id', $reservationId)->orderBy('id')->get();
 
         foreach ($payments as $p) {
             $anyPayment = true;
@@ -488,25 +519,12 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 $blockerMsgs[] = "Payment {$p->id} currency mismatch.";
             }
 
-            $allocations = collect();
-            $refunds = collect();
-            $voidRevs = collect();
-
+            // Resolve allocations, refunds, void reversals from locked collections or DB
             if ($lockedCollections !== null) {
-                $allocGrouped = $lockedCollections['allocations_grouped'];
-                $allocations = $allocGrouped->get($p->id, collect())
-                    ->filter(fn($a) => $a->property_id === $propertyId)
-                    ->sortBy('id')->values();
-                $revsGrouped = $lockedCollections['payment_reversals_grouped'];
-                $allRevs = $revsGrouped->get($p->id, collect())
-                    ->filter(fn($r) => $r->property_id === $propertyId);
-                $voidRevs = $allRevs->filter(
-                    fn($r) => $r->reversal_type?->value === GuestPaymentReversalTypeEnum::PaymentVoid->value
-                )->sortBy('id')->values();
-                $refunds = $lockedCollections['refunds_grouped']->get($reservationId, collect())
-                    ->filter(fn($r) => ($r->guest_payment_transaction_id ?? '') === $p->id
-                        && $r->property_id === $propertyId)
-                    ->sortBy('id')->values();
+                $allocations = $lockedCollections['allocations_by_payment']->get($p->id, collect());
+                $allRevs = $lockedCollections['pay_reversals_by_payment']->get($p->id, collect());
+                $voidRevs = $allRevs->filter(fn($r) => $r->reversal_type?->value === GuestPaymentReversalTypeEnum::PaymentVoid->value);
+                $refunds = $lockedCollections['refunds_by_payment']->get($p->id, collect());
             } else {
                 $allocations = GuestPaymentAllocation::where('property_id', $propertyId)
                     ->where('guest_payment_transaction_id', $p->id)->orderBy('id')->get();
@@ -546,9 +564,16 @@ class GuestLedgerCheckoutFinancialEvaluationService
             $allocFacts = [];
 
             foreach ($allocations as $alloc) {
-                $revs = GuestPaymentReversal::where('property_id', $propertyId)
-                    ->where('guest_payment_allocation_id', $alloc->id)
-                    ->where('reversal_type', GuestPaymentReversalTypeEnum::AllocationReversal->value)->get();
+                if ($lockedCollections !== null) {
+                    $allocRevs = $lockedCollections['pay_reversals_by_alloc']->get($alloc->id, collect());
+                    $revs = $allocRevs->filter(
+                        fn($r) => $r->reversal_type?->value === GuestPaymentReversalTypeEnum::AllocationReversal->value
+                    );
+                } else {
+                    $revs = GuestPaymentReversal::where('property_id', $propertyId)
+                        ->where('guest_payment_allocation_id', $alloc->id)
+                        ->where('reversal_type', GuestPaymentReversalTypeEnum::AllocationReversal->value)->get();
+                }
 
                 if ($revs->count() > 1) {
                     $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
@@ -557,10 +582,17 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
                 if ($revs->count() === 1) {
                     $rev = $revs[0];
-                    $origItems = FolioItem::where('guest_payment_allocation_id', $alloc->id)
-                        ->where('is_void', false)->get();
-                    $revItems = FolioItem::where('guest_payment_reversal_id', $rev->id)
-                        ->where('is_void', false)->get();
+                    if ($lockedCollections !== null) {
+                        $origItem = $lockedCollections['folio_items_by_pay_alloc']->get($alloc->id);
+                        $origItems = $origItem && !$origItem->is_void ? collect([$origItem]) : collect();
+                        $revItem = $lockedCollections['folio_items_by_pay_rev']->get($rev->id);
+                        $revItems = $revItem && !$revItem->is_void ? collect([$revItem]) : collect();
+                    } else {
+                        $origItems = FolioItem::where('guest_payment_allocation_id', $alloc->id)
+                            ->where('is_void', false)->get();
+                        $revItems = FolioItem::where('guest_payment_reversal_id', $rev->id)
+                            ->where('is_void', false)->get();
+                    }
 
                     if ($origItems->count() !== 1) {
                         $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
@@ -585,8 +617,13 @@ class GuestLedgerCheckoutFinancialEvaluationService
                     $allocFacts[] = ['alloc_id' => $alloc->id, 'amount' => bcadd((string) $alloc->amount, '0.00', 2),
                         'reversed' => true, 'rev_id' => $rev->id];
                 } else {
-                    $items = FolioItem::where('guest_payment_allocation_id', $alloc->id)
-                        ->where('is_void', false)->get();
+                    if ($lockedCollections !== null) {
+                        $item = $lockedCollections['folio_items_by_pay_alloc']->get($alloc->id);
+                        $items = $item && !$item->is_void ? collect([$item]) : collect();
+                    } else {
+                        $items = FolioItem::where('guest_payment_allocation_id', $alloc->id)
+                            ->where('is_void', false)->get();
+                    }
                     if ($items->count() !== 1) {
                         $reviews[] = 'PAYMENT_SOURCE_CONFLICT';
                         $blockerMsgs[] = "Alloc {$alloc->id} has {$items->count()} Payment items, expected 1.";
@@ -665,9 +702,12 @@ class GuestLedgerCheckoutFinancialEvaluationService
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
         array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers,
         bool $includeCashFields = false,
+        ?array $lockedCollections = null,
     ): array {
-        $deposits = GuestDepositTransaction::where('property_id', $propertyId)
-            ->where('reservation_id', $reservationId)->get();
+        $deposits = $lockedCollections !== null
+            ? $lockedCollections['deposits']
+            : GuestDepositTransaction::where('property_id', $propertyId)
+                ->where('reservation_id', $reservationId)->orderBy('id')->get();
         $facts = []; $allResolved = true; $anyDeposit = false;
 
         foreach ($deposits as $d) {
@@ -683,13 +723,21 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 $blockerMsgs[] = "Deposit {$d->id} currency mismatch.";
             }
 
-            $applications = GuestDepositApplication::where('property_id', $propertyId)
-                ->where('guest_deposit_transaction_id', $d->id)->get();
-            $refunds = GuestRefundTransaction::where('property_id', $propertyId)
-                ->where('guest_deposit_transaction_id', $d->id)->get();
-            $voidRevs = GuestDepositReversal::where('property_id', $propertyId)
-                ->where('guest_deposit_transaction_id', $d->id)
-                ->where('reversal_type', GuestDepositReversalTypeEnum::DepositVoid->value)->get();
+            if ($lockedCollections !== null) {
+                $applications = $lockedCollections['dep_applications_by_deposit']->get($d->id, collect());
+                $refunds = $lockedCollections['refunds_by_deposit']->get($d->id, collect());
+                $depRevs = $lockedCollections['dep_reversals_by_deposit']->get($d->id, collect());
+                $voidRevs = $depRevs->filter(fn($r) => $r->reversal_type?->value === GuestDepositReversalTypeEnum::DepositVoid->value);
+            } else {
+                $applications = GuestDepositApplication::where('property_id', $propertyId)
+                    ->where('guest_deposit_transaction_id', $d->id)->orderBy('id')->get();
+                $refunds = GuestRefundTransaction::where('property_id', $propertyId)
+                    ->where('guest_deposit_transaction_id', $d->id)->orderBy('id')->get();
+                $voidRevs = GuestDepositReversal::where('property_id', $propertyId)
+                    ->where('guest_deposit_transaction_id', $d->id)
+                    ->where('reversal_type', GuestDepositReversalTypeEnum::DepositVoid->value)
+                    ->orderBy('id')->get();
+            }
 
             if ($d->lifecycle_status === GuestDepositLifecycleStatusEnum::Voided) {
                 if ($voidRevs->count() !== 1) {
@@ -719,9 +767,16 @@ class GuestLedgerCheckoutFinancialEvaluationService
             $appFacts = [];
 
             foreach ($applications as $app) {
-                $revs = GuestDepositReversal::where('property_id', $propertyId)
-                    ->where('guest_deposit_application_id', $app->id)
-                    ->where('reversal_type', GuestDepositReversalTypeEnum::ApplicationReversal->value)->get();
+                if ($lockedCollections !== null) {
+                    $appRevs = $lockedCollections['dep_reversals_by_app']->get($app->id, collect());
+                    $revs = $appRevs->filter(
+                        fn($r) => $r->reversal_type?->value === GuestDepositReversalTypeEnum::ApplicationReversal->value
+                    );
+                } else {
+                    $revs = GuestDepositReversal::where('property_id', $propertyId)
+                        ->where('guest_deposit_application_id', $app->id)
+                        ->where('reversal_type', GuestDepositReversalTypeEnum::ApplicationReversal->value)->get();
+                }
 
                 if ($revs->count() > 1) {
                     $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
@@ -730,10 +785,17 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
                 if ($revs->count() === 1) {
                     $rev = $revs[0];
-                    $origItems = FolioItem::where('guest_deposit_application_id', $app->id)
-                        ->where('is_void', false)->get();
-                    $revItems = FolioItem::where('guest_deposit_reversal_id', $rev->id)
-                        ->where('is_void', false)->get();
+                    if ($lockedCollections !== null) {
+                        $origItem = $lockedCollections['folio_items_by_dep_app']->get($app->id);
+                        $origItems = $origItem && !$origItem->is_void ? collect([$origItem]) : collect();
+                        $revItem = $lockedCollections['folio_items_by_dep_rev']->get($rev->id);
+                        $revItems = $revItem && !$revItem->is_void ? collect([$revItem]) : collect();
+                    } else {
+                        $origItems = FolioItem::where('guest_deposit_application_id', $app->id)
+                            ->where('is_void', false)->get();
+                        $revItems = FolioItem::where('guest_deposit_reversal_id', $rev->id)
+                            ->where('is_void', false)->get();
+                    }
                     if ($origItems->count() !== 1) {
                         $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
                         $blockerMsgs[] = "App {$app->id} has {$origItems->count()} Deposit items, expected 1.";
@@ -757,8 +819,13 @@ class GuestLedgerCheckoutFinancialEvaluationService
                     $appFacts[] = ['app_id' => $app->id, 'amount' => bcadd((string) $app->amount, '0.00', 2),
                         'reversed' => true, 'rev_id' => $rev->id];
                 } else {
-                    $items = FolioItem::where('guest_deposit_application_id', $app->id)
-                        ->where('is_void', false)->get();
+                    if ($lockedCollections !== null) {
+                        $item = $lockedCollections['folio_items_by_dep_app']->get($app->id);
+                        $items = $item && !$item->is_void ? collect([$item]) : collect();
+                    } else {
+                        $items = FolioItem::where('guest_deposit_application_id', $app->id)
+                            ->where('is_void', false)->get();
+                    }
                     if ($items->count() !== 1) {
                         $reviews[] = 'DEPOSIT_SOURCE_CONFLICT';
                         $blockerMsgs[] = "App {$app->id} has {$items->count()} Deposit items, expected 1.";
@@ -832,9 +899,12 @@ class GuestLedgerCheckoutFinancialEvaluationService
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
         array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers,
         bool $includeCashFields = false,
+        ?array $lockedCollections = null,
     ): array {
-        $refunds = GuestRefundTransaction::where('property_id', $propertyId)
-            ->where('reservation_id', $reservationId)->get();
+        $refunds = $lockedCollections !== null
+            ? $lockedCollections['refunds_by_id']->values()
+            : GuestRefundTransaction::where('property_id', $propertyId)
+                ->where('reservation_id', $reservationId)->orderBy('id')->get();
         $facts = []; $anyIssue = false;
 
         foreach ($refunds as $r) {
@@ -919,13 +989,20 @@ class GuestLedgerCheckoutFinancialEvaluationService
 
     private function evaluateArTransfers(
         string $reservationId, string $propertyId, string $guestId, ?string $currency,
-        array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers
+        array $folioIds, array &$blockers, array &$blockerMsgs, array &$reviews, array &$markers,
+        ?array $lockedCollections = null,
     ): array {
-        $folioIdsForRes = Folio::withoutGlobalScope('property')
-            ->where('property_id', $propertyId)->where('reservation_id', $reservationId)
-            ->pluck('id')->toArray();
-        $requests = GuestArTransferRequest::where('property_id', $propertyId)
-            ->whereIn('folio_id', $folioIdsForRes)->get();
+        if ($lockedCollections !== null) {
+            $requests = $lockedCollections['ar_requests_by_folio']
+                ->filter(fn($r, $k) => in_array($k, $folioIds, true))
+                ->flatten(1);
+        } else {
+            $folioIdsForRes = Folio::withoutGlobalScope('property')
+                ->where('property_id', $propertyId)->where('reservation_id', $reservationId)
+                ->pluck('id')->toArray();
+            $requests = GuestArTransferRequest::where('property_id', $propertyId)
+                ->whereIn('folio_id', $folioIdsForRes)->get();
+        }
         $facts = []; $anyBlock = false; $anyReview = false;
 
         foreach ($requests as $req) {
@@ -939,8 +1016,13 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 $blockerMsgs[] = "AR {$req->id} outside checkout folios."; $anyReview = true;
             }
 
-            $decisions = GuestArTransferDecision::where('property_id', $propertyId)
-                ->where('guest_ar_transfer_request_id', $req->id)->orderBy('created_at')->get();
+            $decisions = null;
+            if ($lockedCollections !== null) {
+                $decisions = $lockedCollections['ar_decisions_by_request']->get($req->id, collect());
+            } else {
+                $decisions = GuestArTransferDecision::where('property_id', $propertyId)
+                    ->where('guest_ar_transfer_request_id', $req->id)->orderBy('created_at')->get();
+            }
             $accepted  = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Accepted);
             $rejected  = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Rejected);
             $reversed  = $decisions->where('decision_type', GuestArTransferDecisionTypeEnum::Reversed);
@@ -1242,6 +1324,22 @@ class GuestLedgerCheckoutFinancialEvaluationService
                 $sessionIds[] = $csId;
             }
         }
+
+        // Deduplicate by exact tuple using canonical JSON key
+        $seen = [];
+        $deduped = [];
+        foreach ($references as $ref) {
+            $key = json_encode([
+                'source_type' => $ref['source_type'],
+                'source_id' => $ref['source_id'],
+                'cashier_session_id' => $ref['cashier_session_id'],
+            ], JSON_UNESCAPED_SLASHES);
+            if (! isset($seen[$key])) {
+                $seen[$key] = true;
+                $deduped[] = $ref;
+            }
+        }
+        $references = $deduped;
 
         // Sort deterministically using tuple comparison
         usort($references, function (array $a, array $b): int {

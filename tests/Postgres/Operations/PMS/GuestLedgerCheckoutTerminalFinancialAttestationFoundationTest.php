@@ -609,6 +609,58 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
         );
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // 11. Locked-mode no-re-query proof
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public function test_no_locked_mode_requery(): void
+    {
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+
+            $this->service->attest($context, $stay->id);
+
+            $mutableTables = [
+                'reservations', 'folios', 'folio_items',
+                'guest_payment_transactions', 'guest_payment_allocations',
+                'guest_payment_reversals', 'guest_deposit_transactions',
+                'guest_deposit_applications', 'guest_deposit_reversals',
+                'guest_refund_transactions', 'guest_ar_transfer_requests',
+                'guest_ar_transfer_decisions',
+            ];
+
+            $tableQueries = [];
+            foreach (DB::getQueryLog() as $entry) {
+                $sql = strtolower($entry['query'] ?? '');
+                foreach ($mutableTables as $table) {
+                    if (str_contains($sql, 'from "' . $table) || str_contains($sql, 'from "' . $table)) {
+                        $tableQueries[$table][] = $sql;
+                    }
+                }
+            }
+
+            // Each mutable table should appear at most once (lock stage)
+            foreach ($tableQueries as $table => $queries) {
+                $selectCount = 0;
+                foreach ($queries as $q) {
+                    if (str_starts_with(trim($q), 'select')) {
+                        $selectCount++;
+                    }
+                }
+                $this->assertLessThanOrEqual(1, $selectCount,
+                    "Table {$table} was queried {$selectCount} times in locked mode.");
+            }
+
+            DB::disableQueryLog();
+        });
+    }
+
     public function test_glf_e_does_not_leak_na_a2_error_code(): void
     {
         // The GLF-E error code for context rejection must be its own,

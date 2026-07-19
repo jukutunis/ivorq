@@ -377,6 +377,102 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
         });
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Port status matrix
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public function test_posting_blocked_produces_blocker(): void
+    {
+        app()->instance(GuestLedgerPostingCompletenessParticipationPort::class, new class implements GuestLedgerPostingCompletenessParticipationPort {
+            public function participate(string $r, string $p): array {
+                return ['status' => self::AVAILABLE_BLOCKED, 'code' => 'POSTING_INCOMPLETE', 'source_fingerprint' => 'fp', 'source_identifiers' => []];
+            }
+        });
+        $this->service = app(GuestLedgerCheckoutTerminalFinancialAttestationService::class);
+
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $guest = $reservation->primaryGuest;
+            $stay = $this->makeStay($reservation->id, $guest->id);
+            $this->makeFolio($reservation->id, $guest->id);
+
+            $a = $this->service->attest($context, $stay->id);
+            $this->assertContains('MANDATORY_POSTINGS_INCOMPLETE', $a->blocker_codes);
+        });
+    }
+
+    public function test_settlement_hold_active_produces_blocker(): void
+    {
+        app()->instance(GuestLedgerSettlementHoldParticipationPort::class, new class implements GuestLedgerSettlementHoldParticipationPort {
+            public function participate(string $r, string $p): array {
+                return ['status' => self::AVAILABLE_BLOCKED, 'code' => 'HOLD_ACTIVE', 'source_fingerprint' => 'fp', 'source_identifiers' => []];
+            }
+        });
+        $this->service = app(GuestLedgerCheckoutTerminalFinancialAttestationService::class);
+
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $guest = $reservation->primaryGuest;
+            $stay = $this->makeStay($reservation->id, $guest->id);
+            $this->makeFolio($reservation->id, $guest->id);
+
+            $a = $this->service->attest($context, $stay->id);
+            $this->assertContains('SETTLEMENT_HOLD_ACTIVE', $a->blocker_codes);
+        });
+    }
+
+    public function test_completed_settlement_conflict_produces_blocker(): void
+    {
+        app()->instance(GuestLedgerCompletedSettlementConflictParticipationPort::class, new class implements GuestLedgerCompletedSettlementConflictParticipationPort {
+            public function participate(string $r, string $p): array {
+                return ['status' => self::AVAILABLE_BLOCKED, 'code' => 'CONFLICT_EXISTS', 'source_fingerprint' => 'fp', 'source_identifiers' => []];
+            }
+        });
+        $this->service = app(GuestLedgerCheckoutTerminalFinancialAttestationService::class);
+
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $guest = $reservation->primaryGuest;
+            $stay = $this->makeStay($reservation->id, $guest->id);
+            $this->makeFolio($reservation->id, $guest->id);
+
+            $a = $this->service->attest($context, $stay->id);
+            $this->assertContains('CONFLICTING_COMPLETED_SETTLEMENT', $a->blocker_codes);
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Missing CASH linkage via reflection
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public function test_missing_cash_linkage_via_reflection(): void
+    {
+        // Use reflection to test the private cash-reference builder directly
+        $evaluator = app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutFinancialEvaluationService::class);
+        $ref = new \ReflectionMethod($evaluator, 'buildCashLinkedReferences');
+        $ref->setAccessible(true);
+
+        // Synthetic CASH payment fact with empty cashier_session_id
+        $paymentFacts = [[
+            'id' => 'test-pmt-1',
+            'tender_type' => 'CASH',
+            'cashier_session_id' => '',
+        ]];
+
+        $result = $ref->invoke($evaluator, 'prop-1', 'res-1', 'guest-1', $paymentFacts, [], []);
+
+        $this->assertTrue($result['missing_linkage'], 'Empty cashier_session_id must set missing_linkage=true.');
+
+        // Verify status ordering: missing_linkage → EVIDENCE_UNAVAILABLE
+        $statusValue = $evaluator->determineStatusValue(
+            ['CASH_LINKED_REFERENCE_EVIDENCE_UNAVAILABLE'], [], []
+        );
+        $this->assertEquals('PMS_TERMINAL_FINANCIAL_EVIDENCE_UNAVAILABLE', $statusValue);
+    }
+
     public function test_cash_references_exclude_amounts(): void
     {
         DB::transaction(function () {
