@@ -120,7 +120,7 @@ Packages must run sequentially. One package may depend on earlier package eviden
 
 1. ADR-089 — accepted, Approved, merged
 2. NA-A2 — accepted, merged
-3. GLF-E PMS terminal financial attestation — accepted, merged
+3. GLF-E original package — merged; narrow acceptance reopened for GLF-E-S1
 4. GLF-E-S1 savepoint lock-continuity correction — current authorized package
 5. GC-A2 General Cashier terminal obligation attestation — paused and locked
 6. Front Desk terminal state and immutable checkout evidence — locked
