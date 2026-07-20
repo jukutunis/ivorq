@@ -340,15 +340,15 @@
       ],
       "expected": {
         "tests": 63,
-        "assertions": 266,
+        "assertions": 271,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-21",
         "branch": "sprint-glf-e-s1-savepoint-lock-continuity",
-        "sha": "2c001775a74fab8243375006b01f73e7afe3122f",
-        "note": "GLF-E-S1 savepoint correction measured at strengthened proof source commit 2c001775a74fab8243375006b01f73e7afe3122f. Foundation 25 tests / 106 assertions. SourceIntegrity 31 tests / 97 assertions. ConcurrencyProof 7 tests / 63 assertions. Batch total 63 tests / 266 assertions / 0 failures / 0 errors. Deterministic PostgreSQL blocker proof replaces fixed usleep: Worker B writes lock_attempt_marker before FOR UPDATE; coordinator polls pg_stat_activity.wait_event_type=Lock and pg_blocking_pids confirmation; Worker A returns structured validator evidence (DomainException, GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION, validator_result=rejected). Historical savepoint gap reproduced: NA-A2 context issued before savepoint, GLF-E issued inside savepoint, same exact object after rollback, same backend PID, same outer transaction ID. Transaction-local GLF-E capability via parameterized set_config(..., true), only SHA-256 hash retained in WeakMap, single-query validation with pg_backend_pid / txid_current / current_setting / hash_equals. Rollback invalidates inner attestation, savepoint release preserves attestation, outer capability restored after inner rollback, latest issuance wins. No raw capability leakage. Zero business writes. No General Cashier query. GLF-D 60/253 preserved. 13 active baselines. checkout unauthorized. can_execute=false. GC-A2 paused. No GC-A2 source. No migration. No route/controller/UI. No permission/confirmation."
+        "sha": "e7b8615df23067c2f119adbb1bf2906f21e854a4",
+        "note": "GLF-E-S1 savepoint correction measured at final proof assertion commit e7b8615df23067c2f119adbb1bf2906f21e854a4. Foundation 25 tests / 106 assertions. SourceIntegrity 31 tests / 97 assertions. ConcurrencyProof 7 tests / 68 assertions. Batch total 63 tests / 271 assertions / 0 failures / 0 errors. Deterministic PostgreSQL blocker proof replaces fixed usleep: Worker B writes lock_attempt_marker before FOR UPDATE; coordinator polls pg_stat_activity.wait_event_type=Lock and pg_blocking_pids confirmation; Worker A returns structured validator evidence (DomainException, GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION, validator_result=rejected, validator_previous_exception_class=null, attestation_retained=true). Distinct PHP PIDs proven. Distinct PostgreSQL PIDs proven. Marker-to-worker identity bindings confirmed. NA-A2: 20/914/0/0 PASS. GLF-D: 60/253/0/0 PASS. GC-A1: 38/231/0/0 PASS. GLF-E baseline: 63/271/0/0 PASS (batch). Manifest: 33 tests PASS. Complete active runner: 13 passed / 0 failed / 0 skipped. Inventory Reversal: 8 tests / 72 assertions / 2 accepted errors. No raw capability leakage. Zero business writes. No General Cashier query. checkout unauthorized. can_execute=false. GC-A2 paused. No GC-A2 source. No migration. No route/controller/UI. No permission/confirmation."
       },
       "accepted_debt": [],
       "status": "active"
