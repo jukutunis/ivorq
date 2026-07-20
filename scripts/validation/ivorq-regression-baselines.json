@@ -328,7 +328,7 @@
     },
     {
       "id": "guest-ledger-terminal-financial-attestation-baseline",
-      "description": "GLF-E PMS terminal financial attestation PostgreSQL tests covering active transaction enforcement, NA-A2 context validation, same-property relationship validation, deterministic same-transaction and different-transaction fingerprints, exact-object issuance, forged attestation rejection, zero-write proof, no-General-Cashier-query proof, locked terminal evaluation (no folio, zero balance, non-zero balance, multiple folios, closed folio, unresolved payment), cash-linked references, GLF-D snapshot equivalence, PMS participant lock holding, participant rollback, property isolation, lock timeout, and distinct transaction identity. All 3 test classes pass cleanly as a single batch.",
+      "description": "GLF-E PMS terminal financial attestation PostgreSQL tests covering active transaction enforcement, NA-A2 context validation, same-property relationship validation, deterministic same-transaction and different-transaction fingerprints, exact-object issuance, forged attestation rejection, savepoint rollback lock-continuity correction with transaction-local GLF-E capability, zero-write proof, no-General-Cashier-query proof, locked terminal evaluation (no folio, zero balance, non-zero balance, multiple folios, closed folio, unresolved payment), cash-linked references, GLF-D snapshot equivalence, PMS participant lock holding, participant rollback, property isolation, lock timeout, and distinct transaction identity. GLF-E-S1 savepoint correction adds: parameterized set_config(..., true) transaction-local capability, only SHA-256 hash retained in WeakMap, single-query validation proof with hash_equals, newest-issuance semantics, outer-capability restoration after inner rollback, real multi-process Scenario F savepoint rollback proof. All 3 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -339,16 +339,16 @@
         "GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 49,
-        "assertions": 194,
+        "tests": 63,
+        "assertions": 256,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-20",
-        "branch": "sprint-glf-e-pms-terminal-financial-attestation",
-        "sha": "f390527966e43010f07844a9ca6cf90ad2fff7e2",
-        "note": "GLF-E measured at proof source commit f390527. Foundation 21 tests / 96 assertions. SourceIntegrity 22 tests / 58 assertions. ConcurrencyProof 6 tests / 40 assertions. Batch total 49 tests / 194 assertions / 0 failures / 0 errors. Scenario A participant-first. Scenario B committed closed-folio latest-state proof. Scenario C explicit rollback-release proof. Scenario D cross-property isolation. Scenario E structured PostgreSQL 55P03 timeout proof with GLF_E_FINANCIAL_SOURCE_LOCK_TIMEOUT, sqlstate 55P03, previous_exception_class Illuminate\\Database\\QueryException, preserved transaction identity. All five scenarios use real multi-process concurrency with distinct PHP PIDs and PostgreSQL backend PIDs. End-to-end cross-transaction fingerprint with same BD, same stay, two real attest calls. Narrow 55P03 classifier. SQL zero-write with CTE detection. Full-row SHA-256 snapshot zero-write proof. GLF-D 60/253 preserved. 13 active baselines. checkout unauthorized. can_execute=false."
+        "branch": "sprint-glf-e-s1-savepoint-lock-continuity",
+        "sha": "48a65c6d14c28698e769646c42cf2a180c100368",
+        "note": "GLF-E-S1 savepoint correction measured at runtime source commit 48a65c6d14c28698e769646c42cf2a180c100368. Foundation 25 tests / 106 assertions. SourceIntegrity 31 tests / 97 assertions. ConcurrencyProof 7 tests / 53 assertions. Batch total 63 tests / 256 assertions / 0 failures / 0 errors. Historical savepoint gap reproduced: NA-A2 context issued before savepoint, GLF-E issued inside savepoint, same exact object after rollback, same backend PID, same outer transaction ID, PMS locks released, old validator failure mode. Transaction-local GLF-E capability via parameterized set_config(..., true), only SHA-256 hash retained in WeakMap, single-query validation with pg_backend_pid / txid_current / current_setting / hash_equals. Rollback invalidates inner attestation, savepoint release preserves attestation, outer capability restored after inner rollback, latest issuance wins after successful release. No raw capability leakage in value object, fingerprint, markers, errors, or logs. Real multi-process Scenario F: Worker A PHP PID distinct from Worker B, PostgreSQL backend PID stable before/after savepoint rollback, outer transaction ID stable, GLF-E validator rejected retained attestation with GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION, Worker B blocked before rollback and proceeded while A outer transaction still open, finite worker and barrier timeouts, no orphan processes. Zero business writes preserved: only SELECT set_config, SET LOCAL lock_timeout, and SELECT current_setting allowed as server-controlled transaction/security operations. No General Cashier query. GLF-D 60/253 preserved. 13 active baselines. checkout unauthorized. can_execute=false. GC-A2 paused. No GC-A2 source. No migration. No route/controller/UI. No permission/confirmation."
       },
       "accepted_debt": [],
       "status": "active"

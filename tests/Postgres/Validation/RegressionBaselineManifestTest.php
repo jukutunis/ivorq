@@ -730,13 +730,21 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest', $baseline->classes[0]);
         $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest', $baseline->classes[1]);
         $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest', $baseline->classes[2]);
-        $this->assertEquals(49, $baseline->expected->tests ?? null, 'GLF-E must have 49 tests.');
-        $this->assertEquals(194, $baseline->expected->assertions ?? null, 'GLF-E must have 194 assertions.');
+        $this->assertEquals(63, $baseline->expected->tests ?? null, 'GLF-E must have 63 tests.');
+        $this->assertEquals(256, $baseline->expected->assertions ?? null, 'GLF-E must have 256 assertions.');
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertEquals([], $baseline->accepted_debt);
-        $this->assertEquals('f390527966e43010f07844a9ca6cf90ad2fff7e2', $baseline->provenance->sha ?? null);
-        $this->assertEquals('sprint-glf-e-pms-terminal-financial-attestation', $baseline->provenance->branch ?? null);
+        $this->assertEquals('48a65c6d14c28698e769646c42cf2a180c100368', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-glf-e-s1-savepoint-lock-continuity', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('savepoint', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Transaction-local GLF-E capability', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('set_config', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('SHA-256 hash retained', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No raw capability leakage', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Scenario F', $baseline->provenance->note ?? '');
     }
 
     private function findBaseline(string $id): ?object
