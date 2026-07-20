@@ -747,6 +747,8 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('pg_blocking_pids', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('DomainException', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Transaction-local GLF-E capability', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('set_config', $baseline->provenance->note ?? '');
     }
 
     private function findBaseline(string $id): ?object
