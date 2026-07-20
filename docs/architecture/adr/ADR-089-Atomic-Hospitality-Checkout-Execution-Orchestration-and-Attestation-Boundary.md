@@ -8,7 +8,7 @@
 * **Status:** Approved
 * **Related ADRs:** ADR-001, ADR-002, ADR-004, ADR-029, ADR-034, ADR-040, ADR-066, ADR-067, ADR-084, ADR-085, ADR-086, ADR-087, ADR-088
 * **Accepted predecessor:** FD-B13 Checkout Execution Readiness Review at `fbb289abf4bbfeb2f3ae801e05e98619a61f7814`
-* **Runtime implementation:** NA-A2 prerequisite slice under implementation; checkout execution remains unauthorized
+* **Runtime implementation:** GLF-E accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`; GC-A2 is the current authorized prerequisite package; checkout execution remains unauthorized
 
 ## Status
 
@@ -20,7 +20,7 @@ Accepted and fast-forward merged at:
 1682dec0fb7f654e77888a476b4ec55a1507610b
 ```
 
-NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. NA-A2 is accepted and fast-forward merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is the current runtime prerequisite under implementation for PMS terminal financial attestation. Financial, cashier, Front Desk terminal evidence, Housekeeping handoff, confirmation, permission, and checkout command packages remain unimplemented.
+NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. NA-A2 is accepted and fast-forward merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GC-A2 is the current authorized prerequisite package for General Cashier terminal obligation attestation. Financial, cashier, Front Desk terminal evidence, Housekeeping handoff, confirmation, permission, and checkout command packages remain unimplemented.
 
 ## Context
 
@@ -203,6 +203,8 @@ The PMS participating attestation runs before General Cashier participation. It 
 It must not transfer folio, payment, deposit, refund, reversal, AR, or settlement ownership to Front Desk or General Cashier.
 
 ### General Cashier Attestation
+
+**GC-A2 activation note (2026-07-20):** GC-A2 is authorized only to implement the General Cashier-owned execution-time terminal obligation attestation. It must consume an exact, transaction-bound GLF-E attestation. It must independently re-resolve Property, stay, reservation, and approved cashier-session relationships from minimized PMS references. It may lock only General Cashier-owned rows after the PMS lock step. It must fail closed when required PMS cash-linked references are missing or invalid. It must return minimized transaction-bound value evidence. It must perform zero PMS and Front Desk mutation. It does not authorize checkout execution.
 
 The General Cashier-owned execution-time terminal obligation attestation must consume the PMS terminal financial attestation before participating. It must independently re-resolve the property, stay, reservation, and approved cashier-session relationships from the minimized PMS references; lock only General Cashier-owned cashier-session and accountability rows; determine unresolved cashier custody, handover, count, close, reconciliation, and accountability obligations; and return only the minimized status and fingerprint required for checkout evidence.
 
@@ -394,8 +396,8 @@ Runtime prerequisite categories must remain locked until ADR-089 is independentl
 
 1. ADR-089 accepted and merged.
 2. Shared checkout transaction-participation and Property/Business Date/Night Audit concurrency foundation — NA-A2 implemented and merged.
-3. PMS Guest Ledger execution-time terminal financial attestation — GLF-E current.
-4. General Cashier execution-time terminal obligation attestation — locked.
+3. PMS Guest Ledger execution-time terminal financial attestation — GLF-E accepted and merged.
+4. General Cashier execution-time terminal obligation attestation — GC-A2 current authorized.
 5. Front Desk terminal stay state and immutable checkout execution evidence foundation — locked.
 6. Transactional Housekeeping room-turnover handoff/outbox — locked.
 7. Checkout Sensitive Action Confirmation intent and execute permission, including `CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED` — locked.
