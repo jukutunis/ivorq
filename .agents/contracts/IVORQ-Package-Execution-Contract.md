@@ -94,7 +94,7 @@ Concise source-backed architecture summary — not a full ADR dump.
 - NA-A1: 11 tests / 422 assertions
 - NA-A2: 20 tests / 914 assertions
 - RegressionBaselineManifestTest: 33 tests / 997 assertions
-- Complete active runner: 13 active baselines PASS
+- Complete active runner: 13 passed / 0 failed / 0 skipped
 - Inventory Reversal inherited debt remains: 8 tests / 72 assertions / 2 accepted errors
 - ADR-089 accepted and merged.
 - ADR-089 architecture status: Approved.

@@ -20,7 +20,7 @@ Accepted and fast-forward merged at:
 1682dec0fb7f654e77888a476b4ec55a1507610b
 ```
 
-NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. NA-A2 is accepted and fast-forward merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GC-A2 is the current authorized prerequisite package for General Cashier terminal obligation attestation. Financial, cashier, Front Desk terminal evidence, Housekeeping handoff, confirmation, permission, and checkout command packages remain unimplemented.
+NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. NA-A2 is accepted and fast-forward merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GC-A2 is the current authorized prerequisite package for General Cashier terminal obligation attestation. GC-A2, Front Desk terminal evidence, Housekeeping handoff, confirmation, permission, and checkout command packages remain unimplemented.
 
 ## Context
 
