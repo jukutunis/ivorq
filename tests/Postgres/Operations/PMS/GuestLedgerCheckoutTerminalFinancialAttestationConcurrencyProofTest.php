@@ -162,6 +162,72 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
         $this->c->releaseWorker($he); $this->c->waitForWorker($wB,20);
     }
 
+    // ═══ Scenario F — savepoint rollback releases PMS locks while outer transaction remains active ═══
+    public function test_scenario_f_savepoint_rollback_releases_pms_locks(): void
+    {
+        $r=$this->makeGlfReservation(); $g=$r->primaryGuest; $s=$this->stay($r->id,$g->id); $f=$this->folio($r->id,$g->id); $bd=$this->openBD();
+        $ra=$this->tmp('f_ready');
+        $ha=$this->tmp('f_hold');
+        $rm=$this->tmp('f_rollback');
+        $fr=$this->tmp('f_final');
+
+        // Worker A: outer tx → NA-A2 → savepoint → GLF-E attest → hold → rollback → validate → final hold
+        $wA=$this->c->spawnWorker('attest_savepoint_rollback',[
+            'company_id'=>$this->glfCompany->id,
+            'property_id'=>$this->glfProperty->id,
+            'expected_evidence'=>$this->ev($bd),
+            'stay_id'=>$s->id,
+            'ready_marker'=>$ra,
+            'hold_until_path'=>$ha,
+            'hold_timeout'=>20,
+            'rollback_marker'=>$rm,
+            'final_release_path'=>$fr,
+        ]);
+
+        // Wait for attestation_ready — A holds PMS locks inside savepoint
+        $mA=$this->c->waitForMarker($ra,15);
+        $this->assertEquals('attest_savepoint_rollback',$mA['mode']);
+        $this->assertTrue($this->c->isWorkerRunning($wA),'Worker A must still be running after attestation_ready.');
+
+        // Worker B: attempt conflicting FOR UPDATE on the same folio row
+        // Spawned AFTER A's readiness is confirmed; B will block on the PostgreSQL lock
+        $wB=$this->c->spawnWorker('conflicting_lock_attempt',[
+            'table'=>'folios',
+            'row_id'=>$f->id,
+        ]);
+
+        // Wait to prove B is blocked (B will wait in the barrier then try the lock)
+        usleep(400000);
+
+        // B should now be running but blocked on the folio lock
+        $this->assertTrue($this->c->isWorkerRunning($wB),'Worker B must be blocked while A holds savepoint locks.');
+
+        // Release A to rollback savepoint
+        $this->c->releaseWorker($ha);
+
+        // Wait for A's rollback_marker — signals outer tx still open
+        $mR=$this->c->waitForMarker($rm,15);
+        $this->assertEquals('savepoint_rolled_back_outer_still_open',$mR['mode']);
+
+        // B should now have proceeded (lock released by savepoint rollback)
+        $rB=$this->c->waitForWorker($wB,20);
+        $this->assertTrue($rB['proceeded'] ?? false,'Worker B must have proceeded after savepoint rollback.');
+        $this->assertGreaterThan(0,$rB['blocked_ms'],'Worker B must have been blocked for non-zero duration.');
+
+        // Release A final to commit outer transaction
+        $this->c->releaseWorker($fr);
+        $rA=$this->c->waitForWorker($wA,20);
+
+        // Assertions
+        $this->assertTrue($rA['rolled_back'] ?? false,'A rolled_back=true.');
+        $this->assertEquals('rejected',$rA['validator_result'],'GLF-E validator must reject retained attestation.');
+        $this->assertEquals($rA['postgres_backend_pid_before'],$rA['postgres_backend_pid_after'],'Backend PID stable across savepoint rollback.');
+        $this->assertEquals($rA['postgres_transaction_id_before'],$rA['postgres_transaction_id_after'],'Transaction ID stable across savepoint rollback.');
+        $this->assertNotEquals($rA['postgres_backend_pid_before'],$rB['postgres_backend_pid'],'Distinct worker PostgreSQL backend PIDs.');
+        $this->assertNotEmpty($rA['fingerprint']);
+        $this->assertNotEmpty($rB['postgres_backend_pid']);
+    }
+
     // ═══ Narrow 55P03 classifier ═══
     public function test_unrelated_55p03_not_classified_as_lock_timeout(): void
     {

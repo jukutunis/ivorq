@@ -84,7 +84,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyCoordinator
         }
 
         // Transaction workers: require PG evidence
-        $txModes = ['attest','mutate_and_hold','hold_source','attest_and_rollback','attest_other'];
+        $txModes = ['attest','mutate_and_hold','hold_source','attest_and_rollback','attest_other','attest_savepoint_rollback','conflicting_lock_attempt'];
         if (in_array($r['data']['mode'] ?? '', $txModes, true)) {
             foreach (['postgres_backend_pid','postgres_transaction_id','started_at','completed_at'] as $f) if (empty($r['data'][$f])) throw new \RuntimeException("Worker {$idx} missing {$f}");
         }

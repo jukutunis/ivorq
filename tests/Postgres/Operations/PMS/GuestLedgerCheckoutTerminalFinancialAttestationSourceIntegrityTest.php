@@ -570,4 +570,225 @@ class GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest extends
             $evaluator->determineStatusValue(['CASH_LINKED_REFERENCE_EVIDENCE_UNAVAILABLE'], [], [])
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // GLF-E transaction-local capability proofs
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public function test_capability_setting_name_is_correct(): void
+    {
+        $ref = new \ReflectionClass(GuestLedgerCheckoutTerminalFinancialAttestationService::class);
+        $this->assertTrue($ref->hasConstant('GLF_E_CAPABILITY_SETTING'));
+
+        $name = $ref->getConstant('GLF_E_CAPABILITY_SETTING');
+        $this->assertEquals('ivorq.glf_e_attestation_capability', $name);
+
+        // Must be a private constant
+        $refConst = $ref->getReflectionConstant('GLF_E_CAPABILITY_SETTING');
+        $this->assertTrue($refConst->isPrivate());
+    }
+
+    public function test_capability_uses_parameterized_set_config_with_transaction_local(): void
+    {
+        // Prove issueGlfeCapability uses parameterized set_config(?, ?, true)
+        $ref = new \ReflectionMethod(
+            GuestLedgerCheckoutTerminalFinancialAttestationService::class,
+            'issueGlfeCapability'
+        );
+        $ref->setAccessible(true);
+        $this->assertTrue($ref->isPrivate());
+
+        // Read the method source to verify set_config signature
+        $code = $this->readMethodSource($ref);
+        $this->assertStringContainsString('set_config(', $code);
+        $this->assertStringContainsString('true', $code);
+        $this->assertStringContainsString('?', $code);
+        $this->assertStringContainsString('random_bytes(32)', $code);
+        $this->assertStringContainsString('bin2hex', $code);
+        $this->assertStringContainsString("hash('sha256'", $code);
+    }
+
+    public function test_validation_uses_single_query_capability_proof(): void
+    {
+        $ref = new \ReflectionMethod(
+            GuestLedgerCheckoutTerminalFinancialAttestationService::class,
+            'glfeCapabilityProof'
+        );
+        $ref->setAccessible(true);
+        $this->assertTrue($ref->isPrivate());
+
+        $code = $this->readMethodSource($ref);
+        $this->assertStringContainsString('pg_backend_pid()', $code);
+        $this->assertStringContainsString('txid_current()', $code);
+        $this->assertStringContainsString('current_setting(', $code);
+    }
+
+    public function test_capability_hash_equals_validation_present(): void
+    {
+        $ref = new \ReflectionMethod(
+            GuestLedgerCheckoutTerminalFinancialAttestationService::class,
+            'assertIssuedForCurrentTransaction'
+        );
+        $code = $this->readMethodSource($ref);
+
+        $this->assertStringContainsString('attestation_capability_hash', $code);
+        $this->assertStringContainsString('hash_equals', $code);
+        $this->assertStringContainsString('hash(\'sha256\'', $code);
+        $this->assertStringContainsString('capability_token', $code);
+    }
+
+    public function test_only_sha256_hash_stored_in_weakmap_not_raw_capability(): void
+    {
+        DB::transaction(function () {
+            $reservation = $this->makeGlfReservation();
+            $guest = $reservation->primaryGuest;
+            $stay = $this->createStay($reservation->id, $guest->id);
+            $this->createFolio($reservation->id, $guest->id);
+
+            $attestation = $this->service->attest($this->acquireContext(), $stay->id);
+
+            // Use reflection to inspect private WeakMap
+            $ref = new \ReflectionMethod(
+                GuestLedgerCheckoutTerminalFinancialAttestationService::class,
+                'issuedAttestations'
+            );
+            $ref->setAccessible(true);
+            $map = $ref->invoke(null);
+
+            $this->assertTrue(isset($map[$attestation]), 'Attestation must be registered.');
+            $issuance = $map[$attestation];
+
+            // Must have attestation_capability_hash
+            $this->assertArrayHasKey('attestation_capability_hash', $issuance);
+            $hash = $issuance['attestation_capability_hash'];
+
+            // Must be a 64-character lowercase hex string (SHA-256)
+            $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $hash);
+
+            // No field must contain a 64-char hex value that looks like a raw
+            // 32-byte token (that would be the raw capability leaked).
+            // The hash value must not appear anywhere else in the issuance data.
+            foreach ($issuance as $key => $value) {
+                if ($key === 'attestation_capability_hash') {
+                    continue;
+                }
+                if (is_string($value)) {
+                    $this->assertStringNotContainsString($hash, (string) $value,
+                        "Field '{$key}' must not contain the capability hash.");
+                }
+            }
+        });
+    }
+
+    public function test_no_raw_capability_in_value_object(): void
+    {
+        DB::transaction(function () {
+            $reservation = $this->makeGlfReservation();
+            $guest = $reservation->primaryGuest;
+            $stay = $this->createStay($reservation->id, $guest->id);
+            $this->createFolio($reservation->id, $guest->id);
+
+            $attestation = $this->service->attest($this->acquireContext(), $stay->id);
+            $serialized = json_encode($attestation);
+
+            $this->assertStringNotContainsString('capability', $serialized);
+            $this->assertStringNotContainsString('attestation_capability', $serialized);
+            $this->assertStringNotContainsString('glf_e_attestation_capability', $serialized);
+        });
+    }
+
+    public function test_no_raw_capability_in_source_fingerprint(): void
+    {
+        DB::transaction(function () {
+            $reservation = $this->makeGlfReservation();
+            $guest = $reservation->primaryGuest;
+            $stay = $this->createStay($reservation->id, $guest->id);
+            $this->createFolio($reservation->id, $guest->id);
+
+            $attestation = $this->service->attest($this->acquireContext(), $stay->id);
+            $this->assertStringNotContainsString(
+                'capability',
+                $attestation->source_fingerprint,
+                'Source fingerprint must not contain capability references.'
+            );
+        });
+    }
+
+    public function test_no_raw_capability_in_markers(): void
+    {
+        DB::transaction(function () {
+            $reservation = $this->makeGlfReservation();
+            $guest = $reservation->primaryGuest;
+            $stay = $this->createStay($reservation->id, $guest->id);
+            $this->createFolio($reservation->id, $guest->id);
+
+            $attestation = $this->service->attest($this->acquireContext(), $stay->id);
+            $markersJson = json_encode($attestation->markers);
+
+            $this->assertStringNotContainsString('capability', $markersJson);
+            $this->assertStringNotContainsString('glf_e_attestation', $markersJson);
+        });
+    }
+
+    public function test_capability_error_does_not_expose_raw_token(): void
+    {
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->createStay($reservation->id, $reservation->primaryGuest->id);
+            $this->createFolio($reservation->id, $reservation->primaryGuest->id);
+
+            // Issue a valid attestation then try to validate a forged one
+            $real = $this->service->attest($context, $stay->id);
+
+            // A field-identical forged attestation should be rejected
+            $forged = \Modules\Operations\PMS\ValueObjects\GuestLedgerCheckoutTerminalFinancialAttestation::create(
+                status: $real->status,
+                property_id: $real->property_id,
+                property_business_date_id: $real->property_business_date_id,
+                business_date: $real->business_date,
+                front_desk_stay_id: $real->front_desk_stay_id,
+                reservation_id: $real->reservation_id,
+                folio_count: $real->folio_count,
+                canonical_aggregate_balance: $real->canonical_aggregate_balance,
+                currency: $real->currency,
+                blocker_codes: $real->blocker_codes,
+                review_reasons: $real->review_reasons,
+                evidence_unavailable_codes: $real->evidence_unavailable_codes,
+                cash_linked_references: $real->cash_linked_references,
+                cashier_session_ids: $real->cashier_session_ids,
+                source_fingerprint: $real->source_fingerprint,
+                evaluated_at: $real->evaluated_at,
+                markers: $real->markers,
+            );
+
+            try {
+                $this->service->assertIssuedForCurrentTransaction($context, $forged);
+                $this->fail('Expected forged attestation to be rejected.');
+            } catch (\DomainException $e) {
+                $msg = $e->getMessage();
+                // Error message must not contain capability token or setting name
+                $this->assertStringNotContainsString('ivorq.glf_e_attestation_capability', $msg);
+                $this->assertStringNotContainsString('capability_token', $msg);
+                // Must use the stable GLF-E error code
+                $this->assertStringContainsString(
+                    GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION,
+                    $msg
+                );
+            }
+        });
+    }
+
+    /**
+     * Read the source code of a reflection method as a string for inspection.
+     */
+    private function readMethodSource(\ReflectionMethod $method): string
+    {
+        $filename = $method->getFileName();
+        $start = $method->getStartLine();
+        $end = $method->getEndLine();
+
+        $lines = file($filename);
+        return implode('', array_slice($lines, $start - 1, $end - $start + 1));
+    }
 }

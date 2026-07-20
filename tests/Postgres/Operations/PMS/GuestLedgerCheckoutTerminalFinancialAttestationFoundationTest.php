@@ -227,23 +227,38 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
     public function test_rolled_back_savepoint_attestation_rejected(): void
     {
         DB::transaction(function () {
-            // Create context and attestation inside a savepoint, then rollback
-            DB::beginTransaction();
-            $bd = $this->openBusinessDate();
-            $context = $this->lockService->acquire(
-                $this->glfCompany->id, $this->glfProperty->id,
-                ['property_business_date_id' => $bd->id, 'property_id' => $this->glfProperty->id,
-                 'business_date' => $bd->business_date->format('Y-m-d'), 'property_timezone' => 'UTC',
-                 'opened_by' => (string) $this->glfActor->id, 'opened_at' => $bd->opened_at->utc()->toISOString()],
-            );
+            // 1. Acquire NA-A2 context in OUTER transaction
+            $context = $this->acquireContext();
 
+            // 2. Create fixture in outer transaction
             $reservation = $this->makeGlfReservation();
             $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
             $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
-            $attestation = $this->service->attest($context, $stay->id);
-            DB::rollBack();
 
-            // Outside savepoint, attestation should be rejected
+            // 3. Capture exact identities
+            $proofBefore = DB::selectOne(
+                'SELECT pg_backend_pid() AS backend_pid, txid_current()::text AS transaction_id'
+            );
+            $backendPid = (int) $proofBefore->backend_pid;
+            $txid = trim((string) $proofBefore->transaction_id);
+
+            // 4. Issue GLF-E attestation inside nested savepoint
+            DB::beginTransaction(); // savepoint
+            $attestation = $this->service->attest($context, $stay->id);
+            DB::rollBack(); // rollback savepoint only
+
+            // 5. Confirm same exact objects and identities
+            $this->assertNotNull($context, 'NA-A2 context object retained.');
+            $this->assertNotNull($attestation, 'GLF-E PHP attestation object retained.');
+
+            $proofAfter = DB::selectOne(
+                'SELECT pg_backend_pid() AS backend_pid, txid_current()::text AS transaction_id'
+            );
+            $this->assertEquals($backendPid, (int) $proofAfter->backend_pid, 'Backend PID unchanged.');
+            $this->assertEquals($txid, trim((string) $proofAfter->transaction_id), 'Transaction ID unchanged.');
+
+            // 6. assertIssuedForCurrentTransaction must reject — GLF-E capability
+            //    was rolled back with the savepoint
             try {
                 $this->service->assertIssuedForCurrentTransaction($context, $attestation);
                 $this->fail('Expected DomainException for rolled-back savepoint attestation.');
@@ -316,7 +331,122 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 4. Exact-object issuance
+    // 4. GLF-E savepoint capability behavior
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public function test_savepoint_release_preserves_glf_e_attestation(): void
+    {
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+
+            // Issue attestation inside savepoint, then release
+            DB::beginTransaction();
+            $attestation = $this->service->attest($context, $stay->id);
+            DB::commit(); // release savepoint
+
+            // After successful release, attestation and capability are valid
+            $this->service->assertIssuedForCurrentTransaction($context, $attestation);
+            $this->assertTrue(true);
+        });
+    }
+
+    public function test_second_issuance_invalidates_first(): void
+    {
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+
+            $a1 = $this->service->attest($context, $stay->id);
+            $a2 = $this->service->attest($context, $stay->id);
+
+            // a2 valid (latest capability)
+            $this->service->assertIssuedForCurrentTransaction($context, $a2);
+
+            // a1 invalid (superseded capability)
+            try {
+                $this->service->assertIssuedForCurrentTransaction($context, $a1);
+                $this->fail('Expected first attestation to be invalidated.');
+            } catch (DomainException $e) {
+                $this->assertStringContainsString(
+                    GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION,
+                    $e->getMessage()
+                );
+            }
+        });
+    }
+
+    public function test_outer_attestation_restored_after_inner_rollback(): void
+    {
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+
+            // Issue outer attestation A (capability A)
+            $aOuter = $this->service->attest($context, $stay->id);
+
+            // Issue inner attestation B inside savepoint, then rollback
+            DB::beginTransaction(); // savepoint
+            $aInner = $this->service->attest($context, $stay->id); // capability B
+            DB::rollBack(); // restores capability A
+
+            // B invalid (capability rolled back)
+            try {
+                $this->service->assertIssuedForCurrentTransaction($context, $aInner);
+                $this->fail('Expected inner attestation invalid after rollback.');
+            } catch (DomainException $e) {
+                $this->assertStringContainsString(
+                    GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION,
+                    $e->getMessage()
+                );
+            }
+
+            // A valid (capability restored)
+            $this->service->assertIssuedForCurrentTransaction($context, $aOuter);
+            $this->assertTrue(true);
+        });
+    }
+
+    public function test_released_inner_attestation_invalidates_outer(): void
+    {
+        DB::transaction(function () {
+            $context = $this->acquireContext();
+            $reservation = $this->makeGlfReservation();
+            $stay = $this->makeStay($reservation->id, $reservation->primaryGuest->id);
+            $this->makeFolio($reservation->id, $reservation->primaryGuest->id);
+
+            // Issue outer attestation A (capability A)
+            $aOuter = $this->service->attest($context, $stay->id);
+
+            // Issue inner attestation B inside savepoint, then release
+            DB::beginTransaction(); // savepoint
+            $aInner = $this->service->attest($context, $stay->id); // capability B
+            DB::commit(); // release — capability B remains current
+
+            // B valid (latest capability)
+            $this->service->assertIssuedForCurrentTransaction($context, $aInner);
+
+            // A invalid (capability superseded)
+            try {
+                $this->service->assertIssuedForCurrentTransaction($context, $aOuter);
+                $this->fail('Expected outer attestation invalid after inner release.');
+            } catch (DomainException $e) {
+                $this->assertStringContainsString(
+                    GuestLedgerCheckoutTerminalFinancialAttestationService::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION,
+                    $e->getMessage()
+                );
+            }
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 5. Exact-object issuance
     // ═══════════════════════════════════════════════════════════════════════
 
     public function test_exact_object_issuance(): void

@@ -37,6 +37,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
 
     private const LOCK_TIMEOUT = '5s';
     private const LOCK_TIMEOUT_SQLSTATE = '55P03';
+    private const GLF_E_CAPABILITY_SETTING = 'ivorq.glf_e_attestation_capability';
 
     /**
      * @var \WeakMap<GuestLedgerCheckoutTerminalFinancialAttestation, array<string, mixed>>|null
@@ -152,7 +153,10 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
             markers: $result['markers'],
         );
 
-        // 11. Register in exact-object WeakMap
+        // 11. Issue transaction-local GLF-E capability after all locks and evaluation
+        $capabilityHash = $this->issueGlfeCapability();
+
+        // 12. Register in exact-object WeakMap
         $proof = $this->postgresTransactionProof();
         self::issuedAttestations()[$attestation] = [
             'postgres_backend_pid' => $proof['backend_pid'],
@@ -165,6 +169,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
             'reservation_id' => $reservationId,
             'status' => $status->value,
             'source_fingerprint' => $fingerprint,
+            'attestation_capability_hash' => $capabilityHash,
         ];
 
         return $attestation;
@@ -204,10 +209,14 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
             throw new DomainException(self::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION);
         }
 
-        // 4. Require same backend PID and transaction ID
-        $currentProof = $this->postgresTransactionProof();
+        // 4. Require same backend PID, transaction ID, and transaction-local capability
+        $currentProof = $this->glfeCapabilityProof();
         if ($currentProof['backend_pid'] !== $issuance['postgres_backend_pid']
-            || $currentProof['transaction_id'] !== $issuance['postgres_transaction_id']) {
+            || $currentProof['transaction_id'] !== $issuance['postgres_transaction_id']
+            || ! hash_equals(
+                (string) $issuance['attestation_capability_hash'],
+                hash('sha256', $currentProof['capability_token'])
+            )) {
             throw new DomainException(self::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION);
         }
 
@@ -282,6 +291,66 @@ class GuestLedgerCheckoutTerminalFinancialAttestationService
         }
 
         return $transactionId;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // GLF-E transaction-local capability
+    // ═════════════════════════════════════════════════════════════════════
+
+    /**
+     * Issue a cryptographically random transaction-local capability token
+     * after all PMS locks and terminal evaluation have succeeded.
+     * Only the SHA-256 hash is retained.
+     */
+    private function issueGlfeCapability(): string
+    {
+        try {
+            $capabilityToken = bin2hex(random_bytes(32));
+            $row = DB::selectOne(
+                'SELECT set_config(?, ?, true) AS capability_token',
+                [self::GLF_E_CAPABILITY_SETTING, $capabilityToken]
+            );
+        } catch (Throwable $exception) {
+            throw new DomainException(self::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION, 0, $exception);
+        }
+
+        $configuredToken = trim((string) ($row->capability_token ?? ''));
+        if ($configuredToken === '' || ! hash_equals($capabilityToken, $configuredToken)) {
+            throw new DomainException(self::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION);
+        }
+
+        // Replacing this transaction-local setting makes only the newest attestation valid.
+        return hash('sha256', $capabilityToken);
+    }
+
+    /**
+     * @return array{backend_pid: int, transaction_id: string, capability_token: string}
+     */
+    private function glfeCapabilityProof(): array
+    {
+        try {
+            $row = DB::selectOne(
+                'SELECT pg_backend_pid() AS backend_pid, txid_current()::text AS transaction_id, '
+                . 'current_setting(?, true) AS capability_token',
+                [self::GLF_E_CAPABILITY_SETTING]
+            );
+        } catch (Throwable $exception) {
+            throw new DomainException(self::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION, 0, $exception);
+        }
+
+        $backendPid = (int) ($row->backend_pid ?? 0);
+        $transactionId = trim((string) ($row->transaction_id ?? ''));
+        $capabilityToken = trim((string) ($row->capability_token ?? ''));
+
+        if ($backendPid < 1 || $transactionId === '' || $capabilityToken === '') {
+            throw new DomainException(self::ERROR_INVALID_TERMINAL_FINANCIAL_ATTESTATION);
+        }
+
+        return [
+            'backend_pid' => $backendPid,
+            'transaction_id' => $transactionId,
+            'capability_token' => $capabilityToken,
+        ];
     }
 
     // ═════════════════════════════════════════════════════════════════════

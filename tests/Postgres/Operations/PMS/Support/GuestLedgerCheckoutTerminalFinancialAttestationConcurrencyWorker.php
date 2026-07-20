@@ -25,12 +25,14 @@
 
     try {
         $result = match ($mode) {
-            'attest'             => doAttest($p),
-            'mutate_and_hold'    => doMutateAndHold($p),
-            'attest_other'       => doAttestOther($p),
-            'hold_source'        => doHoldSource($p),
-            'attest_and_rollback'=> doAttestAndRollback($p),
-            default              => throw new \RuntimeException("Unknown mode: {$mode}"),
+            'attest'                    => doAttest($p),
+            'mutate_and_hold'           => doMutateAndHold($p),
+            'attest_other'              => doAttestOther($p),
+            'hold_source'               => doHoldSource($p),
+            'attest_and_rollback'       => doAttestAndRollback($p),
+            'attest_savepoint_rollback' => doAttestSavepointRollback($p),
+            'conflicting_lock_attempt'  => doConflictingLockAttempt($p),
+            default                     => throw new \RuntimeException("Unknown mode: {$mode}"),
         };
         $result['mode'] = $mode; $result['php_pid'] = $phpPid;
         $result['started_at'] = $startedAt; $result['completed_at'] = date('c');
@@ -185,4 +187,117 @@ function doAttestAndRollback(array $p): array
         \Illuminate\Support\Facades\DB::rollBack();
         return $r;
     } catch (\Throwable $e) { \Illuminate\Support\Facades\DB::rollBack(); throw $e; }
+}
+
+// ═══ Scenario F — savepoint rollback releases PMS locks while outer transaction remains active ═══
+
+function doAttestSavepointRollback(array $p): array
+{
+    \Illuminate\Support\Facades\DB::beginTransaction(); // outer transaction
+    try {
+        $lockSvc = app(\Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService::class);
+        $attSvc  = app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService::class);
+
+        // Acquire NA-A2 context in outer transaction
+        $ctx = $lockSvc->acquire($p['company_id'], $p['property_id'], $p['expected_evidence']);
+        [$outerPid, $outerTxid] = txIdentity();
+
+        // Begin nested savepoint
+        \Illuminate\Support\Facades\DB::beginTransaction();
+
+        // Issue GLF-E attestation inside savepoint (locks PMS rows)
+        $att = $attSvc->attest($ctx, $p['stay_id']);
+
+        // Signal attestation is ready, locks are held
+        signal($p['ready_marker'] ?? '', [
+            'mode' => 'attest_savepoint_rollback',
+            'pg_pid' => $outerPid,
+            'txid' => $outerTxid,
+        ]);
+
+        // Wait while B is proven blocked on conflicting lock
+        barrier($p['hold_until_path'] ?? '', $p['hold_timeout'] ?? 30);
+
+        // Rollback only the nested savepoint — releases PMS locks
+        \Illuminate\Support\Facades\DB::rollBack();
+
+        // Capture identity after rollback
+        [$pidAfter, $txidAfter] = txIdentity();
+
+        // Try to validate the retained attestation — must be rejected
+        $validatorResult = 'rejected';
+        try {
+            $attSvc->assertIssuedForCurrentTransaction($ctx, $att);
+            $validatorResult = 'accepted_error';
+        } catch (\DomainException $e) {
+            if (str_contains($e->getMessage(), 'GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION')) {
+                $validatorResult = 'rejected';
+            } else {
+                $validatorResult = 'unexpected_error';
+            }
+        }
+
+        $r = [
+            'postgres_backend_pid' => $pidAfter,
+            'postgres_transaction_id' => $txidAfter,
+            'postgres_backend_pid_before' => $outerPid,
+            'postgres_transaction_id_before' => $outerTxid,
+            'postgres_backend_pid_after' => $pidAfter,
+            'postgres_transaction_id_after' => $txidAfter,
+            'attestation_retained' => true,
+            'validator_result' => $validatorResult,
+            'rolled_back' => true,
+            'fingerprint' => $att->source_fingerprint,
+        ];
+
+        // Signal savepoint rolled back, outer tx still open
+        signal($p['rollback_marker'] ?? '', [
+            'mode' => 'savepoint_rolled_back_outer_still_open',
+            'pg_pid' => $pidAfter,
+            'txid' => $txidAfter,
+        ]);
+
+        // Hold outer transaction until final release
+        if (!empty($p['final_release_path'])) {
+            barrier($p['final_release_path'], $p['hold_timeout'] ?? 30);
+        }
+
+        \Illuminate\Support\Facades\DB::commit(); // commit outer transaction
+        return $r;
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\DB::rollBack();
+        throw $e;
+    }
+}
+
+function doConflictingLockAttempt(array $p): array
+{
+    $started = microtime(true);
+
+    \Illuminate\Support\Facades\DB::beginTransaction();
+    try {
+        \Illuminate\Support\Facades\DB::statement("SET LOCAL lock_timeout = '10s'");
+
+        // Attempt conflicting FOR UPDATE on the same PMS source row locked by GLF-E
+        $row = \Illuminate\Support\Facades\DB::table($p['table'])
+            ->where('id', $p['row_id'])
+            ->lockForUpdate()
+            ->first();
+
+        $elapsedMs = (int)((microtime(true) - $started) * 1000);
+        [$pid, $txid] = txIdentity();
+
+        $r = [
+            'proceeded' => true,
+            'blocked_ms' => $elapsedMs,
+            'postgres_backend_pid' => $pid,
+            'postgres_transaction_id' => $txid,
+        ];
+
+        \Illuminate\Support\Facades\DB::commit();
+        return $r;
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\DB::rollBack();
+        throw $e;
+    }
 }
