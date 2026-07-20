@@ -8,7 +8,7 @@
 * **Status:** Approved
 * **Related ADRs:** ADR-001, ADR-002, ADR-004, ADR-029, ADR-034, ADR-040, ADR-066, ADR-067, ADR-084, ADR-085, ADR-086, ADR-087, ADR-088
 * **Accepted predecessor:** FD-B13 Checkout Execution Readiness Review at `fbb289abf4bbfeb2f3ae801e05e98619a61f7814`
-* **Runtime implementation:** GLF-E accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`; GC-A2 is the current authorized prerequisite package; checkout execution remains unauthorized
+* **Runtime implementation:** GLF-E accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. A savepoint rollback lock-continuity defect was source-proven. GLF-E-S1 is the current authorized narrow correction. GC-A2 is paused. Checkout execution remains unauthorized.
 
 ## Status
 
@@ -20,7 +20,7 @@ Accepted and fast-forward merged at:
 1682dec0fb7f654e77888a476b4ec55a1507610b
 ```
 
-NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. NA-A2 is accepted and fast-forward merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GC-A2 is the current authorized prerequisite package for General Cashier terminal obligation attestation. GC-A2, Front Desk terminal evidence, Housekeeping handoff, confirmation, permission, and checkout command packages remain unimplemented.
+NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. NA-A2 is accepted and fast-forward merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. A savepoint rollback lock-continuity defect was source-proven: an attestation could be issued inside a nested savepoint, the savepoint rolled back releasing PMS row locks, and the retained exact PHP attestation object would incorrectly pass validation because it shared the same backend PID and outer transaction ID. GLF-E-S1 is the current authorized narrow correction. GC-A2 is paused. Checkout execution remains unauthorized.
 
 ## Context
 
@@ -201,6 +201,8 @@ The PMS-owned execution-time terminal financial attestation must determine under
 The PMS participating attestation runs before General Cashier participation. It must lock and evaluate PMS Guest Ledger and PMS Cashiering-owned payment, allocation, deposit, refund, reversal, AR, folio, and settlement rows needed for terminal checkout evaluation; return only the minimized terminal financial result required by Front Desk; return approved cash-linked transaction and cashier-session references required by General Cashier; and keep the PMS owner-domain locks held until checkout commit or rollback.
 
 It must not transfer folio, payment, deposit, refund, reversal, AR, or settlement ownership to Front Desk or General Cashier.
+
+A transaction-bound attestation must prove not only PHP object identity, backend PID, and outer transaction ID, but also that the owner-domain locks represented by the attestation were not released by savepoint rollback. The required PostgreSQL transaction-local capability pattern uses `SELECT set_config('ivorq.glf_e_attestation_capability', <server-generated-secret>, true)` — a server-controlled, cryptographically random token installed with transaction-local scope after all PMS locks and terminal evaluation have succeeded. Only the SHA-256 hash is retained in the issuance WeakMap. Validation resolves `pg_backend_pid()`, `txid_current()`, and `current_setting('ivorq.glf_e_attestation_capability', true)` in a single query and verifies with `hash_equals`. Savepoint rollback restores the previous capability state, invalidating any attestation issued inside the rolled-back savepoint.
 
 ### General Cashier Attestation
 
@@ -397,11 +399,12 @@ Runtime prerequisite categories must remain locked until ADR-089 is independentl
 1. ADR-089 accepted and merged.
 2. Shared checkout transaction-participation and Property/Business Date/Night Audit concurrency foundation — NA-A2 implemented and merged.
 3. PMS Guest Ledger execution-time terminal financial attestation — GLF-E accepted and merged.
-4. General Cashier execution-time terminal obligation attestation — GC-A2 current authorized.
-5. Front Desk terminal stay state and immutable checkout execution evidence foundation — locked.
-6. Transactional Housekeeping room-turnover handoff/outbox — locked.
-7. Checkout Sensitive Action Confirmation intent and execute permission, including `CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED` — locked.
-8. Final Front Desk checkout execution command and interaction layer — locked.
+4. GLF-E-S1 savepoint lock-continuity correction — current authorized.
+5. General Cashier execution-time terminal obligation attestation — GC-A2 paused and locked.
+6. Front Desk terminal stay state and immutable checkout execution evidence foundation — locked.
+7. Transactional Housekeeping room-turnover handoff/outbox — locked.
+8. Checkout Sensitive Action Confirmation intent and execute permission, including `CHECKOUT_CONFIRMATION_ONE_TIME_CONSUMPTION_REQUIRED` — locked.
+9. Final Front Desk checkout execution command and interaction layer — locked.
 
 The final checkout command remains last. Runtime package codes are not assigned by this ADR.
 
