@@ -233,17 +233,44 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
         $rA=$this->c->waitForWorker($wA,20);
 
         // Assertions — distinct workers
+        $this->assertNotEquals(
+            $rA['php_pid'],
+            $rB['php_pid'],
+            'Workers A and B must use distinct PHP processes.'
+        );
         $this->assertNotEquals($rA['postgres_backend_pid_before'],$rB['postgres_backend_pid'],'Distinct worker PostgreSQL backend PIDs.');
+
+        // Bind marker identities to final worker evidence
+        $this->assertEquals(
+            (int) $mA['pg_pid'],
+            (int) $rA['postgres_backend_pid_before'],
+            'Worker A attestation_ready marker PG PID must equal final backend PID.'
+        );
+        $this->assertEquals(
+            (int) $mB['postgres_backend_pid'],
+            (int) $rB['postgres_backend_pid'],
+            'Worker B lock_attempt marker PG PID must equal final backend PID.'
+        );
 
         // Worker A: identity stability
         $this->assertTrue($rA['rolled_back'] ?? false,'A rolled_back=true.');
         $this->assertEquals($rA['postgres_backend_pid_before'],$rA['postgres_backend_pid_after'],'Backend PID stable across savepoint rollback.');
         $this->assertEquals($rA['postgres_transaction_id_before'],$rA['postgres_transaction_id_after'],'Transaction ID stable across savepoint rollback.');
 
+        // Worker A: validate the exact retained attestation object
+        $this->assertTrue(
+            $rA['attestation_retained'] ?? false,
+            'Worker A must validate the exact retained GLF-E object.'
+        );
+
         // Worker A: structured validator evidence
         $this->assertEquals('rejected',$rA['validator_result'],'Validator must reject retained attestation.');
         $this->assertEquals('DomainException',$rA['validator_exception_class'],'Validator exception must be DomainException.');
         $this->assertStringContainsString('GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION',$rA['validator_error'],'Validator error must be GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION.');
+        $this->assertNull(
+            $rA['validator_previous_exception_class'],
+            'Capability mismatch rejection should not require a previous DB exception.'
+        );
 
         $this->assertNotEmpty($rA['fingerprint']);
         $this->assertNotEmpty($rB['lock_attempt_started_at']);
