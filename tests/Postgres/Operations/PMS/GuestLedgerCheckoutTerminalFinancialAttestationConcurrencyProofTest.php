@@ -170,6 +170,7 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
         $ha=$this->tmp('f_hold');
         $rm=$this->tmp('f_rollback');
         $fr=$this->tmp('f_final');
+        $lb=$this->tmp('f_lock_attempt');
 
         // Worker A: outer tx → NA-A2 → savepoint → GLF-E attest → hold → rollback → validate → final hold
         $wA=$this->c->spawnWorker('attest_savepoint_rollback',[
@@ -190,17 +191,26 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
         $this->assertTrue($this->c->isWorkerRunning($wA),'Worker A must still be running after attestation_ready.');
 
         // Worker B: attempt conflicting FOR UPDATE on the same folio row
-        // Spawned AFTER A's readiness is confirmed; B will block on the PostgreSQL lock
         $wB=$this->c->spawnWorker('conflicting_lock_attempt',[
             'table'=>'folios',
             'row_id'=>$f->id,
+            'lock_attempt_marker'=>$lb,
         ]);
 
-        // Wait to prove B is blocked (B will wait in the barrier then try the lock)
-        usleep(400000);
+        // Wait for Worker B's lock-attempt marker
+        $mB=$this->c->waitForMarker($lb,15);
+        $this->assertEquals('conflicting_lock_attempt',$mB['mode']);
+        $this->assertNotEmpty($mB['postgres_backend_pid'],'Worker B must report its PostgreSQL PID.');
+        $this->assertNotEmpty($mB['postgres_transaction_id'],'Worker B must report its transaction ID.');
 
-        // B should now be running but blocked on the folio lock
-        $this->assertTrue($this->c->isWorkerRunning($wB),'Worker B must be blocked while A holds savepoint locks.');
+        $blockedBpid = (int)$mB['postgres_backend_pid'];
+        $blockerApid = (int)$mA['pg_pid'];
+
+        // Prove PostgreSQL lock blocking deterministically
+        $blockProof = $this->c->waitForPostgresLockBlock($blockedBpid, $blockerApid, 10);
+        $this->assertTrue($blockProof['blocked'],'PostgreSQL must report B blocked by A.');
+        $this->assertEquals('Lock',$blockProof['wait_event_type'],'wait_event_type must be Lock.');
+        $this->assertTrue($blockProof['blocked_by_expected'],'pg_blocking_pids must include Worker A as blocker.');
 
         // Release A to rollback savepoint
         $this->c->releaseWorker($ha);
@@ -209,23 +219,35 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest extend
         $mR=$this->c->waitForMarker($rm,15);
         $this->assertEquals('savepoint_rolled_back_outer_still_open',$mR['mode']);
 
-        // B should now have proceeded (lock released by savepoint rollback)
+        // B must now have proceeded (lock released by savepoint rollback)
         $rB=$this->c->waitForWorker($wB,20);
         $this->assertTrue($rB['proceeded'] ?? false,'Worker B must have proceeded after savepoint rollback.');
+        $this->assertTrue($rB['row_found'] ?? false,'Worker B must have acquired the row.');
         $this->assertGreaterThan(0,$rB['blocked_ms'],'Worker B must have been blocked for non-zero duration.');
+
+        // Before releasing A's outer-transaction barrier, assert A is still running
+        $this->assertTrue($this->c->isWorkerRunning($wA),'Worker A outer transaction must still be open when B completed.');
 
         // Release A final to commit outer transaction
         $this->c->releaseWorker($fr);
         $rA=$this->c->waitForWorker($wA,20);
 
-        // Assertions
+        // Assertions — distinct workers
+        $this->assertNotEquals($rA['postgres_backend_pid_before'],$rB['postgres_backend_pid'],'Distinct worker PostgreSQL backend PIDs.');
+
+        // Worker A: identity stability
         $this->assertTrue($rA['rolled_back'] ?? false,'A rolled_back=true.');
-        $this->assertEquals('rejected',$rA['validator_result'],'GLF-E validator must reject retained attestation.');
         $this->assertEquals($rA['postgres_backend_pid_before'],$rA['postgres_backend_pid_after'],'Backend PID stable across savepoint rollback.');
         $this->assertEquals($rA['postgres_transaction_id_before'],$rA['postgres_transaction_id_after'],'Transaction ID stable across savepoint rollback.');
-        $this->assertNotEquals($rA['postgres_backend_pid_before'],$rB['postgres_backend_pid'],'Distinct worker PostgreSQL backend PIDs.');
+
+        // Worker A: structured validator evidence
+        $this->assertEquals('rejected',$rA['validator_result'],'Validator must reject retained attestation.');
+        $this->assertEquals('DomainException',$rA['validator_exception_class'],'Validator exception must be DomainException.');
+        $this->assertStringContainsString('GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION',$rA['validator_error'],'Validator error must be GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION.');
+
         $this->assertNotEmpty($rA['fingerprint']);
-        $this->assertNotEmpty($rB['postgres_backend_pid']);
+        $this->assertNotEmpty($rB['lock_attempt_started_at']);
+        $this->assertNotEmpty($rB['lock_acquired_at']);
     }
 
     // ═══ Narrow 55P03 classifier ═══

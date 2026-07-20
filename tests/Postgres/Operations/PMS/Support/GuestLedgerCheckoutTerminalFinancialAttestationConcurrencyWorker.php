@@ -225,16 +225,43 @@ function doAttestSavepointRollback(array $p): array
         [$pidAfter, $txidAfter] = txIdentity();
 
         // Try to validate the retained attestation — must be rejected
-        $validatorResult = 'rejected';
+        $validatorResult = 'not_evaluated';
+        $validatorExceptionClass = null;
+        $validatorError = null;
+        $validatorPreviousExceptionClass = null;
+
         try {
             $attSvc->assertIssuedForCurrentTransaction($ctx, $att);
+            // If we reach here, the validator incorrectly accepted
             $validatorResult = 'accepted_error';
         } catch (\DomainException $e) {
+            $validatorExceptionClass = get_class($e);
+            $validatorError = $e->getMessage();
+            if ($e->getPrevious()) {
+                $validatorPreviousExceptionClass = get_class($e->getPrevious());
+            }
             if (str_contains($e->getMessage(), 'GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION')) {
                 $validatorResult = 'rejected';
             } else {
                 $validatorResult = 'unexpected_error';
             }
+        } catch (\Throwable $e) {
+            $validatorExceptionClass = get_class($e);
+            $validatorError = $e->getMessage();
+            if ($e->getPrevious()) {
+                $validatorPreviousExceptionClass = get_class($e->getPrevious());
+            }
+            $validatorResult = 'unexpected_exception';
+        }
+
+        if ($validatorResult === 'not_evaluated') {
+            throw new \RuntimeException('Validator was not evaluated.');
+        }
+        if ($validatorResult !== 'rejected') {
+            throw new \RuntimeException(
+                "Validator expected rejected, got {$validatorResult}. "
+                . "Exception: {$validatorExceptionClass}, Error: {$validatorError}"
+            );
         }
 
         $r = [
@@ -246,6 +273,9 @@ function doAttestSavepointRollback(array $p): array
             'postgres_transaction_id_after' => $txidAfter,
             'attestation_retained' => true,
             'validator_result' => $validatorResult,
+            'validator_exception_class' => $validatorExceptionClass,
+            'validator_error' => $validatorError,
+            'validator_previous_exception_class' => $validatorPreviousExceptionClass,
             'rolled_back' => true,
             'fingerprint' => $att->source_fingerprint,
         ];
@@ -272,11 +302,25 @@ function doAttestSavepointRollback(array $p): array
 
 function doConflictingLockAttempt(array $p): array
 {
-    $started = microtime(true);
-
     \Illuminate\Support\Facades\DB::beginTransaction();
     try {
         \Illuminate\Support\Facades\DB::statement("SET LOCAL lock_timeout = '10s'");
+
+        // Resolve PostgreSQL identity before lock attempt
+        [$pid, $txid] = txIdentity();
+        $lockAttemptStartedAt = date('c');
+
+        // Write deterministic marker immediately before FOR UPDATE
+        signal($p['lock_attempt_marker'] ?? '', [
+            'mode' => 'conflicting_lock_attempt',
+            'postgres_backend_pid' => $pid,
+            'postgres_transaction_id' => $txid,
+            'table' => $p['table'],
+            'row_id' => $p['row_id'],
+            'lock_attempt_started_at' => $lockAttemptStartedAt,
+        ]);
+
+        $started = microtime(true);
 
         // Attempt conflicting FOR UPDATE on the same PMS source row locked by GLF-E
         $row = \Illuminate\Support\Facades\DB::table($p['table'])
@@ -285,13 +329,16 @@ function doConflictingLockAttempt(array $p): array
             ->first();
 
         $elapsedMs = (int)((microtime(true) - $started) * 1000);
-        [$pid, $txid] = txIdentity();
+        $lockAcquiredAt = date('c');
 
         $r = [
             'proceeded' => true,
-            'blocked_ms' => $elapsedMs,
             'postgres_backend_pid' => $pid,
             'postgres_transaction_id' => $txid,
+            'lock_attempt_started_at' => $lockAttemptStartedAt,
+            'lock_acquired_at' => $lockAcquiredAt,
+            'blocked_ms' => $elapsedMs,
+            'row_found' => $row !== null,
         ];
 
         \Illuminate\Support\Facades\DB::commit();

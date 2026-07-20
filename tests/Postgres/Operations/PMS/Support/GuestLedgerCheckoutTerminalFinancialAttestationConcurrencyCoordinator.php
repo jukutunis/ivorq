@@ -118,4 +118,47 @@ class GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyCoordinator
 
     public function cleanup(): void { foreach (array_keys($this->workers) as $i) $this->terminateWorker($i); }
     public function __destruct() { $this->cleanup(); }
+
+    /**
+     * Prove that a blocked backend PID is waiting on a Lock for which
+     * the expected blocker is the actual PostgreSQL blocking backend.
+     *
+     * Uses bounded polling against pg_stat_activity / pg_blocking_pids.
+     */
+    public function waitForPostgresLockBlock(
+        int $blockedBackendPid,
+        int $expectedBlockerBackendPid,
+        int $timeoutSeconds
+    ): array {
+        $deadline = time() + $timeoutSeconds;
+        $lastState = null;
+
+        while (time() < $deadline) {
+            $row = \Illuminate\Support\Facades\DB::selectOne(
+                'SELECT pid, state, wait_event_type, wait_event, '
+                . 'EXISTS (SELECT 1 FROM unnest(pg_blocking_pids(pid)) AS blocker_pid WHERE blocker_pid = ?) AS blocked_by_expected '
+                . 'FROM pg_stat_activity WHERE pid = ?',
+                [$expectedBlockerBackendPid, $blockedBackendPid]
+            );
+
+            $lastState = $row;
+
+            if ($row && $row->wait_event_type === 'Lock' && $row->blocked_by_expected) {
+                return [
+                    'blocked' => true,
+                    'wait_event_type' => $row->wait_event_type,
+                    'wait_event' => $row->wait_event ?? null,
+                    'state' => $row->state,
+                    'blocked_by_expected' => $row->blocked_by_expected,
+                ];
+            }
+
+            usleep(100000); // 100 ms polling interval
+        }
+
+        throw new \RuntimeException(
+            'PostgreSQL lock block not confirmed within ' . $timeoutSeconds . 's. '
+            . 'Last state: ' . json_encode($lastState)
+        );
+    }
 }
