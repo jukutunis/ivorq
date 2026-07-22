@@ -62,6 +62,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'night-audit-run-lock-foundation-baseline',
             'night-audit-checkout-concurrency-foundation-baseline',
             'guest-ledger-terminal-financial-attestation-baseline',
+            'general-cashier-terminal-obligation-attestation-baseline',
         ];
 
         $actualIds = array_map(fn($b) => $b->id, $this->manifest->baselines);
@@ -477,12 +478,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'night-audit-run-lock-foundation-baseline',
             'night-audit-checkout-concurrency-foundation-baseline',
             'guest-ledger-terminal-financial-attestation-baseline',
+            'general-cashier-terminal-obligation-attestation-baseline',
         ];
 
         $this->assertCount(
-            13,
+            14,
             $activeIds,
-            "Must have exactly 12 active baselines. Found: " . implode(', ', $activeIds)
+            "Must have exactly 14 active baselines. Found: " . implode(', ', $activeIds)
         );
 
         foreach ($expectedActiveIds as $id) {
@@ -583,7 +585,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
     {
         $ids = array_map(fn($b) => $b->id, $this->manifest->baselines);
 
-        $expectedCount = 15;
+        $expectedCount = 16;
         $this->assertCount(
             $expectedCount,
             $ids,
@@ -749,6 +751,42 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Transaction-local GLF-E capability', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('set_config', $baseline->provenance->note ?? '');
+    }
+
+    public function test_gc_a2_baseline_matches_proof_commit_measurement(): void
+    {
+        $baseline = $this->findBaseline('general-cashier-terminal-obligation-attestation-baseline');
+        $this->assertNotNull($baseline, 'GC-A2 baseline must exist.');
+        $this->assertEquals('active', $baseline->status);
+        $this->assertEquals('batch', $baseline->execution_mode ?? null);
+        $this->assertSame([
+            'GeneralCashierCheckoutTerminalObligationAttestationFoundationTest',
+            'GeneralCashierCheckoutTerminalObligationAttestationSourceIntegrityTest',
+            'GeneralCashierCheckoutTerminalObligationAttestationConcurrencyProofTest',
+        ], $baseline->classes);
+        $this->assertEquals(53, $baseline->expected->tests ?? null);
+        $this->assertEquals(145, $baseline->expected->assertions ?? null);
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertSame([], $baseline->accepted_debt ?? null);
+        $this->assertEquals('4dfdba2a7038c5a11ad1960e4c31c632ef09742a', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-gc-a2-checkout-terminal-obligation-attestation', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No GC-A1 reuse', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No PMS financial-source query', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('cashier_sessions only FOR UPDATE source', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Parameterized set_config(..., true)', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Only SHA-256 hash retained', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Savepoint rollback invalidates GC-A2', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Savepoint rollback preserves NA-A2 and GLF-E', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('pg_stat_activity lock proof', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('pg_blocking_pids blocker proof', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Zero business writes', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No migration', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No route/controller/UI', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No permission/confirmation', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Inventory Reversal inherited debt unchanged', $baseline->provenance->note ?? '');
     }
 
     private function findBaseline(string $id): ?object

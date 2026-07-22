@@ -510,6 +510,33 @@
       "status": "active"
     },
     {
+      "id": "general-cashier-terminal-obligation-attestation-baseline",
+      "description": "GC-A2 General Cashier terminal obligation attestation PostgreSQL tests covering active transaction enforcement, NA-A2 context validation, exact GLF-E attestation validation, identity conflict detection, stay/reservation relationship re-resolution, minimized GLF-E cash-linked reference validation, source-type allowlist, open/blocks/missing/closed/unsupported session evaluation, exact output field whitelist, deterministic same-transaction and different-transaction fingerprints, exact-object issuance and validator, forged/manual/cross-context/cross-GLF/cross-transaction rejection, latest issuance semantics, savepoint rollback rejection with outer capability restoration, savepoint release acceptance with supersession, zero-write proof over 16 source tables, narrow 55P03 lock-timeout mapping, source integrity (no GC-A1 reuse, no PMS financial query, only cashier_sessions FOR UPDATE, parameterized set_config, no raw capability/cash IDs in output), and real multi-process concurrency proof (lock holding, savepoint rollback GC lock release while NA-A2/GLF-E remain valid, savepoint release retains lock, property isolation, lock timeout with pg_stat_activity and pg_blocking_pids proof). All three classes pass in one batch.",
+      "type": "phpunit",
+      "configuration": "phpunit.pg.xml",
+      "selection_policy": "exact-test-classes",
+      "execution_mode": "batch",
+      "classes": [
+        "GeneralCashierCheckoutTerminalObligationAttestationFoundationTest",
+        "GeneralCashierCheckoutTerminalObligationAttestationSourceIntegrityTest",
+        "GeneralCashierCheckoutTerminalObligationAttestationConcurrencyProofTest"
+      ],
+      "expected": {
+        "tests": 53,
+        "assertions": 145,
+        "failures": 0,
+        "errors": 0
+      },
+      "provenance": {
+        "measured_at": "2026-07-22",
+        "branch": "sprint-gc-a2-checkout-terminal-obligation-attestation",
+        "sha": "4dfdba2a7038c5a11ad1960e4c31c632ef09742a",
+        "note": "Contract Version 1.11. Foundation 30 tests / 56 assertions. SourceIntegrity 18 tests / 33 assertions. ConcurrencyProof 5 tests / 56 assertions. Batch total 53 tests / 145 assertions / 0 failures / 0 errors. Exact NA-A2 result: 20/914/0/0 PASS. Exact GLF-E result: 63/271/0/0 PASS. Exact GC-A1 result: 38/231/0/0 PASS. Exact GLF-D result: 60/253/0/0 PASS. Active PostgreSQL transaction required. Exact NA-A2 context required. Exact GLF-E object required. No GC-A1 reuse. No PMS financial-source query. cashier_sessions only FOR UPDATE source. Deterministic lock order. Transaction-local GC-A2 capability. Parameterized set_config(..., true). Only SHA-256 hash retained. Savepoint rollback invalidates GC-A2. Savepoint rollback preserves NA-A2 and GLF-E. pg_stat_activity lock proof. pg_blocking_pids blocker proof. Zero business writes. No migration. No route/controller/UI. No permission/confirmation. can_execute=false. checkout unauthorized. Inventory Reversal inherited debt unchanged."
+      },
+      "accepted_debt": [],
+      "status": "active"
+    },
+    {
       "id": "banking-master-baseline-v2-candidate",
       "description": "Banking master baseline v2 candidate — replaces legacy 194 undiscoverable baseline. Includes core Banking operational tests only (9 classes). Banking migration tests are excluded. ConfirmedBankPaymentLifecycleTest is excluded due to business-date setup gap (documented in DEBT-BANKING-CONFIRMED-PAYMENT-LIFECYCLE-BUSINESS-DATE). Verified at 84 total tests when including ConfirmedBankPaymentLifecycleTest (1 error from business-date gap); clean at 83/0/0 when excluding it.",
       "type": "phpunit",
