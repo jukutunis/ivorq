@@ -1,9 +1,9 @@
 # IVORQ Package Execution Contract
 
 Status: APPROVED
-Version: 1.10
+Version: 1.11
 Created: 2026-07-10
-Last amended: 2026-07-20
+Last amended: 2026-07-22
 
 Amendment note:
   - Version 1.1 was explicitly approved by the IVORQ Owner for ADR-034 activation and controlled Business Date / Night Audit sequencing.
@@ -16,6 +16,7 @@ Amendment note:
   - Version 1.8 is explicitly Owner-authorized for NA-A2 accepted-predecessor synchronization, GLF-E runtime authorization, PMS terminal financial attestation, shared evaluator extraction, participation ports, cash-linked reference contract, exact-object issuance, and continued prohibition on checkout execution.
   - Version 1.9 is explicitly Owner-authorized for GLF-E accepted-predecessor synchronization, canonical SHA synchronization, GC-A2 runtime authorization, General Cashier terminal obligation attestation, consumption of minimized exact GLF-E references, General Cashier-owned lock participation, continued prohibition on checkout execution, and continued locking of later packages.
   - Version 1.10 is explicitly Owner-authorized for GLF-E savepoint lock-continuity correction, transaction-local GLF-E attestation capability, reopening GLF-E acceptance for narrow GLF-E-S1 correction, pausing GC-A2 runtime implementation, continued prohibition on checkout execution, and continued locking of all later packages.
+  - Version 1.11 is explicitly Owner-authorized for GLF-E-S1 accepted-predecessor synchronization, canonical SHA synchronization, final GLF-E savepoint-safe evidence synchronization, GC-A2 runtime reactivation, General Cashier terminal obligation attestation sequencing, continued prohibition on checkout execution, and continued locking of all later packages.
 
 Amendment protocol:
   - Only Owner may approve amendments to this contract.
@@ -75,7 +76,7 @@ Concise source-backed architecture summary — not a full ADR dump.
 - Current baseline counts must always be verified from the canonical regression manifest.
 - This section records the accepted predecessor state at the time a package is authorized.
 - Later merge results must not be inferred before independent merge verification.
-- Canonical predecessor: `5f471a7bd38687938227d3b345d9e426dc90276a`
+- Canonical predecessor: `f91621b58fe5743ed2a60980a70475cae40331bc`
 - ADR-034 merged and accepted.
 - BD-A1 merged and accepted.
 - FD-B11 merged and accepted.
@@ -94,7 +95,8 @@ Concise source-backed architecture summary — not a full ADR dump.
 - BD-A1: 11 tests / 318 assertions
 - NA-A1: 11 tests / 422 assertions
 - NA-A2: 20 tests / 914 assertions
-- RegressionBaselineManifestTest: 33 tests / 997 assertions
+- GLF-E: 63 tests / 271 assertions / 0 failures / 0 errors
+- RegressionBaselineManifestTest: 33 tests / 1009 assertions
 - Complete active runner: 13 passed / 0 failed / 0 skipped
 - Inventory Reversal inherited debt remains: 8 tests / 72 assertions / 2 accepted errors
 - ADR-089 accepted and merged.
@@ -102,15 +104,16 @@ Concise source-backed architecture summary — not a full ADR dump.
 - NA-A2 accepted and fast-forward merged.
 - NA-A2 does not authorize checkout execution.
 - GLF-E accepted and merged.
-- GLF-E baseline: 49 tests / 194 assertions / 0 failures / 0 errors (historical predecessor evidence)
-- GLF-E acceptance reopened only for GLF-E-S1 savepoint lock-continuity correction
-- GLF-E-S1 current authorized correction package
-- GC-A2 paused and locked
+- GLF-E baseline: 49 tests / 194 assertions / 0 failures / 0 errors (historical predecessor evidence before GLF-E-S1 correction)
+- GLF-E-S1 accepted and fast-forward merged at `f91621b58fe5743ed2a60980a70475cae40331bc`
+- GLF-E savepoint lock-continuity defect corrected
+- GC-A2 current authorized runtime package
 - Later Front Desk state/evidence, Housekeeping handoff, confirmation/permission, and final command remain locked.
 - Full access does not bypass later packages.
 - `can_execute=false` remains binding.
 - checkout unauthorized
-- GC-A2 must not start until GLF-E-S1 is independently reviewed, accepted, and merged.
+- GC-A2 may now start only as its own bounded runtime package.
+- GC-A2 does not authorize checkout execution.
 
 ## 6. Package sequencing model
 
@@ -120,15 +123,15 @@ Packages must run sequentially. One package may depend on earlier package eviden
 
 1. ADR-089 — accepted, Approved, merged
 2. NA-A2 — accepted, merged
-3. GLF-E original package — merged; narrow acceptance reopened for GLF-E-S1
-4. GLF-E-S1 savepoint lock-continuity correction — current authorized package
-5. GC-A2 General Cashier terminal obligation attestation — paused and locked
+3. GLF-E original package — accepted, merged
+4. GLF-E-S1 savepoint lock-continuity correction — accepted, merged
+5. GC-A2 General Cashier terminal obligation attestation — current authorized runtime package
 6. Front Desk terminal state and immutable checkout evidence — locked
 7. Transactional Housekeeping handoff/outbox — locked
 8. Checkout sensitive confirmation and execute permission — locked
 9. Final checkout command and interaction layer — locked
 
-Only the next package may start after its predecessor is reviewed, accepted, and merged into the canonical branch. BD-A1 is accepted as the authoritative Property Business Date foundation; NA-A1 is accepted as the authoritative Night Audit run and active close-lock foundation. FD-B12 consumes NA-A1 read-only inside Front Desk, but checkout execution remains unauthorized. FD-B13 is accepted and records `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES` and `NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION`. ADR-089 is accepted, Approved, and merged at `1682dec0fb7f654e77888a476b4ec55a1507610b`. NA-A2 is accepted and merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GLF-E-S1 is the current authorized savepoint lock-continuity correction package. GC-A2 is paused and locked; it must not start until GLF-E-S1 is independently reviewed, accepted, and merged. GC-A2 is limited to General Cashier execution-time terminal obligation attestation, consuming minimized PMS references under General Cashier-owned locks without PMS or Front Desk mutation. GC-A2 does not authorize checkout execution. Checkout execution requires later Owner-approved packages; `can_execute=false` remains the canonical runtime behavior until that separately authorized package changes it. No AI agent may interpret full access as permission to skip package sequencing. Business Date and Night Audit must never absorb source-domain ownership. Package implementation remains sequential.
+Only the next package may start after its predecessor is reviewed, accepted, and merged into the canonical branch. BD-A1 is accepted as the authoritative Property Business Date foundation; NA-A1 is accepted as the authoritative Night Audit run and active close-lock foundation. FD-B12 consumes NA-A1 read-only inside Front Desk, but checkout execution remains unauthorized. FD-B13 is accepted and records `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES` and `NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION`. ADR-089 is accepted, Approved, and merged at `1682dec0fb7f654e77888a476b4ec55a1507610b`. NA-A2 is accepted and merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GLF-E-S1 is accepted and fast-forward merged at `f91621b58fe5743ed2a60980a70475cae40331bc`. GC-A2 is the current authorized runtime package. GC-A2 is limited to General Cashier execution-time terminal obligation attestation, consuming minimized PMS references under General Cashier-owned locks without PMS or Front Desk mutation. GC-A2 does not authorize checkout execution. Checkout execution requires later Owner-approved packages; `can_execute=false` remains the canonical runtime behavior until that separately authorized package changes it. No AI agent may interpret full access as permission to skip package sequencing. Business Date and Night Audit must never absorb source-domain ownership. Package implementation remains sequential.
 
 ### A. Domain-owned package
 
