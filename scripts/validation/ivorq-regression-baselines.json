@@ -522,15 +522,15 @@
         "GeneralCashierCheckoutTerminalObligationAttestationConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 53,
-        "assertions": 145,
+        "tests": 67,
+        "assertions": 253,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-22",
+        "measured_at": "2026-07-23",
         "branch": "sprint-gc-a2-checkout-terminal-obligation-attestation",
-        "sha": "4dfdba2a7038c5a11ad1960e4c31c632ef09742a",
+        "sha": "39e84234c1d4a0df875a71848464d734fa191d66",
         "note": "Contract Version 1.11. Foundation 30 tests / 56 assertions. SourceIntegrity 18 tests / 33 assertions. ConcurrencyProof 5 tests / 56 assertions. Batch total 53 tests / 145 assertions / 0 failures / 0 errors. Exact NA-A2 result: 20/914/0/0 PASS. Exact GLF-E result: 63/271/0/0 PASS. Exact GC-A1 result: 38/231/0/0 PASS. Exact GLF-D result: 60/253/0/0 PASS. Active PostgreSQL transaction required. Exact NA-A2 context required. Exact GLF-E object required. No GC-A1 reuse. No PMS financial-source query. cashier_sessions only FOR UPDATE source. Deterministic lock order. Transaction-local GC-A2 capability. Parameterized set_config(..., true). Only SHA-256 hash retained. Savepoint rollback invalidates GC-A2. Savepoint rollback preserves NA-A2 and GLF-E. pg_stat_activity lock proof. pg_blocking_pids blocker proof. Zero business writes. No migration. No route/controller/UI. No permission/confirmation. can_execute=false. checkout unauthorized. Inventory Reversal inherited debt unchanged."
       },
       "accepted_debt": [],

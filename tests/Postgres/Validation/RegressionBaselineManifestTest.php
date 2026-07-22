@@ -764,12 +764,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'GeneralCashierCheckoutTerminalObligationAttestationSourceIntegrityTest',
             'GeneralCashierCheckoutTerminalObligationAttestationConcurrencyProofTest',
         ], $baseline->classes);
-        $this->assertEquals(53, $baseline->expected->tests ?? null);
-        $this->assertEquals(145, $baseline->expected->assertions ?? null);
+        $this->assertEquals(67, $baseline->expected->tests ?? null);
+        $this->assertEquals(253, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('4dfdba2a7038c5a11ad1960e4c31c632ef09742a', $baseline->provenance->sha ?? null);
+        $this->assertEquals('39e84234c1d4a0df875a71848464d734fa191d66', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-gc-a2-checkout-terminal-obligation-attestation', $baseline->provenance->branch ?? null);
         $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
