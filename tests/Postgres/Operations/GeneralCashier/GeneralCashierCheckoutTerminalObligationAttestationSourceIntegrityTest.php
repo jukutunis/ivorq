@@ -15,6 +15,10 @@ use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutTerminalObligationAttestationService;
 use Modules\Operations\GeneralCashier\ValueObjects\GeneralCashierCheckoutTerminalObligationAttestation;
 use Modules\Operations\PMS\Models\Folio;
+use Carbon\Carbon;
+use Illuminate\Support\Str;
+use Modules\Operations\PMS\Enums\GuestPaymentLifecycleStatusEnum;
+use Modules\Operations\PMS\Enums\GuestPaymentTenderTypeEnum;
 use Modules\Operations\PMS\Models\GuestPaymentTransaction;
 use Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService;
 use Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort;
@@ -139,23 +143,38 @@ class GeneralCashierCheckoutTerminalObligationAttestationSourceIntegrityTest ext
         return $cs->fresh();
     }
 
-    private function makePayment(string $folioId, string $reservationId, string $guestId, string $cashierSessionId): GuestPaymentTransaction
+    private function makePayment(string $reservationId, string $guestId, string $cashierSessionId): GuestPaymentTransaction
     {
         static $pseq = 0;
         $pseq++;
         $pt = new GuestPaymentTransaction();
         $pt->forceFill([
             'property_id' => $this->glfProperty->id,
-            'folio_id' => $folioId,
+            'payment_number' => 'SI-PT-' . $pseq . '-' . Str::upper(Str::random(4)),
             'reservation_id' => $reservationId,
             'guest_id' => $guestId,
-            'cashier_session_id' => $cashierSessionId,
-            'tender_type' => 'cash',
-            'amount' => '50.00',
             'currency' => 'USD',
-            'status' => 'completed',
-            'transaction_number' => 'SI-PT-' . $pseq,
-            'idempotency_key' => 'si-pt-' . bin2hex(random_bytes(4)),
+            'amount' => '50.00',
+            'tender_type' => GuestPaymentTenderTypeEnum::Cash->value,
+            'cashier_session_id' => $cashierSessionId,
+            'lifecycle_status' => GuestPaymentLifecycleStatusEnum::Recorded->value,
+            'recording_idempotency_key' => 'si-pt-' . Str::ulid(),
+            'recorded_at' => Carbon::parse('2026-07-23 08:00:00'),
+            'recorded_by' => $this->glfActor->id,
+            'source_snapshot' => [
+                'payment_number' => 'SI-PT-' . $pseq,
+                'reservation_id' => $reservationId,
+                'guest_id' => $guestId,
+                'currency' => 'USD',
+                'amount' => '50.00',
+                'tender_type' => 'CASH',
+                'cashier_session_id' => $cashierSessionId,
+                'lifecycle_status' => 'RECORDED',
+                'recorded_at' => '2026-07-23T08:00:00+00:00',
+                'recorded_by' => (string) $this->glfActor->id,
+            ],
+            'created_by' => $this->glfActor->id,
+            'updated_by' => $this->glfActor->id,
         ])->save();
         return $pt->fresh();
     }
@@ -338,7 +357,7 @@ class GeneralCashierCheckoutTerminalObligationAttestationSourceIntegrityTest ext
             $s = $this->makeStay($r->id, $g->id);
             $f = $this->makeFolio($r->id, $g->id);
             $cs = $this->makeCashierSession('OPEN');
-            $pt = $this->makePayment($f->id, $r->id, $g->id, $cs->id);
+            $pt = $this->makePayment($r->id, $g->id, $cs->id);
 
             $ctx = $this->acquireContext();
             $glf = $this->glfService->attest($ctx, $s->id);
@@ -371,7 +390,7 @@ class GeneralCashierCheckoutTerminalObligationAttestationSourceIntegrityTest ext
             $s = $this->makeStay($r->id, $g->id);
             $f = $this->makeFolio($r->id, $g->id);
             $cs = $this->makeCashierSession('OPEN');
-            $pt = $this->makePayment($f->id, $r->id, $g->id, $cs->id);
+            $pt = $this->makePayment($r->id, $g->id, $cs->id);
 
             $ctx = $this->acquireContext();
             $glf = $this->glfService->attest($ctx, $s->id);
@@ -394,7 +413,7 @@ class GeneralCashierCheckoutTerminalObligationAttestationSourceIntegrityTest ext
             $s = $this->makeStay($r->id, $g->id);
             $f = $this->makeFolio($r->id, $g->id);
             $cs = $this->makeCashierSession('OPEN');
-            $pt = $this->makePayment($f->id, $r->id, $g->id, $cs->id);
+            $pt = $this->makePayment($r->id, $g->id, $cs->id);
 
             $ctx = $this->acquireContext();
             $glf = $this->glfService->attest($ctx, $s->id);

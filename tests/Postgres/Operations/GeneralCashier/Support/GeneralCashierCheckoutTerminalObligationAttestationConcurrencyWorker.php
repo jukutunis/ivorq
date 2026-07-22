@@ -24,6 +24,9 @@
     $startedAt = date('c');
     $phpPid = getmypid();
 
+    // Bind CLEAR participation ports for GLF-E attestation in concurrency workers
+    bindClearParticipationPorts($app);
+
     try {
         $result = match ($mode) {
             'gc_attest'                     => doGcAttest($p),
@@ -55,6 +58,28 @@
         exit(1);
     }
 })();
+
+function bindClearParticipationPorts($app): void
+{
+    $app->singleton(
+        \Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessParticipationPort::class,
+        fn() => new class implements \Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessParticipationPort {
+            public function participate(string $r, string $p): array { return ['status' => 'AVAILABLE_CLEAR', 'code' => null, 'source_fingerprint' => 'fp_pc', 'source_identifiers' => []]; }
+        }
+    );
+    $app->singleton(
+        \Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldParticipationPort::class,
+        fn() => new class implements \Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldParticipationPort {
+            public function participate(string $r, string $p): array { return ['status' => 'AVAILABLE_CLEAR', 'code' => null, 'source_fingerprint' => 'fp_sh', 'source_identifiers' => []]; }
+        }
+    );
+    $app->singleton(
+        \Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort::class,
+        fn() => new class implements \Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort {
+            public function participate(string $r, string $p): array { return ['status' => 'AVAILABLE_CLEAR', 'code' => null, 'source_fingerprint' => 'fp_cs', 'source_identifiers' => []]; }
+        }
+    );
+}
 
 function extractStructuredError(\Throwable $e, array &$out): void
 {
@@ -275,6 +300,8 @@ function doGcAttestSavepointRollback(array $p): array
 
         return [
             'rolled_back' => true,
+            'postgres_backend_pid' => $pidBefore,
+            'postgres_transaction_id' => $txidBefore,
             'postgres_backend_pid_before' => $pidBefore,
             'postgres_backend_pid_after' => $pidAfter,
             'postgres_transaction_id_before' => $txidBefore,
