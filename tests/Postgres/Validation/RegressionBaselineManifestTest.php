@@ -771,29 +771,70 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals('8b2e28cacd4ea2693b33ffbded023814077e7fbd', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-gc-a2-checkout-terminal-obligation-attestation', $baseline->provenance->branch ?? null);
+
+        // Execution mode (already asserted on the field above)
+        $this->assertStringContainsString('Registered individual runner total', $baseline->provenance->note ?? '');
+
+        // Per-class results
+        $this->assertStringContainsString('Foundation 44 tests / 124 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('SourceIntegrity 18 tests / 73 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('ConcurrencyProof 5 tests / 56 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+
+        // Registered individual total
+        $this->assertStringContainsString('67 tests / 253 assertions / 0 failures / 0 errors / 0 skipped', $baseline->provenance->note ?? '');
+
+        // Combined batch is not registered mode
+        $this->assertStringContainsString('Combined batch execution is not the registered mode', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('three DatabaseMigrations classes conflict when combined', $baseline->provenance->note ?? '');
+
+        // Predecessor results
+        $this->assertStringContainsString('NA-A2: 20/914/0/0 PASS', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('GLF-E: 63/271/0/0 PASS', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('GC-A1: 38/231/0/0 PASS', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('GLF-D: 60/253/0/0 PASS', $baseline->provenance->note ?? '');
+
+        // Complete active runner
+        $this->assertStringContainsString('Complete active runner: 14 passed / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
+
+        // Non-PostgreSQL guard
+        $this->assertStringContainsString('Non-PostgreSQL public guard proven', $baseline->provenance->note ?? '');
+
+        // Capability lifecycle
         $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('No GC-A1 reuse', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('No PMS financial-source query', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('cashier_sessions only FOR UPDATE source', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Transaction-local GC-A2 capability', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Only SHA-256 capability hash retained', $baseline->provenance->note ?? '');
+
+        // Transaction locality
+        $this->assertStringContainsString('Active PostgreSQL transaction required', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Parameterized set_config(..., true)', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Only SHA-256 hash retained', $baseline->provenance->note ?? '');
+
+        // Lock ordering and source
+        $this->assertStringContainsString('Deterministic lock order', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('cashier_sessions only FOR UPDATE source', $baseline->provenance->note ?? '');
+
+        // Savepoint rollback
         $this->assertStringContainsString('Savepoint rollback invalidates GC-A2', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Savepoint rollback preserves NA-A2 and GLF-E', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('pg_stat_activity lock proof', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('pg_blocking_pids blocker proof', $baseline->provenance->note ?? '');
+
+        // Source restrictions
+        $this->assertStringContainsString('No GC-A1 reuse', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No PMS financial-source query', $baseline->provenance->note ?? '');
+
+        // Zero business writes
         $this->assertStringContainsString('Zero business writes', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No migration', $baseline->provenance->note ?? '');
+
+        // No route/controller/UI, no permission/confirmation
         $this->assertStringContainsString('No route/controller/UI', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No permission/confirmation', $baseline->provenance->note ?? '');
+
+        // GC-A2 scope
+        $this->assertStringContainsString('pg_stat_activity lock proof', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('pg_blocking_pids blocker proof', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Inventory Reversal inherited debt unchanged', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Non-PostgreSQL public guard proven', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Foundation 44 tests / 124 assertions', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('SourceIntegrity 18 tests / 73 assertions', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('ConcurrencyProof 5 tests / 56 assertions', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Individual total 67 tests / 253 assertions', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('NA-A2: 20/914/0/0 PASS', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('GC-A1: 38/231/0/0 PASS', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Exact NA-A2 context required', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Exact GLF-E object required', $baseline->provenance->note ?? '');
     }
 
     private function findBaseline(string $id): ?object
