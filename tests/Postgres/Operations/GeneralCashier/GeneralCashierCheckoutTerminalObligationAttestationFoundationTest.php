@@ -206,26 +206,47 @@ class GeneralCashierCheckoutTerminalObligationAttestationFoundationTest extends 
 
     public function test_postgresql_required(): void
     {
-        // Test that the guard branch for non-PostgreSQL is present and reachable.
-        // The service checks DB::connection()->getDriverName() !== 'pgsql'.
-        // We verify the guard exists in the source and the test environment uses PostgreSQL.
+        // Real non-PostgreSQL guard proof using an isolated in-memory SQLite connection.
+        // GC-A2 must reject the driver before dereferencing argument objects.
+        $originalConnection = DB::connection();
+        $originalDefault = DB::getDefaultConnection();
+        $tempName = 'gc_a2_temp_sqlite_' . uniqid();
 
-        // Source-level proof: the assertParticipatingPostgresTransaction method exists
-        // and checks driver name
-        $ref = new \ReflectionMethod($this->gcService, 'assertParticipatingPostgresTransaction');
-        $ref->setAccessible(true);
+        // Register an in-memory SQLite connection
+        config()->set("database.connections.{$tempName}", [
+            'driver' => 'sqlite',
+            'database' => ':memory:',
+        ]);
 
-        // The test DB must be PostgreSQL
-        $this->assertEquals('pgsql', DB::connection()->getDriverName(), 'Test environment must use PostgreSQL');
-
-        // In a transaction, the guard passes for PostgreSQL
-        DB::beginTransaction();
         try {
-            // Should not throw when using PostgreSQL
-            $ref->invoke($this->gcService);
-            $this->assertTrue(true);
+            // Purge any cached connection and set as default
+            DB::purge($tempName);
+            DB::setDefaultConnection($tempName);
+            DB::reconnect($tempName);
+
+            // Begin a transaction on the SQLite connection
+            DB::beginTransaction();
+
+            try {
+                // Create typed uninitialized objects through reflection
+                $ctxRef = new \ReflectionClass(PropertyBusinessDateOperationalLockContext::class);
+                $ctx = $ctxRef->newInstanceWithoutConstructor();
+
+                $glfRef = new \ReflectionClass(\Modules\Operations\PMS\ValueObjects\GuestLedgerCheckoutTerminalFinancialAttestation::class);
+                $glf = $glfRef->newInstanceWithoutConstructor();
+
+                $this->expectException(RuntimeException::class);
+                $this->expectExceptionMessage(GeneralCashierCheckoutTerminalObligationAttestationService::ERROR_POSTGRESQL_REQUIRED);
+
+                $this->gcService->attest($ctx, $glf);
+            } finally {
+                DB::rollBack();
+            }
         } finally {
-            DB::rollBack();
+            // Restore original connection
+            DB::purge($tempName);
+            DB::setDefaultConnection($originalDefault);
+            DB::reconnect($originalDefault);
         }
     }
 
