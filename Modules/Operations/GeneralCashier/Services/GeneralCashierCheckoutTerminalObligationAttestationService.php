@@ -129,27 +129,33 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
         }
 
         // 6. Validate minimized GLF-E cash-linked reference structure
-        $this->validateCashLinkedReferences($financialAttestation);
+        // May return a terminal EVIDENCE_UNAVAILABLE result (pre-lock) or null (proceed)
+        $preLockResult = $this->validateCashLinkedReferences($financialAttestation);
 
         $consumedPmsStatus = $financialAttestation->status->value;
         $consumedPmsFingerprint = $financialAttestation->source_fingerprint;
         $cashierSessionIds = $financialAttestation->cashier_session_ids;
 
-        // 7. Set narrow transaction-local lock timeout
-        DB::statement("SET LOCAL lock_timeout = '" . self::LOCK_TIMEOUT . "'");
+        // If validateCashLinkedReferences returned a terminal result, use it (no lock query)
+        if ($preLockResult !== null) {
+            $evaluationResult = $preLockResult;
+        } else {
+            // 7. Set narrow transaction-local lock timeout
+            DB::statement("SET LOCAL lock_timeout = '" . self::LOCK_TIMEOUT . "'");
 
-        // 8 & 9. Lock and evaluate General Cashier sessions
-        try {
-            $evaluationResult = $this->evaluateTerminalObligations(
-                $propertyId,
-                $cashierSessionIds,
-                $financialAttestation->cash_linked_references,
-            );
-        } catch (QueryException $exception) {
-            if ($this->isLockTimeout($exception)) {
-                throw new RuntimeException(self::ERROR_CASHIER_SOURCE_LOCK_TIMEOUT, 0, $exception);
+            // 8 & 9. Lock and evaluate General Cashier sessions
+            try {
+                $evaluationResult = $this->evaluateTerminalObligations(
+                    $propertyId,
+                    $cashierSessionIds,
+                    $financialAttestation->cash_linked_references,
+                );
+            } catch (QueryException $exception) {
+                if ($this->isLockTimeout($exception)) {
+                    throw new RuntimeException(self::ERROR_CASHIER_SOURCE_LOCK_TIMEOUT, 0, $exception);
+                }
+                throw $exception;
             }
-            throw $exception;
         }
 
         // 10. Build immutable transaction-bound value object
@@ -199,15 +205,25 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
             'postgres_transaction_id' => $proof['transaction_id'],
             'operational_context' => $operationalContext,
             'financial_attestation' => $financialAttestation,
-            'property_id' => $propertyId,
-            'property_business_date_id' => $operationalContext->property_business_date_id,
-            'business_date' => $operationalContext->business_date,
-            'stay_id' => $stayId,
-            'reservation_id' => $reservationId,
-            'consumed_pms_status' => $consumedPmsStatus,
-            'consumed_pms_source_fingerprint' => $consumedPmsFingerprint,
-            'status' => $evaluationResult['status']->value,
+            'attestation_version' => $attestation->attestation_version,
+            'status' => $attestation->status->value,
+            'owner' => $attestation->owner,
+            'transaction_bound' => $attestation->transaction_bound,
+            'property_id' => $attestation->property_id,
+            'property_business_date_id' => $attestation->property_business_date_id,
+            'business_date' => $attestation->business_date,
+            'front_desk_stay_id' => $attestation->front_desk_stay_id,
+            'reservation_id' => $attestation->reservation_id,
+            'consumed_pms_status' => $attestation->consumed_pms_status,
+            'consumed_pms_source_fingerprint' => $attestation->consumed_pms_source_fingerprint,
+            'cashier_session_ids' => $attestation->cashier_session_ids,
+            'cash_linked_reference_count' => $attestation->cash_linked_reference_count,
+            'blocker_codes' => $attestation->blocker_codes,
+            'review_reasons' => $attestation->review_reasons,
+            'evidence_unavailable_codes' => $attestation->evidence_unavailable_codes,
             'source_fingerprint' => $attestation->source_fingerprint,
+            'evaluated_at' => $attestation->evaluated_at,
+            'markers' => $attestation->markers,
             'attestation_capability_hash' => $capabilityHash,
         ];
 
@@ -268,14 +284,25 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
         }
 
         // 6. Require all authoritative immutable fields to match
-        if ($cashierAttestation->property_id !== $issuance['property_id']
+        if ($cashierAttestation->attestation_version !== $issuance['attestation_version']
+            || $cashierAttestation->status->value !== $issuance['status']
+            || $cashierAttestation->owner !== $issuance['owner']
+            || $cashierAttestation->transaction_bound !== $issuance['transaction_bound']
+            || $cashierAttestation->property_id !== $issuance['property_id']
             || $cashierAttestation->property_business_date_id !== $issuance['property_business_date_id']
             || $cashierAttestation->business_date !== $issuance['business_date']
-            || $cashierAttestation->front_desk_stay_id !== $issuance['stay_id']
+            || $cashierAttestation->front_desk_stay_id !== $issuance['front_desk_stay_id']
             || $cashierAttestation->reservation_id !== $issuance['reservation_id']
             || $cashierAttestation->consumed_pms_status !== $issuance['consumed_pms_status']
             || $cashierAttestation->consumed_pms_source_fingerprint !== $issuance['consumed_pms_source_fingerprint']
-            || $cashierAttestation->source_fingerprint !== $issuance['source_fingerprint']) {
+            || $cashierAttestation->cashier_session_ids !== $issuance['cashier_session_ids']
+            || $cashierAttestation->cash_linked_reference_count !== $issuance['cash_linked_reference_count']
+            || $cashierAttestation->blocker_codes !== $issuance['blocker_codes']
+            || $cashierAttestation->review_reasons !== $issuance['review_reasons']
+            || $cashierAttestation->evidence_unavailable_codes !== $issuance['evidence_unavailable_codes']
+            || $cashierAttestation->source_fingerprint !== $issuance['source_fingerprint']
+            || $cashierAttestation->evaluated_at !== $issuance['evaluated_at']
+            || $cashierAttestation->markers !== $issuance['markers']) {
             throw new DomainException(self::ERROR_INVALID_TERMINAL_OBLIGATION_ATTESTATION);
         }
     }
@@ -303,44 +330,99 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
      * Validate minimized GLF-E cash-linked reference structure.
      * Must fail before any cashier_sessions query.
      *
-     * @throws DomainException
+     * When GLF-E explicitly signals CASH_LINKED_REFERENCE_EVIDENCE_UNAVAILABLE,
+     * this method returns a terminal EVIDENCE_UNAVAILABLE result pre-lock.
+     *
+     * @throws DomainException for malformed references
+     * @return array{status: GeneralCashierCheckoutTerminalObligationAttestationStatusEnum, blocker_codes: string[], review_reasons: string[], evidence_unavailable_codes: string[], locked_session_facts: array[], markers: array<string, string>}|null
      */
     private function validateCashLinkedReferences(
         GuestLedgerCheckoutTerminalFinancialAttestation $financialAttestation,
-    ): void {
+    ): ?array {
         $references = $financialAttestation->cash_linked_references;
 
-        // When GLF-E explicitly signals evidence-unavailable, fail closed
+        // When GLF-E explicitly signals evidence-unavailable, return terminal EVIDENCE_UNAVAILABLE
+        // without querying cashier_sessions. This is valid fail-closed source evidence.
         if (in_array('CASH_LINKED_REFERENCE_EVIDENCE_UNAVAILABLE', $financialAttestation->evidence_unavailable_codes, true)) {
+            $markers = [
+                'attestation_owner' => 'GENERAL_CASHIER',
+                'transaction_boundary' => 'ACTIVE_POSTGRESQL_TRANSACTION',
+                'pms_reference_contract' => 'EXACT_GLF_E_ATTESTATION',
+                'cashier_obligation_scope_marker' => 'AUTHORITATIVE_CASHIER_OBLIGATIONS_FOUND',
+                'cashier_accountability_marker' => 'CASHIER_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE',
+            ];
+
+            return [
+                'status' => GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationEvidenceUnavailable,
+                'blocker_codes' => [],
+                'review_reasons' => [],
+                'evidence_unavailable_codes' => ['CASH_LINKED_REFERENCE_EVIDENCE_UNAVAILABLE'],
+                'locked_session_facts' => [],
+                'markers' => $markers,
+            ];
+        }
+
+        // Validate cashier_session_ids themselves: must be non-empty strings, unique, sorted
+        $attestedSessionIds = $financialAttestation->cashier_session_ids;
+        $prevId = null;
+        foreach ($attestedSessionIds as $sid) {
+            if (! is_string($sid) || trim($sid) === '') {
+                throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
+            }
+            if ($prevId !== null && $sid <= $prevId) {
+                throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
+            }
+            $prevId = $sid;
+        }
+
+        // Empty references + non-empty session IDs = invalid
+        if (count($references) === 0 && count($attestedSessionIds) > 0) {
             throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
         }
 
-        // Empty references are valid — no cashier obligation
-        if (count($references) === 0) {
-            return;
+        // Non-empty references + empty session IDs = invalid
+        if (count($references) > 0 && count($attestedSessionIds) === 0) {
+            throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
         }
+
+        // Both empty → valid (no cashier obligation); handled downstream as CLEAR
+        if (count($references) === 0) {
+            return null;
+        }
+
+        $expectedKeys = ['cashier_session_id', 'source_id', 'source_type'];
+        sort($expectedKeys);
 
         $seenTuples = [];
         $derivedSessionIds = [];
+        $prevTuple = null;
 
         foreach ($references as $ref) {
-            // Every reference must be an array with exactly the expected keys
+            // Every reference must be an array
             if (! is_array($ref)) {
                 throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
             }
 
-            $allowedKeys = ['source_type', 'source_id', 'cashier_session_id'];
+            // Exact key validation — sort both sides
             $actualKeys = array_keys($ref);
             sort($actualKeys);
-            if ($actualKeys !== $allowedKeys) {
+
+            if ($actualKeys !== $expectedKeys) {
                 throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
             }
 
-            $sourceType = trim((string) ($ref['source_type'] ?? ''));
-            $sourceId = trim((string) ($ref['source_id'] ?? ''));
-            $cashierSessionId = trim((string) ($ref['cashier_session_id'] ?? ''));
+            // Require each value to be an actual non-empty string before trimming
+            if (! isset($ref['source_type']) || ! is_string($ref['source_type'])
+                || ! isset($ref['source_id']) || ! is_string($ref['source_id'])
+                || ! isset($ref['cashier_session_id']) || ! is_string($ref['cashier_session_id'])) {
+                throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
+            }
 
-            // All three values must be non-empty strings
+            $sourceType = trim($ref['source_type']);
+            $sourceId = trim($ref['source_id']);
+            $cashierSessionId = trim($ref['cashier_session_id']);
+
+            // All three values must be non-empty after trim
             if ($sourceType === '' || $sourceId === '' || $cashierSessionId === '') {
                 throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
             }
@@ -357,6 +439,13 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
             }
             $seenTuples[$tupleKey] = true;
 
+            // Deterministic tuple ordering: source_type → source_id → cashier_session_id
+            $canonicalTuple = "{$sourceType}|{$sourceId}|{$cashierSessionId}";
+            if ($prevTuple !== null && $canonicalTuple <= $prevTuple) {
+                throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
+            }
+            $prevTuple = $canonicalTuple;
+
             $derivedSessionIds[] = $cashierSessionId;
         }
 
@@ -364,12 +453,11 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
         $derivedSessionIds = array_values(array_unique($derivedSessionIds));
         sort($derivedSessionIds);
 
-        $attestedSessionIds = $financialAttestation->cashier_session_ids;
-        sort($attestedSessionIds);
-
         if ($derivedSessionIds !== $attestedSessionIds) {
             throw new DomainException(self::ERROR_INVALID_CASH_LINKED_REFERENCES);
         }
+
+        return null; // references valid, proceed to lock & evaluate
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -460,13 +548,13 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
             ];
 
             // OPEN session → BLOCKED
-            if ($status === 'OPEN') {
+            if ($status === CashierSessionStatusEnum::OPEN->value) {
                 $blockerCodes[] = 'CASHIER_SESSION_OPEN';
                 continue;
             }
 
             // CLOSED session — evaluate close evidence
-            if ($status === 'CLOSED') {
+            if ($status === CashierSessionStatusEnum::CLOSED->value) {
                 $closedAt = $session->closed_at ?? null;
                 $closedBy = trim((string) ($session->closed_by ?? ''));
 
@@ -489,7 +577,7 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
         // (already validated above — but if it slipped through, record it)
         // Note: We validated this before the lock query, so this is a belt-and-suspenders check
 
-        // Determine terminal status by precedence
+        // Deduplicate and sort
         $blockerCodes = array_values(array_unique($blockerCodes));
         $reviewReasons = array_values(array_unique($reviewReasons));
         $evidenceUnavailableCodes = array_values(array_unique($evidenceUnavailableCodes));
@@ -501,19 +589,20 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
         // Sort session facts by id
         usort($lockedSessionFacts, fn(array $a, array $b): int => $a['id'] <=> $b['id']);
 
-        if (count($evidenceUnavailableCodes) > 0) {
-            $status = GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationEvidenceUnavailable;
-            $markers['cashier_accountability_marker'] = 'CASHIER_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE';
-        } elseif (count($reviewReasons) > 0) {
-            $status = GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationReviewRequired;
-            $markers['cashier_accountability_marker'] = 'CASHIER_ACCOUNTABILITY_REVIEW_REQUIRED';
-        } elseif (count($blockerCodes) > 0) {
-            $status = GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationBlocked;
-            $markers['cashier_accountability_marker'] = 'CASHIER_ACCOUNTABILITY_BLOCKED';
-        } else {
-            $status = GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationClear;
-            $markers['cashier_accountability_marker'] = 'CASHIER_ACCOUNTABILITY_CLEAR';
-        }
+        // Determine terminal status by correct precedence:
+        // 1. REVIEW_REQUIRED > 2. EVIDENCE_UNAVAILABLE > 3. BLOCKED > 4. CLEAR
+        $status = $this->resolveTerminalStatus($blockerCodes, $reviewReasons, $evidenceUnavailableCodes);
+
+        match ($status) {
+            GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationReviewRequired =>
+                $markers['cashier_accountability_marker'] = 'CASHIER_ACCOUNTABILITY_REVIEW_REQUIRED',
+            GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationEvidenceUnavailable =>
+                $markers['cashier_accountability_marker'] = 'CASHIER_ACCOUNTABILITY_EVIDENCE_UNAVAILABLE',
+            GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationBlocked =>
+                $markers['cashier_accountability_marker'] = 'CASHIER_ACCOUNTABILITY_BLOCKED',
+            GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationClear =>
+                $markers['cashier_accountability_marker'] = 'CASHIER_ACCOUNTABILITY_CLEAR',
+        };
 
         return [
             'status' => $status,
@@ -523,6 +612,36 @@ class GeneralCashierCheckoutTerminalObligationAttestationService
             'locked_session_facts' => $lockedSessionFacts,
             'markers' => $markers,
         ];
+    }
+
+    /**
+     * Resolve terminal status with correct precedence:
+     *   1. REVIEW_REQUIRED
+     *   2. EVIDENCE_UNAVAILABLE
+     *   3. BLOCKED
+     *   4. CLEAR
+     *
+     * Extracted as a narrow private method for deterministic testing.
+     *
+     * @param string[] $blockerCodes
+     * @param string[] $reviewReasons
+     * @param string[] $evidenceUnavailableCodes
+     */
+    private function resolveTerminalStatus(
+        array $blockerCodes,
+        array $reviewReasons,
+        array $evidenceUnavailableCodes,
+    ): GeneralCashierCheckoutTerminalObligationAttestationStatusEnum {
+        if (count($reviewReasons) > 0) {
+            return GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationReviewRequired;
+        }
+        if (count($evidenceUnavailableCodes) > 0) {
+            return GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationEvidenceUnavailable;
+        }
+        if (count($blockerCodes) > 0) {
+            return GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationBlocked;
+        }
+        return GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationClear;
     }
 
     // ═════════════════════════════════════════════════════════════════════
