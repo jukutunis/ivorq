@@ -758,7 +758,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $baseline = $this->findBaseline('general-cashier-terminal-obligation-attestation-baseline');
         $this->assertNotNull($baseline, 'GC-A2 baseline must exist.');
         $this->assertEquals('active', $baseline->status);
-        $this->assertEquals('batch', $baseline->execution_mode ?? null);
+        $this->assertEquals('individual', $baseline->execution_mode ?? null, 'GC-A2 uses individual execution due to DatabaseMigrations batch conflict.');
         $this->assertSame([
             'GeneralCashierCheckoutTerminalObligationAttestationFoundationTest',
             'GeneralCashierCheckoutTerminalObligationAttestationSourceIntegrityTest',
@@ -769,7 +769,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('39e84234c1d4a0df875a71848464d734fa191d66', $baseline->provenance->sha ?? null);
+        $this->assertEquals('8b2e28cacd4ea2693b33ffbded023814077e7fbd', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-gc-a2-checkout-terminal-obligation-attestation', $baseline->provenance->branch ?? null);
         $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
@@ -787,6 +787,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('No route/controller/UI', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No permission/confirmation', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Inventory Reversal inherited debt unchanged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Non-PostgreSQL public guard proven', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Foundation 44 tests / 124 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('SourceIntegrity 18 tests / 73 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('ConcurrencyProof 5 tests / 56 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Individual total 67 tests / 253 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('NA-A2: 20/914/0/0 PASS', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('GC-A1: 38/231/0/0 PASS', $baseline->provenance->note ?? '');
     }
 
     private function findBaseline(string $id): ?object

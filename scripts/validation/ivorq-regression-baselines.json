@@ -515,7 +515,7 @@
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
-      "execution_mode": "batch",
+      "execution_mode": "individual",
       "classes": [
         "GeneralCashierCheckoutTerminalObligationAttestationFoundationTest",
         "GeneralCashierCheckoutTerminalObligationAttestationSourceIntegrityTest",
@@ -530,8 +530,8 @@
       "provenance": {
         "measured_at": "2026-07-23",
         "branch": "sprint-gc-a2-checkout-terminal-obligation-attestation",
-        "sha": "39e84234c1d4a0df875a71848464d734fa191d66",
-        "note": "Contract Version 1.11. Foundation 30 tests / 56 assertions. SourceIntegrity 18 tests / 33 assertions. ConcurrencyProof 5 tests / 56 assertions. Batch total 53 tests / 145 assertions / 0 failures / 0 errors. Exact NA-A2 result: 20/914/0/0 PASS. Exact GLF-E result: 63/271/0/0 PASS. Exact GC-A1 result: 38/231/0/0 PASS. Exact GLF-D result: 60/253/0/0 PASS. Active PostgreSQL transaction required. Exact NA-A2 context required. Exact GLF-E object required. No GC-A1 reuse. No PMS financial-source query. cashier_sessions only FOR UPDATE source. Deterministic lock order. Transaction-local GC-A2 capability. Parameterized set_config(..., true). Only SHA-256 hash retained. Savepoint rollback invalidates GC-A2. Savepoint rollback preserves NA-A2 and GLF-E. pg_stat_activity lock proof. pg_blocking_pids blocker proof. Zero business writes. No migration. No route/controller/UI. No permission/confirmation. can_execute=false. checkout unauthorized. Inventory Reversal inherited debt unchanged."
+        "sha": "8b2e28cacd4ea2693b33ffbded023814077e7fbd",
+        "note": "Contract Version 1.11. Foundation 44 tests / 124 assertions / 0 failures / 0 errors. SourceIntegrity 18 tests / 73 assertions / 0 failures / 0 errors. ConcurrencyProof 5 tests / 56 assertions / 0 failures / 0 errors. Individual total 67 tests / 253 assertions. Batch execution blocked by systemic DatabaseMigrations conflict across three test classes (14 migration errors; identical pattern to inventory-avco-sensitive-baseline-v2-candidate). Execution mode set to individual per established project convention. NA-A2: 20/914/0/0 PASS. GC-A1: 38/231/0/0 PASS. GLF-E and GLF-D: individual execution verified in prior correction cycle at 63/271 and 60/253 respectively. Active PostgreSQL transaction required. Non-PostgreSQL public guard proven via isolated in-memory SQLite connection. Exact NA-A2 context required. Exact GLF-E object required. No GC-A1 reuse. No PMS financial-source query. cashier_sessions only FOR UPDATE source. Deterministic lock order. Transaction-local GC-A2 capability. Parameterized set_config(..., true). Only SHA-256 capability hash retained. Savepoint rollback invalidates GC-A2. Savepoint rollback preserves NA-A2 and GLF-E. pg_stat_activity lock proof. pg_blocking_pids blocker proof. Zero business writes. No migration. No route/controller/UI. No permission/confirmation. can_execute=false. checkout unauthorized. Inventory Reversal inherited debt unchanged. One local pre-push amend occurred while preparing the Repair and prove GC-A2 runtime tests commit. No force-push or remote branch-history rewrite was used."
       },
       "accepted_debt": [],
       "status": "active"
