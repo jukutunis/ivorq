@@ -649,4 +649,24 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
             'Migration trigger must enforce DELIVERED no-data replay.'
         );
     }
+
+    public function test_trigger_uses_column_value_time_checks(): void
+    {
+        $migrationPath = base_path('Modules/Operations/FrontDesk/database/migrations/2026_07_24_000001_create_front_desk_checkout_housekeeping_handoffs_table.php');
+        $this->assertFileExists($migrationPath);
+        $source = file_get_contents($migrationPath);
+
+        // Column-value time checks provide defense-in-depth for due-time validation
+        // alongside PHP-level server-now checks in the Eloquent model
+        $this->assertStringContainsString(
+            'NEW.claimed_at < OLD.claim_expires_at',
+            $source,
+            'Trigger must use NEW.claimed_at vs OLD.claim_expires_at for expiry check.'
+        );
+        $this->assertStringContainsString(
+            'NEW.claimed_at < OLD.available_at',
+            $source,
+            'Trigger must use NEW.claimed_at vs OLD.available_at for retry check.'
+        );
+    }
 }

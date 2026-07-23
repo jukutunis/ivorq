@@ -63,43 +63,53 @@ class FrontDeskCheckoutHousekeepingHandoff extends Model
 
             // ── Same-status checks ──────────────────────────────────────
             if ($oldStatus === $newStatus) {
-                if ($oldStatus === 'PENDING') {
-                    throw new DomainException(
-                        'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                    );
-                }
-                if ($oldStatus === 'FAILED') {
+                if ($oldStatus === 'PENDING' || $oldStatus === 'FAILED') {
                     throw new DomainException(
                         'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
                     );
                 }
                 if ($oldStatus === 'CLAIMED') {
-                    // Only allowed when old claim expired
+                    // Only allowed when old claim expired (database-clock check via server now)
                     $oldClaimExpiresAt = $original['claim_expires_at'] ?? null;
                     if ($oldClaimExpiresAt === null || $oldClaimExpiresAt > $now->format('Y-m-d H:i:s')) {
                         throw new DomainException(
                             'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
                         );
                     }
-                    // Must change token hash
+                    // attempts must increment
+                    if ($handoff->attempts !== ((int) ($original['attempts'] ?? 0)) + 1) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    // claimed_at must change and be >= old claim_expires_at
+                    if (! $handoff->isDirty('claimed_at')) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->claimed_at !== null && $oldClaimExpiresAt !== null
+                        && $handoff->claimed_at->format('Y-m-d H:i:s') < $oldClaimExpiresAt) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    // claim_expires_at must be > new claimed_at
+                    if ($handoff->claim_expires_at === null || $handoff->claimed_at === null
+                        || $handoff->claim_expires_at <= $handoff->claimed_at) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    // token hash must change
                     if ($handoff->claim_token_hash === ($original['claim_token_hash'] ?? null)) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     // available_at must not change
                     if ($handoff->isDirty('available_at')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    // delivery/failure/error fields must be null
+                    if ($handoff->delivered_at !== null || $handoff->failed_at !== null || $handoff->last_error_code !== null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                 }
                 if ($oldStatus === 'DELIVERED') {
-                    // Only allowed when there is NO persisted data change
+                    // DELIVERED must not mutate any persisted data
                     if ($handoff->isDirty()) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                 }
             }
@@ -108,87 +118,106 @@ class FrontDeskCheckoutHousekeepingHandoff extends Model
             if ($oldStatus !== $newStatus) {
                 // PENDING → CLAIMED
                 if ($oldStatus === 'PENDING' && $newStatus === 'CLAIMED') {
+                    $oldAvailableAt = $original['available_at'] ?? null;
+                    if ($oldAvailableAt === null || $oldAvailableAt > $now->format('Y-m-d H:i:s')) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
                     if ($handoff->attempts !== ((int) ($original['attempts'] ?? 0)) + 1) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->claimed_at === null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->claim_expires_at === null || $handoff->claimed_at === null
+                        || $handoff->claim_expires_at <= $handoff->claimed_at) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->claim_token_hash === null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     if ($handoff->isDirty('available_at')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->delivered_at !== null || $handoff->failed_at !== null || $handoff->last_error_code !== null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                 }
                 // FAILED → CLAIMED
                 elseif ($oldStatus === 'FAILED' && $newStatus === 'CLAIMED') {
                     $oldAvailableAt = $original['available_at'] ?? null;
                     if ($oldAvailableAt === null || $oldAvailableAt > $now->format('Y-m-d H:i:s')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     if ($handoff->attempts !== ((int) ($original['attempts'] ?? 0)) + 1) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if (! $handoff->isDirty('claimed_at')) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->claimed_at !== null && $oldAvailableAt !== null
+                        && $handoff->claimed_at->format('Y-m-d H:i:s') < $oldAvailableAt) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->claim_expires_at === null || $handoff->claimed_at === null
+                        || $handoff->claim_expires_at <= $handoff->claimed_at) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     if ($handoff->claim_token_hash === ($original['claim_token_hash'] ?? null)) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     if ($handoff->isDirty('available_at')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->failed_at !== null || $handoff->last_error_code !== null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->delivered_at !== null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                 }
                 // CLAIMED → DELIVERED
                 elseif ($oldStatus === 'CLAIMED' && $newStatus === 'DELIVERED') {
                     if ($handoff->isDirty('attempts')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     if ($handoff->isDirty('claimed_at') || $handoff->isDirty('claim_expires_at') || $handoff->isDirty('claim_token_hash')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     if ($handoff->isDirty('available_at')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->delivered_at === null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->failed_at !== null || $handoff->last_error_code !== null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                 }
                 // CLAIMED → FAILED
                 elseif ($oldStatus === 'CLAIMED' && $newStatus === 'FAILED') {
                     if ($handoff->isDirty('attempts')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     if ($handoff->isDirty('claimed_at') || $handoff->isDirty('claim_expires_at') || $handoff->isDirty('claim_token_hash')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->failed_at === null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->last_error_code === null) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+                    }
+                    if ($handoff->available_at === null || $handoff->failed_at === null
+                        || $handoff->available_at <= $handoff->failed_at) {
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     if ($handoff->delivered_at !== null) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
-                    }
-                    if ($handoff->available_at === null || $handoff->failed_at === null || $handoff->available_at <= $handoff->failed_at) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
+                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                 }
                 // Any other transition is invalid
                 else {
-                    throw new DomainException(
-                        'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                    );
+                    throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                 }
             }
         });

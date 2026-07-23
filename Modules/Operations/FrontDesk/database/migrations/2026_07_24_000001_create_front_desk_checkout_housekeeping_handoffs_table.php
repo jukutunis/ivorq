@@ -293,6 +293,18 @@ return new class extends Migration
                             IF NEW.available_at IS DISTINCT FROM OLD.available_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
+                            IF NEW.claimed_at IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at <= NEW.claimed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_token_hash IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.delivered_at IS NOT NULL OR NEW.failed_at IS NOT NULL OR NEW.last_error_code IS NOT NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
                             RETURN NEW;
                         END IF;
 
@@ -304,10 +316,19 @@ return new class extends Migration
                             IF NEW.attempts <> OLD.attempts + 1 THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
+                            IF NEW.claimed_at IS NOT DISTINCT FROM OLD.claimed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at <= NEW.claimed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
                             IF NEW.claim_token_hash IS NOT DISTINCT FROM OLD.claim_token_hash THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.available_at IS DISTINCT FROM OLD.available_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.delivered_at IS NOT NULL OR NEW.failed_at IS NOT NULL OR NEW.last_error_code IS NOT NULL THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             RETURN NEW;
@@ -321,10 +342,25 @@ return new class extends Migration
                             IF NEW.attempts <> OLD.attempts + 1 THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
+                            IF NEW.claimed_at IS NOT DISTINCT FROM OLD.claimed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at <= NEW.claimed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
                             IF NEW.claim_token_hash IS NOT DISTINCT FROM OLD.claim_token_hash THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.available_at IS DISTINCT FROM OLD.available_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.failed_at IS NOT NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.last_error_code IS NOT NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.delivered_at IS NOT NULL THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             RETURN NEW;
