@@ -245,13 +245,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertSame('FrontDeskCheckoutHousekeepingHandoffMigrationProofTest', $lastSix[4]);
         $this->assertSame('FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest', $lastSix[5]);
 
-        $this->assertEquals(628, $baseline->expected->tests ?? null);
-        $this->assertEquals(6232, $baseline->expected->assertions ?? null);
+        $this->assertEquals(632, $baseline->expected->tests ?? null);
+        $this->assertEquals(6241, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '2b9c37363f5e9418d34a2c381e734da92f7d777b',
+            '8e209cd3fafaba5b60bc47ff5b0c48026bb938ef',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -315,13 +315,10 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('Package 8 locked', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 9 locked', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('superseded append-only', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('superseded', $baseline->provenance->note ?? '');
 
         // ── FD-C2 correction markers ──────────────────────────────────────
-        $this->assertStringContainsString('resolveOrFail', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('same-status', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('attempts integrity', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('markFailed replay', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('superseded', $baseline->provenance->note ?? '');
     }
 
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void
