@@ -29,14 +29,21 @@ class FrontDeskDeparturePreparationEventBoundaryTest extends PostgresTestCase
         parent::tearDown();
     }
 
-    // ── No final checkout state ──
+    // ── FD-C1 terminal state exists, but departure preparation events remain non-executing ──
 
-    public function test_no_checked_out_state_in_stay_enum(): void
+    public function test_fd_c1_checked_out_state_exists_without_event_checkout_authority(): void
     {
         $cases = \Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum::cases();
         $values = array_map(fn ($case) => $case->value, $cases);
 
-        $this->assertNotContains('CHECKED_OUT', $values);
+        // FD-C1 intentionally introduced CheckedOut / CHECKED_OUT as the foundation terminal stay state
+        $this->assertContains('CHECKED_OUT', $values);
+        $this->assertSame(
+            'CHECKED_OUT',
+            \Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum::CheckedOut->value
+        );
+
+        // These legacy aliases must not exist
         $this->assertNotContains('SETTLED', $values);
         $this->assertNotContains('DEPARTED', $values);
         $this->assertNotContains('CANCELLED', $values);
