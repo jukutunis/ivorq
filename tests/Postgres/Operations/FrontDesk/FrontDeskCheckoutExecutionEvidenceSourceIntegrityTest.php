@@ -249,6 +249,73 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
         );
     }
 
+    // ── Foreign Key Presence in Migration ─────────────────────────────────
+
+    public function test_migration_contains_all_six_named_foreign_keys(): void
+    {
+        $migrationPath = base_path('Modules/Operations/FrontDesk/database/migrations/2026_07_23_000001_create_front_desk_checkout_executions_table.php');
+        $this->assertFileExists($migrationPath);
+        $source = file_get_contents($migrationPath);
+
+        $fks = [
+            'fd_ce_property_fk' => ['properties', 'property_id'],
+            'fd_ce_stay_fk' => ['front_desk_stays', 'front_desk_stay_id'],
+            'fd_ce_reservation_fk' => ['reservations', 'reservation_id'],
+            'fd_ce_final_review_fk' => ['front_desk_departure_checkout_final_reviews', 'front_desk_final_review_id'],
+            'fd_ce_business_date_fk' => ['property_business_dates', 'property_business_date_id'],
+            'fd_ce_created_by_fk' => ['users', 'created_by'],
+        ];
+
+        foreach ($fks as $fkName => [$table, $column]) {
+            $this->assertStringContainsString(
+                $fkName,
+                $source,
+                "Migration must contain FK constraint '{$fkName}' referencing {$table}({$column})."
+            );
+            $this->assertStringContainsString(
+                "references('id')->on('{$table}')",
+                $source,
+                "Migration FK '{$fkName}' must reference {$table}.id."
+            );
+        }
+    }
+
+    public function test_migration_idempotency_uses_trim_enforcement(): void
+    {
+        $migrationPath = base_path('Modules/Operations/FrontDesk/database/migrations/2026_07_23_000001_create_front_desk_checkout_executions_table.php');
+        $this->assertFileExists($migrationPath);
+        $source = file_get_contents($migrationPath);
+
+        $this->assertStringContainsString(
+            'btrim(idempotency_key)',
+            $source,
+            'Migration must use btrim() for idempotency_key whitespace enforcement.'
+        );
+        $this->assertStringContainsString(
+            "idempotency_key = btrim(idempotency_key)",
+            $source,
+            'Migration must enforce idempotency_key trim equality.'
+        );
+    }
+
+    public function test_migration_has_no_cascade_or_set_null(): void
+    {
+        $migrationPath = base_path('Modules/Operations/FrontDesk/database/migrations/2026_07_23_000001_create_front_desk_checkout_executions_table.php');
+        $this->assertFileExists($migrationPath);
+        $source = file_get_contents($migrationPath);
+
+        $forbidden = ['onDelete(\'cascade\')', 'ON DELETE CASCADE',
+                      'onDelete(\'set null\')', 'ON DELETE SET NULL',
+                      'SET DEFAULT'];
+        foreach ($forbidden as $pattern) {
+            $this->assertStringNotContainsString(
+                $pattern,
+                $source,
+                "Migration must not contain '{$pattern}'."
+            );
+        }
+    }
+
     // ── Contract Version remains 1.12 ─────────────────────────────────────
 
     public function test_contract_version_remains_1_12(): void

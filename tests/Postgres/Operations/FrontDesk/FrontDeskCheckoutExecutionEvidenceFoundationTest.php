@@ -634,4 +634,174 @@ class FrontDeskCheckoutExecutionEvidenceFoundationTest extends PostgresTestCase
         $freshReview = FrontDeskDepartureCheckoutFinalReview::find($review->id);
         $this->assertSame($preReviewStatus, $freshReview->final_review_status);
     }
+
+    // ── Foreign Key Referential Integrity ──────────────────────────────────
+
+    public function test_nonexistent_property_id_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, 'fk-prop');
+        $payload['property_id'] = (string) Str::ulid();
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_nonexistent_front_desk_stay_id_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, 'fk-stay');
+        $payload['front_desk_stay_id'] = (string) Str::ulid();
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_nonexistent_reservation_id_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, 'fk-res');
+        $payload['reservation_id'] = (string) Str::ulid();
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_nonexistent_front_desk_final_review_id_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, 'fk-review');
+        $payload['front_desk_final_review_id'] = (string) Str::ulid();
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_nonexistent_property_business_date_id_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, 'fk-bd');
+        $payload['property_business_date_id'] = (string) Str::ulid();
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_nonexistent_created_by_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, 'fk-actor');
+        $payload['created_by'] = (string) Str::ulid();
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_failed_fk_insert_leaves_no_evidence_row(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $beforeCount = FrontDeskCheckoutExecution::count();
+
+        DB::beginTransaction();
+        try {
+            $payload = $this->validEvidencePayload($stay, $review, $bd, 'fk-no-row');
+            $payload['property_id'] = (string) Str::ulid();
+            $e = new FrontDeskCheckoutExecution();
+            $e->forceFill($payload)->save();
+            DB::commit();
+            $this->fail('FK violation should have thrown.');
+        } catch (QueryException) {
+            DB::rollBack();
+            // Expected — FK violation rolls back
+        }
+
+        $this->assertSame($beforeCount, FrontDeskCheckoutExecution::count());
+    }
+
+    // ── Idempotency Key Whitespace Enforcement ─────────────────────────────
+
+    public function test_leading_space_idempotency_key_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, ' leading-space');
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_trailing_space_idempotency_key_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, 'trailing-space ');
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_both_side_space_idempotency_key_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, ' both-side ');
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_whitespace_only_idempotency_key_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $this->expectException(QueryException::class);
+        $payload = $this->validEvidencePayload($stay, $review, $bd, '   ');
+        $e = new FrontDeskCheckoutExecution();
+        $e->forceFill($payload)->save();
+    }
+
+    public function test_valid_trimmed_canonical_key_accepted(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+
+        $evidence = $this->createEvidence($stay, $review, $bd, 'canonical-trimmed-key');
+
+        $this->assertNotNull($evidence->id);
+        $this->assertSame('canonical-trimmed-key', $evidence->idempotency_key);
+        $this->assertDatabaseHas('front_desk_checkout_executions', [
+            'id' => $evidence->id,
+            'idempotency_key' => 'canonical-trimmed-key',
+        ]);
+    }
 }

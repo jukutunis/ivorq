@@ -10,14 +10,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('front_desk_checkout_executions', function (Blueprint $table) {
-            $table->string('id', 26)->primary();
-            $table->string('property_id', 26);
-            $table->string('front_desk_stay_id', 26);
-            $table->string('reservation_id', 26);
+            $table->char('id', 26)->primary();
+            $table->char('property_id', 26);
+            $table->char('front_desk_stay_id', 26);
+            $table->char('reservation_id', 26);
             $table->string('idempotency_key');
             $table->string('terminal_stay_status', 50);
-            $table->string('front_desk_final_review_id', 26);
-            $table->string('property_business_date_id', 26);
+            $table->char('front_desk_final_review_id', 26);
+            $table->char('property_business_date_id', 26);
             $table->date('business_date');
             $table->string('night_audit_source_status');
             $table->char('night_audit_source_fingerprint', 64);
@@ -27,7 +27,7 @@ return new class extends Migration
             $table->char('general_cashier_attestation_fingerprint', 64);
             $table->char('source_hash', 64);
             $table->timestamp('occurred_at');
-            $table->string('created_by', 26);
+            $table->char('created_by', 26);
             $table->timestamp('created_at');
 
             $table->unique(['property_id', 'idempotency_key'], 'fd_ce_idempotency_unique');
@@ -41,6 +41,20 @@ return new class extends Migration
             $table->index('property_business_date_id', 'fd_ce_business_date_id_idx');
             $table->index('occurred_at', 'fd_ce_occurred_at_idx');
             $table->index('created_at', 'fd_ce_created_at_idx');
+
+            // Foreign keys — all RESTRICT, no CASCADE, no SET NULL
+            $table->foreign('property_id', 'fd_ce_property_fk')
+                ->references('id')->on('properties')->restrictOnDelete();
+            $table->foreign('front_desk_stay_id', 'fd_ce_stay_fk')
+                ->references('id')->on('front_desk_stays')->restrictOnDelete();
+            $table->foreign('reservation_id', 'fd_ce_reservation_fk')
+                ->references('id')->on('reservations')->restrictOnDelete();
+            $table->foreign('front_desk_final_review_id', 'fd_ce_final_review_fk')
+                ->references('id')->on('front_desk_departure_checkout_final_reviews')->restrictOnDelete();
+            $table->foreign('property_business_date_id', 'fd_ce_business_date_fk')
+                ->references('id')->on('property_business_dates')->restrictOnDelete();
+            $table->foreign('created_by', 'fd_ce_created_by_fk')
+                ->references('id')->on('users')->restrictOnDelete();
         });
 
         if (DB::getDriverName() === 'pgsql') {
@@ -53,7 +67,7 @@ return new class extends Migration
             DB::statement("
                 ALTER TABLE front_desk_checkout_executions
                 ADD CONSTRAINT fd_ce_idempotency_not_blank
-                CHECK (idempotency_key <> '' AND idempotency_key !~ '^\\s+$')
+                CHECK (btrim(idempotency_key) <> '' AND idempotency_key = btrim(idempotency_key))
             ");
 
             DB::statement("
