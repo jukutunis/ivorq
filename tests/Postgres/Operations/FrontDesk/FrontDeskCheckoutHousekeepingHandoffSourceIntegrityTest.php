@@ -650,23 +650,34 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
         );
     }
 
-    public function test_trigger_uses_column_value_time_checks(): void
+    public function test_trigger_uses_database_clock_authority(): void
     {
         $migrationPath = base_path('Modules/Operations/FrontDesk/database/migrations/2026_07_24_000001_create_front_desk_checkout_housekeeping_handoffs_table.php');
         $this->assertFileExists($migrationPath);
         $source = file_get_contents($migrationPath);
 
-        // Column-value time checks provide defense-in-depth for due-time validation
-        // alongside PHP-level server-now checks in the Eloquent model
+        // Database clock is the authoritative due-time source
+        $this->assertStringContainsString(
+            'OLD.available_at > CURRENT_TIMESTAMP',
+            $source,
+            'Trigger must use CURRENT_TIMESTAMP for available_at due-time check.'
+        );
+        $this->assertStringContainsString(
+            'OLD.claim_expires_at > CURRENT_TIMESTAMP',
+            $source,
+            'Trigger must use CURRENT_TIMESTAMP for claim expiry check.'
+        );
+
+        // Column-value checks are complementary defense-in-depth
         $this->assertStringContainsString(
             'NEW.claimed_at < OLD.claim_expires_at',
             $source,
-            'Trigger must use NEW.claimed_at vs OLD.claim_expires_at for expiry check.'
+            'Trigger must retain column-value claim-expiry comparison.'
         );
         $this->assertStringContainsString(
             'NEW.claimed_at < OLD.available_at',
             $source,
-            'Trigger must use NEW.claimed_at vs OLD.available_at for retry check.'
+            'Trigger must retain column-value available-at comparison.'
         );
     }
 }

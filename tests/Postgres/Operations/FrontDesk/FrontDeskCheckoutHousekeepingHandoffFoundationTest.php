@@ -39,7 +39,9 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
     protected function setUp(): void
     {
         parent::setUp();
-        Carbon::setTestNow(Carbon::parse('2026-07-24 12:00:00'));
+
+        // Use real PHP time — close enough to PostgreSQL CURRENT_TIMESTAMP for 60s+ leases
+        Carbon::setTestNow(now());
 
         $this->currentProperty = app(CurrentPropertyService::class);
 
@@ -88,6 +90,15 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
+
+    /**
+     * Align Carbon test time to the authoritative PostgreSQL CURRENT_TIMESTAMP.
+     */
+    private function syncCarbonToDatabase(): void
+    {
+        $dbNow = DB::select('SELECT CURRENT_TIMESTAMP AS database_now')[0]->database_now;
+        Carbon::setTestNow(Carbon::parse($dbNow));
+    }
 
     private function makeGuest(Property $prop): Guest
     {
@@ -599,7 +610,8 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
 
         $handoff = new FrontDeskCheckoutHousekeepingHandoff();
         $payload = $this->validHandoffPayload($execution, 'idem-src-occ-' . Str::ulid(), 'corr-src-occ-' . Str::ulid());
-        $payload['occurred_at'] = Carbon::parse('2026-07-24 11:00:00');
+        // Set occurred_at to 1 hour before the execution (relative to frozen Carbon time)
+        $payload['occurred_at'] = Carbon::now()->subHour();
 
         $this->expectException(QueryException::class);
         $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_SOURCE_MISMATCH');
@@ -1468,18 +1480,15 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', Carbon::now()->addMinutes(7));
     }
 
-    // ── Database clock bypass tests: column-level integrity prevents tampering ──
+    // ── Database clock bypass tests ────────────────────────────────────────
 
-    public function test_pending_future_available_at_claim_rejected_by_model_clock(): void
+    public function test_pending_future_available_at_rejected_by_trigger_clock(): void
     {
-        // The model-level check (available_at <= now) prevents claiming before available_at.
-        // Create a handoff with available_at in the future relative to PHP now().
         $stay = $this->makeInHouseStay($this->property);
         $review = $this->makeFinalReview($this->property, $stay);
         $bd = $this->makeBusinessDate($this->property);
         $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-bypass1-' . Str::ulid());
 
-        // Insert handoff with future available_at (1 hour ahead of Carbon-frozen now)
         $handoffId = (string) Str::ulid();
         DB::table('front_desk_checkout_housekeeping_handoffs')->insert([
             'id' => $handoffId, 'property_id' => $execution->property_id,
@@ -1492,88 +1501,107 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             'correlation_key' => 'corr-bypass1-' . Str::ulid(),
             'source_hash' => hash('sha256', 'src-bypass1-' . Str::ulid()),
             'delivery_status' => 'PENDING', 'attempts' => 0,
-            'available_at' => Carbon::now()->addHour(),
+            'available_at' => DB::raw("CURRENT_TIMESTAMP + interval '1 hour'"),
             'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
         ]);
 
-        // Eloquent model prevents claiming before available_at due
-        $handoff = FrontDeskCheckoutHousekeepingHandoff::forProperty($this->property->id)
-            ->where('id', $handoffId)->first();
-        $handoff->delivery_status = FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed;
-        $handoff->attempts = 1;
-        $handoff->claimed_at = now();
-        $handoff->claim_expires_at = now()->addSeconds(60);
-        $handoff->claim_token_hash = str_repeat('a', 64);
-        $handoff->delivered_at = null;
-        $handoff->failed_at = null;
-        $handoff->last_error_code = null;
-
-        $this->expectException(DomainException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
-        $handoff->save();
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoffId)
+            ->update([
+                'delivery_status' => 'CLAIMED', 'attempts' => 1,
+                'claimed_at' => DB::raw("CURRENT_TIMESTAMP + interval '2 hours'"),
+                'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP + interval '3 hours'"),
+                'claim_token_hash' => str_repeat('a', 64), 'updated_at' => now(),
+            ]);
     }
 
-    public function test_active_claimed_forged_future_claimed_at_rejected(): void
+    public function test_expired_claim_reclaim_succeeds_after_db_time_due(): void
     {
         $stay = $this->makeInHouseStay($this->property);
         $review = $this->makeFinalReview($this->property, $stay);
         $bd = $this->makeBusinessDate($this->property);
-        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-bypass2-' . Str::ulid());
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-bypass4-' . Str::ulid());
 
-        // Create handoff and claim via service (real claim with real DB timestamps)
-        $handoff = $this->createHandoff($execution, 'idem-bypass2-' . Str::ulid(), 'corr-bypass2-' . Str::ulid());
-        $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 300);
+        $handoffId = (string) Str::ulid();
+        DB::table('front_desk_checkout_housekeeping_handoffs')->insert([
+            'id' => $handoffId, 'property_id' => $execution->property_id,
+            'front_desk_stay_id' => $execution->front_desk_stay_id,
+            'reservation_id' => $execution->reservation_id,
+            'checkout_execution_id' => $execution->id,
+            'property_business_date_id' => $execution->property_business_date_id,
+            'business_date' => $execution->business_date,
+            'idempotency_key' => 'idem-bypass4-' . Str::ulid(),
+            'correlation_key' => 'corr-bypass4-' . Str::ulid(),
+            'source_hash' => hash('sha256', 'src-bypass4-' . Str::ulid()),
+            'delivery_status' => 'CLAIMED', 'attempts' => 1,
+            'claimed_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
+            'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 second'"),
+            'claim_token_hash' => str_repeat('d', 64),
+            'available_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
+            'occurred_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
+            'created_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
+            'updated_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
+        ]);
 
-        // Try raw reclaim with forged future claimed_at — trigger must reject active claim
-        // because OLD.claim_expires_at > CURRENT_TIMESTAMP (lease is still active)
-        $this->expectException(QueryException::class);
-        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
         DB::table('front_desk_checkout_housekeeping_handoffs')
-            ->where('id', $handoff->id)
+            ->where('id', $handoffId)
             ->update([
-                'delivery_status' => 'CLAIMED',
-                'attempts' => DB::raw('attempts + 1'),
-                'claimed_at' => DB::raw("CURRENT_TIMESTAMP + interval '2 hours'"),
-                'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP + interval '3 hours'"),
-                'claim_token_hash' => str_repeat('b', 64),
-                'updated_at' => now(),
+                'delivery_status' => 'CLAIMED', 'attempts' => 2,
+                'claimed_at' => DB::raw('CURRENT_TIMESTAMP'),
+                'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP + interval '120 seconds'"),
+                'claim_token_hash' => str_repeat('e', 64), 'updated_at' => now(),
             ]);
+
+        $row = DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $handoffId)->first();
+        $this->assertSame(2, (int) $row->attempts);
+        $this->assertSame(str_repeat('e', 64), $row->claim_token_hash);
     }
 
-    public function test_failed_not_yet_due_forged_future_claimed_at_rejected(): void
+    public function test_due_failed_retry_succeeds_after_db_time_due(): void
     {
         $stay = $this->makeInHouseStay($this->property);
         $review = $this->makeFinalReview($this->property, $stay);
         $bd = $this->makeBusinessDate($this->property);
-        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-bypass3-' . Str::ulid());
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-bypass5-' . Str::ulid());
 
-        // Create and claim handoff
-        $handoff = $this->createHandoff($execution, 'idem-bypass3-' . Str::ulid(), 'corr-bypass3-' . Str::ulid());
-        $claimResult = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
+        $handoffId = (string) Str::ulid();
+        DB::table('front_desk_checkout_housekeeping_handoffs')->insert([
+            'id' => $handoffId, 'property_id' => $execution->property_id,
+            'front_desk_stay_id' => $execution->front_desk_stay_id,
+            'reservation_id' => $execution->reservation_id,
+            'checkout_execution_id' => $execution->id,
+            'property_business_date_id' => $execution->property_business_date_id,
+            'business_date' => $execution->business_date,
+            'idempotency_key' => 'idem-bypass5-' . Str::ulid(),
+            'correlation_key' => 'corr-bypass5-' . Str::ulid(),
+            'source_hash' => hash('sha256', 'src-bypass5-' . Str::ulid()),
+            'delivery_status' => 'FAILED', 'attempts' => 1,
+            'claimed_at' => DB::raw("CURRENT_TIMESTAMP - interval '2 hours'"),
+            'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
+            'claim_token_hash' => str_repeat('f', 64),
+            'failed_at' => DB::raw("CURRENT_TIMESTAMP - interval '30 minutes'"),
+            'last_error_code' => 'HK_DELIVERY_TIMEOUT',
+            'available_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 second'"),
+            'occurred_at' => DB::raw("CURRENT_TIMESTAMP - interval '2 hours'"),
+            'created_at' => DB::raw("CURRENT_TIMESTAMP - interval '2 hours'"),
+            'updated_at' => DB::raw("CURRENT_TIMESTAMP - interval '2 hours'"),
+        ]);
 
-        // Mark failed with future retry time using DB raw
-        $retryAt = DB::raw("CURRENT_TIMESTAMP + interval '1 hour'");
-        $this->deliveryService->markFailed(
-            $this->property->id, $handoff->id, $claimResult['claim_token'],
-            'HK_DELIVERY_TIMEOUT',
-            Carbon::now()->addHour()
-        );
-
-        // Try raw retry with forged future claimed_at — trigger must reject because OLD.available_at > CURRENT_TIMESTAMP
-        $this->expectException(QueryException::class);
-        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
         DB::table('front_desk_checkout_housekeeping_handoffs')
-            ->where('id', $handoff->id)
+            ->where('id', $handoffId)
             ->update([
-                'delivery_status' => 'CLAIMED',
-                'attempts' => DB::raw('attempts + 1'),
-                'claimed_at' => DB::raw("CURRENT_TIMESTAMP + interval '2 hours'"),
-                'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP + interval '3 hours'"),
-                'claim_token_hash' => str_repeat('c', 64),
-                'failed_at' => null,
-                'last_error_code' => null,
-                'delivered_at' => null,
-                'updated_at' => now(),
+                'delivery_status' => 'CLAIMED', 'attempts' => 2,
+                'claimed_at' => DB::raw('CURRENT_TIMESTAMP'),
+                'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP + interval '120 seconds'"),
+                'claim_token_hash' => str_repeat('a', 64),
+                'failed_at' => null, 'last_error_code' => null, 'updated_at' => now(),
             ]);
+
+        $row = DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $handoffId)->first();
+        $this->assertSame(2, (int) $row->attempts);
+        $this->assertSame(str_repeat('a', 64), $row->claim_token_hash);
+        $this->assertSame('CLAIMED', $row->delivery_status);
     }
 }
