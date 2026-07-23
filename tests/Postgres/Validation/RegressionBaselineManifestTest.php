@@ -229,42 +229,66 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_fd_b12_measurement(): void
+    public function test_frontdesk_operational_baseline_matches_fd_c1_measurement(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
         $this->assertEquals('active', $baseline->status ?? null);
-        $this->assertCount(53, $baseline->classes, 'Front Desk baseline must keep exactly 53 classes.');
-        $this->assertEquals('FrontDeskDepartureCheckoutExecutionBoundaryTest', $baseline->classes[count($baseline->classes) - 1]);
-        $this->assertEquals(483, $baseline->expected->tests ?? null);
-        $this->assertEquals(1983, $baseline->expected->assertions ?? null);
+        $this->assertCount(56, $baseline->classes, 'Front Desk baseline must keep exactly 56 classes.');
+
+        // The last three classes are the FD-C1 tests
+        $lastThree = array_slice($baseline->classes, -3);
+        $this->assertSame('FrontDeskCheckoutExecutionEvidenceFoundationTest', $lastThree[0]);
+        $this->assertSame('FrontDeskCheckoutExecutionEvidenceMigrationProofTest', $lastThree[1]);
+        $this->assertSame('FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest', $lastThree[2]);
+
+        $this->assertEquals(534, $baseline->expected->tests ?? null);
+        $this->assertEquals(4817, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '359cdf01e044c469771dd4663cb225a19ab219a1',
+            'd72381c074ed03b01e3ce8674da459b2f1d0c629',
             $baseline->provenance->sha ?? null
         );
+        $this->assertMatchesRegularExpression(
+            '/^[a-f0-9]{40}$/',
+            $baseline->provenance->sha ?? '',
+            'Provenance SHA must be a full 40-character hex string.'
+        );
         $this->assertEquals(
-            'sprint-fd-b12-night-audit-lock-read-integration',
+            'sprint-fd-c1-terminal-checkout-evidence-foundation',
             $baseline->provenance->branch ?? null
         );
+
+        // FD-C1 description assertions
+        $this->assertStringContainsString('FD-C1', $baseline->description ?? '');
+        $this->assertStringContainsString('immutable checkout execution evidence', $baseline->description ?? '');
+        $this->assertStringContainsString('referential integrity', $baseline->description ?? '');
+        $this->assertStringContainsString('can_execute=false', $baseline->description ?? '');
         $this->assertStringContainsString('FD-B12', $baseline->description ?? '');
-        $this->assertStringContainsString('FD-B11', $baseline->description ?? '');
         $this->assertStringContainsString('Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2)', $baseline->description ?? '');
-        $this->assertStringContainsString('NA-A1', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('complete accepted NA-A1 source-key presence', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Missing keys are not equivalent to explicit null values', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('strict positive integer attempt_number', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Gate 7 exposes the exact whitelist', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('NIGHT_AUDIT_LOCK_CLEAR', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('NIGHT_AUDIT_CLOSE_LOCK_ACTIVE', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Queue minimization remains unchanged', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('authorization-first behavior remains unchanged', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('zero-mutation', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('No checkout execution, Night Audit command, or Business Date command is activated', $baseline->provenance->note ?? '');
+
+        // FD-C1 provenance note contains required markers
+        $this->assertStringContainsString('CHECKED_OUT', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_property_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_stay_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_reservation_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_final_review_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_business_date_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_created_by_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('idempotency trim enforcement', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE', $baseline->provenance->note ?? '');
+        // Zero-failure specific assertions
+        $this->assertStringContainsString('stale boundary assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('CHECKED_OUT exists', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('departure preparation does not execute checkout', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero-failure', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no new accepted debt', $baseline->provenance->note ?? '');
+
+        $this->assertStringContainsString('No checkout command', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
     }
 
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void
