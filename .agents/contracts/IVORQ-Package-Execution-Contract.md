@@ -91,7 +91,7 @@ Concise source-backed architecture summary — not a full ADR dump.
 - FD-B13 accepted and merged.
 - FD-B13 verdict: `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES`
 - ADR trigger: `NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION`
-- Front Desk active baseline: 483 tests / 1983 assertions / 0 failures / 0 errors
+- Historical FD-B12 Front Desk baseline before FD-C1: 483 tests / 1983 assertions / 0 failures / 0 errors
 - GC-A1: 38 tests / 231 assertions
 - GLF-D: 60 tests / 253 assertions
 - BD-A1: 11 tests / 318 assertions
@@ -99,7 +99,7 @@ Concise source-backed architecture summary — not a full ADR dump.
 - NA-A2: 20 tests / 914 assertions
 - GLF-E: 63 tests / 271 assertions / 0 failures / 0 errors
 - GLF-E baseline: 49 tests / 194 assertions / 0 failures / 0 errors (historical predecessor evidence before GLF-E-S1 correction)
-- RegressionBaselineManifestTest: 34 tests / 1085 assertions
+- RegressionBaselineManifestTest: 34 tests / 1104 assertions / 0 failures / 0 errors
 - Complete active runner: 8 passed / 6 MISMATCH / 0 skipped
 - MISMATCH classification: test-runner / DatabaseMigrations infrastructure exception; not FD-C1 source failure; not new accepted product debt
 - Inventory Reversal inherited debt remains: 8 tests / 72 assertions / 2 accepted errors
