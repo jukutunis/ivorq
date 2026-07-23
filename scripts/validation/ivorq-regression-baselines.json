@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, FD-B10 read-only General Cashier obligation integration, FD-B11 read-only authoritative Business Date integration, FD-B12 read-only authoritative Night Audit close-lock integration, FD-C1 terminal checkout state and immutable checkout execution evidence foundation. Foundation only; no checkout command; no write route; can_execute=false; checkout unauthorized. All 56 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, FD-B10 read-only General Cashier obligation integration, FD-B11 read-only authoritative Business Date integration, FD-B12 read-only authoritative Night Audit close-lock integration, FD-C1 terminal checkout state and immutable checkout execution evidence foundation with referential integrity. Foundation only; no checkout command; no write route; can_execute=false; checkout unauthorized. All 56 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -70,16 +70,16 @@
         "FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest"
       ],
       "expected": {
-        "tests": 519,
-        "assertions": 4721,
+        "tests": 534,
+        "assertions": 4815,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-23",
         "branch": "sprint-fd-c1-terminal-checkout-evidence-foundation",
-        "sha": "868af88",
-        "note": "FD-C1 terminal checkout state and immutable checkout execution evidence foundation measured at source commit 868af88: 56 exact Front Desk classes / 519 tests / 4721 assertions / 0 failures / 0 errors. FD-C1 adds one terminal stay state (CheckedOut / CHECKED_OUT), one FrontDeskCheckoutExecution model with full application-level and PostgreSQL immutability (FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE), one additive migration for front_desk_checkout_executions with CHECKED_OUT constraint, SHA-256 fingerprint constraints, blank idempotency constraint, BEFORE UPDATE/DELETE triggers, property-scoped idempotency uniqueness, one-success-per-stay uniqueness, and source_hash duplicate prevention. Foundation only: no checkout command, no write route, no execute permission, no sensitive confirmation intent, no Housekeeping handoff/outbox, no foreign-domain mutation, no stay transition, can_execute=false, CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED preserved, checkout unauthorized. Three new test classes: Foundation (20 tests / 52 assertions), Migration Proof (1 test / 66 assertions), Source Integrity (15 tests / 2620 assertions)."
+        "sha": "405c1cdcaf29ab77b86530241509b942abf86900",
+        "note": "FD-C1 referential integrity correction measured at source-correction commit 405c1cdcaf29ab77b86530241509b942abf86900: 56 exact Front Desk classes. Post-correction FD-C1 focused combined result: 51 tests / 2832 assertions / 0 failures / 0 errors. Existing FD-B12 baseline (53 classes): 483 tests / 1983 assertions. Best available combined estimate: 534 tests / 4815 assertions. CHECKED_OUT terminal state. Six named foreign keys: fd_ce_property_fk, fd_ce_stay_fk, fd_ce_reservation_fk, fd_ce_final_review_fk, fd_ce_business_date_fk, fd_ce_created_by_fk — all RESTRICT, no CASCADE, no SET NULL. idempotency trim enforcement: btrim(idempotency_key) <> '' AND idempotency_key = btrim(idempotency_key). FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE. No checkout command; no write route; no route/controller/UI; no permission; no sensitive confirmation intent; no Housekeeping handoff/outbox; no foreign-domain mutation; can_execute=false; CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED; checkout unauthorized; no new accepted debt. Full 56-class registered baseline execution attempted but timed out due to PostgreSQL RefreshDatabase overhead; final registered counts require independent reviewer verification."
       },
       "accepted_debt": [],
       "status": "active"
