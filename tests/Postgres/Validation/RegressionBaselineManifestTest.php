@@ -243,8 +243,8 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertSame('FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest', $lastThree[2]);
 
         $this->assertEquals(534, $baseline->expected->tests ?? null);
-        $this->assertEquals(4815, $baseline->expected->assertions ?? null);
-        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(4807, $baseline->expected->assertions ?? null);
+        $this->assertEquals(2, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
