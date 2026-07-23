@@ -1,9 +1,9 @@
 # IVORQ Package Execution Contract
 
 Status: APPROVED
-Version: 1.11
+Version: 1.12
 Created: 2026-07-10
-Last amended: 2026-07-22
+Last amended: 2026-07-23
 
 Amendment note:
   - Version 1.1 was explicitly approved by the IVORQ Owner for ADR-034 activation and controlled Business Date / Night Audit sequencing.
@@ -17,6 +17,7 @@ Amendment note:
   - Version 1.9 is explicitly Owner-authorized for GLF-E accepted-predecessor synchronization, canonical SHA synchronization, GC-A2 runtime authorization, General Cashier terminal obligation attestation, consumption of minimized exact GLF-E references, General Cashier-owned lock participation, continued prohibition on checkout execution, and continued locking of later packages.
   - Version 1.10 is explicitly Owner-authorized for GLF-E savepoint lock-continuity correction, transaction-local GLF-E attestation capability, reopening GLF-E acceptance for narrow GLF-E-S1 correction, pausing GC-A2 runtime implementation, continued prohibition on checkout execution, and continued locking of all later packages.
   - Version 1.11 is explicitly Owner-authorized for GLF-E-S1 accepted-predecessor synchronization, canonical SHA synchronization, final GLF-E savepoint-safe evidence synchronization, GC-A2 runtime reactivation, General Cashier terminal obligation attestation sequencing, continued prohibition on checkout execution, and continued locking of all later packages.
+  - Version 1.12 is explicitly Owner-authorized for GC-A2 accepted-predecessor synchronization, canonical SHA synchronization to f0635b6c402ea095a1cd21b1a1510008c49e7739, acceptance of the General Cashier transaction-bound terminal obligation attestation, activation of FD-C1 Front Desk terminal checkout state foundation, immutable checkout execution evidence foundation, continued prohibition on actual checkout execution, continued locking of Housekeeping handoff/outbox, continued locking of checkout sensitive confirmation and execute permission, continued locking of the final checkout command and interaction layer, continued can_execute=false, continued checkout unauthorized, and confirmation that full access does not bypass package sequencing.
 
 Amendment protocol:
   - Only Owner may approve amendments to this contract.
@@ -76,7 +77,7 @@ Concise source-backed architecture summary — not a full ADR dump.
 - Current baseline counts must always be verified from the canonical regression manifest.
 - This section records the accepted predecessor state at the time a package is authorized.
 - Later merge results must not be inferred before independent merge verification.
-- Canonical predecessor: `f91621b58fe5743ed2a60980a70475cae40331bc`
+- Canonical predecessor: `f0635b6c402ea095a1cd21b1a1510008c49e7739`
 - ADR-034 merged and accepted.
 - BD-A1 merged and accepted.
 - FD-B11 merged and accepted.
@@ -96,24 +97,33 @@ Concise source-backed architecture summary — not a full ADR dump.
 - NA-A1: 11 tests / 422 assertions
 - NA-A2: 20 tests / 914 assertions
 - GLF-E: 63 tests / 271 assertions / 0 failures / 0 errors
-- RegressionBaselineManifestTest: 33 tests / 1009 assertions
-- Complete active runner: 13 passed / 0 failed / 0 skipped
+- GLF-E baseline: 49 tests / 194 assertions / 0 failures / 0 errors (historical predecessor evidence before GLF-E-S1 correction)
+- RegressionBaselineManifestTest: 34 tests / 1085 assertions
+- Complete active runner: 14 passed / 0 failed / 0 skipped
 - Inventory Reversal inherited debt remains: 8 tests / 72 assertions / 2 accepted errors
 - ADR-089 accepted and merged.
 - ADR-089 architecture status: Approved.
 - NA-A2 accepted and fast-forward merged.
 - NA-A2 does not authorize checkout execution.
 - GLF-E accepted and merged.
-- GLF-E baseline: 49 tests / 194 assertions / 0 failures / 0 errors (historical predecessor evidence before GLF-E-S1 correction)
 - GLF-E-S1 accepted and fast-forward merged at `f91621b58fe5743ed2a60980a70475cae40331bc`
 - GLF-E savepoint lock-continuity defect corrected
-- GC-A2 current authorized runtime package
-- Later Front Desk state/evidence, Housekeeping handoff, confirmation/permission, and final command remain locked.
+- GC-A2 accepted and true fast-forward merged at `f0635b6c402ea095a1cd21b1a1510008c49e7739`
+- GC-A2: 67 tests / 253 assertions / 0 failures / 0 errors
+- FD-C1 Front Desk terminal checkout state and immutable checkout execution evidence foundation — current authorized runtime package
+- FD-C1 is a Front Desk-owned foundation package only.
+- FD-C1 does not execute checkout.
+- FD-C1 does not expose a write route.
+- FD-C1 does not create execute permission.
+- FD-C1 does not register sensitive confirmation intent.
+- FD-C1 does not create Housekeeping handoff/outbox.
+- FD-C1 does not call GLF-E or GC-A2 as a final checkout command.
+- FD-C1 does not set can_execute=true.
+- checkout unauthorized.
+- Later Front Desk handoff, confirmation/permission, and final command remain locked.
 - Full access does not bypass later packages.
 - `can_execute=false` remains binding.
 - checkout unauthorized
-- GC-A2 may now start only as its own bounded runtime package.
-- GC-A2 does not authorize checkout execution.
 
 ## 6. Package sequencing model
 
@@ -125,13 +135,13 @@ Packages must run sequentially. One package may depend on earlier package eviden
 2. NA-A2 — accepted, merged
 3. GLF-E original package — accepted, merged
 4. GLF-E-S1 savepoint lock-continuity correction — accepted, merged
-5. GC-A2 General Cashier terminal obligation attestation — current authorized runtime package
-6. Front Desk terminal state and immutable checkout evidence — locked
+5. GC-A2 General Cashier terminal obligation attestation — accepted, merged
+6. FD-C1 Front Desk terminal checkout state and immutable checkout execution evidence foundation — current authorized runtime package
 7. Transactional Housekeeping handoff/outbox — locked
 8. Checkout sensitive confirmation and execute permission — locked
 9. Final checkout command and interaction layer — locked
 
-Only the next package may start after its predecessor is reviewed, accepted, and merged into the canonical branch. BD-A1 is accepted as the authoritative Property Business Date foundation; NA-A1 is accepted as the authoritative Night Audit run and active close-lock foundation. FD-B12 consumes NA-A1 read-only inside Front Desk, but checkout execution remains unauthorized. FD-B13 is accepted and records `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES` and `NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION`. ADR-089 is accepted, Approved, and merged at `1682dec0fb7f654e77888a476b4ec55a1507610b`. NA-A2 is accepted and merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GLF-E-S1 is accepted and fast-forward merged at `f91621b58fe5743ed2a60980a70475cae40331bc`. GC-A2 is the current authorized runtime package. GC-A2 is limited to General Cashier execution-time terminal obligation attestation, consuming minimized PMS references under General Cashier-owned locks without PMS or Front Desk mutation. GC-A2 does not authorize checkout execution. Checkout execution requires later Owner-approved packages; `can_execute=false` remains the canonical runtime behavior until that separately authorized package changes it. No AI agent may interpret full access as permission to skip package sequencing. Business Date and Night Audit must never absorb source-domain ownership. Package implementation remains sequential.
+Only the next package may start after its predecessor is reviewed, accepted, and merged into the canonical branch. BD-A1 is accepted as the authoritative Property Business Date foundation; NA-A1 is accepted as the authoritative Night Audit run and active close-lock foundation. FD-B12 consumes NA-A1 read-only inside Front Desk, but checkout execution remains unauthorized. FD-B13 is accepted and records `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES` and `NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION`. ADR-089 is accepted, Approved, and merged at `1682dec0fb7f654e77888a476b4ec55a1507610b`. NA-A2 is accepted and merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GLF-E-S1 is accepted and fast-forward merged at `f91621b58fe5743ed2a60980a70475cae40331bc`. GC-A2 is accepted and true fast-forward merged at `f0635b6c402ea095a1cd21b1a1510008c49e7739`. FD-C1 is the current authorized runtime package. FD-C1 is limited to Front Desk terminal checkout stay-state foundation and immutable checkout execution evidence foundation only. FD-C1 does not execute checkout, does not expose a write route, does not create execute permission, does not register sensitive confirmation intent, does not create Housekeeping handoff/outbox, does not call GLF-E or GC-A2 as a final checkout command, and does not set can_execute=true. Checkout execution requires later Owner-approved packages; `can_execute=false` remains the canonical runtime behavior until that separately authorized package changes it. No AI agent may interpret full access as permission to skip package sequencing. Business Date and Night Audit must never absorb source-domain ownership. Package implementation remains sequential.
 
 ### A. Domain-owned package
 
