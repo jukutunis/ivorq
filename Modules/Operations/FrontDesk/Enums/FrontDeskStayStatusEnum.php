@@ -8,4 +8,5 @@ enum FrontDeskStayStatusEnum: string
     case RoomAssigned = 'ROOM_ASSIGNED';
     case CheckInConfirmationPending = 'CHECK_IN_CONFIRMATION_PENDING';
     case InHouse = 'IN_HOUSE';
+    case CheckedOut = 'CHECKED_OUT';
 }
