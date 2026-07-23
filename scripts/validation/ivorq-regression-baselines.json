@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, FD-B10 read-only General Cashier obligation integration, FD-B11 read-only authoritative Business Date integration, and FD-B12 read-only authoritative Night Audit close-lock integration. All 53 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, FD-B10 read-only General Cashier obligation integration, FD-B11 read-only authoritative Business Date integration, FD-B12 read-only authoritative Night Audit close-lock integration, FD-C1 terminal checkout state and immutable checkout execution evidence foundation. Foundation only; no checkout command; no write route; can_execute=false; checkout unauthorized. All 56 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -64,19 +64,22 @@
         "FrontDeskDepartureCheckoutFinalReviewImmutabilityTest",
         "FrontDeskDepartureCheckoutFinalReviewWorkspaceTest",
         "FrontDeskDepartureCheckoutFinalReviewIsolatedConcurrencyProofTest",
-        "FrontDeskDepartureCheckoutExecutionBoundaryTest"
+        "FrontDeskDepartureCheckoutExecutionBoundaryTest",
+        "FrontDeskCheckoutExecutionEvidenceFoundationTest",
+        "FrontDeskCheckoutExecutionEvidenceMigrationProofTest",
+        "FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest"
       ],
       "expected": {
-        "tests": 483,
-        "assertions": 1983,
+        "tests": 519,
+        "assertions": 4721,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-18",
-        "branch": "sprint-fd-b12-night-audit-lock-read-integration",
-        "sha": "359cdf01e044c469771dd4663cb225a19ab219a1",
-        "note": "FD-B12 strict source evidence correction measured at source commit 359cdf01e044c469771dd4663cb225a19ab219a1: 53 exact Front Desk classes / 483 tests / 1983 assertions / 0 failures / 0 errors. FD-B12 validates complete accepted NA-A1 source-key presence before semantic status evaluation, including explicit-null fields such as night_audit_run_id, attempt_number, started_by, source_fingerprint, and property_id. Missing keys are not equivalent to explicit null values and fail closed with FD_B12_INVALID_NIGHT_AUDIT_LOCK_PROJECTION. Active Night Audit evidence now requires a strict positive integer attempt_number with no coercion. Gate 7 exposes the exact whitelist gate, owner, satisfied, detail, status, source_status, close_lock_active, business_date, property_timezone, attempt_number, run_status, started_at, evidence_unavailable_codes, evaluated_at, and source_fingerprint, while omitting raw night_audit_run_id, started_by, property_id, and property_business_date_id. NIGHT_AUDIT_LOCK_CLEAR satisfies only the Night Audit gate with null attempt and started_at; NIGHT_AUDIT_LOCK_ACTIVE blocks with NIGHT_AUDIT_CLOSE_LOCK_ACTIVE while preserving active attempt and started_at; unavailable source evidence remains fail-closed with NIGHT_AUDIT_LOCK_EVIDENCE_UNAVAILABLE and null Gate 7 attempt/started_at. Queue minimization remains unchanged, authorization-first behavior remains unchanged, checkout execution remains unauthorized, can_execute=false, and the projection remains zero-mutation across Front Desk, Guest Ledger, General Cashier, Business Date, Night Audit, folio, settlement, close, advance, reopen, checkpoints, and posting state. No checkout execution, Night Audit command, or Business Date command is activated."
+        "measured_at": "2026-07-23",
+        "branch": "sprint-fd-c1-terminal-checkout-evidence-foundation",
+        "sha": "868af88",
+        "note": "FD-C1 terminal checkout state and immutable checkout execution evidence foundation measured at source commit 868af88: 56 exact Front Desk classes / 519 tests / 4721 assertions / 0 failures / 0 errors. FD-C1 adds one terminal stay state (CheckedOut / CHECKED_OUT), one FrontDeskCheckoutExecution model with full application-level and PostgreSQL immutability (FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE), one additive migration for front_desk_checkout_executions with CHECKED_OUT constraint, SHA-256 fingerprint constraints, blank idempotency constraint, BEFORE UPDATE/DELETE triggers, property-scoped idempotency uniqueness, one-success-per-stay uniqueness, and source_hash duplicate prevention. Foundation only: no checkout command, no write route, no execute permission, no sensitive confirmation intent, no Housekeeping handoff/outbox, no foreign-domain mutation, no stay transition, can_execute=false, CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED preserved, checkout unauthorized. Three new test classes: Foundation (20 tests / 52 assertions), Migration Proof (1 test / 66 assertions), Source Integrity (15 tests / 2620 assertions)."
       },
       "accepted_debt": [],
       "status": "active"
