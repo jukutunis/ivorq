@@ -6,7 +6,7 @@
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
-      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, FD-B10 read-only General Cashier obligation integration, FD-B11 read-only authoritative Business Date integration, FD-B12 read-only authoritative Night Audit close-lock integration, FD-C1 terminal checkout state and immutable checkout execution evidence foundation with referential integrity. Foundation only; no checkout command; no write route; can_execute=false; checkout unauthorized. All 56 test classes pass cleanly as a single batch.",
+      "description": "Front Desk operational tests covering Arrival, Stay, Room Assignment, Check-In, Check-Out Readiness, Room Move, In-House, Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2), Departure Operational Handover (FD-B3), Departure Closure Readiness (FD-B4), Departure Checkout Eligibility (FD-B5), Departure Checkout Authorization (FD-B6), Departure Checkout Final Review (FD-B7), Departure Checkout Execution Boundary (FD-B8), FD-B9 authorization-first Guest Ledger read integration, FD-B10 read-only General Cashier obligation integration, FD-B11 read-only authoritative Business Date integration, FD-B12 read-only authoritative Night Audit close-lock integration, FD-C1 terminal checkout state and immutable checkout execution evidence foundation with referential integrity, FD-C2 checkout-to-Housekeeping handoff/outbox foundation with dedicated checkout-specific persistence, minimized identifiers, source-relationship enforcement, immutable payload, retryable delivery state, no Housekeeping readiness mutation. Foundation only; no checkout command; no write route; no production handoff creation path; can_execute=false; checkout unauthorized. All 59 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -67,19 +67,22 @@
         "FrontDeskDepartureCheckoutExecutionBoundaryTest",
         "FrontDeskCheckoutExecutionEvidenceFoundationTest",
         "FrontDeskCheckoutExecutionEvidenceMigrationProofTest",
-        "FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest"
+        "FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest",
+        "FrontDeskCheckoutHousekeepingHandoffFoundationTest",
+        "FrontDeskCheckoutHousekeepingHandoffMigrationProofTest",
+        "FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest"
       ],
       "expected": {
-        "tests": 534,
-        "assertions": 4817,
+        "tests": 613,
+        "assertions": 6197,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-23",
-        "branch": "sprint-fd-c1-terminal-checkout-evidence-foundation",
-        "sha": "d72381c074ed03b01e3ce8674da459b2f1d0c629",
-        "note": "FD-C1 zero-failure registered 56-class Front Desk baseline: 534 tests / 4817 assertions / 0 failures / 0 errors / duration 1,801,913ms. Historical diagnostic run (534/4807/2) had 2 failures from stale boundary assertions (FrontDeskDeparturePreparationBoundaryTest, FrontDeskDeparturePreparationEventBoundaryTest) that predated FD-C1 and asserted CHECKED_OUT did not exist. Those assertions were synchronized with authorized FD-C1 in commit d72381c—CHECKED_OUT exists as a foundation enum; departure preparation does not execute checkout; departure preparation events do not execute checkout. Six FD-C1 foreign keys: fd_ce_property_fk, fd_ce_stay_fk, fd_ce_reservation_fk, fd_ce_final_review_fk, fd_ce_business_date_fk, fd_ce_created_by_fk — all RESTRICT, no CASCADE, no SET NULL. idempotency trim enforcement: btrim(idempotency_key) <> '' AND idempotency_key = btrim(idempotency_key). FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE. No checkout command; no write route; no route/controller/UI; no permission; no sensitive confirmation intent; no Housekeeping handoff/outbox; no foreign-domain mutation; can_execute=false; CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED; checkout unauthorized; no new accepted debt."
+        "measured_at": "2026-07-24",
+        "branch": "sprint-fd-c2-checkout-housekeeping-handoff-foundation",
+        "sha": "d0ce6b3769b5d454c1fd3f0791cb7b64852ab778",
+        "note": "FD-C2 59-class Front Desk baseline: 613 tests / 6197 assertions / 0 failures / 0 errors. FD-C2 focused measurement: 79 tests / 1380 assertions / 0 failures / 0 errors across 3 classes. FD-C1 predecessor: 534 tests / 4817 assertions (verified at merge). Five FD-C2 foreign keys: fd_chh_property_fk, fd_chh_stay_fk, fd_chh_reservation_fk, fd_chh_execution_fk, fd_chh_business_date_fk — all RESTRICT. Five unique identities: fd_chh_idempotency_unique, fd_chh_correlation_unique, fd_chh_source_hash_unique, fd_chh_execution_unique, fd_chh_stay_unique. Immutable payload: FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE. Delete forbidden: FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN. Source mismatch: FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_SOURCE_MISMATCH. Invalid transition: FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION. Raw claim token never persisted (SHA-256 hash only). Dedicated table front_desk_checkout_housekeeping_handoffs (22 columns). outbox_messages unchanged. No checkout command; no production handoff creation path; no route/controller/permission/intent/UI; no stay transition; no Housekeeping readiness mutation; no foreign-domain mutation; can_execute=false; CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED; checkout unauthorized; Package 8 locked; Package 9 locked; no new accepted debt."
       },
       "accepted_debt": [],
       "status": "active"
