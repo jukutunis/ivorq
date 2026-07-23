@@ -251,7 +251,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'eed89e573ade65c8ec7962a7d1ec09439195756b',
+            '8409c8ccc10cc017a63d9fe35cdbb26170ccacf3',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -285,8 +285,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('CHECKED_OUT exists', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('departure preparation does not execute checkout', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('zero-failure', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Contract Version 1.13', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No checkout command', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('superseded', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero-failure registered', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('1,708,649ms', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Exit code: 0', $baseline->provenance->note ?? '');
 
         // ── FD-C2 assertions ──────────────────────────────────────────────
         $this->assertStringContainsString('FD-C2', $baseline->description ?? '');
@@ -319,8 +324,8 @@ class RegressionBaselineManifestTest extends PostgresTestCase
 
         // ── FD-C2 correction markers ──────────────────────────────────────
         $this->assertStringContainsString('superseded', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Actual completed registered', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('CURRENT_TIMESTAMP authority restored', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Actual completed zero-failure registered', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('CURRENT_TIMESTAMP authority remains', $baseline->provenance->note ?? '');
 
         // Prove no arithmetic-derived claims remain in the accepted note
         $this->assertStringNotContainsString('did not complete', $baseline->provenance->note ?? '');
