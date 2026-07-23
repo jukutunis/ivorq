@@ -244,12 +244,17 @@ return new class extends Migration
 
             // Mutation trigger function
             DB::statement("CREATE OR REPLACE FUNCTION fd_chh_enforce_mutation_rules() RETURNS trigger AS \$\$
+                DECLARE
+                    wall_clock_utc TIMESTAMP;
                 BEGIN
                     IF TG_OP = 'DELETE' THEN
                         RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN';
                     END IF;
 
                     IF TG_OP = 'UPDATE' THEN
+                        -- Resolve actual wall-clock time normalized to UTC once per trigger invocation
+                        wall_clock_utc := clock_timestamp() AT TIME ZONE 'UTC';
+
                         -- Reject immutable payload changes (explicit column checks)
                         IF NEW.property_id IS DISTINCT FROM OLD.property_id THEN
                             RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE';
@@ -287,16 +292,16 @@ return new class extends Migration
 
                         -- PENDING → CLAIMED
                         IF OLD.delivery_status = 'PENDING' AND NEW.delivery_status = 'CLAIMED' THEN
-                            IF OLD.available_at > clock_timestamp() THEN
+                            IF OLD.available_at > wall_clock_utc THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claimed_at IS NULL OR NEW.claimed_at < OLD.available_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.attempts <> OLD.attempts + 1 THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.available_at IS DISTINCT FROM OLD.available_at THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
-                            IF NEW.claimed_at IS NULL THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at <= NEW.claimed_at THEN
@@ -313,10 +318,10 @@ return new class extends Migration
 
                         -- CLAIMED → CLAIMED (reclaim on expiry)
                         IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'CLAIMED' THEN
-                            IF OLD.claim_expires_at > clock_timestamp() THEN
+                            IF OLD.claim_expires_at > wall_clock_utc THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            IF NEW.claimed_at < OLD.claim_expires_at THEN
+                            IF NEW.claimed_at IS NULL OR NEW.claimed_at < OLD.claim_expires_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.attempts <> OLD.attempts + 1 THEN
@@ -342,10 +347,10 @@ return new class extends Migration
 
                         -- FAILED → CLAIMED (due retry)
                         IF OLD.delivery_status = 'FAILED' AND NEW.delivery_status = 'CLAIMED' THEN
-                            IF OLD.available_at > clock_timestamp() THEN
+                            IF OLD.available_at > wall_clock_utc THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            IF NEW.claimed_at < OLD.available_at THEN
+                            IF NEW.claimed_at IS NULL OR NEW.claimed_at < OLD.available_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.attempts <> OLD.attempts + 1 THEN
@@ -377,7 +382,22 @@ return new class extends Migration
 
                         -- CLAIMED → DELIVERED
                         IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'DELIVERED' THEN
-                            IF OLD.claim_expires_at <= clock_timestamp() THEN
+                            -- Lease must still be active
+                            IF OLD.claim_expires_at <= wall_clock_utc THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- delivered_at must be database-clock consistent (narrow tolerance)
+                            IF NEW.delivered_at IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.delivered_at < OLD.claimed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.delivered_at >= OLD.claim_expires_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- delivered_at must be within a narrow tolerance of wall clock
+                            IF NEW.delivered_at < wall_clock_utc - interval '2 seconds' OR NEW.delivered_at > wall_clock_utc + interval '2 seconds' THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.attempts IS DISTINCT FROM OLD.attempts THEN
@@ -395,9 +415,6 @@ return new class extends Migration
                             IF NEW.available_at IS DISTINCT FROM OLD.available_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            IF NEW.delivered_at IS NULL THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
                             IF NEW.failed_at IS NOT NULL OR NEW.last_error_code IS NOT NULL THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
@@ -406,7 +423,32 @@ return new class extends Migration
 
                         -- CLAIMED → FAILED
                         IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'FAILED' THEN
-                            IF OLD.claim_expires_at <= clock_timestamp() THEN
+                            -- Lease must still be active
+                            IF OLD.claim_expires_at <= wall_clock_utc THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- failed_at must be database-clock consistent
+                            IF NEW.failed_at IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.failed_at < OLD.claimed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.failed_at >= OLD.claim_expires_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- failed_at must be within a narrow tolerance of wall clock
+                            IF NEW.failed_at < wall_clock_utc - interval '2 seconds' OR NEW.failed_at > wall_clock_utc + interval '2 seconds' THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- retryAt must be in the future
+                            IF NEW.available_at <= wall_clock_utc THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.available_at <= NEW.failed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.last_error_code IS NULL THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.attempts IS DISTINCT FROM OLD.attempts THEN
@@ -419,15 +461,6 @@ return new class extends Migration
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.claim_token_hash IS DISTINCT FROM OLD.claim_token_hash THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
-                            IF NEW.failed_at IS NULL THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
-                            IF NEW.last_error_code IS NULL THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
-                            IF NEW.available_at <= NEW.failed_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.delivered_at IS NOT NULL THEN

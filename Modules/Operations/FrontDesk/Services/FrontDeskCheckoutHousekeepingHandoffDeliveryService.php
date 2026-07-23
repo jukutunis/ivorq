@@ -4,6 +4,7 @@ namespace Modules\Operations\FrontDesk\Services;
 
 use DateTimeInterface;
 use DomainException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Operations\FrontDesk\Enums\FrontDeskCheckoutHousekeepingHandoffStatusEnum;
@@ -33,6 +34,29 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
         $result = DB::selectOne("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS wall_clock");
 
         return Carbon::parse($result->wall_clock);
+    }
+
+    /**
+     * Convert a PostgreSQL trigger QueryException into a DomainException
+     * when it carries a known FD-C2 marker, preserving the trigger's
+     * defense-in-depth without exposing raw database errors.
+     */
+    private function throwTriggerDomainException(QueryException $e): void
+    {
+        $message = $e->getMessage();
+
+        if (str_contains($message, 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION')) {
+            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION', 0, $e);
+        }
+        if (str_contains($message, 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE')) {
+            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE', 0, $e);
+        }
+        if (str_contains($message, 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN')) {
+            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN', 0, $e);
+        }
+
+        // Not a known FD-C2 trigger message — rethrow as-is
+        throw $e;
     }
 
     /**
@@ -106,7 +130,11 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             $handoff->delivered_at = null;
             $handoff->failed_at = null;
             $handoff->last_error_code = null;
-            $handoff->save();
+            try {
+                $handoff->save();
+            } catch (QueryException $e) {
+                $this->throwTriggerDomainException($e);
+            }
 
             return [
                 'handoff_id' => $handoff->id,
@@ -185,7 +213,11 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
 
             $handoff->delivery_status = FrontDeskCheckoutHousekeepingHandoffStatusEnum::Delivered;
             $handoff->delivered_at = $dbNow;
-            $handoff->save();
+            try {
+                $handoff->save();
+            } catch (QueryException $e) {
+                $this->throwTriggerDomainException($e);
+            }
 
             return $handoff->fresh();
         });
@@ -275,7 +307,11 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             $handoff->failed_at = $dbNow;
             $handoff->last_error_code = $errorCode;
             $handoff->available_at = $retryAt;
-            $handoff->save();
+            try {
+                $handoff->save();
+            } catch (QueryException $e) {
+                $this->throwTriggerDomainException($e);
+            }
 
             return $handoff->fresh();
         });

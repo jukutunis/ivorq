@@ -656,16 +656,21 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
         $this->assertFileExists($migrationPath);
         $source = file_get_contents($migrationPath);
 
-        // Database wall-clock (clock_timestamp) is the authoritative due-time source
+        // Database wall-clock normalized to UTC
         $this->assertStringContainsString(
-            'OLD.available_at > clock_timestamp()',
+            "wall_clock_utc := clock_timestamp() AT TIME ZONE 'UTC'",
             $source,
-            'Trigger must use clock_timestamp() for available_at due-time check.'
+            'Trigger must resolve clock_timestamp() AT TIME ZONE UTC into wall_clock_utc variable.'
         );
         $this->assertStringContainsString(
-            'OLD.claim_expires_at > clock_timestamp()',
+            'OLD.available_at > wall_clock_utc',
             $source,
-            'Trigger must use clock_timestamp() for claim expiry check.'
+            'Trigger must use wall_clock_utc for available_at due-time check.'
+        );
+        $this->assertStringContainsString(
+            'OLD.claim_expires_at <= wall_clock_utc',
+            $source,
+            'Trigger must use wall_clock_utc for lease expiry guard (DELIVERED/FAILED).'
         );
 
         // Column-value checks are complementary defense-in-depth

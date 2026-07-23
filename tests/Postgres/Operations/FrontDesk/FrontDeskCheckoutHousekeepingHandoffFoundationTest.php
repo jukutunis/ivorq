@@ -1027,37 +1027,20 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         $handoff = $this->createHandoff($execution, 'idem-svc-due-' . Str::ulid(), 'corr-svc-due-' . Str::ulid());
 
         $claimResult = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
-        $retryAt = Carbon::now()->addMinutes(5);
+        $retryAt = Carbon::now()->addSecond();
         $this->deliveryService->markFailed(
             $this->property->id, $handoff->id, $claimResult['claim_token'],
             'HK_DELIVERY_TIMEOUT', $retryAt
         );
 
-        // Set available_at in the past via direct DB update (bypass trigger by using a superuser...
-        // Actually, just wait — markFailed set available_at to now+5min via Carbon.
-        // For the test, we claim with a fresh service call after ensuring available_at is due.
-        // Use a fresh handoff that is already due.
-        // Alternative: create a new handoff that's already due for retry.
-        $handoff2 = $this->createHandoff($execution, 'idem-svc-due2-' . Str::ulid(), 'corr-svc-due2-' . Str::ulid());
-        DB::table('front_desk_checkout_housekeeping_handoffs')
-            ->where('id', $handoff2->id)
-            ->update([
-                'delivery_status' => 'FAILED',
-                'attempts' => 1,
-                'claimed_at' => DB::raw("clock_timestamp() - interval '10 minutes'"),
-                'claim_expires_at' => DB::raw("clock_timestamp() - interval '5 minutes'"),
-                'claim_token_hash' => str_repeat('r', 64),
-                'failed_at' => DB::raw("clock_timestamp() - interval '5 minutes'"),
-                'last_error_code' => 'HK_PREV_TIMEOUT',
-                'available_at' => DB::raw("clock_timestamp() - interval '1 second'"),
-                'updated_at' => now(),
-            ]);
+        // Wait for the 1-second retry time to elapse
+        usleep(1_500_000);
 
-        $result = $this->deliveryService->claimAvailable($this->property->id, $handoff2->id, 60);
-        $handoff2->refresh();
+        $result = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
+        $handoff->refresh();
 
-        $this->assertEquals(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed, $handoff2->delivery_status);
-        $this->assertSame(2, $handoff2->attempts);
+        $this->assertEquals(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed, $handoff->delivery_status);
+        $this->assertSame(2, $handoff->attempts);
         $this->assertNotEmpty($result['claim_token']);
     }
 
@@ -1340,8 +1323,8 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         $handoff->refresh();
         $originalAttempts = $handoff->attempts;
 
-        // Advance past expiry
-        Carbon::setTestNow(Carbon::now()->addSeconds(5));
+        // Advance past expiry by waiting for the 1-second lease to elapse
+        usleep(1_500_000);
 
         // Raw reclaim on expired claim
         DB::table('front_desk_checkout_housekeeping_handoffs')
@@ -1349,16 +1332,16 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             ->update([
                 'delivery_status' => 'CLAIMED',
                 'attempts' => $originalAttempts + 1,
-                'claimed_at' => now(),
-                'claim_expires_at' => now()->addSeconds(120),
-                'claim_token_hash' => str_repeat('e', 64),
+                'claimed_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC'"),
+                'claim_expires_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' + interval '120 seconds'"),
+                'claim_token_hash' => hash('sha256', 'exp-raw-reclaim'),
                 'updated_at' => now(),
             ]);
 
         $handoff->refresh();
         $this->assertEquals(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed, $handoff->delivery_status);
         $this->assertSame($originalAttempts + 1, $handoff->attempts);
-        $this->assertSame(str_repeat('e', 64), $handoff->claim_token_hash);
+        $this->assertSame(hash('sha256', 'exp-raw-reclaim'), $handoff->claim_token_hash);
     }
 
     public function test_attempts_tampering_rejected(): void
@@ -1474,10 +1457,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         $retryAt = Carbon::now()->addMinutes(5);
         $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', $retryAt);
 
-        // Advance past retry time
-        Carbon::setTestNow(Carbon::now()->addMinutes(10));
-
-        // Replay with same params after retry time — should still succeed idempotently
+        // Replay with same params (idempotent) — no time manipulation needed
         $replay = $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', $retryAt);
 
         $this->assertEquals(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Failed, $replay->delivery_status);
@@ -1523,7 +1503,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             'correlation_key' => 'corr-bypass1-' . Str::ulid(),
             'source_hash' => hash('sha256', 'src-bypass1-' . Str::ulid()),
             'delivery_status' => 'PENDING', 'attempts' => 0,
-            'available_at' => DB::raw("CURRENT_TIMESTAMP + interval '1 hour'"),
+            'available_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' + interval '1 hour'"),
             'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
         ]);
 
@@ -1533,8 +1513,8 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             ->where('id', $handoffId)
             ->update([
                 'delivery_status' => 'CLAIMED', 'attempts' => 1,
-                'claimed_at' => DB::raw("CURRENT_TIMESTAMP + interval '2 hours'"),
-                'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP + interval '3 hours'"),
+                'claimed_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' + interval '2 hours'"),
+                'claim_expires_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' + interval '3 hours'"),
                 'claim_token_hash' => str_repeat('a', 64), 'updated_at' => now(),
             ]);
     }
@@ -1558,21 +1538,21 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             'correlation_key' => 'corr-bypass4-' . Str::ulid(),
             'source_hash' => hash('sha256', 'src-bypass4-' . Str::ulid()),
             'delivery_status' => 'CLAIMED', 'attempts' => 1,
-            'claimed_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
-            'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 second'"),
+            'claimed_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
+            'claim_expires_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 second'"),
             'claim_token_hash' => str_repeat('d', 64),
-            'available_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
-            'occurred_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
-            'created_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
-            'updated_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
+            'available_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
+            'occurred_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
+            'created_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
+            'updated_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
         ]);
 
         DB::table('front_desk_checkout_housekeeping_handoffs')
             ->where('id', $handoffId)
             ->update([
                 'delivery_status' => 'CLAIMED', 'attempts' => 2,
-                'claimed_at' => DB::raw('CURRENT_TIMESTAMP'),
-                'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP + interval '120 seconds'"),
+                'claimed_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC'"),
+                'claim_expires_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' + interval '120 seconds'"),
                 'claim_token_hash' => str_repeat('e', 64), 'updated_at' => now(),
             ]);
 
@@ -1600,23 +1580,23 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             'correlation_key' => 'corr-bypass5-' . Str::ulid(),
             'source_hash' => hash('sha256', 'src-bypass5-' . Str::ulid()),
             'delivery_status' => 'FAILED', 'attempts' => 1,
-            'claimed_at' => DB::raw("CURRENT_TIMESTAMP - interval '2 hours'"),
-            'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 hour'"),
+            'claimed_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '2 hours'"),
+            'claim_expires_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
             'claim_token_hash' => str_repeat('f', 64),
-            'failed_at' => DB::raw("CURRENT_TIMESTAMP - interval '30 minutes'"),
+            'failed_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '30 minutes'"),
             'last_error_code' => 'HK_DELIVERY_TIMEOUT',
-            'available_at' => DB::raw("CURRENT_TIMESTAMP - interval '1 second'"),
-            'occurred_at' => DB::raw("CURRENT_TIMESTAMP - interval '2 hours'"),
-            'created_at' => DB::raw("CURRENT_TIMESTAMP - interval '2 hours'"),
-            'updated_at' => DB::raw("CURRENT_TIMESTAMP - interval '2 hours'"),
+            'available_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 second'"),
+            'occurred_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '2 hours'"),
+            'created_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '2 hours'"),
+            'updated_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '2 hours'"),
         ]);
 
         DB::table('front_desk_checkout_housekeeping_handoffs')
             ->where('id', $handoffId)
             ->update([
                 'delivery_status' => 'CLAIMED', 'attempts' => 2,
-                'claimed_at' => DB::raw('CURRENT_TIMESTAMP'),
-                'claim_expires_at' => DB::raw("CURRENT_TIMESTAMP + interval '120 seconds'"),
+                'claimed_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC'"),
+                'claim_expires_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' + interval '120 seconds'"),
                 'claim_token_hash' => str_repeat('a', 64),
                 'failed_at' => null, 'last_error_code' => null, 'updated_at' => now(),
             ]);
@@ -1782,8 +1762,8 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
                 'attempts' => 1,
                 'claimed_at' => DB::raw("clock_timestamp() - interval '2 minutes'"),
                 'claim_expires_at' => DB::raw("clock_timestamp() - interval '1 minute'"),
-                'claim_token_hash' => str_repeat('d', 64),
-                'available_at' => DB::raw("clock_timestamp() - interval '3 minutes'"),
+                'claim_token_hash' => hash('sha256', 'sql-dl-expired-d'),
+                'available_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '3 minutes'"),
                 'updated_at' => now(),
             ]);
 
@@ -1794,7 +1774,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             ->where('id', $hid)
             ->update([
                 'delivery_status' => 'DELIVERED',
-                'delivered_at' => DB::raw('clock_timestamp()'),
+                'delivered_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC'"),
                 'updated_at' => now(),
             ]);
     }
@@ -1816,8 +1796,8 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
                 'attempts' => 1,
                 'claimed_at' => DB::raw("clock_timestamp() - interval '2 minutes'"),
                 'claim_expires_at' => DB::raw("clock_timestamp() - interval '1 minute'"),
-                'claim_token_hash' => str_repeat('e', 64),
-                'available_at' => DB::raw("clock_timestamp() - interval '3 minutes'"),
+                'claim_token_hash' => hash('sha256', 'sql-fl-expired-e'),
+                'available_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '3 minutes'"),
                 'updated_at' => now(),
             ]);
 
@@ -1828,9 +1808,9 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             ->where('id', $hid)
             ->update([
                 'delivery_status' => 'FAILED',
-                'failed_at' => DB::raw('clock_timestamp()'),
+                'failed_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC'"),
                 'last_error_code' => 'HK_LEASE_EXPIRED',
-                'available_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
+                'available_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' + interval '60 seconds'"),
                 'updated_at' => now(),
             ]);
     }
@@ -1886,7 +1866,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
                 'attempts' => 1,
                 'claimed_at' => DB::raw("clock_timestamp() - interval '30 seconds'"),
                 'claim_expires_at' => DB::raw("clock_timestamp() + interval '120 seconds'"),
-                'claim_token_hash' => str_repeat('g', 64),
+                'claim_token_hash' => hash('sha256', 'sql-cc-block-g'),
                 'available_at' => DB::raw("clock_timestamp() - interval '60 seconds'"),
                 'updated_at' => now(),
             ]);
@@ -1901,7 +1881,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
                 'attempts' => 2,
                 'claimed_at' => DB::raw('clock_timestamp()'),
                 'claim_expires_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
-                'claim_token_hash' => str_repeat('h', 64),
+                'claim_token_hash' => hash('sha256', 'sql-cc-block-reclaim-h'),
                 'updated_at' => now(),
             ]);
     }
@@ -1924,7 +1904,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
                 'attempts' => 1,
                 'claimed_at' => DB::raw("clock_timestamp() - interval '5 minutes'"),
                 'claim_expires_at' => DB::raw("clock_timestamp() - interval '4 minutes'"),
-                'claim_token_hash' => str_repeat('i', 64),
+                'claim_token_hash' => hash('sha256', 'sql-fc-early-i'),
                 'failed_at' => DB::raw("clock_timestamp() - interval '4 minutes'"),
                 'last_error_code' => 'HK_PREVIOUS_TIMEOUT',
                 'available_at' => DB::raw("clock_timestamp() + interval '120 seconds'"),
@@ -1941,7 +1921,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
                 'attempts' => 2,
                 'claimed_at' => DB::raw('clock_timestamp()'),
                 'claim_expires_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
-                'claim_token_hash' => str_repeat('j', 64),
+                'claim_token_hash' => hash('sha256', 'sql-fc-early-retry-j'),
                 'failed_at' => null,
                 'last_error_code' => null,
                 'updated_at' => now(),
@@ -1974,7 +1954,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
                 'attempts' => 1,
                 'claimed_at' => DB::raw('clock_timestamp()'),
                 'claim_expires_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
-                'claim_token_hash' => str_repeat('k', 64),
+                'claim_token_hash' => hash('sha256', 'sql-valid-k'),
                 'updated_at' => now(),
             ]);
 
