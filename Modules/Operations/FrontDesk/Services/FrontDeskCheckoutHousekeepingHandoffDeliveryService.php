@@ -45,6 +45,9 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
     {
         $message = $e->getMessage();
 
+        if (str_contains($message, 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM')) {
+            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM', 0, $e);
+        }
         if (str_contains($message, 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION')) {
             throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION', 0, $e);
         }
@@ -55,7 +58,6 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN', 0, $e);
         }
 
-        // Not a known FD-C2 trigger message — rethrow as-is
         throw $e;
     }
 
