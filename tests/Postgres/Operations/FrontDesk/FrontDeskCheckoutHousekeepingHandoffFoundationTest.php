@@ -229,7 +229,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             'correlation_key' => $correlationKey,
             'source_hash' => $this->sha256($execution->id . $idempotencyKey),
             'occurred_at' => now(),
-            'available_at' => now(),
+            'available_at' => now()->subSeconds(5),
             'created_at' => now(),
             'updated_at' => now(),
         ];
@@ -836,8 +836,8 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         $handoff->refresh();
         $this->assertSame(1, $handoff->attempts);
 
-        // Advance past expiry
-        Carbon::setTestNow(Carbon::now()->addSeconds(5));
+        // Wait for the 1-second lease to actually expire by wall clock
+        usleep(1_500_000); // 1.5s
 
         // Reclaim
         $result = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
@@ -1009,8 +1009,9 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             'HK_DELIVERY_TIMEOUT', $retryAt
         );
 
-        // Early retry cannot claim
-        Carbon::setTestNow(Carbon::now()->addMinutes(2));
+        // Early retry cannot claim — available_at is still in the future via DB clock
+        // (available_at was set to now+5min by markFailed; DB clock_timestamp() is ≈now)
+        $handoff->refresh();
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
         $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
@@ -1032,12 +1033,31 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             'HK_DELIVERY_TIMEOUT', $retryAt
         );
 
-        Carbon::setTestNow(Carbon::now()->addMinutes(6));
-        $result = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
-        $handoff->refresh();
+        // Set available_at in the past via direct DB update (bypass trigger by using a superuser...
+        // Actually, just wait — markFailed set available_at to now+5min via Carbon.
+        // For the test, we claim with a fresh service call after ensuring available_at is due.
+        // Use a fresh handoff that is already due.
+        // Alternative: create a new handoff that's already due for retry.
+        $handoff2 = $this->createHandoff($execution, 'idem-svc-due2-' . Str::ulid(), 'corr-svc-due2-' . Str::ulid());
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoff2->id)
+            ->update([
+                'delivery_status' => 'FAILED',
+                'attempts' => 1,
+                'claimed_at' => DB::raw("clock_timestamp() - interval '10 minutes'"),
+                'claim_expires_at' => DB::raw("clock_timestamp() - interval '5 minutes'"),
+                'claim_token_hash' => str_repeat('r', 64),
+                'failed_at' => DB::raw("clock_timestamp() - interval '5 minutes'"),
+                'last_error_code' => 'HK_PREV_TIMEOUT',
+                'available_at' => DB::raw("clock_timestamp() - interval '1 second'"),
+                'updated_at' => now(),
+            ]);
 
-        $this->assertEquals(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed, $handoff->delivery_status);
-        $this->assertSame(2, $handoff->attempts);
+        $result = $this->deliveryService->claimAvailable($this->property->id, $handoff2->id, 60);
+        $handoff2->refresh();
+
+        $this->assertEquals(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed, $handoff2->delivery_status);
+        $this->assertSame(2, $handoff2->attempts);
         $this->assertNotEmpty($result['claim_token']);
     }
 
@@ -1169,7 +1189,9 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         $handoff = $this->createHandoff($execution, 'idem-expdel-' . Str::ulid(), 'corr-expdel-' . Str::ulid());
 
         $claimResult = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 1);
-        Carbon::setTestNow(Carbon::now()->addSeconds(5));
+
+        // Wait for the 1-second lease to actually expire by wall clock
+        usleep(1_500_000); // 1.5s
 
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
@@ -1603,5 +1625,549 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         $this->assertSame(2, (int) $row->attempts);
         $this->assertSame(str_repeat('a', 64), $row->claim_token_hash);
         $this->assertSame('CLAIMED', $row->delivery_status);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Lease clock integrity — database wall-clock authority
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * Resolve actual PostgreSQL wall-clock time via clock_timestamp().
+     */
+    private function dbWallClock(): \DateTimeImmutable
+    {
+        $result = DB::selectOne('SELECT clock_timestamp() AS wall_clock');
+        return new \DateTimeImmutable($result->wall_clock);
+    }
+
+    // ── A. Application clock behind database clock ────────────────────────
+
+    public function test_mark_delivered_rejects_expired_claim_by_database_clock(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-skew-del-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-skew-del-' . Str::ulid(), 'corr-skew-del-' . Str::ulid());
+
+        // Claim with a very short lease (1 second) so it expires almost immediately
+        $claim = $this->deliveryService->claimAvailable(
+            $this->property->id, $handoff->id, 1
+        );
+
+        // Wait for the lease to actually expire by wall clock
+        usleep(1_500_000); // 1.5 seconds — longer than the 1s lease
+
+        // Set Carbon test clock to BEFORE expiry (simulating stale application clock)
+        Carbon::setTestNow(Carbon::parse($claim['claimed_at']));
+
+        // Delivery must fail because database wall clock sees the lease as expired
+        try {
+            $this->deliveryService->markDelivered(
+                $this->property->id, $handoff->id, $claim['claim_token']
+            );
+            $this->fail('Expected expired-claim rejection but delivery succeeded.');
+        } catch (DomainException $e) {
+            $this->assertStringContainsString('EXPIRED_CLAIM', $e->getMessage());
+        }
+
+        // Prove status remains CLAIMED and no delivery timestamp was added
+        $row = DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoff->id)->first();
+        $this->assertSame('CLAIMED', $row->delivery_status);
+        $this->assertNull($row->delivered_at);
+    }
+
+    public function test_mark_failed_rejects_expired_claim_by_database_clock(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-skew-fail-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-skew-fail-' . Str::ulid(), 'corr-skew-fail-' . Str::ulid());
+
+        $claim = $this->deliveryService->claimAvailable(
+            $this->property->id, $handoff->id, 1
+        );
+
+        usleep(1_500_000);
+
+        Carbon::setTestNow(Carbon::parse($claim['claimed_at']));
+
+        $retryAt = new \DateTimeImmutable('+60 seconds');
+
+        try {
+            $this->deliveryService->markFailed(
+                $this->property->id, $handoff->id, $claim['claim_token'],
+                'HK_TIMEOUT', $retryAt
+            );
+            $this->fail('Expected expired-claim rejection but failure succeeded.');
+        } catch (DomainException $e) {
+            $this->assertStringContainsString('EXPIRED_CLAIM', $e->getMessage());
+        }
+
+        $row = DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoff->id)->first();
+        $this->assertSame('CLAIMED', $row->delivery_status);
+        $this->assertNull($row->failed_at);
+        $this->assertNull($row->last_error_code);
+    }
+
+    public function test_claim_available_uses_database_time_when_application_clock_behind(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-skew-claim-' . Str::ulid());
+
+        // Create handoff available 2 seconds ago
+        $twoSecondsAgo = (new \DateTimeImmutable('-2 seconds'))->format('Y-m-d H:i:s');
+        DB::table('front_desk_checkout_housekeeping_handoffs')->insert([
+            'id' => ($hid = Str::ulid()->toString()),
+            'property_id' => $execution->property_id,
+            'front_desk_stay_id' => $execution->front_desk_stay_id,
+            'reservation_id' => $execution->reservation_id,
+            'checkout_execution_id' => $execution->id,
+            'property_business_date_id' => $execution->property_business_date_id,
+            'business_date' => $execution->business_date->toDateString(),
+            'idempotency_key' => 'idem-skew-claim-' . Str::ulid(),
+            'correlation_key' => 'corr-skew-claim-' . Str::ulid(),
+            'source_hash' => $this->sha256(Str::ulid()->toString()),
+            'available_at' => $twoSecondsAgo,
+            'occurred_at' => $twoSecondsAgo,
+            'created_at' => $twoSecondsAgo,
+            'updated_at' => $twoSecondsAgo,
+        ]);
+
+        // Set Carbon 10 seconds behind — but DB says the handoff is available
+        Carbon::setTestNow(now()->subSeconds(10));
+
+        $claim = $this->deliveryService->claimAvailable(
+            $this->property->id, $hid, 60
+        );
+
+        // The claim must succeed using database wall-clock time
+        $this->assertNotEmpty($claim['claim_token']);
+        $this->assertNotNull($claim['claimed_at']);
+
+        $row = DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $hid)->first();
+        // claimed_at must be database-derived (close to actual wall clock, not frozen Carbon)
+        $wallClock = $this->dbWallClock();
+        $claimedAt = Carbon::parse($row->claimed_at);
+        $diffSeconds = abs($wallClock->getTimestamp() - $claimedAt->getTimestamp());
+        $this->assertLessThan(5, $diffSeconds, 'claimed_at must be database wall-clock time, not frozen Carbon time.');
+
+        // claim_expires_at must be after claimed_at (valid lease)
+        $claimExpiresAt = Carbon::parse($row->claim_expires_at);
+        $this->assertGreaterThan($claimedAt->getTimestamp(), $claimExpiresAt->getTimestamp());
+    }
+
+    // ── B. Direct SQL trigger enforcement ──────────────────────────────────
+
+    public function test_direct_sql_expired_claimed_to_delivered_is_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-sql-dl-exp-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-sql-dl-exp-' . Str::ulid(), 'corr-sql-dl-exp-' . Str::ulid());
+
+        $hid = $handoff->id;
+
+        // Manually set the row to CLAIMED with an already-expired lease
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'CLAIMED',
+                'attempts' => 1,
+                'claimed_at' => DB::raw("clock_timestamp() - interval '2 minutes'"),
+                'claim_expires_at' => DB::raw("clock_timestamp() - interval '1 minute'"),
+                'claim_token_hash' => str_repeat('d', 64),
+                'available_at' => DB::raw("clock_timestamp() - interval '3 minutes'"),
+                'updated_at' => now(),
+            ]);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'DELIVERED',
+                'delivered_at' => DB::raw('clock_timestamp()'),
+                'updated_at' => now(),
+            ]);
+    }
+
+    public function test_direct_sql_expired_claimed_to_failed_is_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-sql-fl-exp-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-sql-fl-exp-' . Str::ulid(), 'corr-sql-fl-exp-' . Str::ulid());
+
+        $hid = $handoff->id;
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'CLAIMED',
+                'attempts' => 1,
+                'claimed_at' => DB::raw("clock_timestamp() - interval '2 minutes'"),
+                'claim_expires_at' => DB::raw("clock_timestamp() - interval '1 minute'"),
+                'claim_token_hash' => str_repeat('e', 64),
+                'available_at' => DB::raw("clock_timestamp() - interval '3 minutes'"),
+                'updated_at' => now(),
+            ]);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'FAILED',
+                'failed_at' => DB::raw('clock_timestamp()'),
+                'last_error_code' => 'HK_LEASE_EXPIRED',
+                'available_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
+                'updated_at' => now(),
+            ]);
+    }
+
+    public function test_direct_sql_early_pending_to_claimed_is_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-sql-pc-early-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-sql-pc-early-' . Str::ulid(), 'corr-sql-pc-early-' . Str::ulid());
+
+        $hid = $handoff->id;
+
+        // Set available_at 60 seconds in the future
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'available_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
+                'updated_at' => now(),
+            ]);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'CLAIMED',
+                'attempts' => 1,
+                'claimed_at' => DB::raw('clock_timestamp()'),
+                'claim_expires_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
+                'claim_token_hash' => str_repeat('f', 64),
+                'updated_at' => now(),
+            ]);
+    }
+
+    public function test_direct_sql_unexpired_claimed_to_claimed_reclaim_is_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-sql-cc-block-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-sql-cc-block-' . Str::ulid(), 'corr-sql-cc-block-' . Str::ulid());
+
+        $hid = $handoff->id;
+
+        // Set to CLAIMED with a still-valid lease (expires in 120s)
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'CLAIMED',
+                'attempts' => 1,
+                'claimed_at' => DB::raw("clock_timestamp() - interval '30 seconds'"),
+                'claim_expires_at' => DB::raw("clock_timestamp() + interval '120 seconds'"),
+                'claim_token_hash' => str_repeat('g', 64),
+                'available_at' => DB::raw("clock_timestamp() - interval '60 seconds'"),
+                'updated_at' => now(),
+            ]);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'CLAIMED',
+                'attempts' => 2,
+                'claimed_at' => DB::raw('clock_timestamp()'),
+                'claim_expires_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
+                'claim_token_hash' => str_repeat('h', 64),
+                'updated_at' => now(),
+            ]);
+    }
+
+    public function test_direct_sql_early_failed_to_claimed_retry_is_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-sql-fc-early-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-sql-fc-early-' . Str::ulid(), 'corr-sql-fc-early-' . Str::ulid());
+
+        $hid = $handoff->id;
+
+        // Set to FAILED with available_at 120s in the future
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'FAILED',
+                'attempts' => 1,
+                'claimed_at' => DB::raw("clock_timestamp() - interval '5 minutes'"),
+                'claim_expires_at' => DB::raw("clock_timestamp() - interval '4 minutes'"),
+                'claim_token_hash' => str_repeat('i', 64),
+                'failed_at' => DB::raw("clock_timestamp() - interval '4 minutes'"),
+                'last_error_code' => 'HK_PREVIOUS_TIMEOUT',
+                'available_at' => DB::raw("clock_timestamp() + interval '120 seconds'"),
+                'updated_at' => now(),
+            ]);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'CLAIMED',
+                'attempts' => 2,
+                'claimed_at' => DB::raw('clock_timestamp()'),
+                'claim_expires_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
+                'claim_token_hash' => str_repeat('j', 64),
+                'failed_at' => null,
+                'last_error_code' => null,
+                'updated_at' => now(),
+            ]);
+    }
+
+    public function test_direct_sql_valid_due_transitions_still_succeed(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-sql-valid-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-sql-valid-' . Str::ulid(), 'corr-sql-valid-' . Str::ulid());
+
+        $hid = $handoff->id;
+
+        // Set available_at in the past (due now)
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'available_at' => DB::raw("clock_timestamp() - interval '1 second'"),
+                'updated_at' => now(),
+            ]);
+
+        // PENDING → CLAIMED must succeed
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'CLAIMED',
+                'attempts' => 1,
+                'claimed_at' => DB::raw('clock_timestamp()'),
+                'claim_expires_at' => DB::raw("clock_timestamp() + interval '60 seconds'"),
+                'claim_token_hash' => str_repeat('k', 64),
+                'updated_at' => now(),
+            ]);
+
+        $row = DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $hid)->first();
+        $this->assertSame('CLAIMED', $row->delivery_status);
+        $this->assertSame(1, (int) $row->attempts);
+
+        // CLAIMED → DELIVERED must succeed (lease still valid)
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'delivery_status' => 'DELIVERED',
+                'delivered_at' => DB::raw('clock_timestamp()'),
+                'updated_at' => now(),
+            ]);
+
+        $row = DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $hid)->first();
+        $this->assertSame('DELIVERED', $row->delivery_status);
+        $this->assertNotNull($row->delivered_at);
+    }
+
+    public function test_direct_sql_payload_immutability_remains_intact(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-sql-immu-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-sql-immu-' . Str::ulid(), 'corr-sql-immu-' . Str::ulid());
+
+        $hid = $handoff->id;
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->update([
+                'front_desk_stay_id' => Str::ulid()->toString(),
+                'updated_at' => now(),
+            ]);
+    }
+
+    public function test_direct_sql_delete_prohibition_remains_intact(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-sql-delno-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-sql-delno-' . Str::ulid(), 'corr-sql-delno-' . Str::ulid());
+
+        $hid = $handoff->id;
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->delete();
+    }
+
+    // ── C. Lock-wait concurrency proof ────────────────────────────────────
+
+    public function test_lock_wait_expiry_worker_rejected_after_lease_expires(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-lockwait-' . Str::ulid());
+        $handoff = $this->createHandoff($execution, 'idem-lockwait-' . Str::ulid(), 'corr-lockwait-' . Str::ulid());
+
+        $claim = $this->deliveryService->claimAvailable(
+            $this->property->id, $handoff->id, 2 // 2-second lease
+        );
+
+        // We simulate the lock-wait scenario using two database connections:
+        // Conn A holds a lock, Conn B attempts delivery after lease expiry.
+
+        $connA = DB::connection('pgsql');
+        $connB = DB::connection('pgsql');
+
+        $hid = $handoff->id;
+        $token = $claim['claim_token'];
+        $tokenHash = hash('sha256', $token);
+
+        // Conn A: Begin transaction and lock the row
+        $connA->beginTransaction();
+        $locked = $connA->table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)
+            ->lockForUpdate()
+            ->first();
+        $this->assertNotNull($locked);
+
+        // Wait for the lease to expire while Conn A holds the lock
+        usleep(3_000_000); // 3 seconds — lease was 2 seconds
+
+        // Now lease is expired by actual wall clock
+
+        // Conn B: Attempt delivery — must block on Conn A's lock, then reject
+        // We use a child PHP process to avoid blocking the test runner
+        $phpBinary = PHP_BINARY;
+        $artisan = base_path('artisan');
+        $script = base_path('tests/Postgres/Operations/FrontDesk/fd_c2_lock_wait_worker.php');
+
+        // Write the worker script
+        $workerCode = <<<PHP
+<?php
+// FD-C2 lock-wait concurrency worker
+require_once __DIR__ . '/../../../../vendor/autoload.php';
+\$app = require_once __DIR__ . '/../../../../bootstrap/app.php';
+\$app->make(\\Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap();
+
+use Illuminate\\Support\\Facades\\DB;
+use Modules\\Operations\\FrontDesk\\Services\\FrontDeskCheckoutHousekeepingHandoffDeliveryService;
+use Shared\\Services\\CurrentPropertyService;
+
+\$propertyId = '{$this->property->id}';
+\$handoffId = '{$hid}';
+\$claimToken = '{$token}';
+
+\$currentProperty = app(CurrentPropertyService::class);
+\$currentProperty->setPropertyId(\$propertyId);
+
+\$deliveryService = app(FrontDeskCheckoutHousekeepingHandoffDeliveryService::class);
+
+try {
+    \$result = \$deliveryService->markDelivered(\$propertyId, \$handoffId, \$claimToken);
+    echo "WORKER_RESULT:DELIVERED\\n";
+    exit(0);
+} catch (\\DomainException \$e) {
+    echo "WORKER_RESULT:REJECTED:" . \$e->getMessage() . "\\n";
+    exit(1);
+} catch (\\Throwable \$e) {
+    echo "WORKER_RESULT:ERROR:" . get_class(\$e) . ":" . \$e->getMessage() . "\\n";
+    exit(2);
+}
+PHP;
+
+        file_put_contents($script, $workerCode);
+
+        // Start worker in background
+        $descriptorSpec = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+        $worker = proc_open(
+            "\"$phpBinary\" \"$script\"",
+            $descriptorSpec,
+            $pipes,
+            base_path()
+        );
+
+        // Give the worker a moment to start and block on the lock
+        usleep(500_000);
+
+        // Conn A: Release the lock (commit)
+        $connA->commit();
+
+        // Wait for worker to complete (max 10 seconds)
+        $start = microtime(true);
+        $workerOutput = '';
+        $workerExitCode = -1;
+        while (true) {
+            $status = proc_get_status($worker);
+            if (! $status['running']) {
+                $workerExitCode = $status['exitcode'];
+                $workerOutput = stream_get_contents($pipes[1]);
+                break;
+            }
+            if (microtime(true) - $start > 10) {
+                proc_terminate($worker, 9);
+                $this->fail('Lock-wait worker timed out after 10 seconds.');
+            }
+            usleep(50_000);
+        }
+
+        fclose($pipes[0]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($worker);
+
+        // Clean up worker script
+        @unlink($script);
+
+        // Worker must have been rejected with expired claim
+        $this->assertStringContainsString('WORKER_RESULT:REJECTED', $workerOutput);
+        $this->assertStringContainsString('EXPIRED_CLAIM', $workerOutput);
+        $this->assertSame(1, $workerExitCode, 'Worker must exit with code 1 (rejected).');
+
+        // Prove handoff remains CLAIMED (not delivered)
+        $row = DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $hid)->first();
+        $this->assertSame('CLAIMED', $row->delivery_status);
+        $this->assertNull($row->delivered_at);
     }
 }

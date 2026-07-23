@@ -287,7 +287,7 @@ return new class extends Migration
 
                         -- PENDING → CLAIMED
                         IF OLD.delivery_status = 'PENDING' AND NEW.delivery_status = 'CLAIMED' THEN
-                            IF OLD.available_at > CURRENT_TIMESTAMP THEN
+                            IF OLD.available_at > clock_timestamp() THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.attempts <> OLD.attempts + 1 THEN
@@ -313,7 +313,7 @@ return new class extends Migration
 
                         -- CLAIMED → CLAIMED (reclaim on expiry)
                         IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'CLAIMED' THEN
-                            IF OLD.claim_expires_at > CURRENT_TIMESTAMP THEN
+                            IF OLD.claim_expires_at > clock_timestamp() THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.claimed_at < OLD.claim_expires_at THEN
@@ -342,7 +342,7 @@ return new class extends Migration
 
                         -- FAILED → CLAIMED (due retry)
                         IF OLD.delivery_status = 'FAILED' AND NEW.delivery_status = 'CLAIMED' THEN
-                            IF OLD.available_at > CURRENT_TIMESTAMP THEN
+                            IF OLD.available_at > clock_timestamp() THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.claimed_at < OLD.available_at THEN
@@ -377,6 +377,9 @@ return new class extends Migration
 
                         -- CLAIMED → DELIVERED
                         IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'DELIVERED' THEN
+                            IF OLD.claim_expires_at <= clock_timestamp() THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
                             IF NEW.attempts IS DISTINCT FROM OLD.attempts THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
@@ -403,6 +406,9 @@ return new class extends Migration
 
                         -- CLAIMED → FAILED
                         IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'FAILED' THEN
+                            IF OLD.claim_expires_at <= clock_timestamp() THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
                             IF NEW.attempts IS DISTINCT FROM OLD.attempts THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;

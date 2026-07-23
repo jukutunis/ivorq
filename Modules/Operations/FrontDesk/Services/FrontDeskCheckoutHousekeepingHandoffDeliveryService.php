@@ -4,6 +4,7 @@ namespace Modules\Operations\FrontDesk\Services;
 
 use DateTimeInterface;
 use DomainException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Operations\FrontDesk\Enums\FrontDeskCheckoutHousekeepingHandoffStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskCheckoutHousekeepingHandoff;
@@ -14,6 +15,25 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
     public function __construct(
         private readonly CurrentPropertyService $currentProperty,
     ) {}
+
+    /**
+     * Resolve authoritative PostgreSQL wall-clock time after row-lock acquisition.
+     *
+     * Uses clock_timestamp() which returns the actual current wall-clock time,
+     * not the transaction-start time (CURRENT_TIMESTAMP / now() / transaction_timestamp()).
+     * This is essential when a transaction may have waited on a FOR UPDATE row lock.
+     *
+     * Returns a Carbon instance normalized to UTC for consistent storage
+     * in timestamp-without-time-zone columns.
+     *
+     * Must be called AFTER lockForUpdate() inside the transaction.
+     */
+    private function resolveDatabaseWallClock(): Carbon
+    {
+        $result = DB::selectOne("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS wall_clock");
+
+        return Carbon::parse($result->wall_clock);
+    }
 
     /**
      * Claim an available handoff for delivery.
@@ -38,9 +58,7 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
         }
 
-        $now = now();
-
-        return DB::transaction(function () use ($currentPropertyId, $handoffId, $leaseSeconds, $now): array {
+        return DB::transaction(function () use ($currentPropertyId, $handoffId, $leaseSeconds): array {
             $handoff = FrontDeskCheckoutHousekeepingHandoff::query()
                 ->forProperty($currentPropertyId)
                 ->where('id', $handoffId)
@@ -50,6 +68,9 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             if (! $handoff) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
             }
+
+            // Resolve authoritative wall-clock time AFTER the row lock
+            $dbNow = $this->resolveDatabaseWallClock();
 
             $status = $handoff->delivery_status;
 
@@ -61,24 +82,25 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             // Active unexpired claim — cannot be stolen
             if (
                 $status === FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed
-                && $handoff->claim_expires_at > $now
+                && $handoff->claim_expires_at !== null
+                && $handoff->claim_expires_at->getTimestamp() > $dbNow->getTimestamp()
             ) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
             }
 
             // Not yet available
-            if ($handoff->available_at > $now) {
+            if ($handoff->available_at !== null && $handoff->available_at->getTimestamp() > $dbNow->getTimestamp()) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
             }
 
             // Generate claim token
             $rawToken = bin2hex(random_bytes(32));
             $tokenHash = hash('sha256', $rawToken);
-            $claimExpiresAt = $now->copy()->addSeconds($leaseSeconds);
+            $claimExpiresAt = $dbNow->copy()->addSeconds($leaseSeconds);
 
             $handoff->delivery_status = FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed;
             $handoff->attempts = $handoff->attempts + 1;
-            $handoff->claimed_at = $now;
+            $handoff->claimed_at = $dbNow;
             $handoff->claim_expires_at = $claimExpiresAt;
             $handoff->claim_token_hash = $tokenHash;
             $handoff->delivered_at = null;
@@ -117,9 +139,7 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
         }
 
-        $now = now();
-
-        return DB::transaction(function () use ($currentPropertyId, $handoffId, $claimToken, $now): FrontDeskCheckoutHousekeepingHandoff {
+        return DB::transaction(function () use ($currentPropertyId, $handoffId, $claimToken): FrontDeskCheckoutHousekeepingHandoff {
             $handoff = FrontDeskCheckoutHousekeepingHandoff::query()
                 ->forProperty($currentPropertyId)
                 ->where('id', $handoffId)
@@ -129,6 +149,9 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             if (! $handoff) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
             }
+
+            // Resolve authoritative wall-clock time AFTER the row lock
+            $dbNow = $this->resolveDatabaseWallClock();
 
             // Already delivered — idempotent replay
             if ($handoff->delivery_status === FrontDeskCheckoutHousekeepingHandoffStatusEnum::Delivered) {
@@ -149,13 +172,19 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_CLAIM_TOKEN');
             }
 
-            // Claim must not be expired
-            if ($handoff->claim_expires_at <= $now) {
+            // Claim must not be expired according to database wall clock.
+            // Use AT TIME ZONE 'UTC' to normalize both sides of the comparison
+            // since the column is timestamp without time zone (stored as UTC).
+            $expiredCheck = DB::selectOne(
+                "SELECT 1 AS expired FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC')",
+                [$handoffId]
+            );
+            if ($expiredCheck !== null) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
             }
 
             $handoff->delivery_status = FrontDeskCheckoutHousekeepingHandoffStatusEnum::Delivered;
-            $handoff->delivered_at = $now;
+            $handoff->delivered_at = $dbNow;
             $handoff->save();
 
             return $handoff->fresh();
@@ -175,7 +204,8 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
         string $errorCode,
         DateTimeInterface $retryAt
     ): FrontDeskCheckoutHousekeepingHandoff {
-        // Validate error code syntax first
+        // Validate error code syntax first (before property resolution —
+        // the error code pattern is a public format check, not a disclosure)
         if (! preg_match('/^[A-Z0-9_]{1,100}$/', $errorCode)) {
             throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_ERROR_CODE');
         }
@@ -186,9 +216,7 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
         }
 
-        $now = now();
-
-        return DB::transaction(function () use ($currentPropertyId, $handoffId, $claimToken, $errorCode, $retryAt, $now): FrontDeskCheckoutHousekeepingHandoff {
+        return DB::transaction(function () use ($currentPropertyId, $handoffId, $claimToken, $errorCode, $retryAt): FrontDeskCheckoutHousekeepingHandoff {
             $handoff = FrontDeskCheckoutHousekeepingHandoff::query()
                 ->forProperty($currentPropertyId)
                 ->where('id', $handoffId)
@@ -199,7 +227,10 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
             }
 
-            // Already failed — idempotent replay check BEFORE retryAt > now validation
+            // Resolve authoritative wall-clock time AFTER the row lock
+            $dbNow = $this->resolveDatabaseWallClock();
+
+            // Already failed — idempotent replay check
             if ($handoff->delivery_status === FrontDeskCheckoutHousekeepingHandoffStatusEnum::Failed) {
                 if (! hash_equals(hash('sha256', $claimToken), $handoff->claim_token_hash ?? '')) {
                     throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_CLAIM_TOKEN');
@@ -225,18 +256,23 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_CLAIM_TOKEN');
             }
 
-            // Claim must not be expired
-            if ($handoff->claim_expires_at <= $now) {
+            // Claim must not be expired according to database wall clock.
+            // Use AT TIME ZONE 'UTC' to normalize both sides of the comparison.
+            $expiredCheck = DB::selectOne(
+                "SELECT 1 AS expired FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC')",
+                [$handoffId]
+            );
+            if ($expiredCheck !== null) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
             }
 
-            // For first FAILED transition, retryAt must be later than server now
-            if ($retryAt <= $now) {
+            // For first FAILED transition, retryAt must be later than database wall clock
+            if ($retryAt->getTimestamp() <= $dbNow->getTimestamp()) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_RETRY_TIME');
             }
 
             $handoff->delivery_status = FrontDeskCheckoutHousekeepingHandoffStatusEnum::Failed;
-            $handoff->failed_at = $now;
+            $handoff->failed_at = $dbNow;
             $handoff->last_error_code = $errorCode;
             $handoff->available_at = $retryAt;
             $handoff->save();

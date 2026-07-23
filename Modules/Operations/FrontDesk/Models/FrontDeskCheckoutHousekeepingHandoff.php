@@ -69,13 +69,9 @@ class FrontDeskCheckoutHousekeepingHandoff extends Model
                     );
                 }
                 if ($oldStatus === 'CLAIMED') {
-                    // Only allowed when old claim expired (database-clock check via server now)
-                    $oldClaimExpiresAt = $original['claim_expires_at'] ?? null;
-                    if ($oldClaimExpiresAt === null || $oldClaimExpiresAt > $now->format('Y-m-d H:i:s')) {
-                        throw new DomainException(
-                            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION'
-                        );
-                    }
+                    // Only allowed when old claim expired.
+                    // Time-based expiry is enforced by the database trigger
+                    // using clock_timestamp(); do not duplicate here.
                     // attempts must increment
                     if ($handoff->attempts !== ((int) ($original['attempts'] ?? 0)) + 1) {
                         throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
@@ -84,6 +80,7 @@ class FrontDeskCheckoutHousekeepingHandoff extends Model
                     if (! $handoff->isDirty('claimed_at')) {
                         throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
+                    $oldClaimExpiresAt = $original['claim_expires_at'] ?? null;
                     if ($handoff->claimed_at !== null && $oldClaimExpiresAt !== null
                         && $handoff->claimed_at->format('Y-m-d H:i:s') < $oldClaimExpiresAt) {
                         throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
@@ -118,10 +115,8 @@ class FrontDeskCheckoutHousekeepingHandoff extends Model
             if ($oldStatus !== $newStatus) {
                 // PENDING → CLAIMED
                 if ($oldStatus === 'PENDING' && $newStatus === 'CLAIMED') {
-                    $oldAvailableAt = $original['available_at'] ?? null;
-                    if ($oldAvailableAt === null || $oldAvailableAt > $now->format('Y-m-d H:i:s')) {
-                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
-                    }
+                    // Time-based eligibility is enforced by the database trigger
+                    // using clock_timestamp(); the model must not use stale application time.
                     if ($handoff->attempts !== ((int) ($original['attempts'] ?? 0)) + 1) {
                         throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
@@ -144,16 +139,15 @@ class FrontDeskCheckoutHousekeepingHandoff extends Model
                 }
                 // FAILED → CLAIMED
                 elseif ($oldStatus === 'FAILED' && $newStatus === 'CLAIMED') {
-                    $oldAvailableAt = $original['available_at'] ?? null;
-                    if ($oldAvailableAt === null || $oldAvailableAt > $now->format('Y-m-d H:i:s')) {
-                        throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
-                    }
+                    // Time-based retry eligibility is enforced by the database trigger
+                    // using clock_timestamp(); the model must not use stale application time.
                     if ($handoff->attempts !== ((int) ($original['attempts'] ?? 0)) + 1) {
                         throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
                     if (! $handoff->isDirty('claimed_at')) {
                         throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
                     }
+                    $oldAvailableAt = $original['available_at'] ?? null;
                     if ($handoff->claimed_at !== null && $oldAvailableAt !== null
                         && $handoff->claimed_at->format('Y-m-d H:i:s') < $oldAvailableAt) {
                         throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
