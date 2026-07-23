@@ -246,12 +246,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertSame('FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest', $lastSix[5]);
 
         $this->assertEquals(632, $baseline->expected->tests ?? null);
-        $this->assertEquals(6241, $baseline->expected->assertions ?? null);
+        $this->assertEquals(6260, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '8e209cd3fafaba5b60bc47ff5b0c48026bb938ef',
+            'eed89e573ade65c8ec7962a7d1ec09439195756b',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -319,6 +319,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
 
         // ── FD-C2 correction markers ──────────────────────────────────────
         $this->assertStringContainsString('superseded', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Actual completed registered', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('CURRENT_TIMESTAMP authority restored', $baseline->provenance->note ?? '');
+
+        // Prove no arithmetic-derived claims remain in the accepted note
+        $this->assertStringNotContainsString('did not complete', $baseline->provenance->note ?? '');
+        $this->assertStringNotContainsString('arithmetic from independently verified focused results', $baseline->provenance->note ?? '');
+        $this->assertStringNotContainsString('No CURRENT_TIMESTAMP database-clock checks in trigger', $baseline->provenance->note ?? '');
     }
 
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void
