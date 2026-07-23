@@ -105,17 +105,23 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
             }
 
-            // Active unexpired claim — cannot be stolen
-            if (
-                $status === FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed
-                && $handoff->claim_expires_at !== null
-                && $handoff->claim_expires_at->getTimestamp() > $dbNow->getTimestamp()
-            ) {
+            // Active unexpired claim — cannot be stolen.
+            // Use database-side comparison for full microsecond precision.
+            $activeClaim = DB::selectOne(
+                "SELECT 1 FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND delivery_status = 'CLAIMED' AND claim_expires_at > (clock_timestamp() AT TIME ZONE 'UTC')",
+                [$handoffId]
+            );
+            if ($activeClaim !== null) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
             }
 
-            // Not yet available
-            if ($handoff->available_at !== null && $handoff->available_at->getTimestamp() > $dbNow->getTimestamp()) {
+            // Not yet available.
+            // Use database-side comparison for full microsecond precision.
+            $notAvailable = DB::selectOne(
+                "SELECT 1 FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND available_at > (clock_timestamp() AT TIME ZONE 'UTC')",
+                [$handoffId]
+            );
+            if ($notAvailable !== null) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
             }
 
@@ -137,6 +143,9 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             } catch (QueryException $e) {
                 $this->throwTriggerDomainException($e);
             }
+
+            // Refresh from database to get trigger-owned timestamps
+            $handoff->refresh();
 
             return [
                 'handoff_id' => $handoff->id,
@@ -203,10 +212,9 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             }
 
             // Claim must not be expired according to database wall clock.
-            // Use AT TIME ZONE 'UTC' to normalize both sides of the comparison
-            // since the column is timestamp without time zone (stored as UTC).
+            // Use database-side comparison for full microsecond precision.
             $expiredCheck = DB::selectOne(
-                "SELECT 1 AS expired FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC')",
+                "SELECT 1 FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND delivery_status = 'CLAIMED' AND claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC')",
                 [$handoffId]
             );
             if ($expiredCheck !== null) {
@@ -221,6 +229,7 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
                 $this->throwTriggerDomainException($e);
             }
 
+            // Return refreshed model with trigger-owned delivered_at
             return $handoff->fresh();
         });
     }
@@ -291,17 +300,21 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             }
 
             // Claim must not be expired according to database wall clock.
-            // Use AT TIME ZONE 'UTC' to normalize both sides of the comparison.
             $expiredCheck = DB::selectOne(
-                "SELECT 1 AS expired FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC')",
+                "SELECT 1 FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND delivery_status = 'CLAIMED' AND claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC')",
                 [$handoffId]
             );
             if ($expiredCheck !== null) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
             }
 
-            // For first FAILED transition, retryAt must be later than database wall clock
-            if ($retryAt->getTimestamp() <= $dbNow->getTimestamp()) {
+            // For first FAILED transition, retryAt must be later than database wall clock.
+            // Use database-side comparison for full microsecond precision.
+            $retryCheck = DB::selectOne(
+                "SELECT 1 WHERE ?::timestamptz <= (clock_timestamp() AT TIME ZONE 'UTC')",
+                [$retryAt->format('Y-m-d H:i:s.u')]
+            );
+            if ($retryCheck !== null) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_RETRY_TIME');
             }
 

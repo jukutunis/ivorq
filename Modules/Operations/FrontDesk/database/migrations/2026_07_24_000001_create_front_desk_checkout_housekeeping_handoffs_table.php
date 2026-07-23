@@ -288,8 +288,8 @@ return new class extends Migration
                             END IF;
                             -- Database owns claimed_at
                             NEW.claimed_at := wall_clock_utc;
-                            -- Lease must be > 0 and <= 300 seconds
-                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at <= NEW.claimed_at THEN
+                            -- Lease must be >= 1s and <= 300s from database-owned claimed_at
+                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at < NEW.claimed_at + interval '1 second' THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.claim_expires_at > NEW.claimed_at + interval '300 seconds' THEN
@@ -323,8 +323,8 @@ return new class extends Migration
                             IF NEW.claimed_at < OLD.claim_expires_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            -- Lease bounds
-                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at <= NEW.claimed_at THEN
+                            -- Lease bounds: 1-300 seconds
+                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at < NEW.claimed_at + interval '1 second' THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.claim_expires_at > NEW.claimed_at + interval '300 seconds' THEN
@@ -361,8 +361,8 @@ return new class extends Migration
                             IF NEW.claimed_at < OLD.available_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            -- Lease bounds
-                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at <= NEW.claimed_at THEN
+                            -- Lease bounds: 1-300 seconds
+                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at < NEW.claimed_at + interval '1 second' THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
                             IF NEW.claim_expires_at > NEW.claimed_at + interval '300 seconds' THEN

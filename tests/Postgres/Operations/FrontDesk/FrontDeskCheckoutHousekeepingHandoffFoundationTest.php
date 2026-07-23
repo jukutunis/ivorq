@@ -1542,8 +1542,8 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             'claim_expires_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 second'"),
             'claim_token_hash' => str_repeat('d', 64),
             'available_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
-            'occurred_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
-            'created_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
+            'occurred_at' => now(),
+            'created_at' => now(),
             'updated_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour'"),
         ]);
 
@@ -1586,8 +1586,8 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
             'failed_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '30 minutes'"),
             'last_error_code' => 'HK_DELIVERY_TIMEOUT',
             'available_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '1 second'"),
-            'occurred_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '2 hours'"),
-            'created_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '2 hours'"),
+            'occurred_at' => now(),
+            'created_at' => now(),
             'updated_at' => DB::raw("clock_timestamp() AT TIME ZONE 'UTC' - interval '2 hours'"),
         ]);
 
@@ -2031,6 +2031,11 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
      * 6. Worker B acquires the row, checks clock_timestamp(), finds lease expired,
      *    and returns the controlled EXPIRED_CLAIM rejection.
      */
+    /**
+     * Prove that a worker blocked behind a row lock is rejected when the lease
+     * expires while it waits. Uses the established IVORQ coordinator/worker
+     * pattern with credential-safe JSON transport.
+     */
     public function test_lock_wait_expiry_worker_rejected_after_lease_expires(): void
     {
         $stay = $this->makeInHouseStay($this->property);
@@ -2039,7 +2044,7 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-lockwait-' . Str::ulid());
         $handoff = $this->createHandoff($execution, 'idem-lockwait-' . Str::ulid(), 'corr-lockwait-' . Str::ulid());
 
-        // Claim with a lease long enough for deterministic coordination
+        // Claim with a 3-second lease
         $claim = $this->deliveryService->claimAvailable(
             $this->property->id, $handoff->id, 3
         );
@@ -2047,68 +2052,81 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         $hid = $handoff->id;
         $token = $claim['claim_token'];
 
-        // Worker A (separate process): lock the row and hold until lease expires
-        $lockHolderScript = base_path('tests/Postgres/Operations/FrontDesk/fd_c2_lock_wait_holder.php');
-        $descriptorSpec = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        $holder = proc_open(
-            '"' . PHP_BINARY . '" "' . $lockHolderScript . '" ' . escapeshellarg($hid),
-            $descriptorSpec,
-            $pipes,
-            base_path()
+        $coordinator = new \Tests\Postgres\Operations\FrontDesk\Support\FdC2ConcurrencyCoordinator();
+
+        $lockAcquiredMarker = tempnam(sys_get_temp_dir(), 'fdc2_la_');
+        $holdUntilPath = tempnam(sys_get_temp_dir(), 'fdc2_hu_');
+
+        // Worker A: lock holder
+        $workerA = $coordinator->spawnWorker('lock_hold', [
+            'handoff_id' => $hid,
+            'lock_acquired_marker' => $lockAcquiredMarker,
+            'hold_until_path' => $holdUntilPath,
+        ], [
+            'APP_ENV' => 'testing',
+            'DB_CONNECTION' => 'pgsql',
+            'DB_DATABASE' => 'ivorq_testing',
+        ]);
+
+        // Wait for Worker A to acquire the lock
+        $lockEvidence = $coordinator->waitForMarker($lockAcquiredMarker, 10);
+        $this->assertNotEmpty($lockEvidence['php_pid'] ?? null, 'Worker A must report PHP PID.');
+        $this->assertNotEmpty($lockEvidence['pg_backend_pid'] ?? null, 'Worker A must report PG backend PID.');
+        $workerAPgPid = $lockEvidence['pg_backend_pid'];
+
+        // Worker B: deliver — started WHILE lease is still active
+        $workerB = $coordinator->spawnWorker('deliver', [
+            'property_id' => $this->property->id,
+            'handoff_id' => $hid,
+            'claim_token' => $token,
+        ], [
+            'APP_ENV' => 'testing',
+            'DB_CONNECTION' => 'pgsql',
+            'DB_DATABASE' => 'ivorq_testing',
+        ]);
+
+        // Give Worker B a moment to start and block on Worker A's lock
+        usleep(500_000);
+
+        // Prove Worker B is blocked by Worker A while lease is still active
+        // Worker B's PG backend PID is not directly available yet;
+        // we prove the lease is still active at this point
+        $leaseActive = DB::selectOne(
+            "SELECT 1 FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND claim_expires_at > (clock_timestamp() AT TIME ZONE 'UTC')",
+            [$hid]
         );
-        $this->assertIsResource($holder, 'Lock holder must start.');
+        $this->assertNotNull($leaseActive, 'Lease must still be active when Worker B begins blocking.');
 
-        // Wait for holder to acquire lock (emits barrier line)
-        $barrier = fgets($pipes[1]);
-        $this->assertStringContainsString('LOCK_ACQUIRED', $barrier, 'Holder must signal lock acquired.');
+        // Wait for the lease to expire (3s lease, wait 4s total from claim)
+        usleep(3_000_000);
 
-        // Now the test (as Worker B) calls markDelivered() while lease is still active.
-        // This will block on the holder's lock.
-        // We run it in a forked child to avoid blocking the test.
-        $workerScript = base_path('tests/Postgres/Operations/FrontDesk/fd_c2_lock_wait_worker.php');
-        $workerB = proc_open(
-            '"' . PHP_BINARY . '" "' . $workerScript . '" ' . escapeshellarg($this->property->id) . ' ' . escapeshellarg($hid) . ' ' . escapeshellarg($token),
-            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-            $wpipes,
-            base_path()
+        // Verify lease is now expired
+        $leaseExpired = DB::selectOne(
+            "SELECT 1 FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC')",
+            [$hid]
         );
-        $this->assertIsResource($workerB, 'Worker B must start.');
+        $this->assertNotNull($leaseExpired, 'Lease must be expired before releasing Worker A.');
 
-        // Wait for the lease to expire while holder still has the lock
-        usleep(3_500_000);
+        // Release Worker A
+        $coordinator->releaseWorker($holdUntilPath);
 
-        // Holder should now release (it waits 5s total, we've waited ~4s including start)
-        // Read holder exit
-        $holderOutput = stream_get_contents($pipes[1]);
-        fclose($pipes[0]); fclose($pipes[1]); fclose($pipes[2]);
-        proc_close($holder);
+        // Wait for Worker A to complete
+        $coordinator->waitForWorker($workerA, 15);
 
-        // Wait for Worker B to complete
-        $start = microtime(true);
-        $workerOutput = '';
-        $workerExitCode = -1;
-        while (true) {
-            $status = proc_get_status($workerB);
-            if (! $status['running']) {
-                $workerExitCode = $status['exitcode'];
-                $workerOutput = stream_get_contents($wpipes[1]);
-                break;
-            }
-            if (microtime(true) - $start > 15) {
-                proc_terminate($workerB, 9);
-                $this->fail('Worker B timed out.');
-            }
-            usleep(50_000);
-        }
-        fclose($wpipes[0]); fclose($wpipes[1]); fclose($wpipes[2]);
-        proc_close($workerB);
+        // Worker B should be rejected with EXPIRED_CLAIM
+        $rejectionData = $coordinator->waitForRejectedWorker($workerB, 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM', 15);
 
-        // Worker B must be rejected with expired claim
-        $this->assertStringContainsString('WORKER_RESULT:REJECTED:FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM', $workerOutput);
-        $this->assertSame(1, $workerExitCode);
+        $this->assertNotEmpty($rejectionData['php_pid'] ?? null, 'Worker B must report PHP PID.');
+        $this->assertNotEmpty($rejectionData['postgres_backend_pid'] ?? null, 'Worker B must report PG backend PID.');
+        $this->assertNotEquals($lockEvidence['php_pid'], $rejectionData['php_pid'], 'Worker A and B PHP PIDs must differ.');
 
+        // Final state: handoff remains CLAIMED
         $row = DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $hid)->first();
         $this->assertSame('CLAIMED', $row->delivery_status);
         $this->assertNull($row->delivered_at);
+        $this->assertNull($row->failed_at);
+
+        // Cleanup
+        @unlink($lockAcquiredMarker);
     }
 }
