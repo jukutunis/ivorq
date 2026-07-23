@@ -130,12 +130,13 @@ return new class extends Migration
                 )
             ");
 
-            // State shape enforcement
+            // State shape enforcement (strengthened)
             DB::statement("
                 ALTER TABLE front_desk_checkout_housekeeping_handoffs
                 ADD CONSTRAINT fd_chh_state_shape_check
                 CHECK (
                     (delivery_status = 'PENDING'
+                     AND attempts = 0
                      AND claimed_at IS NULL
                      AND claim_expires_at IS NULL
                      AND claim_token_hash IS NULL
@@ -144,6 +145,7 @@ return new class extends Migration
                      AND last_error_code IS NULL)
                     OR
                     (delivery_status = 'CLAIMED'
+                     AND attempts >= 1
                      AND claimed_at IS NOT NULL
                      AND claim_expires_at IS NOT NULL
                      AND claim_token_hash IS NOT NULL
@@ -152,6 +154,7 @@ return new class extends Migration
                      AND last_error_code IS NULL)
                     OR
                     (delivery_status = 'DELIVERED'
+                     AND attempts >= 1
                      AND claimed_at IS NOT NULL
                      AND claim_expires_at IS NOT NULL
                      AND claim_token_hash IS NOT NULL
@@ -160,12 +163,14 @@ return new class extends Migration
                      AND last_error_code IS NULL)
                     OR
                     (delivery_status = 'FAILED'
+                     AND attempts >= 1
                      AND claimed_at IS NOT NULL
                      AND claim_expires_at IS NOT NULL
                      AND claim_token_hash IS NOT NULL
                      AND delivered_at IS NULL
                      AND failed_at IS NOT NULL
-                     AND last_error_code IS NOT NULL)
+                     AND last_error_code IS NOT NULL
+                     AND available_at > failed_at)
                 )
             ");
 
@@ -280,36 +285,115 @@ return new class extends Migration
                             RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE';
                         END IF;
 
-                        -- Allow same-status DELIVERED replay (no data change)
-                        IF OLD.delivery_status = 'DELIVERED' AND NEW.delivery_status = 'DELIVERED' THEN
-                            RETURN NEW;
-                        END IF;
-
-                        -- Allow CLAIMED → CLAIMED (reclaim on expiry)
-                        IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'CLAIMED' THEN
-                            RETURN NEW;
-                        END IF;
-
-                        -- Allow FAILED → CLAIMED (retry)
-                        IF OLD.delivery_status = 'FAILED' AND NEW.delivery_status = 'CLAIMED' THEN
-                            RETURN NEW;
-                        END IF;
-
-                        -- Allow PENDING → CLAIMED
+                        -- PENDING → CLAIMED
                         IF OLD.delivery_status = 'PENDING' AND NEW.delivery_status = 'CLAIMED' THEN
+                            IF NEW.attempts <> OLD.attempts + 1 THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.available_at IS DISTINCT FROM OLD.available_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
                             RETURN NEW;
                         END IF;
 
-                        -- Allow CLAIMED → DELIVERED
+                        -- CLAIMED → CLAIMED (reclaim on expiry)
+                        IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'CLAIMED' THEN
+                            IF NEW.claimed_at < OLD.claim_expires_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.attempts <> OLD.attempts + 1 THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_token_hash IS NOT DISTINCT FROM OLD.claim_token_hash THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.available_at IS DISTINCT FROM OLD.available_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            RETURN NEW;
+                        END IF;
+
+                        -- FAILED → CLAIMED (due retry)
+                        IF OLD.delivery_status = 'FAILED' AND NEW.delivery_status = 'CLAIMED' THEN
+                            IF NEW.claimed_at < OLD.available_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.attempts <> OLD.attempts + 1 THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_token_hash IS NOT DISTINCT FROM OLD.claim_token_hash THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.available_at IS DISTINCT FROM OLD.available_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            RETURN NEW;
+                        END IF;
+
+                        -- CLAIMED → DELIVERED
                         IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'DELIVERED' THEN
+                            IF NEW.attempts IS DISTINCT FROM OLD.attempts THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claimed_at IS DISTINCT FROM OLD.claimed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_expires_at IS DISTINCT FROM OLD.claim_expires_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_token_hash IS DISTINCT FROM OLD.claim_token_hash THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.available_at IS DISTINCT FROM OLD.available_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.delivered_at IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.failed_at IS NOT NULL OR NEW.last_error_code IS NOT NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
                             RETURN NEW;
                         END IF;
 
-                        -- Allow CLAIMED → FAILED
+                        -- CLAIMED → FAILED
                         IF OLD.delivery_status = 'CLAIMED' AND NEW.delivery_status = 'FAILED' THEN
+                            IF NEW.attempts IS DISTINCT FROM OLD.attempts THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claimed_at IS DISTINCT FROM OLD.claimed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_expires_at IS DISTINCT FROM OLD.claim_expires_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.claim_token_hash IS DISTINCT FROM OLD.claim_token_hash THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.failed_at IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.last_error_code IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.available_at <= NEW.failed_at THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            IF NEW.delivered_at IS NOT NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
                             RETURN NEW;
                         END IF;
 
+                        -- DELIVERED → DELIVERED (only true no-data replay)
+                        IF OLD.delivery_status = 'DELIVERED' AND NEW.delivery_status = 'DELIVERED' THEN
+                            IF NEW IS DISTINCT FROM OLD THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            RETURN NEW;
+                        END IF;
+
+                        -- Anything else is invalid
                         RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                     END IF;
 

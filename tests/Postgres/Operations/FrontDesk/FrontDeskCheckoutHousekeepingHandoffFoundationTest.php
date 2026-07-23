@@ -1203,4 +1203,268 @@ class FrontDeskCheckoutHousekeepingHandoffFoundationTest extends PostgresTestCas
         // outbox_messages should have zero rows
         $this->assertSame(0, DB::table('outbox_messages')->count());
     }
+
+    // ── Correction: Property context isolation ────────────────────────────
+
+    public function test_current_property_a_cannot_claim_property_b_row(): void
+    {
+        $stay = $this->makeInHouseStay($this->otherProperty);
+        $review = $this->makeFinalReview($this->otherProperty, $stay);
+        $bd = $this->makeBusinessDate($this->otherProperty);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-xprop-claim-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-xprop-claim-' . Str::ulid(), 'corr-xprop-claim-' . Str::ulid());
+
+        // currentProperty is set to $this->property, but handoff belongs to $this->otherProperty
+        $this->currentProperty->setPropertyId($this->property->id);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
+        $this->deliveryService->claimAvailable($this->otherProperty->id, $handoff->id, 60);
+    }
+
+    public function test_mismatched_property_input_does_not_mutate_handoff(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-mismatch-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-mismatch-' . Str::ulid(), 'corr-mismatch-' . Str::ulid());
+        $originalAttempts = $handoff->attempts;
+        $originalStatus = $handoff->delivery_status;
+        $originalClaimedAt = $handoff->claimed_at;
+        $originalTokenHash = $handoff->claim_token_hash;
+
+        try {
+            $this->deliveryService->claimAvailable($this->otherProperty->id, $handoff->id, 60);
+        } catch (DomainException) {}
+
+        $handoff->refresh();
+        $this->assertSame($originalAttempts, $handoff->attempts);
+        $this->assertEquals($originalStatus, $handoff->delivery_status);
+        $this->assertEquals($originalClaimedAt, $handoff->claimed_at);
+        $this->assertEquals($originalTokenHash, $handoff->claim_token_hash);
+    }
+
+    public function test_unresolved_current_property_fails_closed(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-nullprop-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-nullprop-' . Str::ulid(), 'corr-nullprop-' . Str::ulid());
+
+        $this->currentProperty->setPropertyId(null);
+
+        $this->expectException(\Shared\Exceptions\PropertyNotResolvedException::class);
+        $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
+    }
+
+    // ── Correction: Transition integrity ──────────────────────────────────
+
+    public function test_active_claimed_raw_reclaim_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-raw-reclaim-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-raw-reclaim-' . Str::ulid(), 'corr-raw-reclaim-' . Str::ulid());
+
+        // Claim via service
+        $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
+        $handoff->refresh();
+
+        // Try raw SQL reclaim on active claim
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoff->id)
+            ->update([
+                'delivery_status' => 'CLAIMED',
+                'attempts' => DB::raw('attempts + 1'),
+                'claimed_at' => now(),
+                'claim_expires_at' => now()->addSeconds(120),
+                'claim_token_hash' => str_repeat('f', 64),
+                'updated_at' => now(),
+            ]);
+    }
+
+    public function test_expired_claimed_raw_reclaim_accepted(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-exp-raw-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-exp-raw-' . Str::ulid(), 'corr-exp-raw-' . Str::ulid());
+
+        // Claim with 1-second lease via service
+        $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 1);
+        $handoff->refresh();
+        $originalAttempts = $handoff->attempts;
+
+        // Advance past expiry
+        Carbon::setTestNow(Carbon::now()->addSeconds(5));
+
+        // Raw reclaim on expired claim
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoff->id)
+            ->update([
+                'delivery_status' => 'CLAIMED',
+                'attempts' => $originalAttempts + 1,
+                'claimed_at' => now(),
+                'claim_expires_at' => now()->addSeconds(120),
+                'claim_token_hash' => str_repeat('e', 64),
+                'updated_at' => now(),
+            ]);
+
+        $handoff->refresh();
+        $this->assertEquals(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed, $handoff->delivery_status);
+        $this->assertSame($originalAttempts + 1, $handoff->attempts);
+        $this->assertSame(str_repeat('e', 64), $handoff->claim_token_hash);
+    }
+
+    public function test_attempts_tampering_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-tamper-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-tamper-' . Str::ulid(), 'corr-tamper-' . Str::ulid());
+        // Capture pre-mutation state
+        $this->assertSame(0, $handoff->attempts);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoff->id)
+            ->update(['attempts' => 5, 'updated_at' => now()]);
+    }
+
+    public function test_delivered_row_update_timestamp_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-del-touch-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-del-touch-' . Str::ulid(), 'corr-del-touch-' . Str::ulid());
+
+        $claimResult = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
+        $this->deliveryService->markDelivered($this->property->id, $handoff->id, $claimResult['claim_token']);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoff->id)
+            ->update(['updated_at' => now()->addHour()]);
+    }
+
+    public function test_same_status_pending_mutation_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-pend-mut-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-pend-mut-' . Str::ulid(), 'corr-pend-mut-' . Str::ulid());
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoff->id)
+            ->update(['available_at' => now()->addHour(), 'updated_at' => now()]);
+    }
+
+    public function test_same_status_failed_mutation_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-fail-mut-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-fail-mut-' . Str::ulid(), 'corr-fail-mut-' . Str::ulid());
+
+        $claimResult = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
+        $retryAt = Carbon::now()->addMinutes(5);
+        $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', $retryAt);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION');
+
+        DB::table('front_desk_checkout_housekeeping_handoffs')
+            ->where('id', $handoff->id)
+            ->update(['last_error_code' => 'HK_OTHER', 'updated_at' => now()]);
+    }
+
+    // ── Correction: markFailed replay idempotency ─────────────────────────
+
+    public function test_failed_replay_before_retry_time(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-replay-b4-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-replay-b4-' . Str::ulid(), 'corr-replay-b4-' . Str::ulid());
+
+        $claimResult = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
+        $retryAt = Carbon::now()->addMinutes(10);
+        $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', $retryAt);
+
+        // Replay with same params before retry time — should succeed idempotently
+        $replay = $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', $retryAt);
+
+        $handoff->refresh();
+        $this->assertEquals(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Failed, $replay->delivery_status);
+        $this->assertSame('HK_DELIVERY_TIMEOUT', $replay->last_error_code);
+    }
+
+    public function test_failed_replay_after_retry_time(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-replay-aft-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-replay-aft-' . Str::ulid(), 'corr-replay-aft-' . Str::ulid());
+
+        $claimResult = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
+        $retryAt = Carbon::now()->addMinutes(5);
+        $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', $retryAt);
+
+        // Advance past retry time
+        Carbon::setTestNow(Carbon::now()->addMinutes(10));
+
+        // Replay with same params after retry time — should still succeed idempotently
+        $replay = $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', $retryAt);
+
+        $this->assertEquals(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Failed, $replay->delivery_status);
+        $this->assertSame('HK_DELIVERY_TIMEOUT', $replay->last_error_code);
+    }
+
+    public function test_failed_replay_different_retry_at_rejected(): void
+    {
+        $stay = $this->makeInHouseStay($this->property);
+        $review = $this->makeFinalReview($this->property, $stay);
+        $bd = $this->makeBusinessDate($this->property);
+        $execution = $this->createCheckoutExecution($stay, $review, $bd, 'exec-replay-dfr-' . Str::ulid());
+
+        $handoff = $this->createHandoff($execution, 'idem-replay-dfr-' . Str::ulid(), 'corr-replay-dfr-' . Str::ulid());
+
+        $claimResult = $this->deliveryService->claimAvailable($this->property->id, $handoff->id, 60);
+        $retryAt = Carbon::now()->addMinutes(5);
+        $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', $retryAt);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_CONFLICTING_REPLAY');
+        $this->deliveryService->markFailed($this->property->id, $handoff->id, $claimResult['claim_token'], 'HK_DELIVERY_TIMEOUT', Carbon::now()->addMinutes(7));
+    }
 }

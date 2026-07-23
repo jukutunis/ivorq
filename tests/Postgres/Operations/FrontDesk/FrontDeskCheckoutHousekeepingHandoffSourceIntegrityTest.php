@@ -597,4 +597,56 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
         }
         return $files;
     }
+
+    // ── Correction: CurrentPropertyService usage ──────────────────────────
+
+    public function test_delivery_service_uses_current_property_service_resolve_or_fail(): void
+    {
+        $servicePath = base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutHousekeepingHandoffDeliveryService.php');
+        $this->assertFileExists($servicePath);
+        $source = file_get_contents($servicePath);
+
+        $this->assertStringContainsString(
+            'resolveOrFail',
+            $source,
+            'Delivery service must use CurrentPropertyService::resolveOrFail.'
+        );
+    }
+
+    public function test_delivery_service_caller_property_not_authoritative(): void
+    {
+        $servicePath = base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutHousekeepingHandoffDeliveryService.php');
+        $this->assertFileExists($servicePath);
+        $source = file_get_contents($servicePath);
+
+        $this->assertStringContainsString(
+            '$propertyId !== $currentPropertyId',
+            $source,
+            'Delivery service must compare caller propertyId to authoritative current property.'
+        );
+
+        $this->assertStringContainsString(
+            'forProperty($currentPropertyId)',
+            $source,
+            'Delivery service must scope queries with the authoritative current property.'
+        );
+    }
+
+    public function test_migration_contains_full_transition_enforcement(): void
+    {
+        $migrationPath = base_path('Modules/Operations/FrontDesk/database/migrations/2026_07_24_000001_create_front_desk_checkout_housekeeping_handoffs_table.php');
+        $this->assertFileExists($migrationPath);
+        $source = file_get_contents($migrationPath);
+
+        $this->assertStringContainsString(
+            'NEW.attempts <> OLD.attempts + 1',
+            $source,
+            'Migration trigger must enforce attempts increment.'
+        );
+        $this->assertStringContainsString(
+            'NEW IS DISTINCT FROM OLD',
+            $source,
+            'Migration trigger must enforce DELIVERED no-data replay.'
+        );
+    }
 }

@@ -32,11 +32,17 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_LEASE');
         }
 
+        $currentPropertyId = $this->currentProperty->resolveOrFail();
+
+        if ($propertyId !== $currentPropertyId) {
+            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
+        }
+
         $now = now();
 
-        return DB::transaction(function () use ($propertyId, $handoffId, $leaseSeconds, $now): array {
+        return DB::transaction(function () use ($currentPropertyId, $handoffId, $leaseSeconds, $now): array {
             $handoff = FrontDeskCheckoutHousekeepingHandoff::query()
-                ->forProperty($propertyId)
+                ->forProperty($currentPropertyId)
                 ->where('id', $handoffId)
                 ->lockForUpdate()
                 ->first();
@@ -105,11 +111,17 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
         string $handoffId,
         string $claimToken
     ): FrontDeskCheckoutHousekeepingHandoff {
+        $currentPropertyId = $this->currentProperty->resolveOrFail();
+
+        if ($propertyId !== $currentPropertyId) {
+            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
+        }
+
         $now = now();
 
-        return DB::transaction(function () use ($propertyId, $handoffId, $claimToken, $now): FrontDeskCheckoutHousekeepingHandoff {
+        return DB::transaction(function () use ($currentPropertyId, $handoffId, $claimToken, $now): FrontDeskCheckoutHousekeepingHandoff {
             $handoff = FrontDeskCheckoutHousekeepingHandoff::query()
-                ->forProperty($propertyId)
+                ->forProperty($currentPropertyId)
                 ->where('id', $handoffId)
                 ->lockForUpdate()
                 ->first();
@@ -163,21 +175,22 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
         string $errorCode,
         DateTimeInterface $retryAt
     ): FrontDeskCheckoutHousekeepingHandoff {
-        $now = now();
-
-        // Validate error code
+        // Validate error code syntax first
         if (! preg_match('/^[A-Z0-9_]{1,100}$/', $errorCode)) {
             throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_ERROR_CODE');
         }
 
-        // Validate retry time is in the future
-        if ($retryAt <= $now) {
-            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_RETRY_TIME');
+        $currentPropertyId = $this->currentProperty->resolveOrFail();
+
+        if ($propertyId !== $currentPropertyId) {
+            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
         }
 
-        return DB::transaction(function () use ($propertyId, $handoffId, $claimToken, $errorCode, $retryAt, $now): FrontDeskCheckoutHousekeepingHandoff {
+        $now = now();
+
+        return DB::transaction(function () use ($currentPropertyId, $handoffId, $claimToken, $errorCode, $retryAt, $now): FrontDeskCheckoutHousekeepingHandoff {
             $handoff = FrontDeskCheckoutHousekeepingHandoff::query()
-                ->forProperty($propertyId)
+                ->forProperty($currentPropertyId)
                 ->where('id', $handoffId)
                 ->lockForUpdate()
                 ->first();
@@ -186,12 +199,17 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
             }
 
-            // Already failed — idempotent replay if identical
+            // Already failed — idempotent replay check BEFORE retryAt > now validation
             if ($handoff->delivery_status === FrontDeskCheckoutHousekeepingHandoffStatusEnum::Failed) {
                 if (! hash_equals(hash('sha256', $claimToken), $handoff->claim_token_hash ?? '')) {
                     throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_CLAIM_TOKEN');
                 }
                 if ($handoff->last_error_code !== $errorCode) {
+                    throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_CONFLICTING_REPLAY');
+                }
+                // Compare retryAt to persisted available_at at DB precision
+                $persistedAvailableAt = $handoff->available_at;
+                if ($persistedAvailableAt === null || $persistedAvailableAt->format('Y-m-d H:i:s') !== (new \DateTimeImmutable('@' . $retryAt->getTimestamp()))->format('Y-m-d H:i:s')) {
                     throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_CONFLICTING_REPLAY');
                 }
                 return $handoff;
@@ -210,6 +228,11 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             // Claim must not be expired
             if ($handoff->claim_expires_at <= $now) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
+            }
+
+            // For first FAILED transition, retryAt must be later than server now
+            if ($retryAt <= $now) {
+                throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_RETRY_TIME');
             }
 
             $handoff->delivery_status = FrontDeskCheckoutHousekeepingHandoffStatusEnum::Failed;

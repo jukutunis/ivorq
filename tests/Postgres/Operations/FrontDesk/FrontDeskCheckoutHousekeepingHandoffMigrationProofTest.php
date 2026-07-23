@@ -313,14 +313,14 @@ class FrontDeskCheckoutHousekeepingHandoffMigrationProofTest extends PostgresTes
             );
 
             // Invalid transition
-            // Try to go PENDING -> DELIVERED
+            // Try to go CLAIMED -> PENDING (claim first, then revert)
             DB::table('front_desk_checkout_housekeeping_handoffs')
                 ->where('id', $handoffId)
                 ->update(['delivery_status' => 'CLAIMED',
+                          'attempts' => 1,
                           'claimed_at' => now(),
                           'claim_expires_at' => now()->addSeconds(60),
                           'claim_token_hash' => str_repeat('a', 64),
-                          'available_at' => now(),
                           'updated_at' => now()]);
             try {
                 DB::table('front_desk_checkout_housekeeping_handoffs')
