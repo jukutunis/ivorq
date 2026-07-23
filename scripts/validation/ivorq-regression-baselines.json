@@ -73,16 +73,16 @@
         "FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest"
       ],
       "expected": {
-        "tests": 613,
-        "assertions": 6197,
+        "tests": 628,
+        "assertions": 6232,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-24",
         "branch": "sprint-fd-c2-checkout-housekeeping-handoff-foundation",
-        "sha": "d0ce6b3769b5d454c1fd3f0791cb7b64852ab778",
-        "note": "FD-C2 59-class Front Desk baseline: 613 tests / 6197 assertions / 0 failures / 0 errors. FD-C2 focused measurement: 79 tests / 1380 assertions / 0 failures / 0 errors across 3 classes. FD-C1 predecessor: 534 tests / 4817 assertions (verified at merge). Five FD-C2 foreign keys: fd_chh_property_fk, fd_chh_stay_fk, fd_chh_reservation_fk, fd_chh_execution_fk, fd_chh_business_date_fk — all RESTRICT. Five unique identities: fd_chh_idempotency_unique, fd_chh_correlation_unique, fd_chh_source_hash_unique, fd_chh_execution_unique, fd_chh_stay_unique. Immutable payload: FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE. Delete forbidden: FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN. Source mismatch: FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_SOURCE_MISMATCH. Invalid transition: FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION. Raw claim token never persisted (SHA-256 hash only). Dedicated table front_desk_checkout_housekeeping_handoffs (22 columns). outbox_messages unchanged. No checkout command; no production handoff creation path; no route/controller/permission/intent/UI; no stay transition; no Housekeeping readiness mutation; no foreign-domain mutation; can_execute=false; CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED; checkout unauthorized; Package 8 locked; Package 9 locked; no new accepted debt."
+        "sha": "2b9c37363f5e9418d34a2c381e734da92f7d777b",
+        "note": "FD-C2 corrected 59-class Front Desk baseline. FD-C2 focused actual: 94 tests / 1415 assertions / 0 failures / 0 errors across 3 corrected classes (Foundation 64/139, MigrationProof 1/142, SourceIntegrity 29/1134). FD-C1 predecessor: 534 tests / 4817 assertions (verified at merge). Combined 59-class: 628 tests / 6232 assertions. FD-C1 markers: CHECKED_OUT, six fd_ce foreign keys (fd_ce_property_fk, fd_ce_stay_fk, fd_ce_reservation_fk, fd_ce_final_review_fk, fd_ce_business_date_fk, fd_ce_created_by_fk), idempotency trim enforcement, FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE, stale boundary assertions, CHECKED_OUT exists, departure preparation does not execute checkout, zero-failure, No checkout command, no new accepted debt. FD-C2 corrections: enforced current-Property context via CurrentPropertyService::resolveOrFail; caller property parameter is not authoritative; strengthened Eloquent transition enforcement with same-status guards, attempts integrity, claim-identity preservation, and delivered-row no-data replay; PostgreSQL trigger strengthened with full per-transition validation; markFailed replay idempotency corrected; state shape strengthened. Five FD-C2 foreign keys: fd_chh_property_fk, fd_chh_stay_fk, fd_chh_reservation_fk, fd_chh_execution_fk, fd_chh_business_date_fk — all RESTRICT. FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE. FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN. FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_SOURCE_MISMATCH. FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION. Raw claim token never persisted. Dedicated table. outbox_messages unchanged. No checkout command. No production handoff creation path. No route/controller/permission/intent/UI. No stay transition. No Housekeeping readiness mutation. No foreign-domain mutation. can_execute=false. CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED. checkout unauthorized. Package 8 locked. Package 9 locked. No new accepted debt. Original metadata (d0ce6b3) used arithmetic-derived 613/6197; superseded append-only."
       },
       "accepted_debt": [],
       "status": "active"

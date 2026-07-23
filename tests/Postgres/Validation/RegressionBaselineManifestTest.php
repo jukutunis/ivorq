@@ -245,13 +245,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertSame('FrontDeskCheckoutHousekeepingHandoffMigrationProofTest', $lastSix[4]);
         $this->assertSame('FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest', $lastSix[5]);
 
-        $this->assertEquals(613, $baseline->expected->tests ?? null);
-        $this->assertEquals(6197, $baseline->expected->assertions ?? null);
+        $this->assertEquals(628, $baseline->expected->tests ?? null);
+        $this->assertEquals(6232, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'd0ce6b3769b5d454c1fd3f0791cb7b64852ab778',
+            '2b9c37363f5e9418d34a2c381e734da92f7d777b',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -264,24 +264,42 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             $baseline->provenance->branch ?? null
         );
 
-        // FD-C2 description assertions
+        // ── FD-C1 predecessor assertions (restored from canonical) ──────────
         $this->assertStringContainsString('FD-C1', $baseline->description ?? '');
-        $this->assertStringContainsString('FD-C2', $baseline->description ?? '');
         $this->assertStringContainsString('immutable checkout execution evidence', $baseline->description ?? '');
         $this->assertStringContainsString('referential integrity', $baseline->description ?? '');
+        $this->assertStringContainsString('can_execute=false', $baseline->description ?? '');
+        $this->assertStringContainsString('FD-B12', $baseline->description ?? '');
+        $this->assertStringContainsString('Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2)', $baseline->description ?? '');
+
+        $this->assertStringContainsString('CHECKED_OUT', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_property_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_stay_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_reservation_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_final_review_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_business_date_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('fd_ce_created_by_fk', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('idempotency trim enforcement', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('stale boundary assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('CHECKED_OUT exists', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('departure preparation does not execute checkout', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero-failure', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No checkout command', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
+
+        // ── FD-C2 assertions ──────────────────────────────────────────────
+        $this->assertStringContainsString('FD-C2', $baseline->description ?? '');
         $this->assertStringContainsString('checkout-to-Housekeeping handoff/outbox foundation', $baseline->description ?? '');
         $this->assertStringContainsString('dedicated checkout-specific persistence', $baseline->description ?? '');
-        $this->assertStringContainsString('can_execute=false', $baseline->description ?? '');
         $this->assertStringContainsString('no Housekeeping readiness mutation', $baseline->description ?? '');
 
-        // FD-C2 provenance note assertions
         $this->assertStringContainsString('FD-C2', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('fd_chh_property_fk', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('fd_chh_stay_fk', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('fd_chh_reservation_fk', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('fd_chh_execution_fk', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('fd_chh_business_date_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_chh_idempotency_unique', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_SOURCE_MISMATCH', $baseline->provenance->note ?? '');
@@ -289,14 +307,21 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('Raw claim token never persisted', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Dedicated table', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('outbox_messages unchanged', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('no production handoff creation path', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('no Housekeeping readiness mutation', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No production handoff creation path', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No Housekeeping readiness mutation', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 8 locked', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 9 locked', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('no new accepted debt', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('superseded append-only', $baseline->provenance->note ?? '');
+
+        // ── FD-C2 correction markers ──────────────────────────────────────
+        $this->assertStringContainsString('resolveOrFail', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('same-status', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('attempts integrity', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('markFailed replay', $baseline->provenance->note ?? '');
     }
 
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void
