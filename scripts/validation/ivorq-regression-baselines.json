@@ -71,15 +71,15 @@
       ],
       "expected": {
         "tests": 534,
-        "assertions": 4807,
-        "failures": 2,
+        "assertions": 4817,
+        "failures": 0,
         "errors": 0
       },
       "provenance": {
         "measured_at": "2026-07-23",
         "branch": "sprint-fd-c1-terminal-checkout-evidence-foundation",
-        "sha": "405c1cdcaf29ab77b86530241509b942abf86900",
-        "note": "FD-C1 referential integrity correction: actual registered 56-class Front Desk baseline result — 534 tests / 4807 assertions / 2 failures / 0 errors / duration 1,659,298ms. The 2 failures are pre-existing boundary tests (FrontDeskDeparturePreparationBoundaryTest, FrontDeskDeparturePreparationEventBoundaryTest) that previously asserted CHECKED_OUT did not exist in FrontDeskStayStatusEnum. FD-C1 intentionally added CheckedOut/CHECKED_OUT as the foundation terminal stay state; these boundary tests now correctly detect its presence. Post-correction FD-C1 focused combined: 51 tests / 2832 assertions / 0 failures / 0 errors. CHECKED_OUT terminal state. Six named foreign keys: fd_ce_property_fk, fd_ce_stay_fk, fd_ce_reservation_fk, fd_ce_final_review_fk, fd_ce_business_date_fk, fd_ce_created_by_fk — all RESTRICT, no CASCADE, no SET NULL. idempotency trim enforcement: btrim(idempotency_key) <> '' AND idempotency_key = btrim(idempotency_key). FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE. No checkout command; no write route; no route/controller/UI; no permission; no sensitive confirmation intent; no Housekeeping handoff/outbox; no foreign-domain mutation; can_execute=false; CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED; checkout unauthorized; no new accepted debt. Registered baseline measured via guarded wrapper after 27.6-minute execution."
+        "sha": "d72381c074ed03b01e3ce8674da459b2f1d0c629",
+        "note": "FD-C1 zero-failure registered 56-class Front Desk baseline: 534 tests / 4817 assertions / 0 failures / 0 errors / duration 1,801,913ms. Historical diagnostic run (534/4807/2) had 2 failures from stale boundary assertions (FrontDeskDeparturePreparationBoundaryTest, FrontDeskDeparturePreparationEventBoundaryTest) that predated FD-C1 and asserted CHECKED_OUT did not exist. Those assertions were synchronized with authorized FD-C1 in commit d72381c—CHECKED_OUT exists as a foundation enum; departure preparation does not execute checkout; departure preparation events do not execute checkout. Six FD-C1 foreign keys: fd_ce_property_fk, fd_ce_stay_fk, fd_ce_reservation_fk, fd_ce_final_review_fk, fd_ce_business_date_fk, fd_ce_created_by_fk — all RESTRICT, no CASCADE, no SET NULL. idempotency trim enforcement: btrim(idempotency_key) <> '' AND idempotency_key = btrim(idempotency_key). FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE. No checkout command; no write route; no route/controller/UI; no permission; no sensitive confirmation intent; no Housekeeping handoff/outbox; no foreign-domain mutation; can_execute=false; CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED; checkout unauthorized; no new accepted debt."
       },
       "accepted_debt": [],
       "status": "active"

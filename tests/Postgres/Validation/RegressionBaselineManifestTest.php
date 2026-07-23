@@ -243,12 +243,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertSame('FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest', $lastThree[2]);
 
         $this->assertEquals(534, $baseline->expected->tests ?? null);
-        $this->assertEquals(4807, $baseline->expected->assertions ?? null);
-        $this->assertEquals(2, $baseline->expected->failures ?? null);
+        $this->assertEquals(4817, $baseline->expected->assertions ?? null);
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '405c1cdcaf29ab77b86530241509b942abf86900',
+            'd72381c074ed03b01e3ce8674da459b2f1d0c629',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -279,6 +279,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('fd_ce_created_by_fk', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('idempotency trim enforcement', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE', $baseline->provenance->note ?? '');
+        // Zero-failure specific assertions
+        $this->assertStringContainsString('stale boundary assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('CHECKED_OUT exists', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('departure preparation does not execute checkout', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero-failure', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no new accepted debt', $baseline->provenance->note ?? '');
+
         $this->assertStringContainsString('No checkout command', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
