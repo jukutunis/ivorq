@@ -246,6 +246,7 @@ return new class extends Migration
             DB::statement("CREATE OR REPLACE FUNCTION fd_chh_enforce_mutation_rules() RETURNS trigger AS \$\$
                 DECLARE
                     wall_clock_utc TIMESTAMP;
+                    requested_lease_interval INTERVAL;
                 BEGIN
                     IF TG_OP = 'DELETE' THEN
                         RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN';
@@ -286,15 +287,19 @@ return new class extends Migration
                             IF NEW.delivered_at IS NOT NULL OR NEW.failed_at IS NOT NULL OR NEW.last_error_code IS NOT NULL THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            -- Database owns claimed_at
+                            -- Guard against null claim timestamps before computing interval
+                            IF NEW.claimed_at IS NULL OR NEW.claim_expires_at IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- Preserve requested lease interval before trigger replaces claimed_at
+                            requested_lease_interval := NEW.claim_expires_at - NEW.claimed_at;
+                            IF requested_lease_interval < interval '1 second'
+                               OR requested_lease_interval > interval '300 seconds' THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- Database owns claimed_at and claim_expires_at
                             NEW.claimed_at := wall_clock_utc;
-                            -- Lease must be >= 1s and <= 300s from database-owned claimed_at
-                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at < NEW.claimed_at + interval '1 second' THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
-                            IF NEW.claim_expires_at > NEW.claimed_at + interval '300 seconds' THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
+                            NEW.claim_expires_at := wall_clock_utc + requested_lease_interval;
                             RETURN NEW;
                         END IF;
 
@@ -317,19 +322,23 @@ return new class extends Migration
                             IF NEW.delivered_at IS NOT NULL OR NEW.failed_at IS NOT NULL OR NEW.last_error_code IS NOT NULL THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            -- Database owns claimed_at
+                            -- Guard against null claim timestamps before computing interval
+                            IF NEW.claimed_at IS NULL OR NEW.claim_expires_at IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- Preserve requested lease interval before trigger replaces claimed_at
+                            requested_lease_interval := NEW.claim_expires_at - NEW.claimed_at;
+                            IF requested_lease_interval < interval '1 second'
+                               OR requested_lease_interval > interval '300 seconds' THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- Database owns claimed_at and claim_expires_at
                             NEW.claimed_at := wall_clock_utc;
                             -- claimed_at must be >= old expiry
                             IF NEW.claimed_at < OLD.claim_expires_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            -- Lease bounds: 1-300 seconds
-                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at < NEW.claimed_at + interval '1 second' THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
-                            IF NEW.claim_expires_at > NEW.claimed_at + interval '300 seconds' THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
+                            NEW.claim_expires_at := wall_clock_utc + requested_lease_interval;
                             RETURN NEW;
                         END IF;
 
@@ -355,19 +364,23 @@ return new class extends Migration
                             IF NEW.delivered_at IS NOT NULL THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            -- Database owns claimed_at
+                            -- Guard against null claim timestamps before computing interval
+                            IF NEW.claimed_at IS NULL OR NEW.claim_expires_at IS NULL THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- Preserve requested lease interval before trigger replaces claimed_at
+                            requested_lease_interval := NEW.claim_expires_at - NEW.claimed_at;
+                            IF requested_lease_interval < interval '1 second'
+                               OR requested_lease_interval > interval '300 seconds' THEN
+                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
+                            END IF;
+                            -- Database owns claimed_at and claim_expires_at
                             NEW.claimed_at := wall_clock_utc;
                             -- claimed_at must be >= old available_at
                             IF NEW.claimed_at < OLD.available_at THEN
                                 RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
                             END IF;
-                            -- Lease bounds: 1-300 seconds
-                            IF NEW.claim_expires_at IS NULL OR NEW.claim_expires_at < NEW.claimed_at + interval '1 second' THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
-                            IF NEW.claim_expires_at > NEW.claimed_at + interval '300 seconds' THEN
-                                RAISE EXCEPTION 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION';
-                            END IF;
+                            NEW.claim_expires_at := wall_clock_utc + requested_lease_interval;
                             RETURN NEW;
                         END IF;
 

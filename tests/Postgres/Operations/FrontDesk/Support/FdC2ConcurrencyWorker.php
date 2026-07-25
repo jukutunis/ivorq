@@ -6,7 +6,7 @@
  * Receives payload via a temporary JSON file (credential-safe — no CLI token).
  * Modes:
  *   - 'lock_hold': acquire FOR UPDATE lock, signal barrier, hold until released, commit
- *   - 'deliver': call production markDelivered(), report result
+ *   - 'deliver': write pre-lock marker, then call production markDelivered(), report result
  *
  * Output: single JSON line to stdout with at minimum:
  *   php_pid, postgres_backend_pid, postgres_transaction_id, mode,
@@ -15,7 +15,7 @@
  * For 'deliver' mode on failure: domain_error, database_message
  */
 
-require_once __DIR__ . '/../../../../vendor/autoload.php';
+require_once __DIR__ . '/../../../../../vendor/autoload.php';
 
 $basePath = $argv[1] ?? '';
 $dataFile = $argv[2] ?? '';
@@ -46,7 +46,7 @@ $startedAt = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-
 
 try {
     $pgBackendPid = DB::selectOne('SELECT pg_backend_pid() AS pid')->pid;
-    $txId = DB::selectOne('SELECT txid_current() AS txid')->txid;
+    $txId = null; // resolved inside lock_hold after beginTransaction()
 
     switch ($mode) {
         // ----------------------------------------------------------------
@@ -62,6 +62,11 @@ try {
             }
 
             DB::beginTransaction();
+
+            // Resolve txid AFTER beginTransaction so it identifies the
+            // transaction that actually holds the row lock.
+            $txId = DB::selectOne('SELECT txid_current() AS txid')->txid;
+
             $locked = DB::table('front_desk_checkout_housekeeping_handoffs')
                 ->where('id', $handoffId)
                 ->lockForUpdate()
@@ -72,7 +77,7 @@ try {
                 throw new RuntimeException('lock_hold: row not found');
             }
 
-            // Signal lock acquired
+            // Signal lock acquired with actual lock-owning transaction evidence
             file_put_contents($lockAcquiredMarker, json_encode([
                 'php_pid' => $phpPid,
                 'pg_backend_pid' => $pgBackendPid,
@@ -105,15 +110,28 @@ try {
             exit(0);
 
         // ----------------------------------------------------------------
-        // deliver: Call production markDelivered()
+        // deliver: Write pre-lock marker, then call production markDelivered()
         // ----------------------------------------------------------------
         case 'deliver':
             $propertyId = $payload['property_id'] ?? '';
             $handoffId = $payload['handoff_id'] ?? '';
             $claimToken = $payload['claim_token'] ?? '';
+            $preLockMarker = $payload['pre_lock_marker'] ?? '';
 
             if ($propertyId === '' || $handoffId === '' || $claimToken === '') {
                 throw new RuntimeException('deliver missing required payload fields');
+            }
+
+            // Write pre-lock marker BEFORE acquiring any row lock.
+            // This lets the coordinator obtain Worker B's PG backend PID
+            // and prove blocking via pg_blocking_pids().
+            if ($preLockMarker !== '') {
+                file_put_contents($preLockMarker, json_encode([
+                    'php_pid' => $phpPid,
+                    'postgres_backend_pid' => $pgBackendPid,
+                    'postgres_transaction_id' => $txId,
+                    'marked_at' => (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.u\Z'),
+                ]));
             }
 
             $currentProperty = app(CurrentPropertyService::class);
@@ -155,6 +173,23 @@ try {
 } catch (Throwable $e) {
     $completedAt = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.u\Z');
     $previous = $e->getPrevious();
+    // Write crash evidence to a debug marker so timeouts don't hide worker failures
+    $debugMarker = ($payload['lock_acquired_marker'] ?? '') ?: ($payload['pre_lock_marker'] ?? '');
+    if ($debugMarker !== '') {
+        @file_put_contents($debugMarker, json_encode([
+            'php_pid' => $phpPid,
+            'postgres_backend_pid' => $pgBackendPid ?? null,
+            'postgres_transaction_id' => $txId ?? null,
+            'mode' => $mode,
+            'started_at' => $startedAt,
+            'completed_at' => $completedAt,
+            'exit_code' => 2,
+            'exception_class' => get_class($e),
+            'database_message' => $e->getMessage(),
+            'previous_exception_class' => $previous ? get_class($previous) : null,
+        ]));
+    }
+    fwrite(STDERR, "WORKER_CRASH: " . get_class($e) . ": " . $e->getMessage() . "\n");
     echo json_encode([
         'php_pid' => $phpPid,
         'postgres_backend_pid' => $pgBackendPid ?? null,

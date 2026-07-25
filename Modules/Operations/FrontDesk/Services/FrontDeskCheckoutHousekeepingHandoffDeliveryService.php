@@ -281,9 +281,14 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
                 if ($handoff->last_error_code !== $errorCode) {
                     throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_CONFLICTING_REPLAY');
                 }
-                // Compare retryAt to persisted available_at at DB precision
-                $persistedAvailableAt = $handoff->available_at;
-                if ($persistedAvailableAt === null || $persistedAvailableAt->format('Y-m-d H:i:s') !== (new \DateTimeImmutable('@' . $retryAt->getTimestamp()))->format('Y-m-d H:i:s')) {
+                // Compare retryAt to persisted available_at at the approved
+                // FD-C2 column precision (timestamp(0) / Y-m-d H:i:s).
+                $normalizedRetryAt = Carbon::parse($retryAt)->utc()->setMicrosecond(0);
+                $replayMatch = DB::selectOne(
+                    "SELECT 1 FROM front_desk_checkout_housekeeping_handoffs WHERE id = ? AND available_at = ?::timestamp(0)",
+                    [$handoff->id, $normalizedRetryAt->format('Y-m-d H:i:s')]
+                );
+                if ($replayMatch === null) {
                     throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_CONFLICTING_REPLAY');
                 }
                 return $handoff;
@@ -309,10 +314,13 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             }
 
             // For first FAILED transition, retryAt must be later than database wall clock.
-            // Use database-side comparison for full microsecond precision.
+            // Normalize once to UTC with zero microseconds (timestamp(0) precision).
+            $normalizedRetryAt = Carbon::parse($retryAt)->utc()->setMicrosecond(0);
+
+            // Pre-check: normalized retryAt must be strictly later than DB wall clock.
             $retryCheck = DB::selectOne(
-                "SELECT 1 WHERE ?::timestamptz <= (clock_timestamp() AT TIME ZONE 'UTC')",
-                [$retryAt->format('Y-m-d H:i:s.u')]
+                "SELECT 1 WHERE ?::timestamp(0) <= (clock_timestamp() AT TIME ZONE 'UTC')::timestamp(0)",
+                [$normalizedRetryAt->format('Y-m-d H:i:s')]
             );
             if ($retryCheck !== null) {
                 throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_RETRY_TIME');
@@ -321,7 +329,7 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
             $handoff->delivery_status = FrontDeskCheckoutHousekeepingHandoffStatusEnum::Failed;
             $handoff->failed_at = $dbNow;
             $handoff->last_error_code = $errorCode;
-            $handoff->available_at = $retryAt;
+            $handoff->available_at = $normalizedRetryAt;
             try {
                 $handoff->save();
             } catch (QueryException $e) {
