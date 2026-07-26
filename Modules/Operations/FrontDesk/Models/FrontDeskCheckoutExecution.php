@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationConsumption;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\PMS\Models\Reservation;
@@ -23,6 +24,11 @@ class FrontDeskCheckoutExecution extends Model
 
     protected $fillable = [
         'property_id',
+        'checkout_confirmation_consumption_id',
+        'checkout_confirmation_fingerprint',
+        'checkout_confirmed_at',
+        'checkout_confirmation_expires_at',
+        'checkout_confirmation_consumed_at',
         'front_desk_stay_id',
         'reservation_id',
         'idempotency_key',
@@ -45,6 +51,9 @@ class FrontDeskCheckoutExecution extends Model
     protected $casts = [
         'terminal_stay_status' => FrontDeskStayStatusEnum::class,
         'business_date' => 'date',
+        'checkout_confirmed_at' => 'datetime',
+        'checkout_confirmation_expires_at' => 'datetime',
+        'checkout_confirmation_consumed_at' => 'datetime',
         'occurred_at' => 'datetime',
         'created_at' => 'datetime',
     ];
@@ -62,6 +71,11 @@ class FrontDeskCheckoutExecution extends Model
     public function property(): BelongsTo
     {
         return $this->belongsTo(Property::class);
+    }
+
+    public function checkoutConfirmationConsumption(): BelongsTo
+    {
+        return $this->belongsTo(CheckoutSensitiveConfirmationConsumption::class, 'checkout_confirmation_consumption_id');
     }
 
     public function stay(): BelongsTo

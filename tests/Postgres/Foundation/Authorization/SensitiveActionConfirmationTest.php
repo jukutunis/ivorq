@@ -1083,6 +1083,31 @@ class SensitiveActionConfirmationTest extends PostgresTestCase
             ->assertSessionHas('success');
     }
 
+    public function test_checkout_execution_intent_is_registered_but_generic_confirmation_fails_closed(): void
+    {
+        $this->createFixtures();
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->get(route('system.sensitive-action-confirmation.index', ['intent' => 'frontdesk-checkout-execution']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('intent', 'frontdesk-checkout-execution')
+                ->where('isConfirmed', false)
+            );
+
+        $this->withSession($this->propertySession())
+            ->actingAs($this->actor, 'web')
+            ->post(route('system.sensitive-action-confirmation.store'), [
+                'intent' => 'frontdesk-checkout-execution',
+                'password' => 'password',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Checkout confirmation requires authoritative checkout context.');
+
+        $this->assertSame(0, DB::table('checkout_sensitive_confirmation_issuances')->count());
+    }
+
     private function createFixtures(): void
     {
         $this->company = Company::create([
