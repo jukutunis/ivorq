@@ -91,7 +91,10 @@ Concise source-backed architecture summary — not a full ADR dump.
 - FD-B12 merged and accepted.
 - FD-B13 accepted and merged.
 - FD-B13 verdict: `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES`
-- ADR trigger: `NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION`
+- Historical FD-B13 ADR trigger:
+  `NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION`
+- Status: satisfied by Approved ADR-089 at `1682dec0fb7f654e77888a476b4ec55a1507610b`.
+- Package 8 requires no additional ADR.
 - Historical FD-B12 Front Desk baseline before FD-C1: 483 tests / 1983 assertions / 0 failures / 0 errors
 - GC-A1: 38 tests / 231 assertions
 - GLF-D: 60 tests / 253 assertions
@@ -151,6 +154,7 @@ Concise source-backed architecture summary — not a full ADR dump.
 - Package 8 non-goals: no runtime source, migration, model, enum, service, permission seeder, Sensitive Action Confirmation registration, durable consumption persistence, command, route, controller, request class, policy, UI, React/TypeScript, test, baseline metadata, queue, worker, event, scheduler, WebSocket, external integration, checkout execution, stay transition, Housekeeping readiness mutation, or foreign-domain mutation.
 - checkout unauthorized.
 - Final command and interaction layer (Package 9) remain locked.
+- Package 9 remains locked.
 - Full access does not bypass later packages.
 - `can_execute=false` remains binding.
 - `CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED` remains binding.
@@ -271,10 +275,16 @@ A package that creates or consumes controlled handoff between domains.
 
 - Browser may submit identifiers and user-entered notes/status only when authorized.
 - Browser must not control property, tenant, reservation, guest, room, actor, amount, currency, posting state, audit fields, or source snapshots.
-- Server must re-resolve current property context.
-- Server must independently revalidate upstream evidence.
+- Server must first resolve the authenticated actor and authoritative current Company / Property context.
+- Exact package authorization must then be evaluated at the ordering required by the package contract.
+- Package 8 authorization before stay resolution is mandatory.
+- For Package 8 checkout execution, `frontdesk.checkout-execution.execute` authorization occurs before any Front Desk stay query.
+- Only after execute authorization succeeds may the server resolve the submitted stay identifier, scoped to the authoritative current Property.
+- An unauthorized actor causes no stay query.
+- Unknown or cross-Property stay remains non-disclosing only after authorization succeeds.
+- Upstream evidence and owner-domain relationships are independently re-resolved and revalidated after authorization and at the transaction stages required by the governing ADR.
+- No generic server-side resolution rule may be interpreted as permission to query the target stay before execute authorization.
 - Amount/currency must derive server-side where relevant.
-- Authorization must be checked after server-side resolution.
 
 ## 11. Definition of Done per package
 
