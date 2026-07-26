@@ -110,36 +110,36 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
 
     // ── No execute permission ─────────────────────────────────────────────
 
-    public function test_no_checkout_execute_permission_exists(): void
+    public function test_checkout_execute_permission_foundation_exists_without_runtime_execution(): void
     {
         $seederPath = base_path('Modules/Foundation/Authorization/database/seeders/PermissionSeeder.php');
         $this->assertFileExists($seederPath);
 
         $source = file_get_contents($seederPath);
-        $this->assertStringNotContainsString(
+        $this->assertStringContainsString(
             'frontdesk.checkout-execution.execute',
             $source,
-            'No frontdesk.checkout-execution.execute permission must exist.'
+            'Package 8 must register frontdesk.checkout-execution.execute permission foundation.'
         );
     }
 
     // ── No confirmation intent ────────────────────────────────────────────
 
-    public function test_no_checkout_sensitive_intent_exists(): void
+    public function test_checkout_sensitive_intent_foundation_exists_but_generic_confirmation_fails_closed(): void
     {
         $servicePath = base_path('Modules/Foundation/Authorization/Services/SensitiveActionConfirmationService.php');
         $this->assertFileExists($servicePath);
 
         $source = file_get_contents($servicePath);
-        $this->assertStringNotContainsString(
-            'frontdesk-checkout',
+        $this->assertStringContainsString(
+            'frontdesk-checkout-execution',
             $source,
-            'No frontdesk-checkout intent must exist in REGISTERED_INTENTS.'
+            'Package 8 must register frontdesk-checkout-execution intent foundation.'
         );
-        $this->assertStringNotContainsString(
-            'checkout-execution',
+        $this->assertStringContainsString(
+            'Checkout confirmation requires authoritative checkout context.',
             $source,
-            'No checkout-execution intent must exist in REGISTERED_INTENTS.'
+            'Generic sensitive confirmation must fail closed for checkout execution.'
         );
     }
 
@@ -359,26 +359,20 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
 
     // ── Contract Version remains 1.13 ─────────────────────────────────────
 
-    public function test_contract_version_remains_1_13(): void
+    public function test_contract_version_remains_1_14(): void
     {
         $contractPath = base_path('.agents/contracts/IVORQ-Package-Execution-Contract.md');
         $this->assertFileExists($contractPath);
 
         $source = file_get_contents($contractPath);
-        $this->assertStringContainsString('Version: 1.13', $source, 'Contract Version must remain 1.13.');
+        $this->assertStringContainsString('Version: 1.14', $source, 'Contract Version must remain 1.14.');
     }
 
     // ── Package 8 / 9 remain locked ──────────────────────────────────────
 
-    public function test_package_8_and_9_source_does_not_exist(): void
+    public function test_package_9_source_does_not_exist(): void
     {
         $fdBase = base_path('Modules/Operations/FrontDesk');
-
-        // Package 8: Checkout sensitive confirmation
-        $this->assertFileDoesNotExist(
-            $fdBase . '/Services/FrontDeskCheckoutConfirmationService.php',
-            'No checkout confirmation service (Package 8) must exist.'
-        );
 
         // Package 9: Final checkout command
         $this->assertFileDoesNotExist(
