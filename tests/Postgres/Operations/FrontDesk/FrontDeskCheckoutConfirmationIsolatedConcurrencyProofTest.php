@@ -2,22 +2,63 @@
 
 namespace Tests\Postgres\Operations\FrontDesk;
 
-use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
+use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService;
 use Modules\Operations\PMS\Models\Guest;
 use Modules\Operations\PMS\Models\Reservation;
+use Spatie\Permission\PermissionRegistrar;
+use Tests\Postgres\Operations\FrontDesk\Concerns\ManagesConcurrencyDatabase;
 use Tests\PostgresTestCase;
 
 class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends PostgresTestCase
 {
-    use DatabaseMigrations;
+    use ManagesConcurrencyDatabase;
+
+    private bool $concurrencyDatabaseReady = false;
+
+    private string $previousDefaultConnection;
+
+    /**
+     * @var array<int, string>
+     */
+    private array $markerDirs = [];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->previousDefaultConnection = DB::getDefaultConnection();
+        $this->setUpConcurrencyDatabase('ivorq_concurrency_p8_csc_');
+        $this->concurrencyDatabaseReady = true;
+
+        DB::setDefaultConnection('pgsql_concurrency');
+        config(['database.default' => 'pgsql_concurrency']);
+    }
+
+    protected function tearDown(): void
+    {
+        DB::setDefaultConnection($this->previousDefaultConnection);
+        config(['database.default' => $this->previousDefaultConnection]);
+
+        if ($this->concurrencyDatabaseReady) {
+            $this->tearDownConcurrencyDatabase();
+            $this->concurrencyDatabaseReady = false;
+        }
+
+        foreach ($this->markerDirs as $markerDir) {
+            $this->removeDirectory($markerDir);
+        }
+
+        parent::tearDown();
+    }
 
     public function test_same_confirmation_second_claim_blocks_then_receives_already_consumed_after_first_commits(): void
     {
@@ -63,11 +104,79 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
         $this->assertSame(1, DB::table('checkout_sensitive_confirmation_consumptions')->count());
     }
 
+    public function test_waiting_claim_revalidates_expiry_after_first_rolls_back(): void
+    {
+        $fixture = $this->fixture('concurrency-expiry', now(), now()->addSeconds(2));
+        [$a, $aPipes] = $this->startWorker($fixture, 'hold_rollback');
+        $aMarker = $this->waitMarker($fixture['marker_dir'], 'a_locked');
+
+        [$b, $bPipes] = $this->startWorker($fixture, 'claim');
+        $bMarker = $this->waitMarker($fixture['marker_dir'], 'b_before_claim');
+
+        $this->assertEventuallyBlockedBy((int) $bMarker['backend_pid'], (int) $aMarker['backend_pid']);
+        usleep(2_500_000);
+        file_put_contents($fixture['marker_dir'] . DIRECTORY_SEPARATOR . 'release_a', '1');
+
+        $aResult = $this->waitProcess($a, $aPipes);
+        $bResult = $this->waitProcess($b, $bPipes);
+
+        $this->assertSame('rolled_back', $aResult['result']);
+        $this->assertSame('domain_error', $bResult['result']);
+        $this->assertSame(CheckoutSensitiveConfirmationService::ERROR_EXPIRED, $bResult['message']);
+        $this->assertSame(0, DB::table('checkout_sensitive_confirmation_consumptions')->count());
+    }
+
+    public function test_different_issuance_identities_same_checkout_identity_allow_only_one_consumption(): void
+    {
+        $first = $this->fixture('same-checkout-identity');
+        $second = $this->additionalIssuanceFixture($first);
+
+        [$a, $aPipes] = $this->startWorker($first, 'claim');
+        [$b, $bPipes] = $this->startWorker($second, 'claim');
+        $this->waitMarker($first['marker_dir'], 'b_before_claim');
+        $this->waitMarker($second['marker_dir'], 'b_before_claim');
+
+        $aResult = $this->waitProcess($a, $aPipes);
+        $bResult = $this->waitProcess($b, $bPipes);
+
+        $results = [$aResult['result'], $bResult['result']];
+        sort($results);
+        $this->assertSame(['claimed', 'domain_error'], $results);
+        $error = $aResult['result'] === 'domain_error' ? $aResult : $bResult;
+        $this->assertSame(CheckoutSensitiveConfirmationService::ERROR_CHECKOUT_IDENTITY_CONSUMED, $error['message']);
+        $this->assertSame(1, DB::table('checkout_sensitive_confirmation_consumptions')->count());
+    }
+
+    public function test_different_properties_do_not_serialize_and_both_consume(): void
+    {
+        $first = $this->fixture('property-a');
+        $second = $this->fixture('property-b');
+
+        [$a, $aPipes] = $this->startWorker($first, 'claim');
+        [$b, $bPipes] = $this->startWorker($second, 'claim');
+        $aMarker = $this->waitMarker($first['marker_dir'], 'b_before_claim');
+        $bMarker = $this->waitMarker($second['marker_dir'], 'b_before_claim');
+
+        $this->assertNotSame($aMarker['backend_pid'], $bMarker['backend_pid']);
+        $this->assertNoBlockingPid((int) $aMarker['backend_pid']);
+        $this->assertNoBlockingPid((int) $bMarker['backend_pid']);
+
+        $aResult = $this->waitProcess($a, $aPipes);
+        $bResult = $this->waitProcess($b, $bPipes);
+
+        $this->assertSame('claimed', $aResult['result']);
+        $this->assertSame('claimed', $bResult['result']);
+        $this->assertSame(2, DB::table('checkout_sensitive_confirmation_consumptions')->count());
+    }
+
     /**
      * @return array<string, mixed>
      */
-    private function fixture(string $key): array
+    private function fixture(string $key, $confirmedAt = null, $expiresAt = null): array
     {
+        Permission::firstOrCreate(['name' => FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION, 'guard_name' => 'web']);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         $company = Company::create(['name' => 'P8 Concurrency Co', 'slug' => 'p8-conc-' . Str::lower(Str::random(6)), 'is_active' => true]);
         $property = Property::create([
             'company_id' => $company->id,
@@ -79,14 +188,17 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
             'is_active' => true,
         ]);
         $actor = User::create(['name' => 'P8 Concurrency Actor', 'email' => 'p8-conc-' . Str::lower(Str::random(6)) . '@example.test', 'password' => bcrypt('password'), 'is_active' => true]);
+        $actor->properties()->attach($property->id, ['is_default' => true, 'status' => 'active', 'joined_at' => now()]);
+        $actor->givePermissionTo(FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION);
         $stay = $this->stay($property, $actor);
 
         $issuanceId = (string) Str::ulid();
         $identity = (string) Str::ulid();
-        $sessionFingerprint = hash('sha256', 'p8-concurrency-session-' . $issuanceId);
+        $sessionId = Str::random(40);
+        $sessionFingerprint = CheckoutSensitiveConfirmationService::fingerprintSession($sessionId);
         $fingerprint = hash('sha256', 'p8-concurrency-confirmation-' . $issuanceId);
-        $confirmedAt = now();
-        $expiresAt = now()->addMinutes(15);
+        $confirmedAt ??= now();
+        $expiresAt ??= now()->addMinutes(15);
 
         DB::table('checkout_sensitive_confirmation_issuances')->insert([
             'id' => $issuanceId,
@@ -106,7 +218,9 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
 
         $markerDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'p8-csc-' . Str::lower((string) Str::ulid());
         mkdir($markerDir, 0777, true);
+        $this->markerDirs[] = $markerDir;
         $fixture = [
+            'database' => $this->concurrencyDb,
             'company_id' => $company->id,
             'property_id' => $property->id,
             'actor_id' => $actor->id,
@@ -116,6 +230,7 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
             'confirmation_identity' => $identity,
             'confirmation_fingerprint' => $fingerprint,
             'session_fingerprint' => $sessionFingerprint,
+            'session_id' => $sessionId,
             'confirmed_at' => $confirmedAt->toISOString(),
             'expires_at' => $expiresAt->toISOString(),
             'marker_dir' => $markerDir,
@@ -124,6 +239,55 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
         file_put_contents($fixture['path'], json_encode($fixture, JSON_THROW_ON_ERROR));
 
         return $fixture;
+    }
+
+    /**
+     * @param array<string, mixed> $fixture
+     * @return array<string, mixed>
+     */
+    private function additionalIssuanceFixture(array $fixture): array
+    {
+        $issuanceId = (string) Str::ulid();
+        $identity = (string) Str::ulid();
+        $sessionId = Str::random(40);
+        $sessionFingerprint = CheckoutSensitiveConfirmationService::fingerprintSession($sessionId);
+        $fingerprint = hash('sha256', 'p8-concurrency-confirmation-' . $issuanceId);
+        $confirmedAt = now();
+        $expiresAt = now()->addMinutes(15);
+
+        DB::table('checkout_sensitive_confirmation_issuances')->insert([
+            'id' => $issuanceId,
+            'confirmation_identity' => $identity,
+            'intent' => CheckoutSensitiveConfirmationService::INTENT,
+            'actor_id' => $fixture['actor_id'],
+            'company_id' => $fixture['company_id'],
+            'property_id' => $fixture['property_id'],
+            'front_desk_stay_id' => $fixture['front_desk_stay_id'],
+            'checkout_idempotency_key' => $fixture['checkout_idempotency_key'],
+            'session_fingerprint' => $sessionFingerprint,
+            'confirmation_fingerprint' => $fingerprint,
+            'confirmed_at' => $confirmedAt,
+            'expires_at' => $expiresAt,
+            'created_at' => $confirmedAt,
+        ]);
+
+        $markerDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'p8-csc-' . Str::lower((string) Str::ulid());
+        mkdir($markerDir, 0777, true);
+        $this->markerDirs[] = $markerDir;
+
+        $second = $fixture;
+        $second['issuance_id'] = $issuanceId;
+        $second['confirmation_identity'] = $identity;
+        $second['confirmation_fingerprint'] = $fingerprint;
+        $second['session_fingerprint'] = $sessionFingerprint;
+        $second['session_id'] = $sessionId;
+        $second['confirmed_at'] = $confirmedAt->toISOString();
+        $second['expires_at'] = $expiresAt->toISOString();
+        $second['marker_dir'] = $markerDir;
+        $second['path'] = $markerDir . DIRECTORY_SEPARATOR . 'fixture.json';
+        file_put_contents($second['path'], json_encode($second, JSON_THROW_ON_ERROR));
+
+        return $second;
     }
 
     private function stay(Property $property, User $actor): FrontDeskStay
@@ -199,6 +363,34 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
         } while (microtime(true) < $deadline);
 
         $this->fail('pg_blocking_pids did not prove the expected blocker.');
+    }
+
+    private function assertNoBlockingPid(int $backendPid): void
+    {
+        $row = DB::selectOne('SELECT pg_blocking_pids(?) AS blockers', [$backendPid]);
+        $this->assertSame('{}', (string) $row->blockers);
+    }
+
+    private function removeDirectory(string $path): void
+    {
+        if (! is_dir($path)) {
+            return;
+        }
+
+        foreach (scandir($path) ?: [] as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $child = $path . DIRECTORY_SEPARATOR . $entry;
+            if (is_dir($child)) {
+                $this->removeDirectory($child);
+            } else {
+                @unlink($child);
+            }
+        }
+
+        @rmdir($path);
     }
 
     /**

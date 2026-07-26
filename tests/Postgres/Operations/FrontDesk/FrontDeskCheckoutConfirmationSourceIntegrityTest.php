@@ -39,12 +39,38 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
     public function test_package8_claim_requires_postgresql_transaction_and_session_cleanup_is_separate(): void
     {
         $service = file_get_contents(base_path('Modules/Foundation/Authorization/Services/CheckoutSensitiveConfirmationService.php'));
+        $authorization = file_get_contents(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecuteAuthorizationService.php'));
 
+        $this->assertStringContainsString('issueForCurrentSession', $service);
+        $this->assertStringContainsString('claimCurrentSessionConfirmationFor', $service);
+        $this->assertStringContainsString('resolveAuthorizedContext', $service);
+        $this->assertStringContainsString('resolveAuthorizedContext', $authorization);
         $this->assertStringContainsString("getDriverName() !== 'pgsql'", $service);
         $this->assertStringContainsString('DB::transactionLevel() < 1', $service);
+        $this->assertStringContainsString("auth()->id() !== \$context->actor->id", $service);
+        $this->assertStringContainsString('fingerprintSession(session()->getId())', $service);
         $this->assertStringContainsString('lockForUpdate()', $service);
         $this->assertStringContainsString("clock_timestamp() AT TIME ZONE 'UTC'", $service);
         $this->assertStringContainsString('cleanupCurrentSessionReference', $service);
+    }
+
+    public function test_package8_migrations_contain_source_relationship_guards(): void
+    {
+        $evidenceMigration = file_get_contents(base_path('Modules/Operations/FrontDesk/database/migrations/2026_07_27_000001_create_checkout_sensitive_confirmation_evidence_tables.php'));
+        $fdC1Migration = file_get_contents(base_path('Modules/Operations/FrontDesk/database/migrations/2026_07_27_000002_add_package8_confirmation_evidence_to_front_desk_checkout_executions.php'));
+
+        $this->assertStringContainsString('p8_csc_issue_source_guard', $evidenceMigration);
+        $this->assertStringContainsString('P8_CHECKOUT_CONFIRMATION_ISSUANCE_SOURCE_MISMATCH', $evidenceMigration);
+        $this->assertStringContainsString('property_company_id IS DISTINCT FROM NEW.company_id', $evidenceMigration);
+        $this->assertStringContainsString('stay_property_id IS DISTINCT FROM NEW.property_id', $evidenceMigration);
+        $this->assertStringContainsString('P8_CHECKOUT_CONFIRMATION_CONSUMPTION_CONTEXT_MISMATCH', $evidenceMigration);
+        $this->assertStringContainsString('issue_idempotency_key IS DISTINCT FROM NEW.checkout_idempotency_key', $evidenceMigration);
+
+        $this->assertStringContainsString('fd_ce_p8_confirmation_source_guard', $fdC1Migration);
+        $this->assertStringContainsString('P8_CHECKOUT_EXECUTION_CONFIRMATION_SOURCE_MISMATCH', $fdC1Migration);
+        $this->assertStringContainsString('NEW.created_by IS DISTINCT FROM consume_actor_id', $fdC1Migration);
+        $this->assertStringContainsString('NEW.checkout_confirmation_consumed_at IS DISTINCT FROM consume_consumed_at', $fdC1Migration);
+        $this->assertStringContainsString('NEW.checkout_confirmed_at IS DISTINCT FROM issue_confirmed_at', $fdC1Migration);
     }
 
     public function test_no_raw_password_session_or_foreign_domain_mutation_source_is_added(): void

@@ -2,12 +2,8 @@
 
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationContext;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
-use Modules\Foundation\Property\Models\Company;
-use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
-use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Shared\Services\CurrentPropertyService;
 
 require __DIR__ . '/../../../../../vendor/autoload.php';
@@ -20,8 +16,17 @@ $scenario = $argv[2] ?? '';
 
 $fixture = json_decode(file_get_contents($fixturePath), true, flags: JSON_THROW_ON_ERROR);
 
+if (isset($fixture['database'])) {
+    config(['database.connections.pgsql.database' => $fixture['database']]);
+    config(['database.default' => 'pgsql']);
+    DB::setDefaultConnection('pgsql');
+    DB::purge('pgsql');
+    DB::reconnect('pgsql');
+}
+
 $actor = User::findOrFail($fixture['actor_id']);
 Auth::login($actor);
+session()->setId($fixture['session_id']);
 app(CurrentPropertyService::class)->setPropertyId($fixture['property_id']);
 session([
     'active_property_id' => $fixture['property_id'],
@@ -44,15 +49,6 @@ session([
         ],
     ],
 ]);
-
-$context = new CheckoutSensitiveConfirmationContext(
-    actor: $actor,
-    company: Company::findOrFail($fixture['company_id']),
-    property: Property::findOrFail($fixture['property_id']),
-    stay: FrontDeskStay::findOrFail($fixture['front_desk_stay_id']),
-    checkoutIdempotencyKey: $fixture['checkout_idempotency_key'],
-    sessionFingerprint: $fixture['session_fingerprint'],
-);
 
 $markerDir = $fixture['marker_dir'];
 
@@ -83,7 +79,8 @@ try {
         $waitFor('release_a');
 
         if ($scenario === 'hold_commit') {
-            $result = app(CheckoutSensitiveConfirmationService::class)->claimCurrentSessionConfirmation($context);
+            $result = app(CheckoutSensitiveConfirmationService::class)
+                ->claimCurrentSessionConfirmationFor($actor, $fixture['front_desk_stay_id'], $fixture['checkout_idempotency_key']);
             DB::commit();
             echo json_encode(['result' => 'committed', 'php_pid' => getmypid(), 'backend_pid' => $backend, 'consumption_id' => $result->consumptionId], JSON_THROW_ON_ERROR);
             exit(0);
@@ -98,7 +95,8 @@ try {
         $backend = DB::selectOne('SELECT pg_backend_pid() AS pid')->pid;
         $writeMarker('b_before_claim', ['php_pid' => getmypid(), 'backend_pid' => $backend]);
         try {
-            $result = DB::transaction(fn () => app(CheckoutSensitiveConfirmationService::class)->claimCurrentSessionConfirmation($context));
+            $result = DB::transaction(fn () => app(CheckoutSensitiveConfirmationService::class)
+                ->claimCurrentSessionConfirmationFor($actor, $fixture['front_desk_stay_id'], $fixture['checkout_idempotency_key']));
             echo json_encode(['result' => 'claimed', 'php_pid' => getmypid(), 'backend_pid' => $backend, 'consumption_id' => $result->consumptionId], JSON_THROW_ON_ERROR);
             exit(0);
         } catch (DomainException $exception) {

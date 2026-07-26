@@ -13,6 +13,7 @@ use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationContext;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
+use Modules\Foundation\Audit\Models\AuditLog;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
@@ -163,10 +164,70 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         $this->assertSame(0, DB::table('front_desk_checkout_housekeeping_handoffs')->count());
     }
 
+    public function test_authorization_matrix_denies_before_stay_query(): void
+    {
+        foreach ([
+            'inactive_actor' => fn () => $this->actor->forceFill(['is_active' => false])->save(),
+            'missing_company' => fn () => session(['active_company_id' => (string) Str::ulid()]),
+            'inactive_company' => fn () => $this->company->forceFill(['is_active' => false])->save(),
+            'missing_property' => fn () => app(CurrentPropertyService::class)->setPropertyId((string) Str::ulid()),
+            'inactive_property' => fn () => $this->property->forceFill(['is_active' => false])->save(),
+            'property_other_company' => function (): void {
+                $otherCompany = Company::create(['name' => 'Other Co', 'slug' => 'other-co-' . Str::lower(Str::random(6)), 'is_active' => true]);
+                $this->property->forceFill(['company_id' => $otherCompany->id])->save();
+            },
+            'missing_membership' => fn () => $this->actor->properties()->detach($this->property->id),
+            'inactive_membership' => fn () => DB::table('property_user')->where('user_id', $this->actor->id)->where('property_id', $this->property->id)->update(['status' => 'inactive']),
+            'boundary_view_only' => fn () => $this->actor->givePermissionTo('frontdesk.checkout-execution-boundary.view'),
+            'unrelated_permission' => fn () => $this->actor->givePermissionTo('frontdesk.arrival.view'),
+        ] as $case => $mutate) {
+            $this->refreshScenario();
+            $mutate();
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+
+            try {
+                $this->confirmation->issueForCurrentSession($this->actor, $this->stay->id, 'matrix-' . $case, 'password');
+                $this->fail("{$case} must fail authorization.");
+            } catch (AuthorizationException|DomainException $exception) {
+                $this->assertNotSame('', $exception->getMessage());
+            }
+
+            $this->assertSame(0, $this->frontDeskStayQueryCount(), "{$case} must not query front_desk_stays.");
+        }
+    }
+
+    public function test_exact_execute_permission_is_required_and_ignores_forged_context_values(): void
+    {
+        $this->allowExecute();
+        $otherCompany = Company::create(['name' => 'Forged Co', 'slug' => 'forged-co-' . Str::lower(Str::random(6)), 'is_active' => true]);
+        $forgedProperty = $this->property('Forged Property', $otherCompany);
+        $forgedStay = $this->stay($forgedProperty);
+
+        $issuance = $this->confirmation->issueForCurrentSession($this->actor, $this->stay->id, 'server-owned-key', 'password');
+
+        $this->assertSame($this->company->id, $issuance->company_id);
+        $this->assertSame($this->property->id, $issuance->property_id);
+        $this->assertSame($this->stay->id, $issuance->front_desk_stay_id);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT);
+
+        $this->confirmation->issue(new CheckoutSensitiveConfirmationContext(
+            actor: $this->actor,
+            company: $otherCompany,
+            property: $forgedProperty,
+            stay: $forgedStay,
+            checkoutIdempotencyKey: 'forged-context',
+            sessionFingerprint: CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId()),
+        ), 'password');
+    }
+
     public function test_wrong_password_creates_no_issuance(): void
     {
         try {
-            $this->confirmation->issue($this->context('checkout-key-2'), 'wrong-password');
+            $this->allowExecute();
+            $this->confirmation->issueForCurrentSession($this->actor, $this->stay->id, 'checkout-key-2', 'wrong-password');
             $this->fail('Wrong password must fail.');
         } catch (DomainException $exception) {
             $this->assertSame('The password is incorrect.', $exception->getMessage());
@@ -178,7 +239,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
     public function test_reissue_same_context_returns_same_unconsumed_unexpired_issuance(): void
     {
         $first = $this->issue('checkout-key-3');
-        $second = $this->confirmation->issue($this->context('checkout-key-3'), 'password');
+        $second = $this->confirmation->issueForCurrentSession($this->actor, $this->stay->id, 'checkout-key-3', 'password');
 
         $this->assertSame($first->id, $second->id);
         $this->assertSame(1, DB::table('checkout_sensitive_confirmation_issuances')->count());
@@ -191,14 +252,14 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_ACTIVE_TRANSACTION_REQUIRED);
 
-        $this->confirmation->claimCurrentSessionConfirmation($this->context('checkout-key-4'));
+        $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'checkout-key-4');
     }
 
     public function test_valid_claim_consumes_once_inside_active_transaction(): void
     {
         $this->issue('checkout-key-5');
 
-        $result = DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmation($this->context('checkout-key-5')));
+        $result = DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'checkout-key-5'));
 
         $this->assertDatabaseHas('checkout_sensitive_confirmation_consumptions', [
             'id' => $result->consumptionId,
@@ -210,7 +271,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_ALREADY_CONSUMED);
 
-        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmation($this->context('checkout-key-5')));
+        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'checkout-key-5'));
     }
 
     public function test_consumption_rolls_back_with_caller_transaction_and_can_be_reclaimed_before_expiry(): void
@@ -219,7 +280,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
 
         try {
             DB::transaction(function (): void {
-                $this->confirmation->claimCurrentSessionConfirmation($this->context('checkout-key-6'));
+                $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'checkout-key-6');
                 $this->assertSame(1, DB::table('checkout_sensitive_confirmation_consumptions')->count());
                 throw new DomainException('ROLLBACK_TEST');
             });
@@ -228,7 +289,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         }
 
         $this->assertSame(0, DB::table('checkout_sensitive_confirmation_consumptions')->count());
-        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmation($this->context('checkout-key-6')));
+        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'checkout-key-6'));
         $this->assertSame(1, DB::table('checkout_sensitive_confirmation_consumptions')->count());
     }
 
@@ -239,6 +300,79 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT);
         DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmation($this->context('changed-key')));
+    }
+
+    public function test_session_actor_company_property_stay_and_idempotency_bindings_fail_closed(): void
+    {
+        $this->issue('binding-key');
+
+        foreach ([
+            'actor_id' => ['actor', User::create(['name' => 'Other Actor', 'email' => 'other-' . Str::lower(Str::random(6)) . '@example.test', 'password' => Hash::make('password'), 'is_active' => true])],
+            'company_id' => ['company', Company::create(['name' => 'Other Binding Co', 'slug' => 'other-binding-' . Str::lower(Str::random(6)), 'is_active' => true])],
+            'property_id' => ['property', $this->otherProperty],
+            'front_desk_stay_id' => ['stay', $this->stay($this->otherProperty)],
+            'checkout_idempotency_key' => ['idempotency', 'binding-key-changed'],
+            'session_fingerprint' => ['session', hash('sha256', 'forged-session')],
+        ] as $field => [$kind, $value]) {
+            $this->restoreSessionReference('binding-key');
+            $context = $this->context('binding-key');
+            $context = match ($kind) {
+                'actor' => new CheckoutSensitiveConfirmationContext($value, $this->company, $this->property, $this->stay, 'binding-key', CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId())),
+                'company' => new CheckoutSensitiveConfirmationContext($this->actor, $value, $this->property, $this->stay, 'binding-key', CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId())),
+                'property' => new CheckoutSensitiveConfirmationContext($this->actor, $this->company, $value, $this->stay, 'binding-key', CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId())),
+                'stay' => new CheckoutSensitiveConfirmationContext($this->actor, $this->company, $this->property, $value, 'binding-key', CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId())),
+                'idempotency' => $this->context($value),
+                'session' => new CheckoutSensitiveConfirmationContext($this->actor, $this->company, $this->property, $this->stay, 'binding-key', $value),
+            };
+
+            try {
+                DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmation($context));
+                $this->fail("Binding {$field} must fail.");
+            } catch (AuthorizationException|DomainException $exception) {
+                $this->assertContains($exception->getMessage(), [
+                    CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT,
+                    CheckoutSensitiveConfirmationService::ERROR_SESSION_MISMATCH,
+                ]);
+            }
+        }
+    }
+
+    public function test_malformed_session_metadata_and_expiry_fail_closed(): void
+    {
+        $issuance = $this->issue('expiry-key');
+
+        session([CheckoutSensitiveConfirmationService::SESSION_KEY => [CheckoutSensitiveConfirmationService::INTENT => ['issuance_id' => $issuance->id]]]);
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_MALFORMED_CONFIRMATION);
+        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'expiry-key'));
+    }
+
+    public function test_expired_confirmation_fails_closed(): void
+    {
+        $this->allowExecute();
+        $this->insertRawIssuance('expired-key', now()->subMinutes(20), now()->subMinute());
+
+        $this->restoreSessionReference('expired-key');
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_EXPIRED);
+        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'expired-key'));
+    }
+
+    public function test_audit_and_persistence_exclude_password_and_raw_session_id(): void
+    {
+        $sessionId = session()->getId();
+        $this->issue('privacy-key');
+
+        $dbText = json_encode(DB::table('checkout_sensitive_confirmation_issuances')->get(), JSON_THROW_ON_ERROR);
+        $auditText = json_encode(AuditLog::query()->where('event', 'checkout_sensitive_action_confirmed')->get()->toArray(), JSON_THROW_ON_ERROR);
+
+        $this->assertStringNotContainsString('password', $dbText);
+        $this->assertStringNotContainsString('password', $auditText);
+        $this->assertStringNotContainsString($sessionId, $dbText);
+        $this->assertStringNotContainsString($sessionId, $auditText);
+        $this->assertStringContainsString('checkout_idempotency_fingerprint', $auditText);
+        $this->assertStringNotContainsString('privacy-key', $auditText);
     }
 
     public function test_cleanup_is_separate_idempotent_and_non_authoritative(): void
@@ -258,7 +392,9 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
 
     private function issue(string $idempotencyKey)
     {
-        return $this->confirmation->issue($this->context($idempotencyKey), 'password');
+        $this->allowExecute();
+
+        return $this->confirmation->issueForCurrentSession($this->actor, $this->stay->id, $idempotencyKey, 'password');
     }
 
     private function context(string $idempotencyKey): CheckoutSensitiveConfirmationContext
@@ -284,6 +420,83 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
             'currency' => 'USD',
             'is_active' => true,
         ]);
+    }
+
+    private function allowExecute(): void
+    {
+        if (! $this->actor->hasPermissionTo(FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION)) {
+            $this->actor->givePermissionTo(FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION);
+        }
+    }
+
+    private function refreshScenario(): void
+    {
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        Auth::logout();
+        DB::table('model_has_permissions')->delete();
+        DB::table('property_user')->delete();
+        $this->company->refresh()->forceFill(['is_active' => true])->save();
+        $this->property->refresh()->forceFill(['company_id' => $this->company->id, 'is_active' => true])->save();
+        $this->actor->refresh()->forceFill(['is_active' => true])->save();
+        $this->attachProperty($this->actor, $this->property);
+        Auth::login($this->actor);
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+        session([
+            'active_property_id' => $this->property->id,
+            'current_property_id' => $this->property->id,
+            'active_company_id' => $this->company->id,
+        ]);
+    }
+
+    private function restoreSessionReference(string $idempotencyKey): void
+    {
+        $issuance = DB::table('checkout_sensitive_confirmation_issuances')
+            ->where('checkout_idempotency_key', $idempotencyKey)
+            ->first();
+        $this->assertNotNull($issuance);
+
+        session([
+            CheckoutSensitiveConfirmationService::SESSION_KEY => [
+                CheckoutSensitiveConfirmationService::INTENT => [
+                    'actor_id' => $issuance->actor_id,
+                    'intent' => CheckoutSensitiveConfirmationService::INTENT,
+                    'company_id' => $issuance->company_id,
+                    'property_id' => $issuance->property_id,
+                    'front_desk_stay_id' => $issuance->front_desk_stay_id,
+                    'checkout_idempotency_key' => $issuance->checkout_idempotency_key,
+                    'issuance_id' => $issuance->id,
+                    'confirmation_identity' => $issuance->confirmation_identity,
+                    'confirmation_fingerprint' => $issuance->confirmation_fingerprint,
+                    'session_fingerprint' => $issuance->session_fingerprint,
+                    'confirmed_at' => $issuance->confirmed_at,
+                    'expires_at' => $issuance->expires_at,
+                ],
+            ],
+        ]);
+    }
+
+    private function insertRawIssuance(string $idempotencyKey, $confirmedAt, $expiresAt): string
+    {
+        $id = (string) Str::ulid();
+        $identity = (string) Str::ulid();
+
+        DB::table('checkout_sensitive_confirmation_issuances')->insert([
+            'id' => $id,
+            'confirmation_identity' => $identity,
+            'intent' => CheckoutSensitiveConfirmationService::INTENT,
+            'actor_id' => $this->actor->id,
+            'company_id' => $this->company->id,
+            'property_id' => $this->property->id,
+            'front_desk_stay_id' => $this->stay->id,
+            'checkout_idempotency_key' => $idempotencyKey,
+            'session_fingerprint' => CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId()),
+            'confirmation_fingerprint' => hash('sha256', 'raw-confirmation-' . $id),
+            'confirmed_at' => $confirmedAt,
+            'expires_at' => $expiresAt,
+            'created_at' => $confirmedAt,
+        ]);
+
+        return $id;
     }
 
     private function attachProperty(User $user, Property $property, string $status = 'active'): void

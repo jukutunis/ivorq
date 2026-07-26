@@ -94,6 +94,43 @@ return new class extends Migration
                 ALTER TABLE checkout_sensitive_confirmation_issuances
                 ADD CONSTRAINT p8_csc_issue_time_check CHECK (confirmed_at < expires_at AND created_at = confirmed_at)
             ");
+            DB::statement("CREATE OR REPLACE FUNCTION p8_csc_issue_source_guard() RETURNS trigger AS $$
+                DECLARE
+                    property_company_id CHAR(26);
+                    stay_property_id CHAR(26);
+                    actor_active BOOLEAN;
+                    company_active BOOLEAN;
+                    property_active BOOLEAN;
+                BEGIN
+                    SELECT is_active INTO actor_active
+                    FROM users
+                    WHERE id = NEW.actor_id;
+
+                    SELECT is_active INTO company_active
+                    FROM companies
+                    WHERE id = NEW.company_id;
+
+                    SELECT company_id, is_active
+                    INTO property_company_id, property_active
+                    FROM properties
+                    WHERE id = NEW.property_id;
+
+                    SELECT property_id
+                    INTO stay_property_id
+                    FROM front_desk_stays
+                    WHERE id = NEW.front_desk_stay_id;
+
+                    IF actor_active IS DISTINCT FROM TRUE
+                        OR company_active IS DISTINCT FROM TRUE
+                        OR property_active IS DISTINCT FROM TRUE
+                        OR property_company_id IS DISTINCT FROM NEW.company_id
+                        OR stay_property_id IS DISTINCT FROM NEW.property_id THEN
+                        RAISE EXCEPTION 'P8_CHECKOUT_CONFIRMATION_ISSUANCE_SOURCE_MISMATCH';
+                    END IF;
+
+                    RETURN NEW;
+                END; $$ LANGUAGE plpgsql;");
+            DB::statement('CREATE TRIGGER p8_csc_issue_source_guard BEFORE INSERT ON checkout_sensitive_confirmation_issuances FOR EACH ROW EXECUTE FUNCTION p8_csc_issue_source_guard()');
             DB::statement("CREATE OR REPLACE FUNCTION p8_csc_issue_block_mutation() RETURNS trigger AS $$
                 BEGIN
                     RAISE EXCEPTION 'P8_CHECKOUT_CONFIRMATION_ISSUANCE_IMMUTABLE';
@@ -114,15 +151,34 @@ return new class extends Migration
                 DECLARE
                     issue_expires_at TIMESTAMP;
                     issue_confirmed_at TIMESTAMP;
+                    issue_identity CHAR(26);
+                    issue_fingerprint CHAR(64);
+                    issue_actor_id CHAR(26);
+                    issue_company_id CHAR(26);
+                    issue_property_id CHAR(26);
+                    issue_stay_id CHAR(26);
+                    issue_idempotency_key VARCHAR(120);
                     wall_clock_utc TIMESTAMP;
                 BEGIN
-                    SELECT expires_at, confirmed_at
-                    INTO issue_expires_at, issue_confirmed_at
+                    SELECT expires_at, confirmed_at, confirmation_identity, confirmation_fingerprint,
+                           actor_id, company_id, property_id, front_desk_stay_id, checkout_idempotency_key
+                    INTO issue_expires_at, issue_confirmed_at, issue_identity, issue_fingerprint,
+                         issue_actor_id, issue_company_id, issue_property_id, issue_stay_id, issue_idempotency_key
                     FROM checkout_sensitive_confirmation_issuances
                     WHERE id = NEW.issuance_id
                     FOR UPDATE;
 
                     IF NOT FOUND THEN
+                        RAISE EXCEPTION 'P8_CHECKOUT_CONFIRMATION_CONSUMPTION_CONTEXT_MISMATCH';
+                    END IF;
+
+                    IF issue_identity IS DISTINCT FROM NEW.confirmation_identity
+                        OR issue_fingerprint IS DISTINCT FROM NEW.confirmation_fingerprint
+                        OR issue_actor_id IS DISTINCT FROM NEW.actor_id
+                        OR issue_company_id IS DISTINCT FROM NEW.company_id
+                        OR issue_property_id IS DISTINCT FROM NEW.property_id
+                        OR issue_stay_id IS DISTINCT FROM NEW.front_desk_stay_id
+                        OR issue_idempotency_key IS DISTINCT FROM NEW.checkout_idempotency_key THEN
                         RAISE EXCEPTION 'P8_CHECKOUT_CONFIRMATION_CONSUMPTION_CONTEXT_MISMATCH';
                     END IF;
 
@@ -161,7 +217,9 @@ return new class extends Migration
             DB::statement('DROP FUNCTION IF EXISTS p8_csc_consume_guard()');
             DB::statement('DROP TRIGGER IF EXISTS p8_csc_issue_no_delete ON checkout_sensitive_confirmation_issuances');
             DB::statement('DROP TRIGGER IF EXISTS p8_csc_issue_no_update ON checkout_sensitive_confirmation_issuances');
+            DB::statement('DROP TRIGGER IF EXISTS p8_csc_issue_source_guard ON checkout_sensitive_confirmation_issuances');
             DB::statement('DROP FUNCTION IF EXISTS p8_csc_issue_block_mutation()');
+            DB::statement('DROP FUNCTION IF EXISTS p8_csc_issue_source_guard()');
         }
 
         Schema::dropIfExists('checkout_sensitive_confirmation_consumptions');

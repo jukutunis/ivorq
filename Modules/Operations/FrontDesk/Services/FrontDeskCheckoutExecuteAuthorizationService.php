@@ -23,6 +23,16 @@ class FrontDeskCheckoutExecuteAuthorizationService
 
     public function resolveAuthorizedStay(User $actor, string $frontDeskStayId): FrontDeskStay
     {
+        $context = $this->resolveAuthorizedContext($actor, $frontDeskStayId);
+
+        return $context['stay'];
+    }
+
+    /**
+     * @return array{actor: User, company: Company, property: Property, stay: FrontDeskStay}
+     */
+    public function resolveAuthorizedContext(User $actor, string $frontDeskStayId): array
+    {
         $context = $this->authorize($actor);
 
         $stay = FrontDeskStay::withoutGlobalScopes()
@@ -34,7 +44,12 @@ class FrontDeskCheckoutExecuteAuthorizationService
             throw new HttpException(404, self::ERROR_STAY_NOT_FOUND);
         }
 
-        return $stay;
+        return [
+            'actor' => $context['actor'],
+            'company' => $context['company'],
+            'property' => $context['property'],
+            'stay' => $stay,
+        ];
     }
 
     /**
