@@ -2,6 +2,8 @@
 
 namespace Tests\Postgres\Operations\FrontDesk;
 
+use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationContext;
+use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
 use Tests\PostgresTestCase;
 
 class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
@@ -40,14 +42,40 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
     {
         $service = file_get_contents(base_path('Modules/Foundation/Authorization/Services/CheckoutSensitiveConfirmationService.php'));
         $authorization = file_get_contents(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecuteAuthorizationService.php'));
+        $reflection = new \ReflectionClass(CheckoutSensitiveConfirmationService::class);
 
         $this->assertStringContainsString('issueForCurrentSession', $service);
         $this->assertStringContainsString('claimCurrentSessionConfirmationFor', $service);
         $this->assertStringContainsString('resolveAuthorizedContext', $service);
         $this->assertStringContainsString('resolveAuthorizedContext', $authorization);
+        $this->assertTrue($reflection->getMethod('issueForCurrentSession')->isPublic());
+        $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmationFor')->isPublic());
+        $this->assertTrue($reflection->getMethod('issue')->isPrivate());
+        $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmation')->isPrivate());
+
+        $publicIssueOrClaimMethods = array_values(array_filter(
+            array_map(fn (\ReflectionMethod $method): string => $method->getName(), $reflection->getMethods(\ReflectionMethod::IS_PUBLIC)),
+            fn (string $name): bool => str_contains($name, 'issue') || str_contains($name, 'claim')
+        ));
+        sort($publicIssueOrClaimMethods);
+        $this->assertSame([
+            'claimCurrentSessionConfirmationFor',
+            'issueForCurrentSession',
+        ], $publicIssueOrClaimMethods);
+
+        foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            foreach ($method->getParameters() as $parameter) {
+                $this->assertNotSame(
+                    CheckoutSensitiveConfirmationContext::class,
+                    $parameter->getType()?->getName(),
+                    "Public method {$method->getName()} must not accept checkout confirmation context."
+                );
+            }
+        }
+
         $this->assertStringContainsString("getDriverName() !== 'pgsql'", $service);
         $this->assertStringContainsString('DB::transactionLevel() < 1', $service);
-        $this->assertStringContainsString("auth()->id() !== \$context->actor->id", $service);
+        $this->assertStringContainsString('$this->checkoutAuthorization->authorize($context->actor)', $service);
         $this->assertStringContainsString('fingerprintSession(session()->getId())', $service);
         $this->assertStringContainsString('lockForUpdate()', $service);
         $this->assertStringContainsString("clock_timestamp() AT TIME ZONE 'UTC'", $service);

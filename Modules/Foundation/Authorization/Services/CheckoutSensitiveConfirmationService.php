@@ -11,8 +11,6 @@ use Illuminate\Support\Str;
 use Modules\Foundation\Audit\Services\AuditService;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationConsumption;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationIssuance;
-use Modules\Foundation\Property\Models\Company;
-use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService;
@@ -58,7 +56,7 @@ class CheckoutSensitiveConfirmationService
         ), $password);
     }
 
-    public function issue(CheckoutSensitiveConfirmationContext $context, string $password): CheckoutSensitiveConfirmationIssuance
+    private function issue(CheckoutSensitiveConfirmationContext $context, string $password): CheckoutSensitiveConfirmationIssuance
     {
         $this->assertAuthoritativeContext($context);
 
@@ -153,6 +151,14 @@ class CheckoutSensitiveConfirmationService
 
     public function claimCurrentSessionConfirmationFor(User $actor, string $frontDeskStayId, string $checkoutIdempotencyKey): CheckoutSensitiveConfirmationClaimResult
     {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            throw new DomainException(self::ERROR_POSTGRESQL_REQUIRED);
+        }
+
+        if (DB::transactionLevel() < 1) {
+            throw new DomainException(self::ERROR_ACTIVE_TRANSACTION_REQUIRED);
+        }
+
         $resolved = $this->checkoutAuthorization->resolveAuthorizedContext($actor, $frontDeskStayId);
 
         return $this->claimCurrentSessionConfirmation(new CheckoutSensitiveConfirmationContext(
@@ -165,7 +171,7 @@ class CheckoutSensitiveConfirmationService
         ));
     }
 
-    public function claimCurrentSessionConfirmation(CheckoutSensitiveConfirmationContext $context): CheckoutSensitiveConfirmationClaimResult
+    private function claimCurrentSessionConfirmation(CheckoutSensitiveConfirmationContext $context): CheckoutSensitiveConfirmationClaimResult
     {
         if (DB::connection()->getDriverName() !== 'pgsql') {
             throw new DomainException(self::ERROR_POSTGRESQL_REQUIRED);
@@ -341,45 +347,20 @@ class CheckoutSensitiveConfirmationService
 
     private function assertAuthoritativeContext(CheckoutSensitiveConfirmationContext $context): void
     {
-        if (! auth()->check() || auth()->id() !== $context->actor->id) {
+        $resolved = $this->checkoutAuthorization->authorize($context->actor);
+
+        if ($resolved['actor']->id !== $context->actor->id
+            || $resolved['company']->id !== $context->company->id
+            || $resolved['property']->id !== $context->property->id) {
             throw new DomainException(self::ERROR_CONTEXT_CONFLICT);
         }
 
-        $freshActor = User::whereKey($context->actor->id)
-            ->where('is_active', true)
-            ->first();
-        $company = Company::withoutGlobalScopes()
-            ->whereKey($context->company->id)
-            ->where('is_active', true)
-            ->first();
-        $property = Property::withoutGlobalScopes()
-            ->whereKey($context->property->id)
-            ->where('company_id', $context->company->id)
-            ->where('is_active', true)
-            ->first();
         $stay = FrontDeskStay::withoutGlobalScopes()
             ->whereKey($context->stay->id)
-            ->where('property_id', $context->property->id)
+            ->where('property_id', $resolved['property']->id)
             ->first();
 
-        if (! $freshActor || ! $company || ! $property || ! $stay) {
-            throw new DomainException(self::ERROR_CONTEXT_CONFLICT);
-        }
-
-        if (! $freshActor->properties()
-            ->where('properties.id', $property->id)
-            ->wherePivot('status', 'active')
-            ->exists()) {
-            throw new DomainException(self::ERROR_CONTEXT_CONFLICT);
-        }
-
-        try {
-            $canExecute = $freshActor->can(FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION);
-        } catch (\Throwable) {
-            $canExecute = false;
-        }
-
-        if (! $canExecute) {
+        if (! $stay) {
             throw new DomainException(self::ERROR_CONTEXT_CONFLICT);
         }
 

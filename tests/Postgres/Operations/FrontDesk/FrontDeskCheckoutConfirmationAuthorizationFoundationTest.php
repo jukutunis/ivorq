@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use ReflectionClass;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationContext;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
@@ -164,6 +165,26 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         $this->assertSame(0, DB::table('front_desk_checkout_housekeeping_handoffs')->count());
     }
 
+    public function test_context_level_issue_and_claim_are_private_and_not_public_context_apis(): void
+    {
+        $reflection = new ReflectionClass(CheckoutSensitiveConfirmationService::class);
+
+        $this->assertTrue($reflection->getMethod('issueForCurrentSession')->isPublic());
+        $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmationFor')->isPublic());
+        $this->assertTrue($reflection->getMethod('issue')->isPrivate());
+        $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmation')->isPrivate());
+
+        foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            foreach ($method->getParameters() as $parameter) {
+                $this->assertNotSame(
+                    CheckoutSensitiveConfirmationContext::class,
+                    $parameter->getType()?->getName(),
+                    "Public method {$method->getName()} must not accept caller-built checkout confirmation context."
+                );
+            }
+        }
+    }
+
     public function test_authorization_matrix_denies_before_stay_query(): void
     {
         foreach ([
@@ -197,6 +218,97 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         }
     }
 
+    public function test_public_issue_uses_current_property_and_non_discloses_other_member_property_stay(): void
+    {
+        $this->allowExecute();
+        $this->attachProperty($this->actor, $this->otherProperty);
+        $otherStay = $this->stay($this->otherProperty);
+
+        foreach ([(string) Str::ulid(), $otherStay->id] as $stayId) {
+            try {
+                $this->confirmation->issueForCurrentSession($this->actor, $stayId, 'property-isolation-' . Str::lower((string) Str::ulid()), 'password');
+                $this->fail('Unknown and other-current-property stay confirmations must fail closed.');
+            } catch (\Symfony\Component\HttpKernel\Exception\HttpException $exception) {
+                $this->assertSame(404, $exception->getStatusCode());
+                $this->assertSame(FrontDeskCheckoutExecuteAuthorizationService::ERROR_STAY_NOT_FOUND, $exception->getMessage());
+            }
+        }
+
+        $this->assertSame(
+            0,
+            DB::table('checkout_sensitive_confirmation_issuances')->where('property_id', $this->otherProperty->id)->count(),
+            'Public issue API must not create Property B issuance while current Property is A.'
+        );
+
+        $issuance = $this->confirmation->issueForCurrentSession($this->actor, $this->stay->id, 'property-a-valid', 'password');
+        $this->assertSame($this->property->id, $issuance->property_id);
+        $this->assertSame($this->stay->id, $issuance->front_desk_stay_id);
+
+        $result = DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'property-a-valid'));
+        $this->assertSame($this->property->id, $result->propertyId);
+        $this->assertSame($this->stay->id, $result->frontDeskStayId);
+    }
+
+    public function test_claim_authorization_denies_before_stay_query(): void
+    {
+        $this->issue('claim-auth-key');
+
+        foreach ([
+            'missing_execute' => null,
+            'boundary_view_only' => 'frontdesk.checkout-execution-boundary.view',
+            'unrelated_permission' => 'frontdesk.arrival.view',
+        ] as $case => $permission) {
+            DB::table('model_has_permissions')->delete();
+            app(PermissionRegistrar::class)->forgetCachedPermissions();
+            $this->actor->refresh();
+            if ($permission !== null) {
+                $this->actor->givePermissionTo($permission);
+            }
+            $this->restoreSessionReference('claim-auth-key');
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+
+            try {
+                DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'claim-auth-key'));
+                $this->fail("{$case} must fail before stay resolution.");
+            } catch (AuthorizationException $exception) {
+                $this->assertSame(FrontDeskCheckoutExecuteAuthorizationService::ERROR_EXECUTE_PERMISSION_MISSING, $exception->getMessage());
+            }
+
+            $this->assertSame(0, $this->frontDeskStayQueryCount(), "{$case} claim must not query front_desk_stays.");
+        }
+    }
+
+    public function test_current_company_mismatch_fails_before_stay_resolution(): void
+    {
+        $this->issue('company-mismatch-key');
+        $otherCompany = Company::create(['name' => 'Wrong Session Co', 'slug' => 'wrong-session-' . Str::lower(Str::random(6)), 'is_active' => true]);
+        session(['active_company_id' => $otherCompany->id]);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        try {
+            $this->confirmation->issueForCurrentSession($this->actor, $this->stay->id, 'company-mismatch-issue', 'password');
+            $this->fail('Company mismatch must fail before issuing.');
+        } catch (AuthorizationException $exception) {
+            $this->assertSame(FrontDeskCheckoutExecuteAuthorizationService::ERROR_UNAUTHORIZED_PROPERTY_CONTEXT, $exception->getMessage());
+        }
+
+        $this->assertSame(0, $this->frontDeskStayQueryCount(), 'Company mismatch issue must not query front_desk_stays.');
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'company-mismatch-key'));
+            $this->fail('Company mismatch must fail before claim stay resolution.');
+        } catch (AuthorizationException $exception) {
+            $this->assertSame(FrontDeskCheckoutExecuteAuthorizationService::ERROR_UNAUTHORIZED_PROPERTY_CONTEXT, $exception->getMessage());
+        }
+
+        $this->assertSame(0, $this->frontDeskStayQueryCount(), 'Company mismatch claim must not query front_desk_stays.');
+    }
+
     public function test_exact_execute_permission_is_required_and_ignores_forged_context_values(): void
     {
         $this->allowExecute();
@@ -213,7 +325,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT);
 
-        $this->confirmation->issue(new CheckoutSensitiveConfirmationContext(
+        $this->invokePrivateIssue(new CheckoutSensitiveConfirmationContext(
             actor: $this->actor,
             company: $otherCompany,
             property: $forgedProperty,
@@ -249,10 +361,17 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
     {
         $this->issue('checkout-key-4');
 
-        $this->expectException(DomainException::class);
-        $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_ACTIVE_TRANSACTION_REQUIRED);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
 
-        $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'checkout-key-4');
+        try {
+            $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'checkout-key-4');
+            $this->fail('Claim must require caller-owned active transaction.');
+        } catch (DomainException $exception) {
+            $this->assertSame(CheckoutSensitiveConfirmationService::ERROR_ACTIVE_TRANSACTION_REQUIRED, $exception->getMessage());
+        }
+
+        $this->assertSame(0, $this->frontDeskStayQueryCount(), 'No-transaction claim gate must not query front_desk_stays.');
     }
 
     public function test_valid_claim_consumes_once_inside_active_transaction(): void
@@ -299,7 +418,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
 
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT);
-        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmation($this->context('changed-key')));
+        DB::transaction(fn () => $this->invokePrivateClaim($this->context('changed-key')));
     }
 
     public function test_session_actor_company_property_stay_and_idempotency_bindings_fail_closed(): void
@@ -326,12 +445,14 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
             };
 
             try {
-                DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmation($context));
+                DB::transaction(fn () => $this->invokePrivateClaim($context));
                 $this->fail("Binding {$field} must fail.");
             } catch (AuthorizationException|DomainException $exception) {
                 $this->assertContains($exception->getMessage(), [
                     CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT,
                     CheckoutSensitiveConfirmationService::ERROR_SESSION_MISMATCH,
+                    FrontDeskCheckoutExecuteAuthorizationService::ERROR_INVALID_AUTHENTICATED_CONTEXT,
+                    FrontDeskCheckoutExecuteAuthorizationService::ERROR_UNAUTHORIZED_PROPERTY_CONTEXT,
                 ]);
             }
         }
@@ -378,7 +499,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
     public function test_cleanup_is_separate_idempotent_and_non_authoritative(): void
     {
         $this->issue('checkout-key-8');
-        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmation($this->context('checkout-key-8')));
+        DB::transaction(fn () => $this->invokePrivateClaim($this->context('checkout-key-8')));
 
         $this->confirmation->cleanupCurrentSessionReference();
         $this->confirmation->cleanupCurrentSessionReference();
@@ -407,6 +528,22 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
             checkoutIdempotencyKey: $idempotencyKey,
             sessionFingerprint: CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId()),
         );
+    }
+
+    private function invokePrivateIssue(CheckoutSensitiveConfirmationContext $context, string $password)
+    {
+        $method = (new ReflectionClass($this->confirmation))->getMethod('issue');
+        $method->setAccessible(true);
+
+        return $method->invoke($this->confirmation, $context, $password);
+    }
+
+    private function invokePrivateClaim(CheckoutSensitiveConfirmationContext $context)
+    {
+        $method = (new ReflectionClass($this->confirmation))->getMethod('claimCurrentSessionConfirmation');
+        $method->setAccessible(true);
+
+        return $method->invoke($this->confirmation, $context);
     }
 
     private function property(string $name, Company $company): Property
