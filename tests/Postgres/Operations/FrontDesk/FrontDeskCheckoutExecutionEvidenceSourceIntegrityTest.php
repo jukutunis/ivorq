@@ -316,15 +316,15 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
         }
     }
 
-    // ── Contract Version remains 1.12 ─────────────────────────────────────
+    // ── Contract Version remains 1.13 ─────────────────────────────────────
 
-    public function test_contract_version_remains_1_12(): void
+    public function test_contract_version_remains_1_13(): void
     {
         $contractPath = base_path('.agents/contracts/IVORQ-Package-Execution-Contract.md');
         $this->assertFileExists($contractPath);
 
         $source = file_get_contents($contractPath);
-        $this->assertStringContainsString('Version: 1.12', $source, 'Contract Version must remain 1.12.');
+        $this->assertStringContainsString('Version: 1.13', $source, 'Contract Version must remain 1.13.');
     }
 
     // ── No ADR or contract file changed ────────────────────────────────────
