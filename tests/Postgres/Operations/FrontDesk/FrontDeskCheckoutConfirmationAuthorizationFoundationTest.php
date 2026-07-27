@@ -177,6 +177,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
 
         $this->assertTrue($reflection->getMethod('issueForCurrentSession')->isPublic());
         $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmationFor')->isPublic());
+        $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmationFromPreflight')->isPublic());
         $this->assertTrue($reflection->getMethod('issue')->isPrivate());
         $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmation')->isPrivate());
 
@@ -187,6 +188,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         sort($publicIssueOrClaimMethods);
         $this->assertSame([
             'claimCurrentSessionConfirmationFor',
+            'claimCurrentSessionConfirmationFromPreflight',
             'issueForCurrentSession',
         ], $publicIssueOrClaimMethods);
 

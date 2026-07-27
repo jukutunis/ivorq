@@ -14,7 +14,7 @@ use Tests\PostgresTestCase;
 
 class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
 {
-    public function test_package8_permission_intent_and_locked_runtime_markers_exist(): void
+    public function test_package8_permission_intent_and_package9_runtime_markers_exist(): void
     {
         $permissionSeeder = file_get_contents(base_path('Modules/Foundation/Authorization/database/seeders/PermissionSeeder.php'));
         $confirmationService = file_get_contents(base_path('Modules/Foundation/Authorization/Services/SensitiveActionConfirmationService.php'));
@@ -23,22 +23,23 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
         $this->assertStringContainsString('frontdesk.checkout-execution.execute', $permissionSeeder);
         $this->assertStringContainsString('frontdesk-checkout-execution', $confirmationService);
         $this->assertStringContainsString('Checkout confirmation requires authoritative checkout context.', $confirmationService);
-        $this->assertStringContainsString('CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED', $boundary);
-        $this->assertStringContainsString('$canExecute = false;', $boundary);
-        $this->assertStringNotContainsString('$canExecute = true;', $boundary);
+        $this->assertStringContainsString('FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION', $boundary);
+        $this->assertStringContainsString('$canExecute = empty($blockerCodes) && $canUseExecutionCommand;', $boundary);
     }
 
-    public function test_no_package9_checkout_execution_surface_exists(): void
+    public function test_package9_checkout_execution_surface_is_controlled(): void
     {
-        $this->assertFileDoesNotExist(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php'));
+        $this->assertFileExists(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php'));
         $this->assertFileDoesNotExist(base_path('Modules/Operations/FrontDesk/Commands/CheckoutStayCommand.php'));
 
         $controller = file_get_contents(base_path('app/Http/Controllers/Ivorq/FrontDeskController.php'));
         $routes = file_get_contents(base_path('routes/web.php'));
 
-        $this->assertStringNotContainsString('executeCheckout', $controller);
         $this->assertStringNotContainsString('checkOut(', $controller);
-        $this->assertStringNotContainsString("post('/stays/{stay}/checkout", $routes);
+        $this->assertStringContainsString('prepareCheckoutConfirmation', $controller);
+        $this->assertStringContainsString('executeCheckout', $controller);
+        $this->assertStringContainsString("post('/stays/{stay}/checkout-confirmation", $routes);
+        $this->assertStringContainsString("post('/stays/{stay}/checkout-execution", $routes);
         $this->assertStringNotContainsString("put('/stays/{stay}/checkout", $routes);
         $this->assertStringNotContainsString("patch('/stays/{stay}/checkout", $routes);
         $this->assertStringNotContainsString("delete('/stays/{stay}/checkout", $routes);
@@ -51,11 +52,15 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
         $reflection = new \ReflectionClass(CheckoutSensitiveConfirmationService::class);
 
         $this->assertStringContainsString('issueForCurrentSession', $service);
+        $this->assertStringContainsString('validateCurrentSessionConfirmationFor', $service);
         $this->assertStringContainsString('claimCurrentSessionConfirmationFor', $service);
+        $this->assertStringContainsString('claimCurrentSessionConfirmationFromPreflight', $service);
         $this->assertStringContainsString('resolveAuthorizedContext', $service);
         $this->assertStringContainsString('resolveAuthorizedContext', $authorization);
         $this->assertTrue($reflection->getMethod('issueForCurrentSession')->isPublic());
+        $this->assertTrue($reflection->getMethod('validateCurrentSessionConfirmationFor')->isPublic());
         $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmationFor')->isPublic());
+        $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmationFromPreflight')->isPublic());
         $this->assertTrue($reflection->getMethod('issue')->isPrivate());
         $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmation')->isPrivate());
 
@@ -66,6 +71,7 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
         sort($publicIssueOrClaimMethods);
         $this->assertSame([
             'claimCurrentSessionConfirmationFor',
+            'claimCurrentSessionConfirmationFromPreflight',
             'issueForCurrentSession',
         ], $publicIssueOrClaimMethods);
 
@@ -85,6 +91,7 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
         $this->assertStringContainsString('lockForUpdate()', $service);
         $this->assertStringContainsString("clock_timestamp() AT TIME ZONE 'UTC'", $service);
         $this->assertStringContainsString('cleanupCurrentSessionReference', $service);
+        $this->assertStringContainsString('CheckoutSensitiveConfirmationPreflightResult', $service);
     }
 
     public function test_package8_migrations_contain_source_relationship_guards(): void

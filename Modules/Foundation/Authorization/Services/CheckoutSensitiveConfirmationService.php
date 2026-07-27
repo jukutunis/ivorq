@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use Modules\Foundation\Audit\Services\AuditService;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationConsumption;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationIssuance;
+use Modules\Foundation\Authorization\ValueObjects\CheckoutSensitiveConfirmationPreflightResult;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService;
@@ -169,6 +170,139 @@ class CheckoutSensitiveConfirmationService
             checkoutIdempotencyKey: $checkoutIdempotencyKey,
             sessionFingerprint: self::fingerprintSession(session()->getId()),
         ));
+    }
+
+    public function validateCurrentSessionConfirmationFor(User $actor, string $frontDeskStayId, string $checkoutIdempotencyKey): CheckoutSensitiveConfirmationPreflightResult
+    {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            throw new DomainException(self::ERROR_POSTGRESQL_REQUIRED);
+        }
+
+        $resolved = $this->checkoutAuthorization->resolveAuthorizedContext($actor, $frontDeskStayId);
+        $context = new CheckoutSensitiveConfirmationContext(
+            actor: $resolved['actor'],
+            company: $resolved['company'],
+            property: $resolved['property'],
+            stay: $resolved['stay'],
+            checkoutIdempotencyKey: $checkoutIdempotencyKey,
+            sessionFingerprint: self::fingerprintSession(session()->getId()),
+        );
+
+        $this->assertAuthoritativeContext($context);
+
+        $reference = $this->sessionReference();
+        if ($reference === null) {
+            throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+        }
+
+        $idempotencyKey = $this->normalizeIdempotencyKey($context->checkoutIdempotencyKey);
+        $issuanceId = (string) ($reference['issuance_id'] ?? '');
+        if ($issuanceId === '') {
+            throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+        }
+
+        /** @var CheckoutSensitiveConfirmationIssuance|null $issuance */
+        $issuance = CheckoutSensitiveConfirmationIssuance::query()
+            ->whereKey($issuanceId)
+            ->first();
+
+        if (! $issuance) {
+            throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+        }
+
+        $dbNow = $this->postgresWallClockUtc();
+        $this->assertIssuanceMatchesContext($issuance, $context, $idempotencyKey, $reference, $dbNow);
+
+        $consumed = CheckoutSensitiveConfirmationConsumption::query()
+            ->where('issuance_id', $issuance->id)
+            ->exists();
+
+        if ($consumed) {
+            throw new DomainException(self::ERROR_ALREADY_CONSUMED);
+        }
+
+        return new CheckoutSensitiveConfirmationPreflightResult(
+            issuanceId: $issuance->id,
+            confirmationIdentity: $issuance->confirmation_identity,
+            confirmationFingerprint: $issuance->confirmation_fingerprint,
+            actorId: $issuance->actor_id,
+            companyId: $issuance->company_id,
+            propertyId: $issuance->property_id,
+            frontDeskStayId: $issuance->front_desk_stay_id,
+            checkoutIdempotencyKey: $issuance->checkout_idempotency_key,
+            sessionFingerprint: $issuance->session_fingerprint,
+            confirmedAt: Carbon::parse($issuance->confirmed_at),
+            expiresAt: Carbon::parse($issuance->expires_at),
+        );
+    }
+
+    public function claimCurrentSessionConfirmationFromPreflight(User $actor, CheckoutSensitiveConfirmationPreflightResult $preflight): CheckoutSensitiveConfirmationClaimResult
+    {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            throw new DomainException(self::ERROR_POSTGRESQL_REQUIRED);
+        }
+
+        if (DB::transactionLevel() < 1) {
+            throw new DomainException(self::ERROR_ACTIVE_TRANSACTION_REQUIRED);
+        }
+
+        $resolved = $this->checkoutAuthorization->authorize($actor);
+        if ($resolved['actor']->id !== $preflight->actorId
+            || $resolved['company']->id !== $preflight->companyId
+            || $resolved['property']->id !== $preflight->propertyId) {
+            throw new DomainException(self::ERROR_CONTEXT_CONFLICT);
+        }
+
+        $reference = $this->sessionReference();
+        if ($reference === null) {
+            throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+        }
+
+        /** @var CheckoutSensitiveConfirmationIssuance|null $issuance */
+        $issuance = CheckoutSensitiveConfirmationIssuance::query()
+            ->whereKey($preflight->issuanceId)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $issuance) {
+            throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+        }
+
+        $dbNow = $this->postgresWallClockUtc();
+        $this->assertIssuanceMatchesPreflight($issuance, $preflight, $reference, $dbNow);
+
+        try {
+            $consumption = new CheckoutSensitiveConfirmationConsumption();
+            $consumption->forceFill([
+                'issuance_id' => $issuance->id,
+                'confirmation_identity' => $issuance->confirmation_identity,
+                'confirmation_fingerprint' => $issuance->confirmation_fingerprint,
+                'actor_id' => $issuance->actor_id,
+                'company_id' => $issuance->company_id,
+                'property_id' => $issuance->property_id,
+                'front_desk_stay_id' => $issuance->front_desk_stay_id,
+                'checkout_idempotency_key' => $issuance->checkout_idempotency_key,
+                'consumed_at' => $dbNow,
+                'created_at' => $dbNow,
+            ])->save();
+        } catch (QueryException $exception) {
+            $this->mapPersistenceQueryException($exception);
+        }
+
+        return new CheckoutSensitiveConfirmationClaimResult(
+            consumptionId: $consumption->id,
+            issuanceId: $issuance->id,
+            confirmationIdentity: $issuance->confirmation_identity,
+            confirmationFingerprint: $issuance->confirmation_fingerprint,
+            actorId: $issuance->actor_id,
+            companyId: $issuance->company_id,
+            propertyId: $issuance->property_id,
+            frontDeskStayId: $issuance->front_desk_stay_id,
+            checkoutIdempotencyKey: $issuance->checkout_idempotency_key,
+            confirmedAt: Carbon::parse($issuance->confirmed_at),
+            expiresAt: Carbon::parse($issuance->expires_at),
+            consumedAt: $dbNow,
+        );
     }
 
     private function claimCurrentSessionConfirmation(CheckoutSensitiveConfirmationContext $context): CheckoutSensitiveConfirmationClaimResult
@@ -338,6 +472,52 @@ class CheckoutSensitiveConfirmationService
             if (($reference[$field] ?? null) !== $issuance->{$field}) {
                 throw new DomainException($field === 'session_fingerprint' ? self::ERROR_SESSION_MISMATCH : self::ERROR_MALFORMED_CONFIRMATION);
             }
+        }
+
+        if (! $dbNow->lt(Carbon::parse($issuance->expires_at))) {
+            throw new DomainException(self::ERROR_EXPIRED);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $reference
+     */
+    private function assertIssuanceMatchesPreflight(
+        CheckoutSensitiveConfirmationIssuance $issuance,
+        CheckoutSensitiveConfirmationPreflightResult $preflight,
+        array $reference,
+        Carbon $dbNow
+    ): void {
+        if ($issuance->intent !== self::INTENT) {
+            throw new DomainException(self::ERROR_CONTEXT_REQUIRED);
+        }
+
+        if ($issuance->id !== $preflight->issuanceId
+            || $issuance->confirmation_identity !== $preflight->confirmationIdentity
+            || $issuance->confirmation_fingerprint !== $preflight->confirmationFingerprint
+            || $issuance->actor_id !== $preflight->actorId
+            || $issuance->company_id !== $preflight->companyId
+            || $issuance->property_id !== $preflight->propertyId
+            || $issuance->front_desk_stay_id !== $preflight->frontDeskStayId
+            || $issuance->checkout_idempotency_key !== $preflight->checkoutIdempotencyKey
+            || $issuance->session_fingerprint !== $preflight->sessionFingerprint) {
+            throw new DomainException(self::ERROR_CONTEXT_CONFLICT);
+        }
+
+        foreach (['confirmation_identity', 'confirmation_fingerprint', 'session_fingerprint'] as $field) {
+            if (($reference[$field] ?? null) !== $issuance->{$field}) {
+                throw new DomainException($field === 'session_fingerprint' ? self::ERROR_SESSION_MISMATCH : self::ERROR_MALFORMED_CONFIRMATION);
+            }
+        }
+
+        if (($reference['issuance_id'] ?? null) !== $issuance->id
+            || ($reference['checkout_idempotency_key'] ?? null) !== $issuance->checkout_idempotency_key
+            || ($reference['front_desk_stay_id'] ?? null) !== $issuance->front_desk_stay_id) {
+            throw new DomainException(self::ERROR_CONTEXT_CONFLICT);
+        }
+
+        if ($preflight->sessionFingerprint !== self::fingerprintSession(session()->getId())) {
+            throw new DomainException(self::ERROR_SESSION_MISMATCH);
         }
 
         if (! $dbNow->lt(Carbon::parse($issuance->expires_at))) {

@@ -346,6 +346,8 @@ type NightAuditCloseLockSummary = {
 type CheckoutExecutionBoundarySummary = {
   execution_boundary_status: string;
   can_execute: boolean;
+  can_prepare_checkout_confirmation?: boolean;
+  can_complete_checkout?: boolean;
   blocker_codes: string[];
   blocker_messages: string[];
   review_reasons: string[];
@@ -359,6 +361,20 @@ type CheckoutExecutionBoundarySummary = {
   property_business_date: PropertyBusinessDateSummary;
   night_audit_close_lock: NightAuditCloseLockSummary;
 } | null;
+
+type CheckoutExecutionReceipt = {
+  property_id: string;
+  front_desk_stay_id: string;
+  reservation_id: string;
+  checkout_execution_id: string;
+  idempotency_key: string;
+  terminal_status: string;
+  business_date: string;
+  occurred_at: string;
+  handoff_id: string;
+  handoff_delivery_status: string;
+  replayed: boolean;
+};
 
 type AllowedCheckoutFinalReviewStatus = {
   value: string;
@@ -1459,7 +1475,7 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
           Execution boundary evidence could not be resolved for this stay.
         </div>
         <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
-          Checkout execution is not performed in FD-B12.
+          Checkout execution requires server-projected Package 9 readiness.
         </div>
       </div>
     );
@@ -1491,6 +1507,67 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
     nightAuditLock.status === 'NIGHT_AUDIT_LOCK_CLEAR' ? 'success'
     : nightAuditLock.status === 'NIGHT_AUDIT_LOCK_ACTIVE' ? 'warning'
     : 'neutral';
+  const [confirmationOpen, setConfirmationOpen] = React.useState(false);
+  const [idempotencyKey, setIdempotencyKey] = React.useState(() => `p9-${stayId}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const [password, setPassword] = React.useState('');
+  const [confirmationExpiresAt, setConfirmationExpiresAt] = React.useState<string | null>(null);
+  const [receipt, setReceipt] = React.useState<CheckoutExecutionReceipt | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const csrf = () => document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '';
+  const postJson = async (url: string, body: Record<string, string>) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-CSRF-TOKEN': csrf(),
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = payload?.message ?? Object.values(payload?.errors ?? {})?.flat()?.[0] ?? 'Checkout request failed.';
+      throw new Error(String(message));
+    }
+    return payload;
+  };
+  const confirmIdentity = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload = await postJson(`/frontdesk/stays/${stayId}/checkout-confirmation`, { idempotency_key: idempotencyKey, password });
+      setPassword('');
+      if (payload.already_committed && payload.receipt) {
+        setReceipt(payload.receipt as CheckoutExecutionReceipt);
+        setConfirmationOpen(false);
+        setConfirmationExpiresAt(null);
+        return;
+      }
+      setConfirmationExpiresAt(payload.expires_at ?? null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Checkout confirmation failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  const completeCheckout = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload = await postJson(`/frontdesk/stays/${stayId}/checkout-execution`, { idempotency_key: idempotencyKey });
+      setReceipt(payload as CheckoutExecutionReceipt);
+      setConfirmationOpen(false);
+      setConfirmationExpiresAt(null);
+      setPassword('');
+      setIdempotencyKey(`p9-${stayId}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Checkout execution failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div style={{
@@ -1508,7 +1585,7 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
 
       {boundary.can_execute ? (
         <div style={{ marginBottom: '6px', color: 'var(--text-success)', fontWeight: 500 }}>
-          Authoritative read gates are satisfied. Checkout execution remains unavailable in FD-B12.
+          Authoritative gates are satisfied. Sensitive confirmation is required before completion.
         </div>
       ) : (
         <>
@@ -1685,20 +1762,83 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}>
-        <div style={{
-          padding: '4px 10px',
-          backgroundColor: 'var(--surface-disabled)',
-          color: 'var(--text-dimmed)',
-          borderRadius: '4px',
-          fontSize: '11px',
-          fontStyle: 'italic',
-          cursor: 'not-allowed',
-          userSelect: 'none',
-        }}>
-          Checkout execution not yet available
+      {receipt ? (
+        <div role="status" style={{ marginTop: '10px', padding: '10px', border: '1px solid var(--border-subtle)', borderRadius: '6px', background: 'var(--status-ready-bg)', color: 'var(--status-ready-fg)' }}>
+          <div style={{ fontWeight: 700 }}>Checked Out{receipt.replayed ? ' (Replay)' : ''}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginTop: '6px', fontSize: '12px' }}>
+            <span>Execution: {receipt.checkout_execution_id}</span>
+            <span>Occurred: {receipt.occurred_at}</span>
+            <span>Business Date: {receipt.business_date}</span>
+            <span>Night Audit: Clear</span>
+            <span>Financial: {guestLedger.status.replace(/_/g, ' ')}</span>
+            <span>Cashier: {cashierObligation.status.replace(/_/g, ' ')}</span>
+            <span>Housekeeping handoff: {receipt.handoff_delivery_status}</span>
+          </div>
         </div>
-      </div>
+      ) : null}
+
+      {!receipt && boundary.can_execute ? (
+        <div style={{ marginTop: '10px', padding: '10px', border: '1px solid var(--border-subtle)', borderRadius: '6px', background: 'var(--surface-base)' }}>
+          {!confirmationOpen ? (
+            <Button type="button" variant="primary" onClick={() => setConfirmationOpen(true)}>
+              Review & Complete Checkout
+            </Button>
+          ) : (
+            <div role="dialog" aria-modal="false" aria-labelledby={`checkout-confirm-${stayId}`}>
+              <div id={`checkout-confirm-${stayId}`} style={{ fontWeight: 700, marginBottom: '6px', color: 'var(--text-primary)' }}>Review & Complete Checkout</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                Stay {stayId} will move to Checked Out after final confirmation. The Housekeeping handoff will be pending delivery.
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-warning)', marginBottom: '8px', fontWeight: 600 }}>
+                Checkout is terminal.
+              </div>
+              <label className="filter-label" htmlFor={`checkout-password-${stayId}`}>Password</label>
+              <input
+                id={`checkout-password-${stayId}`}
+                type="password"
+                className="filter-input"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                disabled={submitting || confirmationExpiresAt !== null}
+              />
+              <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dimmed)' }}>Attempt key: {idempotencyKey}</div>
+              {confirmationExpiresAt ? <div style={{ marginTop: '4px', fontSize: '12px', color: 'var(--text-success)' }}>Confirmed until {confirmationExpiresAt}</div> : null}
+              {error ? <div role="alert" style={{ marginTop: '6px', color: 'var(--text-warning)', fontSize: '12px' }}>{error}</div> : null}
+              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                <Button type="button" variant="secondary" disabled={submitting} onClick={() => { setConfirmationOpen(false); setPassword(''); setError(null); }}>
+                  Cancel
+                </Button>
+                {!confirmationExpiresAt ? (
+                  <Button type="button" variant="primary" disabled={submitting || password.length === 0} onClick={confirmIdentity}>
+                    Confirm Identity
+                  </Button>
+                ) : (
+                  <Button type="button" variant="primary" disabled={submitting} onClick={completeCheckout}>
+                    Complete Checkout
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {!receipt && !boundary.can_execute ? (
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}>
+          <button type="button" disabled aria-disabled="true" style={{
+            padding: '4px 10px',
+            backgroundColor: 'var(--surface-disabled)',
+            color: 'var(--text-dimmed)',
+            border: 0,
+            borderRadius: '4px',
+            fontSize: '11px',
+            cursor: 'not-allowed',
+          }}>
+            Review & Complete Checkout
+          </button>
+        </div>
+      ) : null}
 
       <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dimmed)', fontStyle: 'italic' }}>
         {boundary.execution_not_performed_marker}

@@ -26,7 +26,10 @@ use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutAuthorizatio
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutFinalReviewProjectionService;
 use Modules\Operations\FrontDesk\Services\FrontDeskDepartureCheckoutExecutionBoundaryProjectionService;
+use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecutionService;
+use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
 use Modules\Operations\FrontDesk\Services\ArrivalEligibilityProjectionService;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 class FrontDeskController extends Controller
 {
@@ -490,5 +493,62 @@ class FrontDeskController extends Controller
             $boundary = $projection->boundary($request->user(), $stay);
             return $request->expectsJson() ? response()->json($boundary) : back()->with('departureCheckoutExecutionBoundary', $boundary);
         } catch (DomainException $e) { throw ValidationException::withMessages(['departure_checkout_execution_boundary' => [$e->getMessage()]]); }
+    }
+
+    public function prepareCheckoutConfirmation(
+        Request $request,
+        string $stay,
+        CheckoutSensitiveConfirmationService $confirmation,
+        FrontDeskCheckoutExecutionService $checkout
+    ) {
+        $validated = $request->validate([
+            'idempotency_key' => ['required', 'string', 'max:120'],
+            'password' => ['required', 'string'],
+        ]);
+
+        try {
+            if ($receipt = $checkout->committedReplayFor($request->user(), $stay, $validated['idempotency_key'])) {
+                return response()->json([
+                    'already_committed' => true,
+                    'receipt' => $receipt->toArray(),
+                ]);
+            }
+
+            $issued = $confirmation->issueForCurrentSession(
+                $request->user(),
+                $stay,
+                $validated['idempotency_key'],
+                $validated['password']
+            );
+
+            return response()->json([
+                'intent' => CheckoutSensitiveConfirmationService::INTENT,
+                'confirmed_at' => $issued->confirmed_at?->toISOString(),
+                'expires_at' => $issued->expires_at?->toISOString(),
+                'front_desk_stay_id' => $issued->front_desk_stay_id,
+                'idempotency_key' => $issued->checkout_idempotency_key,
+            ]);
+        } catch (DomainException $e) {
+            throw ValidationException::withMessages(['checkout_confirmation' => [$e->getMessage()]]);
+        }
+    }
+
+    public function executeCheckout(Request $request, string $stay, FrontDeskCheckoutExecutionService $checkout)
+    {
+        $validated = $request->validate([
+            'idempotency_key' => ['required', 'string', 'max:120'],
+        ]);
+
+        try {
+            $result = $checkout->execute($request->user(), $stay, $validated['idempotency_key']);
+
+            return $request->expectsJson()
+                ? response()->json($result->toArray())
+                : back()->with('checkoutExecutionReceipt', $result->toArray());
+        } catch (ConflictHttpException $e) {
+            return response()->json(['message' => $e->getMessage()], 409);
+        } catch (DomainException $e) {
+            throw ValidationException::withMessages(['checkout_execution' => [$e->getMessage()]]);
+        }
     }
 }

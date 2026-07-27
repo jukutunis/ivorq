@@ -672,7 +672,7 @@ class FrontDeskDepartureQueueProjectionTest extends PostgresTestCase
         $this->assertArrayNotHasKey('owner', $summary['night_audit_close_lock']);
         $this->assertArrayNotHasKey('read_only', $summary['night_audit_close_lock']);
         $this->assertArrayNotHasKey('markers', $summary['night_audit_close_lock']);
-        $this->assertSame('Checkout execution is not performed in FD-B12.', $summary['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is performed only by the Package 9 controlled POST route after sensitive confirmation.', $summary['execution_not_performed_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::FINANCIAL_MARKER_AUTHORIZED, $row['financial_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::CASHIER_MARKER_AUTHORIZED, $row['cashier_marker']);
         $this->assertSame(FrontDeskDepartureQueueProjectionService::BUSINESS_DATE_MARKER_AUTHORIZED, $row['business_date_marker']);

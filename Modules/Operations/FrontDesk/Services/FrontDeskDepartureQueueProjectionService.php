@@ -40,16 +40,16 @@ class FrontDeskDepartureQueueProjectionService
     public const DEPARTURE_OPERATIONALLY_READY = 'DEPARTURE_OPERATIONALLY_READY';
     public const DEPARTURE_OPERATIONALLY_BLOCKED = 'DEPARTURE_OPERATIONALLY_BLOCKED';
     public const DEPARTURE_READINESS_UNKNOWN = 'DEPARTURE_READINESS_UNKNOWN';
-    public const FINANCIAL_MARKER_AUTHORIZED = 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.';
+    public const FINANCIAL_MARKER_AUTHORIZED = 'Financial settlement readiness is evaluated by PMS-owned checkout attestation. Front Desk does not mutate Folios, payments, deposits, refunds, or AR transfers.';
     public const FINANCIAL_MARKER_SUPPRESSED = 'Financial settlement readiness is not exposed in this queue row.';
     public const FINANCIAL_MARKER_CAPABILITY = 'Financial settlement readiness is sourced read-only from PMS Guest Ledger GLF-D when authorized.';
-    public const CASHIER_MARKER_AUTHORIZED = 'Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.';
+    public const CASHIER_MARKER_AUTHORIZED = 'Cashier obligation readiness is evaluated by General Cashier-owned checkout attestation. Front Desk does not mutate cashier sessions, counts, handovers, reconciliation, or accountability completion.';
     public const CASHIER_MARKER_SUPPRESSED = 'Cashier obligation evidence is not exposed in this queue row.';
     public const CASHIER_MARKER_CAPABILITY = 'Cashier obligation readiness is sourced read-only from General Cashier GC-A1 when authorized.';
-    public const BUSINESS_DATE_MARKER_AUTHORIZED = 'Business Date evidence is evaluated read-only from the authoritative BD-A1 Property source. Front Desk does not initialize, close, advance, reopen, or mutate Business Date.';
+    public const BUSINESS_DATE_MARKER_AUTHORIZED = 'Business Date evidence is locked through the authoritative Property Business Date source. Front Desk does not initialize, close, advance, reopen, or mutate Business Date.';
     public const BUSINESS_DATE_MARKER_SUPPRESSED = 'Business Date evidence is not exposed in this queue row.';
     public const BUSINESS_DATE_MARKER_CAPABILITY = 'Business Date evidence is sourced read-only from BD-A1 when authorized.';
-    public const NIGHT_AUDIT_MARKER_AUTHORIZED = 'Night Audit close-lock evidence is evaluated read-only from the authoritative NA-A1 lock projection. Front Desk does not start, abort, close, advance, reopen, run checkpoints, or execute checkout.';
+    public const NIGHT_AUDIT_MARKER_AUTHORIZED = 'Night Audit close-lock evidence participates in the checkout transaction. Front Desk does not start, abort, close, advance, reopen, or run checkpoints.';
     public const NIGHT_AUDIT_MARKER_SUPPRESSED = 'Night Audit close-lock evidence is not exposed in this queue row.';
     public const NIGHT_AUDIT_MARKER_CAPABILITY = 'Night Audit close-lock evidence is sourced read-only from NA-A1 when authorized.';
 
