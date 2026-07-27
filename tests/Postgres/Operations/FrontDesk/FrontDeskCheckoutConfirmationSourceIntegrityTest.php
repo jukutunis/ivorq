@@ -2,6 +2,12 @@
 
 namespace Tests\Postgres\Operations\FrontDesk;
 
+use ReflectionIntersectionType;
+use ReflectionMethod;
+use ReflectionNamedType;
+use ReflectionParameter;
+use ReflectionType;
+use ReflectionUnionType;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationContext;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
 use Tests\PostgresTestCase;
@@ -54,7 +60,7 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
         $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmation')->isPrivate());
 
         $publicIssueOrClaimMethods = array_values(array_filter(
-            array_map(fn (\ReflectionMethod $method): string => $method->getName(), $reflection->getMethods(\ReflectionMethod::IS_PUBLIC)),
+            array_map(fn (ReflectionMethod $method): string => $method->getName(), $reflection->getMethods(ReflectionMethod::IS_PUBLIC)),
             fn (string $name): bool => str_contains($name, 'issue') || str_contains($name, 'claim')
         ));
         sort($publicIssueOrClaimMethods);
@@ -63,11 +69,10 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
             'issueForCurrentSession',
         ], $publicIssueOrClaimMethods);
 
-        foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+        foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
             foreach ($method->getParameters() as $parameter) {
-                $this->assertNotSame(
-                    CheckoutSensitiveConfirmationContext::class,
-                    $parameter->getType()?->getName(),
+                $this->assertFalse(
+                    $this->parameterAcceptsCheckoutContext($parameter),
                     "Public method {$method->getName()} must not accept checkout confirmation context."
                 );
             }
@@ -110,5 +115,27 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
         $this->assertStringNotContainsString('FrontDeskCheckoutExecution::create', $service);
         $this->assertStringNotContainsString('FrontDeskCheckoutHousekeepingHandoff::create', $service);
         $this->assertStringNotContainsString('CHECKED_OUT', $service);
+    }
+
+    private function parameterAcceptsCheckoutContext(ReflectionParameter $parameter): bool
+    {
+        return $this->typeContainsClass($parameter->getType(), CheckoutSensitiveConfirmationContext::class);
+    }
+
+    private function typeContainsClass(?ReflectionType $type, string $class): bool
+    {
+        if ($type instanceof ReflectionNamedType) {
+            return $type->getName() === $class;
+        }
+
+        if ($type instanceof ReflectionUnionType || $type instanceof ReflectionIntersectionType) {
+            foreach ($type->getTypes() as $nestedType) {
+                if ($this->typeContainsClass($nestedType, $class)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

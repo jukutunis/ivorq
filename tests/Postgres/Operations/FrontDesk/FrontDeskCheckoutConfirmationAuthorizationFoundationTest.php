@@ -10,6 +10,12 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use ReflectionClass;
+use ReflectionIntersectionType;
+use ReflectionMethod;
+use ReflectionNamedType;
+use ReflectionParameter;
+use ReflectionType;
+use ReflectionUnionType;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationContext;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
@@ -174,11 +180,20 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         $this->assertTrue($reflection->getMethod('issue')->isPrivate());
         $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmation')->isPrivate());
 
-        foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+        $publicIssueOrClaimMethods = array_values(array_filter(
+            array_map(fn (ReflectionMethod $method): string => $method->getName(), $reflection->getMethods(ReflectionMethod::IS_PUBLIC)),
+            fn (string $name): bool => str_contains($name, 'issue') || str_contains($name, 'claim')
+        ));
+        sort($publicIssueOrClaimMethods);
+        $this->assertSame([
+            'claimCurrentSessionConfirmationFor',
+            'issueForCurrentSession',
+        ], $publicIssueOrClaimMethods);
+
+        foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
             foreach ($method->getParameters() as $parameter) {
-                $this->assertNotSame(
-                    CheckoutSensitiveConfirmationContext::class,
-                    $parameter->getType()?->getName(),
+                $this->assertFalse(
+                    $this->parameterAcceptsCheckoutContext($parameter),
                     "Public method {$method->getName()} must not accept caller-built checkout confirmation context."
                 );
             }
@@ -322,17 +337,16 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         $this->assertSame($this->property->id, $issuance->property_id);
         $this->assertSame($this->stay->id, $issuance->front_desk_stay_id);
 
-        $this->expectException(DomainException::class);
-        $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT);
-
-        $this->invokePrivateIssue(new CheckoutSensitiveConfirmationContext(
-            actor: $this->actor,
-            company: $otherCompany,
-            property: $forgedProperty,
-            stay: $forgedStay,
-            checkoutIdempotencyKey: 'forged-context',
-            sessionFingerprint: CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId()),
-        ), 'password');
+        $this->assertSame(
+            0,
+            DB::table('checkout_sensitive_confirmation_issuances')->where('property_id', $forgedProperty->id)->count(),
+            'Public issue API must derive company, property, stay, and session fingerprint internally.'
+        );
+        $this->assertSame(
+            0,
+            DB::table('checkout_sensitive_confirmation_issuances')->where('front_desk_stay_id', $forgedStay->id)->count(),
+            'Public issue API must not expose a caller-built checkout confirmation context.'
+        );
     }
 
     public function test_wrong_password_creates_no_issuance(): void
@@ -418,43 +432,71 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
 
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT);
-        DB::transaction(fn () => $this->invokePrivateClaim($this->context('changed-key')));
+        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'changed-key'));
     }
 
     public function test_session_actor_company_property_stay_and_idempotency_bindings_fail_closed(): void
     {
         $this->issue('binding-key');
 
-        foreach ([
-            'actor_id' => ['actor', User::create(['name' => 'Other Actor', 'email' => 'other-' . Str::lower(Str::random(6)) . '@example.test', 'password' => Hash::make('password'), 'is_active' => true])],
-            'company_id' => ['company', Company::create(['name' => 'Other Binding Co', 'slug' => 'other-binding-' . Str::lower(Str::random(6)), 'is_active' => true])],
-            'property_id' => ['property', $this->otherProperty],
-            'front_desk_stay_id' => ['stay', $this->stay($this->otherProperty)],
-            'checkout_idempotency_key' => ['idempotency', 'binding-key-changed'],
-            'session_fingerprint' => ['session', hash('sha256', 'forged-session')],
-        ] as $field => [$kind, $value]) {
-            $this->restoreSessionReference('binding-key');
-            $context = $this->context('binding-key');
-            $context = match ($kind) {
-                'actor' => new CheckoutSensitiveConfirmationContext($value, $this->company, $this->property, $this->stay, 'binding-key', CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId())),
-                'company' => new CheckoutSensitiveConfirmationContext($this->actor, $value, $this->property, $this->stay, 'binding-key', CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId())),
-                'property' => new CheckoutSensitiveConfirmationContext($this->actor, $this->company, $value, $this->stay, 'binding-key', CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId())),
-                'stay' => new CheckoutSensitiveConfirmationContext($this->actor, $this->company, $this->property, $value, 'binding-key', CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId())),
-                'idempotency' => $this->context($value),
-                'session' => new CheckoutSensitiveConfirmationContext($this->actor, $this->company, $this->property, $this->stay, 'binding-key', $value),
-            };
+        $otherActor = User::create([
+            'name' => 'Other Actor',
+            'email' => 'other-' . Str::lower(Str::random(6)) . '@example.test',
+            'password' => Hash::make('password'),
+            'is_active' => true,
+        ]);
+        $this->attachProperty($otherActor, $this->property);
+        $otherActor->givePermissionTo(FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION);
 
-            try {
-                DB::transaction(fn () => $this->invokePrivateClaim($context));
-                $this->fail("Binding {$field} must fail.");
-            } catch (AuthorizationException|DomainException $exception) {
-                $this->assertContains($exception->getMessage(), [
-                    CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT,
-                    CheckoutSensitiveConfirmationService::ERROR_SESSION_MISMATCH,
-                    FrontDeskCheckoutExecuteAuthorizationService::ERROR_INVALID_AUTHENTICATED_CONTEXT,
-                    FrontDeskCheckoutExecuteAuthorizationService::ERROR_UNAUTHORIZED_PROPERTY_CONTEXT,
-                ]);
-            }
+        Auth::login($otherActor);
+        $this->restoreSessionReference('binding-key');
+        try {
+            DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($otherActor, $this->stay->id, 'binding-key'));
+            $this->fail('Actor binding must fail.');
+        } catch (DomainException $exception) {
+            $this->assertSame(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT, $exception->getMessage());
+        }
+
+        Auth::login($this->actor);
+        $this->restoreSessionReference('binding-key');
+        try {
+            DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'binding-key-changed'));
+            $this->fail('Idempotency binding must fail.');
+        } catch (DomainException $exception) {
+            $this->assertSame(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT, $exception->getMessage());
+        }
+
+        $this->attachProperty($this->actor, $this->otherProperty);
+        $otherStay = $this->stay($this->otherProperty);
+        app(CurrentPropertyService::class)->setPropertyId($this->otherProperty->id);
+        session([
+            'active_property_id' => $this->otherProperty->id,
+            'current_property_id' => $this->otherProperty->id,
+            'active_company_id' => $this->company->id,
+        ]);
+
+        $this->restoreSessionReference('binding-key');
+        try {
+            DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $otherStay->id, 'binding-key'));
+            $this->fail('Property and stay bindings must fail.');
+        } catch (DomainException $exception) {
+            $this->assertSame(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_CONFLICT, $exception->getMessage());
+        }
+
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+        session([
+            'active_property_id' => $this->property->id,
+            'current_property_id' => $this->property->id,
+            'active_company_id' => $this->company->id,
+        ]);
+
+        session()->setId((string) Str::uuid());
+        $this->restoreSessionReference('binding-key');
+        try {
+            DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'binding-key'));
+            $this->fail('Session fingerprint binding must fail.');
+        } catch (DomainException $exception) {
+            $this->assertSame(CheckoutSensitiveConfirmationService::ERROR_SESSION_MISMATCH, $exception->getMessage());
         }
     }
 
@@ -499,7 +541,7 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
     public function test_cleanup_is_separate_idempotent_and_non_authoritative(): void
     {
         $this->issue('checkout-key-8');
-        DB::transaction(fn () => $this->invokePrivateClaim($this->context('checkout-key-8')));
+        DB::transaction(fn () => $this->confirmation->claimCurrentSessionConfirmationFor($this->actor, $this->stay->id, 'checkout-key-8'));
 
         $this->confirmation->cleanupCurrentSessionReference();
         $this->confirmation->cleanupCurrentSessionReference();
@@ -516,34 +558,6 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         $this->allowExecute();
 
         return $this->confirmation->issueForCurrentSession($this->actor, $this->stay->id, $idempotencyKey, 'password');
-    }
-
-    private function context(string $idempotencyKey): CheckoutSensitiveConfirmationContext
-    {
-        return new CheckoutSensitiveConfirmationContext(
-            actor: $this->actor,
-            company: $this->company,
-            property: $this->property,
-            stay: $this->stay,
-            checkoutIdempotencyKey: $idempotencyKey,
-            sessionFingerprint: CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId()),
-        );
-    }
-
-    private function invokePrivateIssue(CheckoutSensitiveConfirmationContext $context, string $password)
-    {
-        $method = (new ReflectionClass($this->confirmation))->getMethod('issue');
-        $method->setAccessible(true);
-
-        return $method->invoke($this->confirmation, $context, $password);
-    }
-
-    private function invokePrivateClaim(CheckoutSensitiveConfirmationContext $context)
-    {
-        $method = (new ReflectionClass($this->confirmation))->getMethod('claimCurrentSessionConfirmation');
-        $method->setAccessible(true);
-
-        return $method->invoke($this->confirmation, $context);
     }
 
     private function property(string $name, Company $company): Property
@@ -681,5 +695,27 @@ class FrontDeskCheckoutConfirmationAuthorizationFoundationTest extends PostgresT
         return collect(DB::getQueryLog())
             ->filter(fn (array $query): bool => str_contains($query['query'], 'front_desk_stays'))
             ->count();
+    }
+
+    private function parameterAcceptsCheckoutContext(ReflectionParameter $parameter): bool
+    {
+        return $this->typeContainsClass($parameter->getType(), CheckoutSensitiveConfirmationContext::class);
+    }
+
+    private function typeContainsClass(?ReflectionType $type, string $class): bool
+    {
+        if ($type instanceof ReflectionNamedType) {
+            return $type->getName() === $class;
+        }
+
+        if ($type instanceof ReflectionUnionType || $type instanceof ReflectionIntersectionType) {
+            foreach ($type->getTypes() as $nestedType) {
+                if ($this->typeContainsClass($nestedType, $class)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }
