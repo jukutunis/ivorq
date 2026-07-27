@@ -334,7 +334,9 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
         $this->assertFileExists($boundaryPath);
 
         $source = file_get_contents($boundaryPath);
-        $this->assertStringContainsString('$canExecute = empty($blockerCodes) && $canUseExecutionCommand;', $source);
+        $this->assertStringContainsString('FrontDeskCheckoutExecution::withoutGlobalScopes()', $source);
+        $this->assertStringContainsString('$existingExecution === null', $source);
+        $this->assertStringContainsString('empty($reviewReasons)', $source);
         $this->assertStringNotContainsString('$canExecute = true;', $source);
     }
 

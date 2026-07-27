@@ -39,6 +39,9 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
         );
         $this->assertStringContainsString('prepareCheckoutConfirmation', $source);
         $this->assertStringContainsString('executeCheckout', $source);
+        $this->assertStringContainsString("assertOnlyFields(\$request, ['idempotency_key', 'password'], 'checkout_confirmation')", $source);
+        $this->assertStringContainsString("assertOnlyFields(\$request, ['idempotency_key'], 'checkout_execution')", $source);
+        $this->assertStringContainsString('Unsupported checkout field:', $source);
         $this->assertStringContainsString('$checkout->execute($request->user(), $stay, $validated[\'idempotency_key\'])', $source);
     }
 
@@ -138,6 +141,13 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
         $this->assertStringContainsString('checkout-execution', $source);
         $this->assertStringContainsString('{ idempotency_key: idempotencyKey, password }', $source);
         $this->assertStringContainsString('{ idempotency_key: idempotencyKey }', $source);
+        $this->assertStringContainsString('finally {', $source);
+        $this->assertStringContainsString("setPassword('');", $source);
+        $this->assertStringContainsString('receipt.night_audit_status', $source);
+        $this->assertStringContainsString('receipt.pms_terminal_financial_status', $source);
+        $this->assertStringContainsString('receipt.general_cashier_terminal_obligation_status', $source);
+        $this->assertStringNotContainsString('Financial: {guestLedger.status', $source);
+        $this->assertStringNotContainsString('Cashier: {cashierObligation.status', $source);
         $this->assertStringNotContainsString('localStorage', $source);
         $this->assertStringNotContainsString('sessionStorage', $source);
     }
@@ -184,26 +194,54 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
 
         $source = file_get_contents($boundaryPath);
 
-        $this->assertStringContainsString('$canExecute = empty($blockerCodes) && $canUseExecutionCommand;', $source);
+        $this->assertStringContainsString('FrontDeskCheckoutExecution::withoutGlobalScopes()', $source);
+        $this->assertStringContainsString('BLOCKER_CHECKOUT_ALREADY_COMPLETED', $source);
+        $this->assertStringContainsString('$existingExecution === null', $source);
+        $this->assertStringContainsString('empty($reviewReasons)', $source);
         $this->assertStringContainsString("'can_execute'", $source);
     }
 
-    public function test_boundary_does_not_query_new_evidence_table(): void
+    public function test_boundary_reads_checkout_execution_evidence_without_mutating_it(): void
     {
         $boundaryPath = base_path('Modules/Operations/FrontDesk/Services/FrontDeskDepartureCheckoutExecutionBoundaryProjectionService.php');
         $this->assertFileExists($boundaryPath);
 
         $source = file_get_contents($boundaryPath);
-        $this->assertStringNotContainsString(
-            'front_desk_checkout_executions',
-            $source,
-            'Boundary must not query the new evidence table.'
-        );
-        $this->assertStringNotContainsString(
-            'FrontDeskCheckoutExecution',
-            $source,
-            'Boundary must not reference FrontDeskCheckoutExecution model.'
-        );
+        $this->assertStringContainsString('FrontDeskCheckoutExecution::withoutGlobalScopes()', $source);
+        $this->assertStringNotContainsString('new FrontDeskCheckoutExecution', $source);
+        $this->assertStringNotContainsString('->forceFill([', $source);
+        $this->assertStringNotContainsString('->save()', $source);
+    }
+
+    public function test_execution_service_claims_authoritative_confirmation_and_cleanup_is_non_authoritative_after_commit(): void
+    {
+        $source = file_get_contents(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php'));
+
+        $this->assertStringContainsString('validateCurrentSessionConfirmationFor', $source);
+        $this->assertStringContainsString('claimCurrentSessionConfirmationFor($actor, $stay->id, $idempotencyKey)', $source);
+        $this->assertStringNotContainsString('claimCurrentSessionConfirmationFromPreflight', $source);
+        $this->assertStringContainsString('cleanupConfirmationSessionAfterCommit', $source);
+        $this->assertStringContainsString('try {', $source);
+        $this->assertStringContainsString('Log::warning', $source);
+        $this->assertStringContainsString('confirmedAt->equalTo($preflight->confirmedAt)', $source);
+        $this->assertStringContainsString('expiresAt->equalTo($preflight->expiresAt)', $source);
+    }
+
+    public function test_execution_result_contains_minimized_committed_attestation_statuses_without_fingerprints(): void
+    {
+        $result = file_get_contents(base_path('Modules/Operations/FrontDesk/ValueObjects/FrontDeskCheckoutExecutionResult.php'));
+        $service = file_get_contents(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php'));
+
+        foreach (['night_audit_status', 'pms_terminal_financial_status', 'general_cashier_terminal_obligation_status'] as $key) {
+            $this->assertStringContainsString($key, $result);
+        }
+
+        $this->assertStringContainsString('night_audit_source_status', $service);
+        $this->assertStringContainsString('pms_financial_attestation_status', $service);
+        $this->assertStringContainsString('general_cashier_attestation_status', $service);
+        $this->assertStringNotContainsString('night_audit_source_fingerprint\' => $this', $result);
+        $this->assertStringNotContainsString('pms_financial_attestation_fingerprint\' => $this', $result);
+        $this->assertStringNotContainsString('general_cashier_attestation_fingerprint\' => $this', $result);
     }
 
     // ── No extra command object ────────────────────────────────────────────

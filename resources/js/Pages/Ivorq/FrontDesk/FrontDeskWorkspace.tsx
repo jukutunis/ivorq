@@ -373,6 +373,9 @@ type CheckoutExecutionReceipt = {
   occurred_at: string;
   handoff_id: string;
   handoff_delivery_status: string;
+  night_audit_status: string;
+  pms_terminal_financial_status: string;
+  general_cashier_terminal_obligation_status: string;
   replayed: boolean;
 };
 
@@ -1460,6 +1463,68 @@ function CheckoutReadinessPanel({ readiness }: { readiness: CheckoutReadiness })
 }
 
 function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: CheckoutExecutionBoundarySummary; stayId: string }) {
+  const [confirmationOpen, setConfirmationOpen] = React.useState(false);
+  const [idempotencyKey, setIdempotencyKey] = React.useState(() => `p9-${stayId}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const [password, setPassword] = React.useState('');
+  const [confirmationExpiresAt, setConfirmationExpiresAt] = React.useState<string | null>(null);
+  const [receipt, setReceipt] = React.useState<CheckoutExecutionReceipt | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const csrf = () => document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '';
+  const postJson = async (url: string, body: Record<string, string>) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-CSRF-TOKEN': csrf(),
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = payload?.message ?? Object.values(payload?.errors ?? {})?.flat()?.[0] ?? 'Checkout request failed.';
+      throw new Error(String(message));
+    }
+    return payload;
+  };
+  const confirmIdentity = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload = await postJson(`/frontdesk/stays/${stayId}/checkout-confirmation`, { idempotency_key: idempotencyKey, password });
+      if (payload.already_committed && payload.receipt) {
+        setReceipt(payload.receipt as CheckoutExecutionReceipt);
+        setConfirmationOpen(false);
+        setConfirmationExpiresAt(null);
+        return;
+      }
+      setConfirmationExpiresAt(payload.expires_at ?? null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Checkout confirmation failed.');
+    } finally {
+      setPassword('');
+      setSubmitting(false);
+    }
+  };
+  const completeCheckout = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload = await postJson(`/frontdesk/stays/${stayId}/checkout-execution`, { idempotency_key: idempotencyKey });
+      setReceipt(payload as CheckoutExecutionReceipt);
+      setConfirmationOpen(false);
+      setConfirmationExpiresAt(null);
+      setPassword('');
+      setIdempotencyKey(`p9-${stayId}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Checkout execution failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (!boundary) {
     return (
       <div style={{
@@ -1507,67 +1572,6 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
     nightAuditLock.status === 'NIGHT_AUDIT_LOCK_CLEAR' ? 'success'
     : nightAuditLock.status === 'NIGHT_AUDIT_LOCK_ACTIVE' ? 'warning'
     : 'neutral';
-  const [confirmationOpen, setConfirmationOpen] = React.useState(false);
-  const [idempotencyKey, setIdempotencyKey] = React.useState(() => `p9-${stayId}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const [password, setPassword] = React.useState('');
-  const [confirmationExpiresAt, setConfirmationExpiresAt] = React.useState<string | null>(null);
-  const [receipt, setReceipt] = React.useState<CheckoutExecutionReceipt | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-  const [submitting, setSubmitting] = React.useState(false);
-
-  const csrf = () => document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '';
-  const postJson = async (url: string, body: Record<string, string>) => {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-CSRF-TOKEN': csrf(),
-      },
-      body: JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = payload?.message ?? Object.values(payload?.errors ?? {})?.flat()?.[0] ?? 'Checkout request failed.';
-      throw new Error(String(message));
-    }
-    return payload;
-  };
-  const confirmIdentity = async () => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const payload = await postJson(`/frontdesk/stays/${stayId}/checkout-confirmation`, { idempotency_key: idempotencyKey, password });
-      setPassword('');
-      if (payload.already_committed && payload.receipt) {
-        setReceipt(payload.receipt as CheckoutExecutionReceipt);
-        setConfirmationOpen(false);
-        setConfirmationExpiresAt(null);
-        return;
-      }
-      setConfirmationExpiresAt(payload.expires_at ?? null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Checkout confirmation failed.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-  const completeCheckout = async () => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const payload = await postJson(`/frontdesk/stays/${stayId}/checkout-execution`, { idempotency_key: idempotencyKey });
-      setReceipt(payload as CheckoutExecutionReceipt);
-      setConfirmationOpen(false);
-      setConfirmationExpiresAt(null);
-      setPassword('');
-      setIdempotencyKey(`p9-${stayId}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Checkout execution failed.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   return (
     <div style={{
@@ -1769,9 +1773,9 @@ function CheckoutExecutionBoundaryPanel({ boundary, stayId }: { boundary: Checko
             <span>Execution: {receipt.checkout_execution_id}</span>
             <span>Occurred: {receipt.occurred_at}</span>
             <span>Business Date: {receipt.business_date}</span>
-            <span>Night Audit: Clear</span>
-            <span>Financial: {guestLedger.status.replace(/_/g, ' ')}</span>
-            <span>Cashier: {cashierObligation.status.replace(/_/g, ' ')}</span>
+            <span>Night Audit: {receipt.night_audit_status.replace(/_/g, ' ')}</span>
+            <span>Financial: {receipt.pms_terminal_financial_status.replace(/_/g, ' ')}</span>
+            <span>Cashier: {receipt.general_cashier_terminal_obligation_status.replace(/_/g, ' ')}</span>
             <span>Housekeeping handoff: {receipt.handoff_delivery_status}</span>
           </div>
         </div>

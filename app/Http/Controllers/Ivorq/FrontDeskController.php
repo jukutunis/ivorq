@@ -501,6 +501,8 @@ class FrontDeskController extends Controller
         CheckoutSensitiveConfirmationService $confirmation,
         FrontDeskCheckoutExecutionService $checkout
     ) {
+        $this->assertOnlyFields($request, ['idempotency_key', 'password'], 'checkout_confirmation');
+
         $validated = $request->validate([
             'idempotency_key' => ['required', 'string', 'max:120'],
             'password' => ['required', 'string'],
@@ -535,6 +537,8 @@ class FrontDeskController extends Controller
 
     public function executeCheckout(Request $request, string $stay, FrontDeskCheckoutExecutionService $checkout)
     {
+        $this->assertOnlyFields($request, ['idempotency_key'], 'checkout_execution');
+
         $validated = $request->validate([
             'idempotency_key' => ['required', 'string', 'max:120'],
         ]);
@@ -549,6 +553,20 @@ class FrontDeskController extends Controller
             return response()->json(['message' => $e->getMessage()], 409);
         } catch (DomainException $e) {
             throw ValidationException::withMessages(['checkout_execution' => [$e->getMessage()]]);
+        }
+    }
+
+    /**
+     * @param string[] $allowed
+     */
+    private function assertOnlyFields(Request $request, array $allowed, string $bag): void
+    {
+        $extra = array_values(array_diff(array_keys($request->all()), $allowed));
+
+        if ($extra !== []) {
+            throw ValidationException::withMessages([
+                $bag => ['Unsupported checkout field: ' . $extra[0]],
+            ]);
         }
     }
 }

@@ -9,6 +9,7 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Enums\FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskCheckoutExecution;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\GeneralCashier\Enums\GeneralCashierCheckoutObligationStatusEnum;
@@ -34,6 +35,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     public const BLOCKER_FD_B7_NOT_READY = 'FD_B7_NOT_READY';
     public const BLOCKER_FD_B7_EVIDENCE_MISSING = 'FD_B7_EVIDENCE_MISSING';
     public const BLOCKER_STAY_NOT_IN_HOUSE = 'STAY_NOT_IN_HOUSE';
+    public const BLOCKER_CHECKOUT_ALREADY_COMPLETED = 'CHECKOUT_ALREADY_COMPLETED';
     public const BLOCKER_CHECKOUT_NOT_IMPLEMENTED = 'CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED';
     public const UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS = 'FD_B9_UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS';
     public const UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS = 'FD_B10_UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS';
@@ -233,12 +235,29 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'source_fingerprint' => $nightAuditLock['source_fingerprint'],
         ];
 
+        $existingExecution = FrontDeskCheckoutExecution::withoutGlobalScopes()
+            ->where('property_id', $propertyId)
+            ->where('front_desk_stay_id', $stay->id)
+            ->orderByDesc('occurred_at')
+            ->orderByDesc('created_at')
+            ->first();
+
+        if ($existingExecution) {
+            $blockerCodes[] = self::BLOCKER_CHECKOUT_ALREADY_COMPLETED;
+            $blockerMessages[] = 'A completed checkout execution already exists for this stay.';
+        }
+
         $canUseExecutionCommand = $this->actorCan($actor, FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION);
         $authoritativeGates['checkout_execution'] = [
             'gate' => 'No existing completed checkout execution',
             'owner' => 'Front Desk',
-            'satisfied' => true,
-            'detail' => 'Package 9 checkout execution command is available through the controlled POST route.',
+            'satisfied' => $existingExecution === null,
+            'detail' => $existingExecution
+                ? 'A committed checkout execution already exists. Use the same idempotency identity for replay receipt.'
+                : 'No committed checkout execution exists for this stay.',
+            'checkout_execution_id' => $existingExecution?->id,
+            'terminal_stay_status' => $existingExecution?->terminal_stay_status?->value,
+            'occurred_at' => $existingExecution?->occurred_at?->toISOString(),
         ];
 
         $blockerCodes = $this->sortedUnique($blockerCodes);
@@ -246,7 +265,12 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
         $reviewReasons = $this->sortedUnique($reviewReasons);
 
         // Determine overall status. Package 9 execution requires readiness plus the exact execute permission.
-        $canExecute = empty($blockerCodes) && $canUseExecutionCommand;
+        $canExecute = empty($blockerCodes)
+            && empty($reviewReasons)
+            && $canUseExecutionCommand
+            && $stayIsInHouse
+            && $latestFinalReviewStatus === 'CHECKOUT_FINAL_REVIEW_READY'
+            && $existingExecution === null;
         if (empty($blockerCodes)) {
             $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryReady->value;
         } elseif (! empty($reviewReasons)) {

@@ -15,6 +15,9 @@ final readonly class FrontDeskCheckoutExecutionResult
         public string $occurredAt,
         public string $handoffId,
         public string $handoffDeliveryStatus,
+        public string $nightAuditStatus,
+        public string $pmsTerminalFinancialStatus,
+        public string $generalCashierTerminalObligationStatus,
         public bool $replayed,
     ) {}
 
@@ -34,6 +37,9 @@ final readonly class FrontDeskCheckoutExecutionResult
             'occurred_at' => $this->occurredAt,
             'handoff_id' => $this->handoffId,
             'handoff_delivery_status' => $this->handoffDeliveryStatus,
+            'night_audit_status' => $this->nightAuditStatus,
+            'pms_terminal_financial_status' => $this->pmsTerminalFinancialStatus,
+            'general_cashier_terminal_obligation_status' => $this->generalCashierTerminalObligationStatus,
             'replayed' => $this->replayed,
         ];
     }

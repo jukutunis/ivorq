@@ -6,6 +6,7 @@ use DomainException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Modules\Foundation\Audit\Services\AuditService;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationClaimResult;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
@@ -82,7 +83,7 @@ class FrontDeskCheckoutExecutionService
                     return $this->executeAttempt($context, $idempotencyKey, $preflight, $businessDateEvidence);
                 }, 1);
 
-                $this->confirmation->cleanupCurrentSessionReference();
+                $this->cleanupConfirmationSessionAfterCommit($result, $context['property']->id, $context['stay']->id);
 
                 return $result;
             } catch (QueryException $exception) {
@@ -189,7 +190,7 @@ class FrontDeskCheckoutExecutionService
         $this->cashierAttestation->assertIssuedForCurrentTransaction($operationalContext, $financial, $cashier);
         $this->authorization->authorize($actor);
 
-        $claim = $this->confirmation->claimCurrentSessionConfirmationFromPreflight($actor, $preflight);
+        $claim = $this->confirmation->claimCurrentSessionConfirmationFor($actor, $stay->id, $idempotencyKey);
         $this->assertClaimMatchesPreflight($claim, $preflight);
 
         $occurredAt = $this->postgresWallClockUtc();
@@ -370,6 +371,9 @@ class FrontDeskCheckoutExecutionService
             occurredAt: $execution->occurred_at?->toISOString() ?? '',
             handoffId: $handoff->id,
             handoffDeliveryStatus: $handoff->delivery_status?->value ?? FrontDeskCheckoutHousekeepingHandoffStatusEnum::Pending->value,
+            nightAuditStatus: (string) $execution->night_audit_source_status,
+            pmsTerminalFinancialStatus: (string) $execution->pms_financial_attestation_status,
+            generalCashierTerminalObligationStatus: (string) $execution->general_cashier_attestation_status,
             replayed: $replayed,
         );
     }
@@ -383,8 +387,24 @@ class FrontDeskCheckoutExecutionService
             || $claim->companyId !== $preflight->companyId
             || $claim->propertyId !== $preflight->propertyId
             || $claim->frontDeskStayId !== $preflight->frontDeskStayId
-            || $claim->checkoutIdempotencyKey !== $preflight->checkoutIdempotencyKey) {
+            || $claim->checkoutIdempotencyKey !== $preflight->checkoutIdempotencyKey
+            || ! $claim->confirmedAt->equalTo($preflight->confirmedAt)
+            || ! $claim->expiresAt->equalTo($preflight->expiresAt)) {
             throw new DomainException(self::ERROR_CONFIRMATION_CHANGED);
+        }
+    }
+
+    private function cleanupConfirmationSessionAfterCommit(FrontDeskCheckoutExecutionResult $result, string $propertyId, string $stayId): void
+    {
+        try {
+            $this->confirmation->cleanupCurrentSessionReference();
+        } catch (\Throwable $exception) {
+            Log::warning('Checkout confirmation session cleanup failed after committed checkout.', [
+                'property_id' => $propertyId,
+                'front_desk_stay_id' => $stayId,
+                'checkout_execution_id' => $result->checkoutExecutionId,
+                'exception_class' => $exception::class,
+            ]);
         }
     }
 

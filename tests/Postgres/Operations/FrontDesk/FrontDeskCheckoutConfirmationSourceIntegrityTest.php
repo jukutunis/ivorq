@@ -24,7 +24,9 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
         $this->assertStringContainsString('frontdesk-checkout-execution', $confirmationService);
         $this->assertStringContainsString('Checkout confirmation requires authoritative checkout context.', $confirmationService);
         $this->assertStringContainsString('FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION', $boundary);
-        $this->assertStringContainsString('$canExecute = empty($blockerCodes) && $canUseExecutionCommand;', $boundary);
+        $this->assertStringContainsString('FrontDeskCheckoutExecution::withoutGlobalScopes()', $boundary);
+        $this->assertStringContainsString('$existingExecution === null', $boundary);
+        $this->assertStringContainsString('empty($reviewReasons)', $boundary);
     }
 
     public function test_package9_checkout_execution_surface_is_controlled(): void
@@ -54,13 +56,12 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
         $this->assertStringContainsString('issueForCurrentSession', $service);
         $this->assertStringContainsString('validateCurrentSessionConfirmationFor', $service);
         $this->assertStringContainsString('claimCurrentSessionConfirmationFor', $service);
-        $this->assertStringContainsString('claimCurrentSessionConfirmationFromPreflight', $service);
+        $this->assertStringNotContainsString('public function claimCurrentSessionConfirmationFromPreflight', $service);
         $this->assertStringContainsString('resolveAuthorizedContext', $service);
         $this->assertStringContainsString('resolveAuthorizedContext', $authorization);
         $this->assertTrue($reflection->getMethod('issueForCurrentSession')->isPublic());
         $this->assertTrue($reflection->getMethod('validateCurrentSessionConfirmationFor')->isPublic());
         $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmationFor')->isPublic());
-        $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmationFromPreflight')->isPublic());
         $this->assertTrue($reflection->getMethod('issue')->isPrivate());
         $this->assertTrue($reflection->getMethod('claimCurrentSessionConfirmation')->isPrivate());
 
@@ -71,7 +72,6 @@ class FrontDeskCheckoutConfirmationSourceIntegrityTest extends PostgresTestCase
         sort($publicIssueOrClaimMethods);
         $this->assertSame([
             'claimCurrentSessionConfirmationFor',
-            'claimCurrentSessionConfirmationFromPreflight',
             'issueForCurrentSession',
         ], $publicIssueOrClaimMethods);
 
