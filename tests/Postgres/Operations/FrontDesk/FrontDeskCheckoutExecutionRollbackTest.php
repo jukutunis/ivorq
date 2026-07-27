@@ -2,55 +2,280 @@
 
 namespace Tests\Postgres\Operations\FrontDesk;
 
+use Exception;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationConsumption;
+use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
+use Modules\Operations\FrontDesk\Enums\FrontDeskDepartureCheckoutFinalReviewStatusEnum;
+use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskCheckoutExecution;
+use Modules\Operations\FrontDesk\Models\FrontDeskCheckoutHousekeepingHandoff;
+use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
+use Modules\Operations\FrontDesk\Models\FrontDeskStay;
+use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecutionService;
+use Modules\Operations\GeneralCashier\Enums\GeneralCashierCheckoutTerminalObligationAttestationStatusEnum;
+use Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutTerminalObligationAttestationService;
+use Modules\Operations\GeneralCashier\ValueObjects\GeneralCashierCheckoutTerminalObligationAttestation;
+use Modules\Operations\NightAudit\Services\NightAuditCheckoutConcurrencyGuardService;
+use Modules\Operations\NightAudit\ValueObjects\NightAuditCheckoutConcurrencyAttestation;
+use Modules\Operations\PMS\Enums\GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum;
+use Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService;
+use Modules\Operations\PMS\ValueObjects\GuestLedgerCheckoutTerminalFinancialAttestation;
+use Tests\Postgres\Operations\FrontDesk\Concerns\CreatesFrontDeskFdA2Data;
 use Tests\PostgresTestCase;
 
 class FrontDeskCheckoutExecutionRollbackTest extends PostgresTestCase
 {
-    public function test_execution_claim_and_mutations_remain_inside_single_database_transaction(): void
+    use CreatesFrontDeskFdA2Data;
+    use \Illuminate\Foundation\Testing\RefreshDatabase;
+
+    protected function setUp(): void
     {
-        $source = file_get_contents(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php'));
-
-        $this->assertStringContainsString('DB::transaction(function ()', $source);
-        $this->assertStringContainsString('claimCurrentSessionConfirmationFor($actor, $stay->id, $idempotencyKey)', $source);
-        $this->assertStringContainsString('new FrontDeskCheckoutExecution()', $source);
-        $this->assertStringContainsString("'status' => FrontDeskStayStatusEnum::CheckedOut", $source);
-        $this->assertStringContainsString('createHandoff($execution, $occurredAt)', $source);
-
-        $claimPosition = strpos($source, 'claimCurrentSessionConfirmationFor($actor, $stay->id, $idempotencyKey)');
-        $executionPosition = strpos($source, 'new FrontDeskCheckoutExecution()');
-        $stayTransitionPosition = strpos($source, "'status' => FrontDeskStayStatusEnum::CheckedOut");
-        $handoffPosition = strpos($source, 'createHandoff($execution, $occurredAt)');
-        $auditPosition = strpos($source, "'front_desk_checkout_completed'");
-
-        $this->assertIsInt($claimPosition);
-        $this->assertIsInt($executionPosition);
-        $this->assertIsInt($stayTransitionPosition);
-        $this->assertIsInt($handoffPosition);
-        $this->assertIsInt($auditPosition);
-        $this->assertLessThan($executionPosition, $claimPosition);
-        $this->assertLessThan($stayTransitionPosition, $executionPosition);
-        $this->assertLessThan($handoffPosition, $stayTransitionPosition);
-        $this->assertLessThan($auditPosition, $handoffPosition);
+        parent::setUp();
+        $this->setUpFrontDeskFdA2Fixture();
+        
+        \Modules\Foundation\Authorization\Models\Permission::firstOrCreate(['name' => \Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION, 'guard_name' => 'web']);
+        $this->frontDeskActor->givePermissionTo(\Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION);
+        $this->actingAs($this->frontDeskActor, 'web');
+        session($this->propertySession($this->property));
     }
 
-    public function test_post_commit_cleanup_cannot_reinterpret_committed_checkout_as_failure(): void
+    public function test_valid_checkout_completes_full_lifecycle(): void
     {
-        $source = file_get_contents(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php'));
+        [$stay] = $this->setupValidCheckoutState('101', 'idemp-lifecycle');
 
-        $transactionPosition = strpos($source, '$result = DB::transaction');
-        $cleanupPosition = strpos($source, 'cleanupConfirmationSessionAfterCommit($result');
-        $returnPosition = strpos($source, 'return $result;');
-        $cleanupMethodPosition = strpos($source, 'private function cleanupConfirmationSessionAfterCommit');
+        $service = app(FrontDeskCheckoutExecutionService::class);
+        $result = $service->execute($this->frontDeskActor, $stay->id, 'idemp-lifecycle');
 
-        $this->assertIsInt($transactionPosition);
-        $this->assertIsInt($cleanupPosition);
-        $this->assertIsInt($returnPosition);
-        $this->assertIsInt($cleanupMethodPosition);
-        $this->assertLessThan($cleanupPosition, $transactionPosition);
-        $this->assertLessThan($returnPosition, $cleanupPosition);
-        $this->assertStringContainsString('catch (\\Throwable $exception)', $source);
-        $this->assertStringContainsString('Log::warning', $source);
-        $cleanupBody = substr($source, $cleanupMethodPosition, strpos($source, 'private function postgresWallClockUtc') - $cleanupMethodPosition);
-        $this->assertStringNotContainsString('throw $exception;', $cleanupBody);
+        $this->assertFalse($result->replayed);
+        $this->assertSame(FrontDeskStayStatusEnum::CheckedOut->value, $result->terminalStatus);
+
+        $stay->refresh();
+        $this->assertSame(FrontDeskStayStatusEnum::CheckedOut, $stay->status);
+
+        $this->assertSame(1, FrontDeskCheckoutExecution::count());
+        $this->assertSame(1, FrontDeskCheckoutHousekeepingHandoff::count());
+        $this->assertSame(1, CheckoutSensitiveConfirmationConsumption::count());
+
+        $audit = DB::table('audit_logs')
+            ->where('event', 'front_desk_checkout_completed')
+            ->where('user_id', $this->frontDeskActor->id)
+            ->first();
+
+        $this->assertNotNull($audit);
+    }
+
+    public function test_fault_after_claim_rolls_back_everything(): void
+    {
+        [$stay] = $this->setupValidCheckoutState('102', 'idemp-fault-claim');
+
+        CheckoutSensitiveConfirmationConsumption::created(function () {
+            throw new Exception('Fault after claim');
+        });
+
+        $this->assertFaultRollsBack($stay->id, 'idemp-fault-claim', 'Fault after claim');
+    }
+
+    public function test_fault_after_execution_insert_rolls_back_everything(): void
+    {
+        [$stay] = $this->setupValidCheckoutState('103', 'idemp-fault-exec');
+
+        FrontDeskCheckoutExecution::created(function () {
+            throw new Exception('Fault after execution insert');
+        });
+
+        $this->assertFaultRollsBack($stay->id, 'idemp-fault-exec', 'Fault after execution insert');
+    }
+
+    public function test_fault_after_stay_transition_rolls_back_everything(): void
+    {
+        [$stay] = $this->setupValidCheckoutState('104', 'idemp-fault-stay');
+
+        FrontDeskStay::updated(function (FrontDeskStay $model) {
+            if ($model->status === FrontDeskStayStatusEnum::CheckedOut) {
+                throw new Exception('Fault after stay transition');
+            }
+        });
+
+        $this->assertFaultRollsBack($stay->id, 'idemp-fault-stay', 'Fault after stay transition');
+    }
+
+    public function test_fault_before_handoff_rolls_back_everything(): void
+    {
+        [$stay] = $this->setupValidCheckoutState('105', 'idemp-fault-handoff');
+
+        FrontDeskCheckoutHousekeepingHandoff::creating(function () {
+            throw new Exception('Fault before handoff');
+        });
+
+        $this->assertFaultRollsBack($stay->id, 'idemp-fault-handoff', 'Fault before handoff');
+    }
+
+    private function assertFaultRollsBack(string $stayId, string $idempotencyKey, string $expectedMessage): void
+    {
+        $service = app(FrontDeskCheckoutExecutionService::class);
+        $exceptionThrown = false;
+
+        try {
+            $service->execute($this->frontDeskActor, $stayId, $idempotencyKey);
+        } catch (Exception $exception) {
+            $this->assertSame($expectedMessage, $exception->getMessage());
+            $exceptionThrown = true;
+        }
+
+        $this->assertTrue($exceptionThrown);
+
+        $stay = FrontDeskStay::find($stayId);
+        $this->assertSame(FrontDeskStayStatusEnum::InHouse, $stay->status);
+
+        $this->assertSame(0, FrontDeskCheckoutExecution::count());
+        $this->assertSame(0, FrontDeskCheckoutHousekeepingHandoff::count());
+        $this->assertSame(0, CheckoutSensitiveConfirmationConsumption::count());
+    }
+
+    private function setupValidCheckoutState(string $room, string $idempotencyKey): array
+    {
+        [$stay, $roomModel, $reservation] = $this->checkedInStay($room);
+
+        $this->createValidAuthoritativeBusinessDate();
+
+        $occurredAt = now();
+        $status = FrontDeskDepartureCheckoutFinalReviewStatusEnum::CheckoutFinalReviewReady->value;
+        $sourceHash = hash('sha256', implode('|', [$stay->id, $status, '', $occurredAt->toISOString()]));
+
+        $finalReview = new FrontDeskDepartureCheckoutFinalReview();
+        $finalReview->forceFill([
+            'property_id' => $this->property->id,
+            'front_desk_stay_id' => $stay->id,
+            'reservation_id' => $reservation,
+            'guest_id' => $stay->guest_id,
+            'room_id' => $stay->current_room_id,
+            'final_review_status' => $status,
+            'idempotency_key' => 'review-' . Str::ulid(),
+            'source_hash' => $sourceHash,
+            'occurred_at' => $occurredAt,
+            'created_by' => $this->frontDeskActor->id,
+            'created_at' => $occurredAt,
+        ])->save();
+
+        $this->mock(NightAuditCheckoutConcurrencyGuardService::class)
+            ->shouldReceive('attest')
+            ->andReturn(new NightAuditCheckoutConcurrencyAttestation(
+                NightAuditCheckoutConcurrencyAttestation::VERSION,
+                NightAuditCheckoutConcurrencyAttestation::STATUS_CLEAR,
+                NightAuditCheckoutConcurrencyAttestation::OWNER,
+                true,
+                false,
+                $this->property->id,
+                'date-id',
+                '2099-01-01',
+                'UTC',
+                hash('sha256', 'na'),
+                now()->toISOString(),
+                []
+            ));
+
+        $this->mock(GuestLedgerCheckoutTerminalFinancialAttestationService::class)
+            ->shouldReceive('attest')
+            ->andReturn(GuestLedgerCheckoutTerminalFinancialAttestation::create(
+                GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum::PmsTerminalFinancialReady,
+                $this->property->id,
+                'date-id',
+                '2099-01-01',
+                $stay->id,
+                $stay->reservation_id,
+                0,
+                '0.00',
+                'USD',
+                [],
+                [],
+                [],
+                [],
+                [],
+                hash('sha256', 'fin'),
+                now()->toISOString(),
+                []
+            ))
+            ->shouldReceive('assertIssuedForCurrentTransaction');
+
+        $this->mock(GeneralCashierCheckoutTerminalObligationAttestationService::class)
+            ->shouldReceive('attest')
+            ->andReturn(GeneralCashierCheckoutTerminalObligationAttestation::create(
+                GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationClear,
+                $this->property->id,
+                'date-id',
+                '2099-01-01',
+                $stay->id,
+                $stay->reservation_id,
+                GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum::PmsTerminalFinancialReady->value,
+                hash('sha256', 'fin'),
+                [],
+                0,
+                [],
+                [],
+                [],
+                hash('sha256', 'cash'),
+                now()->toISOString(),
+                []
+            ))
+            ->shouldReceive('assertIssuedForCurrentTransaction');
+
+        $issuanceId = (string) Str::ulid();
+        $identity = (string) Str::ulid();
+        $sessionId = session()->getId();
+        $sessionFingerprint = CheckoutSensitiveConfirmationService::fingerprintSession($sessionId);
+        $confirmedAt = now();
+        $expiresAt = now()->addMinutes(15);
+        $fingerprint = hash('sha256', implode('|', [
+            CheckoutSensitiveConfirmationService::INTENT,
+            $identity,
+            $this->frontDeskActor->id,
+            $this->property->company_id,
+            $this->property->id,
+            $stay->id,
+            $idempotencyKey,
+            $sessionFingerprint,
+            $confirmedAt->toISOString(),
+            $expiresAt->toISOString(),
+        ]));
+
+        DB::table('checkout_sensitive_confirmation_issuances')->insert([
+            'id' => $issuanceId,
+            'confirmation_identity' => $identity,
+            'intent' => CheckoutSensitiveConfirmationService::INTENT,
+            'actor_id' => $this->frontDeskActor->id,
+            'company_id' => $this->property->company_id,
+            'property_id' => $this->property->id,
+            'front_desk_stay_id' => $stay->id,
+            'checkout_idempotency_key' => $idempotencyKey,
+            'session_fingerprint' => $sessionFingerprint,
+            'confirmation_fingerprint' => $fingerprint,
+            'confirmed_at' => $confirmedAt,
+            'expires_at' => $expiresAt,
+            'created_at' => $confirmedAt,
+        ]);
+
+        session([
+            CheckoutSensitiveConfirmationService::SESSION_KEY => [
+                CheckoutSensitiveConfirmationService::INTENT => [
+                    'actor_id' => $this->frontDeskActor->id,
+                    'intent' => CheckoutSensitiveConfirmationService::INTENT,
+                    'company_id' => $this->property->company_id,
+                    'property_id' => $this->property->id,
+                    'front_desk_stay_id' => $stay->id,
+                    'checkout_idempotency_key' => $idempotencyKey,
+                    'issuance_id' => $issuanceId,
+                    'confirmation_identity' => $identity,
+                    'confirmation_fingerprint' => $fingerprint,
+                    'session_fingerprint' => $sessionFingerprint,
+                    'confirmed_at' => $confirmedAt->toISOString(),
+                    'expires_at' => $expiresAt->toISOString(),
+                ],
+            ],
+        ]);
+
+        return [$stay, $roomModel, $reservation];
     }
 }

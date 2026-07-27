@@ -138,10 +138,6 @@ class FrontDeskCheckoutExecutionService
             throw new DomainException(self::ERROR_REPLAY_SOURCE_INTEGRITY);
         }
 
-        if ($stay->status !== FrontDeskStayStatusEnum::InHouse) {
-            throw new DomainException(self::ERROR_STAY_NOT_IN_HOUSE);
-        }
-
         $existing = FrontDeskCheckoutExecution::withoutGlobalScopes()
             ->where('property_id', $property->id)
             ->where('idempotency_key', $idempotencyKey)
@@ -157,6 +153,10 @@ class FrontDeskCheckoutExecutionService
         }
 
         $this->assertNoCompletedCheckoutForStay($property->id, $stay->id, lock: true);
+
+        if ($stay->status !== FrontDeskStayStatusEnum::InHouse) {
+            throw new DomainException(self::ERROR_STAY_NOT_IN_HOUSE);
+        }
 
         $finalReview = FrontDeskDepartureCheckoutFinalReview::withoutGlobalScopes()
             ->where('property_id', $property->id)

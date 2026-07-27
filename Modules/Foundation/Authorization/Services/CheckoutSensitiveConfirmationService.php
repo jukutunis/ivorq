@@ -286,6 +286,7 @@ class CheckoutSensitiveConfirmationService
                 'consumed_at' => $dbNow,
                 'created_at' => $dbNow,
             ])->save();
+            $consumption->refresh();
         } catch (QueryException $exception) {
             $this->mapPersistenceQueryException($exception);
         }
@@ -302,7 +303,7 @@ class CheckoutSensitiveConfirmationService
             checkoutIdempotencyKey: $issuance->checkout_idempotency_key,
             confirmedAt: Carbon::parse($issuance->confirmed_at),
             expiresAt: Carbon::parse($issuance->expires_at),
-            consumedAt: $dbNow,
+            consumedAt: $consumption->consumed_at,
         );
     }
 
