@@ -17,6 +17,7 @@ class SensitiveActionConfirmationService
         'finance-approval',
         'fx-break-glass',
         'administrative-sensitive-action',
+        'frontdesk-checkout-execution',
         'cash-payment-execution',
         'bank-payment-execution',
         'banking-migration-account-identity-pilot-execution',
@@ -41,6 +42,8 @@ class SensitiveActionConfirmationService
 
     private const SESSION_KEY = 'sensitive_action_confirmation';
 
+    public const CHECKOUT_EXECUTION_INTENT = 'frontdesk-checkout-execution';
+
     public function __construct(private readonly AuditService $auditService) {}
 
     public function registeredIntents(): array
@@ -52,6 +55,10 @@ class SensitiveActionConfirmationService
     {
         if (!in_array($intent, self::REGISTERED_INTENTS, true)) {
             throw new DomainException('The requested intent is not registered.');
+        }
+
+        if ($intent === self::CHECKOUT_EXECUTION_INTENT) {
+            throw new DomainException('Checkout confirmation requires authoritative checkout context.');
         }
 
         if (!Hash::check($password, $actor->password)) {
