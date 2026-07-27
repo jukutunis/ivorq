@@ -246,13 +246,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertSame('FrontDeskCheckoutConfirmationSourceIntegrityTest', $lastSeven[5]);
         $this->assertSame('FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest', $lastSeven[6]);
 
-        $this->assertEquals(682, $baseline->expected->tests ?? null);
-        $this->assertEquals(6629, $baseline->expected->assertions ?? null);
+        $this->assertEquals(686, $baseline->expected->tests ?? null);
+        $this->assertEquals(6679, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'a41ed618780d779435d543ca7297477e6586dc70',
+            '94a87dad7422f5a7f16656d34432428f0f4a7100',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -289,7 +289,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('Contract Version 1.14', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No checkout command', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('zero-failure corrected registered', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero-failure final registered', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('1,708,649ms', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Exit code: 0', $baseline->provenance->note ?? '');
 
@@ -322,10 +322,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
 
         // ── FD-C2 correction markers ──────────────────────────────────────
         $this->assertStringContainsString('Package 8 checkout confirmation plus execute authorization foundation', $baseline->description ?? '');
-        $this->assertStringContainsString('PACKAGE_8_CORRECTED_SOURCE_SHA a41ed618780d779435d543ca7297477e6586dc70', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Package 8 exact corrected focused batch: 29 tests / 283 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Duration: 185,453ms', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('PACKAGE_8_FINAL_SOURCE_SHA 94a87dad7422f5a7f16656d34432428f0f4a7100', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 8 exact final focused batch: 33 tests / 333 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Duration: 227,293ms', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Adjacent SensitiveActionConfirmation plus FD-C1/FD-C2 batch: 216 tests / 4761 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Duration: 161,340ms', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no public method accepts CheckoutSensitiveConfirmationContext', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('reflection proof is safe for named, union, and intersection types', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('frontdesk.checkout-execution.execute', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('frontdesk-checkout-execution', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout_sensitive_confirmation_issuances', $baseline->provenance->note ?? '');
