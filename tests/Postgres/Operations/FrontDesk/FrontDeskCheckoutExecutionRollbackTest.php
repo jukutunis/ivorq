@@ -113,15 +113,34 @@ class FrontDeskCheckoutExecutionRollbackTest extends PostgresTestCase
         $this->assertFaultRollsBack($stay->id, 'idemp-fault-handoff', 'Fault before handoff');
     }
 
-    private function assertFaultRollsBack(string $stayId, string $idempotencyKey, string $expectedMessage): void
+    public function test_handoff_database_source_integrity_rejection_rolls_back(): void
+    {
+        [$stay] = $this->setupValidCheckoutState('106', 'idemp-fault-handoff-src');
+
+        // Simulate the DB-level NOT NULL / FK violation by triggering a DB error
+        // after execution insert but before handoff, via a save() override.
+        // The handoff source-integrity guard verifies that a corrupted handoff
+        // row cannot exist without a valid execution reference.
+        FrontDeskCheckoutHousekeepingHandoff::saving(function (FrontDeskCheckoutHousekeepingHandoff $model) {
+            // Setting checkout_execution_id to null would violate FK in real DB
+            $model->checkout_execution_id = null;
+        });
+
+        // The resulting DB level FK violation should roll back the transaction
+        $this->assertFaultRollsBack($stay->id, 'idemp-fault-handoff-src', null);
+    }
+
+    private function assertFaultRollsBack(string $stayId, string $idempotencyKey, ?string $expectedMessage): void
     {
         $service = app(FrontDeskCheckoutExecutionService::class);
         $exceptionThrown = false;
 
         try {
             $service->execute($this->frontDeskActor, $stayId, $idempotencyKey);
-        } catch (Exception $exception) {
-            $this->assertSame($expectedMessage, $exception->getMessage());
+        } catch (\Throwable $exception) {
+            if ($expectedMessage !== null) {
+                $this->assertSame($expectedMessage, $exception->getMessage());
+            }
             $exceptionThrown = true;
         }
 
