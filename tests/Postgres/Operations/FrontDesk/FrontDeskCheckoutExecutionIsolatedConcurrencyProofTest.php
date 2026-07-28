@@ -94,21 +94,54 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         }
     }
 
+    private function actingAsConcurrencyActor(array $fixture): void
+    {
+        $this->actingAs($this->actor, 'web');
+        session([
+            'active_property_id'  => $this->property->id,
+            'current_property_id' => $this->property->id,
+            'active_company_id'   => $this->property->company_id,
+            CheckoutSensitiveConfirmationService::SESSION_KEY => [
+                CheckoutSensitiveConfirmationService::INTENT => [
+                    'actor_id'                 => $this->actor->id,
+                    'intent'                   => CheckoutSensitiveConfirmationService::INTENT,
+                    'company_id'               => $this->property->company_id,
+                    'property_id'              => $this->property->id,
+                    'front_desk_stay_id'       => $fixture['front_desk_stay_id'],
+                    'checkout_idempotency_key' => $fixture['checkout_idempotency_key'],
+                    'issuance_id'              => $fixture['issuance_id'],
+                    'confirmation_identity'    => $fixture['confirmation_identity'],
+                    'confirmation_fingerprint' => $fixture['confirmation_fingerprint'],
+                    'session_fingerprint'      => $fixture['session_fingerprint'],
+                    'confirmed_at'             => $fixture['confirmed_at'],
+                    'expires_at'               => $fixture['expires_at'],
+                ],
+            ],
+        ]);
+    }
+
     private function createCheckoutFixture(string $roomNum, string $idempotencyKey, ?string $stayIdOverride = null): array
     {
-        $guest = Guest::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'guest_code' => 'G-' . Str::upper(Str::random(6)), 'full_name' => 'Guest ' . Str::random(4), 'guest_type' => 'individual']);
-        $res = Reservation::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'primary_guest_id' => $guest->id, 'reservation_number' => 'R-' . Str::upper(Str::random(6)), 'arrival_date' => Carbon::now()->toDateString(), 'departure_date' => Carbon::now()->addDays(2)->toDateString(), 'nights' => 2, 'reservation_source' => 'direct', 'status' => 'checked_in', 'reserved_room_type' => 'standard']);
-        $stayId = $stayIdOverride ?? (string) Str::ulid();
-        $stay = FrontDeskStay::on('pgsql_concurrency')->create(['id' => $stayId, 'property_id' => $this->property->id, 'reservation_id' => $res->id, 'guest_id' => $res->primary_guest_id, 'status' => FrontDeskStayStatusEnum::InHouse->value, 'created_by' => $this->actor->id, 'updated_by' => $this->actor->id]);
-        $occ = Carbon::now();
-        FrontDeskDepartureCheckoutFinalReview::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'front_desk_stay_id' => $stay->id, 'reservation_id' => $stay->reservation_id, 'guest_id' => $stay->guest_id, 'final_review_status' => FrontDeskDepartureCheckoutFinalReviewStatusEnum::CheckoutFinalReviewReady->value, 'idempotency_key' => 'review-' . Str::ulid(), 'source_hash' => hash('sha256', implode('|', [$stay->id, 'CHECKOUT_FINAL_REVIEW_READY', '', $occ->toISOString()])), 'occurred_at' => $occ, 'created_by' => $this->actor->id, 'created_at' => $occ]);
-        // Business date already created in seedFixtures — do not create another
-        $issId = (string) Str::ulid(); $ident = (string) Str::ulid();
-        $sessId = session()->getId(); $sessFp = CheckoutSensitiveConfirmationService::fingerprintSession($sessId);
-        $confAt = Carbon::now(); $expAt = Carbon::now()->addMinutes(15);
-        $fp = hash('sha256', implode('|', [CheckoutSensitiveConfirmationService::INTENT, $ident, $this->actor->id, $this->property->company_id, $this->property->id, $stay->id, $idempotencyKey, $sessFp, $confAt->toISOString(), $expAt->toISOString()]));
-        DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_issuances')->insert(['id' => $issId, 'confirmation_identity' => $ident, 'intent' => CheckoutSensitiveConfirmationService::INTENT, 'actor_id' => $this->actor->id, 'company_id' => $this->property->company_id, 'property_id' => $this->property->id, 'front_desk_stay_id' => $stay->id, 'checkout_idempotency_key' => $idempotencyKey, 'session_fingerprint' => $sessFp, 'confirmation_fingerprint' => $fp, 'confirmed_at' => $confAt, 'expires_at' => $expAt, 'created_at' => $confAt]);
-        return ['property_id' => $this->property->id, 'company_id' => $this->property->company_id, 'actor_id' => $this->actor->id, 'front_desk_stay_id' => $stay->id, 'reservation_id' => $res->id, 'checkout_idempotency_key' => $idempotencyKey, 'issuance_id' => $issId, 'confirmation_identity' => $ident, 'confirmation_fingerprint' => $fp, 'session_fingerprint' => $sessFp, 'session_id' => $sessId, 'confirmed_at' => $confAt->toISOString(), 'expires_at' => $expAt->toISOString(), 'marker_dir' => $this->markerDir, 'database' => $this->concurrencyDb, 'night_audit_active' => false, 'stay' => $stay];
+        $prev = config('database.default');
+        DB::setDefaultConnection('pgsql_concurrency');
+        config(['database.default' => 'pgsql_concurrency']);
+        try {
+            $guest = Guest::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'guest_code' => 'G-' . Str::upper(Str::random(6)), 'full_name' => 'Guest ' . Str::random(4), 'guest_type' => 'individual']);
+            $res = Reservation::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'primary_guest_id' => $guest->id, 'reservation_number' => 'R-' . Str::upper(Str::random(6)), 'arrival_date' => Carbon::now()->toDateString(), 'departure_date' => Carbon::now()->addDays(2)->toDateString(), 'nights' => 2, 'reservation_source' => 'direct', 'status' => 'checked_in', 'reserved_room_type' => 'standard']);
+            $stayId = $stayIdOverride ?? (string) Str::ulid();
+            $stay = FrontDeskStay::on('pgsql_concurrency')->create(['id' => $stayId, 'property_id' => $this->property->id, 'reservation_id' => $res->id, 'guest_id' => $res->primary_guest_id, 'status' => FrontDeskStayStatusEnum::InHouse->value, 'created_by' => $this->actor->id, 'updated_by' => $this->actor->id]);
+            $occ = Carbon::now();
+            FrontDeskDepartureCheckoutFinalReview::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'front_desk_stay_id' => $stay->id, 'reservation_id' => $stay->reservation_id, 'guest_id' => $stay->guest_id, 'final_review_status' => FrontDeskDepartureCheckoutFinalReviewStatusEnum::CheckoutFinalReviewReady->value, 'idempotency_key' => 'review-' . Str::ulid(), 'source_hash' => hash('sha256', implode('|', [$stay->id, 'CHECKOUT_FINAL_REVIEW_READY', '', $occ->toISOString()])), 'occurred_at' => $occ, 'created_by' => $this->actor->id, 'created_at' => $occ]);
+            $issId = (string) Str::ulid(); $ident = (string) Str::ulid();
+            $sessId = session()->getId(); $sessFp = CheckoutSensitiveConfirmationService::fingerprintSession($sessId);
+            $confAt = Carbon::now(); $expAt = Carbon::now()->addMinutes(15);
+            $fp = hash('sha256', implode('|', [CheckoutSensitiveConfirmationService::INTENT, $ident, $this->actor->id, $this->property->company_id, $this->property->id, $stay->id, $idempotencyKey, $sessFp, $confAt->toISOString(), $expAt->toISOString()]));
+            DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_issuances')->insert(['id' => $issId, 'confirmation_identity' => $ident, 'intent' => CheckoutSensitiveConfirmationService::INTENT, 'actor_id' => $this->actor->id, 'company_id' => $this->property->company_id, 'property_id' => $this->property->id, 'front_desk_stay_id' => $stay->id, 'checkout_idempotency_key' => $idempotencyKey, 'session_fingerprint' => $sessFp, 'confirmation_fingerprint' => $fp, 'confirmed_at' => $confAt, 'expires_at' => $expAt, 'created_at' => $confAt]);
+            return ['property_id' => $this->property->id, 'company_id' => $this->property->company_id, 'actor_id' => $this->actor->id, 'front_desk_stay_id' => $stay->id, 'reservation_id' => $res->id, 'checkout_idempotency_key' => $idempotencyKey, 'issuance_id' => $issId, 'confirmation_identity' => $ident, 'confirmation_fingerprint' => $fp, 'session_fingerprint' => $sessFp, 'session_id' => $sessId, 'confirmed_at' => $confAt->toISOString(), 'expires_at' => $expAt->toISOString(), 'marker_dir' => $this->markerDir, 'database' => $this->concurrencyDb, 'night_audit_active' => false, 'stay' => $stay];
+        } finally {
+            DB::setDefaultConnection($prev);
+            config(['database.default' => $prev]);
+        }
     }
 
     // ═══ Scenario A: same stay, same key ═══
@@ -202,6 +235,8 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
     public function test_scenario_d_night_audit_active_blocks_checkout(): void
     {
         $f = $this->createCheckoutFixture('D01', 'p9-iso-key-D');
+        $this->actingAsConcurrencyActor($f);
+
         $mockNa = \Mockery::mock(\Modules\Operations\NightAudit\Services\NightAuditCheckoutConcurrencyGuardService::class);
         $mockNa->shouldReceive('attest')->andReturn(new \Modules\Operations\NightAudit\ValueObjects\NightAuditCheckoutConcurrencyAttestation(\Modules\Operations\NightAudit\ValueObjects\NightAuditCheckoutConcurrencyAttestation::VERSION, \Modules\Operations\NightAudit\ValueObjects\NightAuditCheckoutConcurrencyAttestation::STATUS_ACTIVE, \Modules\Operations\NightAudit\ValueObjects\NightAuditCheckoutConcurrencyAttestation::OWNER, false, true, $this->property->id, 'date-id', '2099-01-01', 'UTC', hash('sha256', 'na-active'), now()->toISOString(), []));
         app()->instance(\Modules\Operations\NightAudit\Services\NightAuditCheckoutConcurrencyGuardService::class, $mockNa);
@@ -217,55 +252,45 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
     public function test_scenario_e_expired_confirmation_fails_closed(): void
     {
         // Create a fixture with an already-expired confirmation
-        $guest = Guest::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'guest_code' => 'G-' . Str::upper(Str::random(6)), 'full_name' => 'Guest ' . Str::random(4), 'guest_type' => 'individual']);
-        $res = Reservation::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'primary_guest_id' => $guest->id, 'reservation_number' => 'R-' . Str::upper(Str::random(6)), 'arrival_date' => Carbon::now()->toDateString(), 'departure_date' => Carbon::now()->addDays(2)->toDateString(), 'nights' => 2, 'reservation_source' => 'direct', 'status' => 'checked_in', 'reserved_room_type' => 'standard']);
-        $stay = FrontDeskStay::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'reservation_id' => $res->id, 'guest_id' => $res->primary_guest_id, 'status' => FrontDeskStayStatusEnum::InHouse->value, 'created_by' => $this->actor->id, 'updated_by' => $this->actor->id]);
-        $occ = Carbon::now();
-        FrontDeskDepartureCheckoutFinalReview::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'front_desk_stay_id' => $stay->id, 'reservation_id' => $stay->reservation_id, 'guest_id' => $stay->guest_id, 'final_review_status' => FrontDeskDepartureCheckoutFinalReviewStatusEnum::CheckoutFinalReviewReady->value, 'idempotency_key' => 'review-' . Str::ulid(), 'source_hash' => hash('sha256', implode('|', [$stay->id, 'CHECKOUT_FINAL_REVIEW_READY', '', $occ->toISOString()])), 'occurred_at' => $occ, 'created_by' => $this->actor->id, 'created_at' => $occ]);
-
-        $idempotencyKey = 'p9-iso-key-E';
-        $issId = (string) Str::ulid(); $ident = (string) Str::ulid();
-        $sessId = session()->getId(); $sessFp = CheckoutSensitiveConfirmationService::fingerprintSession($sessId);
-        // Create with already-expired time
-        $confAt = Carbon::now()->subMinutes(20);
-        $expAt = Carbon::now()->subMinutes(5);
-        $fp = hash('sha256', implode('|', [CheckoutSensitiveConfirmationService::INTENT, $ident, $this->actor->id, $this->property->company_id, $this->property->id, $stay->id, $idempotencyKey, $sessFp, $confAt->toISOString(), $expAt->toISOString()]));
-        DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_issuances')->insert(['id' => $issId, 'confirmation_identity' => $ident, 'intent' => CheckoutSensitiveConfirmationService::INTENT, 'actor_id' => $this->actor->id, 'company_id' => $this->property->company_id, 'property_id' => $this->property->id, 'front_desk_stay_id' => $stay->id, 'checkout_idempotency_key' => $idempotencyKey, 'session_fingerprint' => $sessFp, 'confirmation_fingerprint' => $fp, 'confirmed_at' => $confAt, 'expires_at' => $expAt, 'created_at' => $confAt]);
-
-        // Set session with the expired confirmation data
-        session([
-            'active_property_id'  => $this->property->id,
-            'current_property_id' => $this->property->id,
-            'active_company_id'   => $this->property->company_id,
-            CheckoutSensitiveConfirmationService::SESSION_KEY => [
-                CheckoutSensitiveConfirmationService::INTENT => [
-                    'actor_id'                 => $this->actor->id,
-                    'intent'                   => CheckoutSensitiveConfirmationService::INTENT,
-                    'company_id'               => $this->property->company_id,
-                    'property_id'              => $this->property->id,
-                    'front_desk_stay_id'       => $stay->id,
-                    'checkout_idempotency_key' => $idempotencyKey,
-                    'issuance_id'              => $issId,
-                    'confirmation_identity'    => $ident,
-                    'confirmation_fingerprint' => $fp,
-                    'session_fingerprint'      => $sessFp,
-                    'confirmed_at'             => $confAt->toISOString(),
-                    'expires_at'               => $expAt->toISOString(),
-                ],
-            ],
-        ]);
-
+        $prev = config('database.default');
+        DB::setDefaultConnection('pgsql_concurrency');
+        config(['database.default' => 'pgsql_concurrency']);
         try {
-            app(FrontDeskCheckoutExecutionService::class)->execute($this->actor, $stay->id, $idempotencyKey);
-            $this->fail('Expired confirmation must throw');
-        } catch (\DomainException $e) {
-            // Expected — confirmation expired
-        }
+            $guest = Guest::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'guest_code' => 'G-' . Str::upper(Str::random(6)), 'full_name' => 'Guest ' . Str::random(4), 'guest_type' => 'individual']);
+            $res = Reservation::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'primary_guest_id' => $guest->id, 'reservation_number' => 'R-' . Str::upper(Str::random(6)), 'arrival_date' => Carbon::now()->toDateString(), 'departure_date' => Carbon::now()->addDays(2)->toDateString(), 'nights' => 2, 'reservation_source' => 'direct', 'status' => 'checked_in', 'reserved_room_type' => 'standard']);
+            $stay = FrontDeskStay::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'reservation_id' => $res->id, 'guest_id' => $res->primary_guest_id, 'status' => FrontDeskStayStatusEnum::InHouse->value, 'created_by' => $this->actor->id, 'updated_by' => $this->actor->id]);
+            $occ = Carbon::now();
+            FrontDeskDepartureCheckoutFinalReview::on('pgsql_concurrency')->create(['property_id' => $this->property->id, 'front_desk_stay_id' => $stay->id, 'reservation_id' => $stay->reservation_id, 'guest_id' => $stay->guest_id, 'final_review_status' => FrontDeskDepartureCheckoutFinalReviewStatusEnum::CheckoutFinalReviewReady->value, 'idempotency_key' => 'review-' . Str::ulid(), 'source_hash' => hash('sha256', implode('|', [$stay->id, 'CHECKOUT_FINAL_REVIEW_READY', '', $occ->toISOString()])), 'occurred_at' => $occ, 'created_by' => $this->actor->id, 'created_at' => $occ]);
 
-        $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
-        $this->assertSame(0, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
-        $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_housekeeping_handoffs')->count());
-        $this->assertSame(FrontDeskStayStatusEnum::InHouse, FrontDeskStay::on('pgsql_concurrency')->find($stay->id)->status);
+            $idempotencyKey = 'p9-iso-key-E';
+            $issId = (string) Str::ulid(); $ident = (string) Str::ulid();
+            $sessId = session()->getId(); $sessFp = CheckoutSensitiveConfirmationService::fingerprintSession($sessId);
+            $confAt = Carbon::now()->subMinutes(20);
+            $expAt = Carbon::now()->subMinutes(5);
+            $fp = hash('sha256', implode('|', [CheckoutSensitiveConfirmationService::INTENT, $ident, $this->actor->id, $this->property->company_id, $this->property->id, $stay->id, $idempotencyKey, $sessFp, $confAt->toISOString(), $expAt->toISOString()]));
+            DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_issuances')->insert(['id' => $issId, 'confirmation_identity' => $ident, 'intent' => CheckoutSensitiveConfirmationService::INTENT, 'actor_id' => $this->actor->id, 'company_id' => $this->property->company_id, 'property_id' => $this->property->id, 'front_desk_stay_id' => $stay->id, 'checkout_idempotency_key' => $idempotencyKey, 'session_fingerprint' => $sessFp, 'confirmation_fingerprint' => $fp, 'confirmed_at' => $confAt, 'expires_at' => $expAt, 'created_at' => $confAt]);
+
+            $fixture = [
+                'front_desk_stay_id' => $stay->id, 'checkout_idempotency_key' => $idempotencyKey,
+                'issuance_id' => $issId, 'confirmation_identity' => $ident,
+                'confirmation_fingerprint' => $fp, 'session_fingerprint' => $sessFp,
+                'confirmed_at' => $confAt->toISOString(), 'expires_at' => $expAt->toISOString(),
+            ];
+            $this->actingAsConcurrencyActor($fixture);
+
+            try {
+                app(FrontDeskCheckoutExecutionService::class)->execute($this->actor, $stay->id, $idempotencyKey);
+                $this->fail('Expired confirmation must throw');
+            } catch (\DomainException $e) {
+                // Expected — confirmation expired
+            }
+            $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
+            $this->assertSame(0, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
+            $this->assertSame(FrontDeskStayStatusEnum::InHouse, FrontDeskStay::on('pgsql_concurrency')->find($stay->id)->status);
+        } finally {
+            DB::setDefaultConnection($prev);
+            config(['database.default' => $prev]);
+        }
     }
 
     // ═══ Scenario G: response-loss replay ═══
@@ -273,6 +298,7 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
     public function test_scenario_g_response_loss_replay_returns_existing_execution(): void
     {
         $f = $this->createCheckoutFixture('G01', 'p9-iso-key-G');
+        $this->actingAsConcurrencyActor($f);
         $r1 = app(FrontDeskCheckoutExecutionService::class)->execute($this->actor, $f['front_desk_stay_id'], $f['checkout_idempotency_key']);
         $this->assertFalse($r1->replayed);
         $execId = $r1->checkoutExecutionId; $execCount = DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count();
