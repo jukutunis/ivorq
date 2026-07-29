@@ -254,12 +254,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ], $lastTwelve);
 
         $this->assertEquals(729, $baseline->expected->tests ?? null);
-        $this->assertEquals(5332, $baseline->expected->assertions ?? null);
+        $this->assertEquals(5437, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'c857c6466b0f46f61608d7d8c3093094244ed09f',
+            '546041416a709194f23010b5395d8acfe4a9d9bb',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -281,12 +281,18 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2)', $baseline->description ?? '');
 
         $this->assertStringContainsString('CHECKED_OUT', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Package 9 final master completion', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 9 final runtime proof closure', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('FrontDeskCheckoutExecutionService', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('729 tests / 5332 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('2,184,448ms', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('729 tests / 5437 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('2,230,444ms', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Exit code: 0', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 9 focused batch passed 41 tests / 606 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('authorization-first zero requested-stay query proof', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('execution-route idempotency conflict proof', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Adjacent NA-A2 + GLF-E + registered GC-A2 authority measurement passed 150 tests / 1447 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero Package 9 disposable database residue', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('ControlledGoodsReceiptPostingTest.php:208', $baseline->provenance->note ?? '');
 
         // ── FD-C2 assertions ──────────────────────────────────────────────
         $this->assertStringContainsString('FD-C2', $baseline->description ?? '');
@@ -334,7 +340,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('c857c6466b0f46f61608d7d8c3093094244ed09f', $baseline->provenance->sha ?? null);
+        $this->assertEquals('546041416a709194f23010b5395d8acfe4a9d9bb', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-package-9-final-checkout-execution', $baseline->provenance->branch ?? null);
         $this->assertStringContainsString('GUEST_DEPOSIT_OVER_APPLICATION', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('BOUNDED_REJECT', $baseline->provenance->note ?? '');
@@ -792,7 +798,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertEquals([], $baseline->accepted_debt);
-        $this->assertEquals('c857c6466b0f46f61608d7d8c3093094244ed09f', $baseline->provenance->sha ?? null);
+        $this->assertEquals('546041416a709194f23010b5395d8acfe4a9d9bb', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-package-9-final-checkout-execution', $baseline->provenance->branch ?? null);
         $this->assertEquals('batch', $baseline->execution_mode ?? null, 'GLF-E must use batch execution mode.');
         $this->assertStringContainsString('Full active registry runner passed 14 baselines / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
@@ -820,7 +826,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('c857c6466b0f46f61608d7d8c3093094244ed09f', $baseline->provenance->sha ?? null);
+        $this->assertEquals('546041416a709194f23010b5395d8acfe4a9d9bb', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-package-9-final-checkout-execution', $baseline->provenance->branch ?? null);
 
         // Execution mode (already asserted on the field above)
