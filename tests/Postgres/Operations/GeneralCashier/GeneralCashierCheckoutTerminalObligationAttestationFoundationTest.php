@@ -960,10 +960,12 @@ class GeneralCashierCheckoutTerminalObligationAttestationFoundationTest extends 
 
             // Issue GC-A2 (outer)
             $gcOuter = $this->gcService->attest($ctx, $glf);
+            $this->assertSame('GENERAL_CASHIER_TERMINAL_OBLIGATION_CLEAR', $gcOuter->status->value);
 
             // Savepoint → issue inner GC-A2 → rollback
             DB::beginTransaction();
             $gcInner = $this->gcService->attest($ctx, $glf);
+            $this->assertSame('GENERAL_CASHIER_TERMINAL_OBLIGATION_CLEAR', $gcInner->status->value);
             DB::rollBack();
 
             // Inner invalid
@@ -971,11 +973,15 @@ class GeneralCashierCheckoutTerminalObligationAttestationFoundationTest extends 
                 $this->gcService->assertIssuedForCurrentTransaction($ctx, $glf, $gcInner);
                 $this->fail('Inner invalid after rollback');
             } catch (DomainException $e) {
-                // expected
+                $this->assertStringContainsString(
+                    GeneralCashierCheckoutTerminalObligationAttestationService::ERROR_INVALID_TERMINAL_OBLIGATION_ATTESTATION,
+                    $e->getMessage()
+                );
             }
 
             // Outer restored
             $this->gcService->assertIssuedForCurrentTransaction($ctx, $glf, $gcOuter);
+            $this->assertSame('GENERAL_CASHIER_TERMINAL_OBLIGATION_CLEAR', $gcOuter->status->value);
         } finally {
             DB::rollBack();
         }
@@ -994,6 +1000,7 @@ class GeneralCashierCheckoutTerminalObligationAttestationFoundationTest extends 
             $glf = $this->glfService->attest($ctx, $s->id);
 
             $gcOuter = $this->gcService->attest($ctx, $glf);
+            $this->assertSame('GENERAL_CASHIER_TERMINAL_OBLIGATION_CLEAR', $gcOuter->status->value);
 
             // Savepoint → issue → release
             DB::beginTransaction();
@@ -1002,13 +1009,17 @@ class GeneralCashierCheckoutTerminalObligationAttestationFoundationTest extends 
 
             // Inner valid
             $this->gcService->assertIssuedForCurrentTransaction($ctx, $glf, $gcInner);
+            $this->assertSame('GENERAL_CASHIER_TERMINAL_OBLIGATION_CLEAR', $gcInner->status->value);
 
             // Outer superseded
             try {
                 $this->gcService->assertIssuedForCurrentTransaction($ctx, $glf, $gcOuter);
                 $this->fail('Outer superseded after inner release');
             } catch (DomainException $e) {
-                // expected
+                $this->assertStringContainsString(
+                    GeneralCashierCheckoutTerminalObligationAttestationService::ERROR_INVALID_TERMINAL_OBLIGATION_ATTESTATION,
+                    $e->getMessage()
+                );
             }
         } finally {
             DB::rollBack();

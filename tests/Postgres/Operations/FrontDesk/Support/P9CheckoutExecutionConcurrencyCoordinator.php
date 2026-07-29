@@ -117,6 +117,61 @@ class P9CheckoutExecutionConcurrencyCoordinator
         return $out;
     }
 
+    /**
+     * Wait for a worker to exit and return structured stdout, stderr, and exit-code evidence.
+     *
+     * @return array{mode: string, exit_code: int, stdout: string, stderr: string, payload: array<string, mixed>}
+     */
+    public function waitForWorkerResult(int $idx, int $timeoutS = 30): array
+    {
+        if (!isset($this->workers[$idx])) {
+            throw new RuntimeException("P9 worker {$idx} is not registered.");
+        }
+
+        $worker = $this->workers[$idx];
+        $deadline = microtime(true) + $timeoutS;
+        $exitCode = -1;
+
+        while (microtime(true) < $deadline) {
+            $status = proc_get_status($worker['process']);
+            if (!($status['running'] ?? false)) {
+                $exitCode = (int) ($status['exitcode'] ?? -1);
+                break;
+            }
+            usleep(100_000);
+        }
+
+        if ($exitCode === -1) {
+            throw new RuntimeException("P9 worker {$idx} ({$worker['mode']}) did not exit within {$timeoutS}s.");
+        }
+
+        $stdout = is_resource($worker['pipes'][1] ?? null) ? (string) stream_get_contents($worker['pipes'][1]) : '';
+        $stderr = is_resource($worker['pipes'][2] ?? null) ? (string) stream_get_contents($worker['pipes'][2]) : '';
+
+        foreach ([0, 1, 2] as $pipe) {
+            if (is_resource($worker['pipes'][$pipe] ?? null)) {
+                @fclose($worker['pipes'][$pipe]);
+            }
+        }
+
+        @proc_close($worker['process']);
+        @unlink($worker['data_file']);
+        unset($this->workers[$idx]);
+
+        $payload = json_decode(trim($stdout), true);
+        if (!is_array($payload)) {
+            throw new RuntimeException("P9 worker {$idx} ({$worker['mode']}) did not return valid JSON stdout: {$stdout}; stderr: {$stderr}");
+        }
+
+        return [
+            'mode' => $worker['mode'],
+            'exit_code' => $exitCode,
+            'stdout' => $stdout,
+            'stderr' => $stderr,
+            'payload' => $payload,
+        ];
+    }
+
     /** Check if worker is still running. */
     public function isWorkerRunning(int $idx): bool
     {

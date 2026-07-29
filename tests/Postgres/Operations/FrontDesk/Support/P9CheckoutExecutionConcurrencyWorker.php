@@ -21,14 +21,10 @@ use Illuminate\Support\Facades\DB;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecutionService;
-use Modules\Operations\GeneralCashier\Enums\GeneralCashierCheckoutTerminalObligationAttestationStatusEnum;
-use Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutTerminalObligationAttestationService;
-use Modules\Operations\GeneralCashier\ValueObjects\GeneralCashierCheckoutTerminalObligationAttestation;
-use Modules\Operations\NightAudit\Services\NightAuditCheckoutConcurrencyGuardService;
-use Modules\Operations\NightAudit\ValueObjects\NightAuditCheckoutConcurrencyAttestation;
-use Modules\Operations\PMS\Enums\GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum;
-use Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService;
-use Modules\Operations\PMS\ValueObjects\GuestLedgerCheckoutTerminalFinancialAttestation;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessParticipationPort;
+use Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldParticipationPort;
+use Spatie\Permission\PermissionRegistrar;
 use Shared\Services\CurrentPropertyService;
 
 require __DIR__ . '/../../../../../vendor/autoload.php';
@@ -54,6 +50,28 @@ if (isset($fixture['database'])) {
     DB::purge('pgsql');
     DB::reconnect('pgsql');
 }
+
+app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+$clearResult = static fn (string $fingerprint, string $reservationId, string $propertyId): array => [
+    'status' => 'AVAILABLE_CLEAR',
+    'code' => null,
+    'source_fingerprint' => hash('sha256', $fingerprint . '|' . $propertyId . '|' . $reservationId),
+    'source_identifiers' => [],
+];
+
+app()->singleton(GuestLedgerPostingCompletenessParticipationPort::class, fn () => new class($clearResult) implements GuestLedgerPostingCompletenessParticipationPort {
+    public function __construct(private readonly \Closure $clearResult) {}
+    public function participate(string $reservationId, string $propertyId): array { return ($this->clearResult)('p9-posting-completeness', $reservationId, $propertyId); }
+});
+app()->singleton(GuestLedgerSettlementHoldParticipationPort::class, fn () => new class($clearResult) implements GuestLedgerSettlementHoldParticipationPort {
+    public function __construct(private readonly \Closure $clearResult) {}
+    public function participate(string $reservationId, string $propertyId): array { return ($this->clearResult)('p9-settlement-hold', $reservationId, $propertyId); }
+});
+app()->singleton(GuestLedgerCompletedSettlementConflictParticipationPort::class, fn () => new class($clearResult) implements GuestLedgerCompletedSettlementConflictParticipationPort {
+    public function __construct(private readonly \Closure $clearResult) {}
+    public function participate(string $reservationId, string $propertyId): array { return ($this->clearResult)('p9-completed-settlement', $reservationId, $propertyId); }
+});
 
 // ── Actor & session ─────────────────────────────────────────────────
 $actor = User::findOrFail($fixture['actor_id']);
@@ -83,73 +101,7 @@ session([
     ],
 ]);
 
-// ── Mock attestations ───────────────────────────────────────────────
-$nightAuditActive = $fixture['night_audit_active'] ?? false;
-
-app()->bind(NightAuditCheckoutConcurrencyGuardService::class, function () use ($fixture, $nightAuditActive) {
-    $mock = Mockery::mock(NightAuditCheckoutConcurrencyGuardService::class);
-    $status = $nightAuditActive
-        ? NightAuditCheckoutConcurrencyAttestation::STATUS_ACTIVE
-        : NightAuditCheckoutConcurrencyAttestation::STATUS_CLEAR;
-
-    $closeLock = $nightAuditActive;
-
-    $mock->shouldReceive('attest')->andReturn(new NightAuditCheckoutConcurrencyAttestation(
-        NightAuditCheckoutConcurrencyAttestation::VERSION,
-        $status,
-        NightAuditCheckoutConcurrencyAttestation::OWNER,
-        !$closeLock,
-        $closeLock,
-        $fixture['property_id'],
-        'date-id',
-        '2099-01-01',
-        'UTC',
-        hash('sha256', 'na-' . ($nightAuditActive ? 'active' : 'clear')),
-        now()->toISOString(),
-        []
-    ));
-    return $mock;
-});
-
-app()->bind(GuestLedgerCheckoutTerminalFinancialAttestationService::class, function () use ($fixture) {
-    $mock = Mockery::mock(GuestLedgerCheckoutTerminalFinancialAttestationService::class);
-    $mock->shouldReceive('attest')->andReturn(GuestLedgerCheckoutTerminalFinancialAttestation::create(
-        GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum::PmsTerminalFinancialReady,
-        $fixture['property_id'],
-        'date-id',
-        '2099-01-01',
-        $fixture['front_desk_stay_id'],
-        'reservation-id',
-        0, '0.00', 'USD',
-        [], [], [], [], [],
-        hash('sha256', 'fin'),
-        now()->toISOString(),
-        []
-    ));
-    $mock->shouldReceive('assertIssuedForCurrentTransaction');
-    return $mock;
-});
-
-app()->bind(GeneralCashierCheckoutTerminalObligationAttestationService::class, function () use ($fixture) {
-    $mock = Mockery::mock(GeneralCashierCheckoutTerminalObligationAttestationService::class);
-    $mock->shouldReceive('attest')->andReturn(GeneralCashierCheckoutTerminalObligationAttestation::create(
-        GeneralCashierCheckoutTerminalObligationAttestationStatusEnum::GeneralCashierTerminalObligationClear,
-        $fixture['property_id'],
-        'date-id',
-        '2099-01-01',
-        $fixture['front_desk_stay_id'],
-        'reservation-id',
-        GuestLedgerCheckoutTerminalFinancialAttestationStatusEnum::PmsTerminalFinancialReady->value,
-        hash('sha256', 'fin'),
-        [], 0, [], [], [],
-        hash('sha256', 'cash'),
-        now()->toISOString(),
-        []
-    ));
-    $mock->shouldReceive('assertIssuedForCurrentTransaction');
-    return $mock;
-});
-
+// Real owner-domain attestations are resolved from the Laravel container.
 // ── Marker helpers (atomic write via tmp+rename) ──────────────────
 $markerDir = $fixture['marker_dir'];
 
@@ -195,6 +147,8 @@ try {
             'result'                => 'committed',
             'php_pid'              => getmypid(),
             'backend_pid'          => $backendPid,
+            'property_id'           => $fixture['property_id'],
+            'front_desk_stay_id'    => $fixture['front_desk_stay_id'],
             'checkout_execution_id' => $result->checkoutExecutionId,
             'replayed'             => $result->replayed,
         ], JSON_THROW_ON_ERROR);
@@ -215,9 +169,11 @@ try {
         $waitForMarker('release_a', 60000);
         DB::rollBack();
         echo json_encode([
-            'result'       => 'rolled_back',
-            'php_pid'     => getmypid(),
-            'backend_pid' => $backendPid,
+            'result'             => 'rolled_back',
+            'php_pid'            => getmypid(),
+            'backend_pid'        => $backendPid,
+            'property_id'         => $fixture['property_id'],
+            'front_desk_stay_id'  => $fixture['front_desk_stay_id'],
         ], JSON_THROW_ON_ERROR);
         exit(0);
     }
@@ -234,6 +190,8 @@ try {
             'result'                => 'executed',
             'php_pid'              => getmypid(),
             'backend_pid'          => $backendPid,
+            'property_id'           => $fixture['property_id'],
+            'front_desk_stay_id'    => $fixture['front_desk_stay_id'],
             'checkout_execution_id' => $result->checkoutExecutionId,
             'replayed'             => $result->replayed,
         ], JSON_THROW_ON_ERROR);
@@ -252,6 +210,8 @@ try {
             'result'                => 'executed',
             'php_pid'              => getmypid(),
             'backend_pid'          => $backendPid,
+            'property_id'           => $fixture['property_id'],
+            'front_desk_stay_id'    => $fixture['front_desk_stay_id'],
             'checkout_execution_id' => $result->checkoutExecutionId,
             'replayed'             => $result->replayed,
         ], JSON_THROW_ON_ERROR);
@@ -267,6 +227,8 @@ try {
         'class'        => $exception::class,
         'php_pid'     => getmypid(),
         'backend_pid' => $backendPid ?? null,
+        'property_id' => $fixture['property_id'],
+        'front_desk_stay_id' => $fixture['front_desk_stay_id'],
     ], JSON_THROW_ON_ERROR);
     exit(0);
 
@@ -278,6 +240,8 @@ try {
         'message'      => $exception->getMessage(),
         'php_pid'     => getmypid(),
         'backend_pid' => $backendPid ?? null,
+        'property_id' => $fixture['property_id'] ?? null,
+        'front_desk_stay_id' => $fixture['front_desk_stay_id'] ?? null,
     ], JSON_THROW_ON_ERROR);
     exit(1);
 }
