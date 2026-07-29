@@ -815,7 +815,7 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
 
     public function test_scenario_e_valid_at_start_then_expires_while_blocked_fails_closed(): void
     {
-        $f = $this->createCheckoutFixture('E02', 'p9-iso-key-E2', ttlSeconds: 2);
+        $f = $this->createCheckoutFixture('E02', 'p9-iso-key-E2', ttlSeconds: 30);
         $c = new P9CheckoutExecutionConcurrencyCoordinator();
         try {
             $c->spawnWorker('lock_hold_rollback', $f);
@@ -823,13 +823,15 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             $pidA = (int) ($locked['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidA);
 
-            $c->spawnWorker('execute_blocked', $f);
+            $c->spawnWorker('execute_blocked_after_release', $f);
             $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidB = (int) ($ready['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidB);
+            $this->waitUntilConcurrencyDbClockPasses(Carbon::parse($f['expires_at'])->subSeconds(2)->toISOString(), 45);
+            $c->releaseWorker($this->markerDir . DIRECTORY_SEPARATOR . 'release_b');
             $this->assertTrue($c->proveBlocking($pidB, $pidA, self::BLOCKING_PROOF_TIMEOUT_SECONDS), 'Worker B must begin with a valid confirmation and then block behind Worker A.');
 
-            sleep(3);
+            $this->waitUntilConcurrencyDbClockPasses($f['expires_at'], 10);
             $c->releaseWorker($this->markerDir . DIRECTORY_SEPARATOR . 'release_a');
 
             $holder = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, self::WORKER_RESULT_TIMEOUT_SECONDS), 'rolled_back');
@@ -844,6 +846,29 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             $c->terminateAllWorkers();
             $this->cleanUpConcurrencyDbOnce();
         }
+    }
+
+    private function waitUntilConcurrencyDbClockPasses(string $expiresAt, int $timeoutSeconds): void
+    {
+        $expires = Carbon::parse($expiresAt)->utc();
+        $deadline = microtime(true) + $timeoutSeconds;
+
+        do {
+            $dbNow = Carbon::parse(
+                DB::connection('pgsql_concurrency')
+                    ->selectOne("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS wall_clock_utc")
+                    ->wall_clock_utc
+            )->utc();
+
+            if ($dbNow->greaterThan($expires)) {
+                $this->assertTrue(true);
+                return;
+            }
+
+            usleep(100_000);
+        } while (microtime(true) < $deadline);
+
+        $this->fail('PostgreSQL clock did not pass checkout confirmation expiry before release.');
     }
 
     public function test_scenario_f_lock_holder_rolls_back_then_blocked_checkout_commits_once(): void

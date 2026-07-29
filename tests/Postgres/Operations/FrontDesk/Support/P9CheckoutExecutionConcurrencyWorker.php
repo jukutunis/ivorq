@@ -206,11 +206,14 @@ try {
     }
 
     // ── execute_blocked (signals ready, then blocks behind lock_hold) ─
-    if ($scenario === 'execute_blocked') {
+    if ($scenario === 'execute_blocked' || $scenario === 'execute_blocked_after_release') {
         $writeMarker('b_ready', [
             'php_pid'     => getmypid(),
             'backend_pid' => $backendPid,
         ]);
+        if ($scenario === 'execute_blocked_after_release') {
+            $waitForMarker('release_b');
+        }
         $result = app(FrontDeskCheckoutExecutionService::class)
             ->execute($actor, $fixture['front_desk_stay_id'], $fixture['checkout_idempotency_key']);
         echo json_encode([
