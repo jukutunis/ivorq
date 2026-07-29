@@ -395,6 +395,14 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $this->assertNotEmpty((string) $row->general_cashier_attestation_fingerprint);
     }
 
+    private function assertExactRuntimeCounts(int $expected): void
+    {
+        $this->assertSame($expected, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
+        $this->assertSame($expected, DB::connection('pgsql_concurrency')->table('front_desk_checkout_housekeeping_handoffs')->count());
+        $this->assertSame($expected, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
+        $this->assertSame($expected, DB::connection('pgsql_concurrency')->table('audit_logs')->where('event', 'front_desk_checkout_completed')->count());
+    }
+
     // ═══ Scenario A: same stay, same key ═══
 
     /**
@@ -425,7 +433,7 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             $$ LANGUAGE plpgsql;
 
             CREATE TRIGGER {$trigger}
-                BEFORE INSERT ON front_desk_checkout_executions
+                AFTER INSERT ON front_desk_checkout_executions
                 FOR EACH ROW
                 EXECUTE FUNCTION {$function}();
         ");
@@ -517,7 +525,7 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
     {
         $deadline = time() + $timeoutSeconds;
         while (time() < $deadline) {
-            $row = DB::selectOne(
+            $row = DB::connection('pgsql_concurrency')->selectOne(
                 'SELECT wait_event_type, wait_event, state
                    FROM pg_stat_activity
                   WHERE pid = ?',
@@ -558,12 +566,10 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             $this->assertFalse($winner['replayed'] ?? true, json_encode($winner, JSON_UNESCAPED_SLASHES));
             $this->assertTrue($loser['replayed'] ?? false, json_encode($loser, JSON_UNESCAPED_SLASHES));
             $this->assertSame($winner['checkout_execution_id'] ?? null, $loser['checkout_execution_id'] ?? null);
+            $this->assertSame($winner['handoff_id'] ?? null, $loser['handoff_id'] ?? null);
 
-            $this->assertSame(1, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
+            $this->assertExactRuntimeCounts(1);
             $this->assertSame(FrontDeskStayStatusEnum::CheckedOut, FrontDeskStay::on('pgsql_concurrency')->find($f['front_desk_stay_id'])->status);
-            $this->assertSame(1, DB::connection('pgsql_concurrency')->table('front_desk_checkout_housekeeping_handoffs')->count());
-            $this->assertSame(1, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
-            $this->assertSame(1, DB::connection('pgsql_concurrency')->table('audit_logs')->where('event', 'front_desk_checkout_completed')->count());
         } finally {
             $c->terminateAllWorkers();
             $this->cleanUpConcurrencyDbOnce();
@@ -579,19 +585,25 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $c = new P9CheckoutExecutionConcurrencyCoordinator();
         try {
             $c->spawnWorker('lock_hold', $fA);
-            $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', 15);
+            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', 15);
+            $pidA = (int) ($locked['backend_pid'] ?? 0);
+            $this->assertGreaterThan(0, $pidA);
             $c->spawnWorker('execute_blocked', $fB);
-            $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', 15);
+            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', 15);
+            $pidB = (int) ($ready['backend_pid'] ?? 0);
+            $this->assertGreaterThan(0, $pidB);
+            $this->assertNotSame($pidA, $pidB);
+            $this->assertTrue($c->proveBlocking($pidB, $pidA, 15), 'Same-stay different-key worker must wait on the winning checkout worker.');
             $c->releaseWorker($this->markerDir . DIRECTORY_SEPARATOR . 'release_a');
             $winner = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 25), 'committed');
             $loser = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, 25), 'domain_error', FrontDeskCheckoutExecutionService::ERROR_ALREADY_COMPLETED);
+            $this->assertNotSame($winner['php_pid'] ?? null, $loser['php_pid'] ?? null);
+            $this->assertNotSame($winner['backend_pid'] ?? null, $loser['backend_pid'] ?? null);
             $this->assertFalse($winner['replayed'] ?? true, json_encode($winner, JSON_UNESCAPED_SLASHES));
             $this->assertSame($fA['front_desk_stay_id'], $winner['front_desk_stay_id'] ?? null);
             $this->assertSame($fB['front_desk_stay_id'], $loser['front_desk_stay_id'] ?? null);
-            $this->assertSame(1, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
+            $this->assertExactRuntimeCounts(1);
             $this->assertSame(FrontDeskStayStatusEnum::CheckedOut, FrontDeskStay::on('pgsql_concurrency')->find($fA['front_desk_stay_id'])->status);
-            $this->assertSame(1, DB::connection('pgsql_concurrency')->table('front_desk_checkout_housekeeping_handoffs')->count());
-            $this->assertSame(1, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
         } finally {
             $c->terminateAllWorkers();
             $this->cleanUpConcurrencyDbOnce();
@@ -606,12 +618,20 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $fB = $this->createCheckoutFixture('C02', 'p9-iso-key-C');
         $this->assertNotSame($fA['front_desk_stay_id'], $fB['front_desk_stay_id']);
         $c = new P9CheckoutExecutionConcurrencyCoordinator();
+        $sleep = $this->installCheckoutInsertSleepTrigger(3);
         try {
             $c->spawnWorker('lock_hold', $fA);
-            $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', 15);
-            $c->spawnWorker('execute_blocked', $fB);
-            $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', 15);
+            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', 15);
+            $pidA = (int) ($locked['backend_pid'] ?? 0);
+            $this->assertGreaterThan(0, $pidA);
             $c->releaseWorker($this->markerDir . DIRECTORY_SEPARATOR . 'release_a');
+            $this->waitForBackendPgSleep($pidA, 15);
+            $c->spawnWorker('execute_blocked', $fB);
+            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', 15);
+            $pidB = (int) ($ready['backend_pid'] ?? 0);
+            $this->assertGreaterThan(0, $pidB);
+            $this->assertNotSame($pidA, $pidB);
+            $this->assertTrue($c->proveBlocking($pidB, $pidA, 15), 'Same-key different-stay worker must contend on the property-scoped idempotency path.');
             $workerAResult = $c->waitForWorkerResult(0, 25);
             $workerBResult = $c->waitForWorkerResult(1, 25);
             $workerA = $this->assertCleanWorkerResult($workerAResult, $workerAResult['payload']['result'] ?? '');
@@ -625,16 +645,19 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             $loser = ($workerA['result'] ?? null) === 'domain_error' ? $workerA : $workerB;
             $winner = ($workerA['result'] ?? null) === 'domain_error' ? $workerB : $workerA;
             $this->assertSame(FrontDeskCheckoutExecutionService::ERROR_IDEMPOTENCY_CONFLICT, $loser['message'] ?? null);
+            $this->assertStringNotContainsString((string) ($winner['front_desk_stay_id'] ?? ''), json_encode($loser, JSON_UNESCAPED_SLASHES));
             $this->assertFalse($winner['replayed'] ?? true, json_encode($winner, JSON_UNESCAPED_SLASHES));
             $this->assertContains($winner['front_desk_stay_id'] ?? null, [$fA['front_desk_stay_id'], $fB['front_desk_stay_id']]);
             $this->assertContains($loser['front_desk_stay_id'] ?? null, [$fA['front_desk_stay_id'], $fB['front_desk_stay_id']]);
             $this->assertNotSame($winner['front_desk_stay_id'] ?? null, $loser['front_desk_stay_id'] ?? null);
-            $this->assertSame(1, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
+            $this->assertExactRuntimeCounts(1);
             $checkedOut = FrontDeskStay::on('pgsql_concurrency')->where('status', FrontDeskStayStatusEnum::CheckedOut->value)->count();
-            $this->assertLessThanOrEqual(1, $checkedOut);
-            $this->assertSame(1, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
+            $inHouse = FrontDeskStay::on('pgsql_concurrency')->where('status', FrontDeskStayStatusEnum::InHouse->value)->count();
+            $this->assertSame(1, $checkedOut);
+            $this->assertSame(1, $inHouse);
         } finally {
             $c->terminateAllWorkers();
+            $this->dropCheckoutInsertSleepTrigger($sleep);
             $this->cleanUpConcurrencyDbOnce();
         }
     }
@@ -687,21 +710,35 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
     public function test_scenario_d2_real_active_night_audit_run_blocks_checkout(): void
     {
         $f = $this->createCheckoutFixture('D02', 'p9-iso-key-D2');
-        $this->actingAsConcurrencyActor($f);
-
-        $this->withConcurrencyConnection(function (): void {
-            $run = app(NightAuditRunStartService::class)->start($this->actor);
-            $this->assertSame(NightAuditRunStatusEnum::InProgress, $run->status);
-        });
+        $c = new P9CheckoutExecutionConcurrencyCoordinator();
+        $na = $this->spawnNightAuditWorker('start', 'na-d2');
 
         try {
-            $this->withConcurrencyConnection(fn () => app(FrontDeskCheckoutExecutionService::class)->execute($this->actor, $f['front_desk_stay_id'], $f['checkout_idempotency_key']));
-            $this->fail('Active Night Audit close lock must block checkout.');
-        } catch (\DomainException $exception) {
-            $this->assertSame(FrontDeskCheckoutExecutionService::ERROR_NIGHT_AUDIT_ACTIVE, $exception->getMessage());
+            $this->waitForNightAuditBarrier($na['barrier'], 'start-ready-na-d2', $na['run_id']);
+            $naReady = json_decode((string) file_get_contents($na['barrier'] . '-start-ready-na-d2.json'), true) ?: [];
+            $naBackendPid = (int) ($naReady['pg_backend_pid'] ?? 0);
+            $this->assertGreaterThan(0, $naBackendPid);
+            $this->assertSame(0, $this->waitProcess($na['proc'], 15));
+            $naResult = $this->readNightAuditResult($na['result']);
+            $this->assertSame(NightAuditRunStatusEnum::InProgress->value, $naResult['status'] ?? null, json_encode($naResult, JSON_UNESCAPED_SLASHES));
+            $this->assertSame(1, $naResult['active_count'] ?? null);
+
+            $c->spawnWorker('execute', $f);
+            $checkoutReady = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute.json', 15);
+            $checkoutBackendPid = (int) ($checkoutReady['backend_pid'] ?? 0);
+            $this->assertGreaterThan(0, $checkoutBackendPid);
+            $this->assertNotSame($naBackendPid, $checkoutBackendPid);
+
+            $checkout = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 25), 'domain_error', FrontDeskCheckoutExecutionService::ERROR_NIGHT_AUDIT_ACTIVE);
+            $this->assertNotSame($naReady['php_pid'] ?? null, $checkout['php_pid'] ?? null);
+        } finally {
+            $c->terminateAllWorkers();
         }
 
         $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
+        $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_housekeeping_handoffs')->count());
+        $this->assertSame(0, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
+        $this->assertSame(0, DB::connection('pgsql_concurrency')->table('audit_logs')->where('event', 'front_desk_checkout_completed')->count());
         $this->assertSame(FrontDeskStayStatusEnum::InHouse, FrontDeskStay::on('pgsql_concurrency')->find($f['front_desk_stay_id'])->status);
     }
 
@@ -873,21 +910,35 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         });
         $f1 = $this->createCheckoutFixture('H01', 'p9-iso-key-H1');
         $f2 = $this->createCheckoutFixture('H02', 'p9-iso-key-H2', property: $propertyB);
+        $f1['ready_marker'] = 'h1';
+        $f2['ready_marker'] = 'h2';
         $c = new P9CheckoutExecutionConcurrencyCoordinator();
+        $sleep = $this->installCheckoutInsertSleepTrigger(3);
         try {
             $c->spawnWorker('execute', $f1);
             $c->spawnWorker('execute', $f2);
+            $ready1 = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute_h1.json', 15);
+            $ready2 = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute_h2.json', 15);
+            $pid1 = (int) ($ready1['backend_pid'] ?? 0);
+            $pid2 = (int) ($ready2['backend_pid'] ?? 0);
+            $this->assertGreaterThan(0, $pid1);
+            $this->assertGreaterThan(0, $pid2);
+            $this->assertNotSame($pid1, $pid2);
+            $this->waitForBackendPgSleep($pid1, 15);
+            $this->waitForBackendPgSleep($pid2, 15);
+            $this->assertTrue($c->proveNoBlockingBetween($pid1, $pid2), 'Different-property checkout workers must not block each other.');
             $r1 = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 25), 'executed');
             $r2 = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, 25), 'executed');
             $this->assertGreaterThan(0, $r1['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $r2['backend_pid'] ?? 0);
             $this->assertNotSame($r1['backend_pid'] ?? 0, $r2['backend_pid'] ?? 0, 'Distinct backend PIDs required');
+            $this->assertNotSame($r1['php_pid'] ?? 0, $r2['php_pid'] ?? 0, 'Distinct PHP PIDs required');
             $this->assertSame($f1['property_id'], $r1['property_id'] ?? null);
             $this->assertSame($f2['property_id'], $r2['property_id'] ?? null);
             $this->assertNotSame($r1['property_id'] ?? null, $r2['property_id'] ?? null, 'Different-property executions must keep distinct property evidence.');
             $this->assertFalse($r1['replayed'] ?? true, json_encode($r1, JSON_UNESCAPED_SLASHES));
             $this->assertFalse($r2['replayed'] ?? true, json_encode($r2, JSON_UNESCAPED_SLASHES));
-            $this->assertSame(2, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
+            $this->assertExactRuntimeCounts(2);
             $this->assertSame(
                 FrontDeskStayStatusEnum::CheckedOut,
                 FrontDeskStay::on('pgsql_concurrency')->withoutGlobalScopes()->whereKey($f1['front_desk_stay_id'])->value('status')
@@ -898,6 +949,7 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             );
         } finally {
             $c->terminateAllWorkers();
+            $this->dropCheckoutInsertSleepTrigger($sleep);
             $this->cleanUpConcurrencyDbOnce();
         }
     }

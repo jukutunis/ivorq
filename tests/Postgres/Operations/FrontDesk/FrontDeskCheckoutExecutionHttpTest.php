@@ -3,11 +3,14 @@
 namespace Tests\Postgres\Operations\FrontDesk;
 
 use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationConsumption;
+use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationIssuance;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
+use Modules\Operations\FrontDesk\Enums\FrontDeskCheckoutHousekeepingHandoffStatusEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskDepartureCheckoutFinalReviewStatusEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskCheckoutExecution;
@@ -118,6 +121,71 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
         ])->save();
     }
 
+    private function checkoutMutationCounts(): array
+    {
+        return [
+            'consumptions' => DB::table('checkout_sensitive_confirmation_consumptions')->count(),
+            'executions' => FrontDeskCheckoutExecution::count(),
+            'handoffs' => FrontDeskCheckoutHousekeepingHandoff::count(),
+            'checked_out_stays' => DB::table('front_desk_stays')
+                ->where('status', FrontDeskStayStatusEnum::CheckedOut->value)
+                ->count(),
+            'completion_audits' => DB::table('audit_logs')
+                ->where('event', 'front_desk_checkout_completed')
+                ->count(),
+        ];
+    }
+
+    private function assertCheckoutMutationCounts(
+        int $consumptions,
+        int $executions,
+        int $handoffs,
+        int $checkedOutStays,
+        int $completionAudits
+    ): void {
+        $this->assertSame([
+            'consumptions' => $consumptions,
+            'executions' => $executions,
+            'handoffs' => $handoffs,
+            'checked_out_stays' => $checkedOutStays,
+            'completion_audits' => $completionAudits,
+        ], $this->checkoutMutationCounts());
+    }
+
+    private function foreignDomainSnapshot($stay): array
+    {
+        return [
+            'folio' => DB::table('folios')
+                ->where('property_id', $stay->property_id)
+                ->where('reservation_id', $stay->reservation_id)
+                ->first(),
+            'night_audit_runs' => DB::table('night_audit_runs')->count(),
+            'cashier_sessions' => DB::table('cashier_sessions')->count(),
+            'guest_payment_transactions' => DB::table('guest_payment_transactions')->count(),
+            'guest_deposit_transactions' => DB::table('guest_deposit_transactions')->count(),
+            'guest_refund_transactions' => DB::table('guest_refund_transactions')->count(),
+        ];
+    }
+
+    private function assertNoForeignDomainLifecycleMutation(array $before, $stay): void
+    {
+        $folio = DB::table('folios')
+            ->where('property_id', $stay->property_id)
+            ->where('reservation_id', $stay->reservation_id)
+            ->first();
+
+        $this->assertNotNull($before['folio']);
+        $this->assertNotNull($folio);
+        $this->assertSame($before['folio']->id, $folio->id);
+        $this->assertSame($before['folio']->status, $folio->status);
+        $this->assertSame((string) $before['folio']->balance, (string) $folio->balance);
+        $this->assertSame($before['night_audit_runs'], DB::table('night_audit_runs')->count());
+        $this->assertSame($before['cashier_sessions'], DB::table('cashier_sessions')->count());
+        $this->assertSame($before['guest_payment_transactions'], DB::table('guest_payment_transactions')->count());
+        $this->assertSame($before['guest_deposit_transactions'], DB::table('guest_deposit_transactions')->count());
+        $this->assertSame($before['guest_refund_transactions'], DB::table('guest_refund_transactions')->count());
+    }
+
     private function bindClearPmsParticipationPorts(): void
     {
         $clearResult = static fn (string $fingerprint, string $reservationId, string $propertyId): array => [
@@ -151,6 +219,81 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
         $this->browserSessionId ??= session()->getId();
         $this->withCookie((string) config('session.cookie'), $this->browserSessionId)
             ->withCredentials();
+    }
+
+    private function installCheckoutConfirmationSession($stay, string $idempotencyKey, ?Carbon $confirmedAt = null, ?Carbon $expiresAt = null): CheckoutSensitiveConfirmationIssuance
+    {
+        $this->usePropertySession($this->property);
+
+        $confirmedAt ??= Carbon::parse(DB::selectOne("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS wall_clock_utc")->wall_clock_utc);
+        $expiresAt ??= $confirmedAt->copy()->addMinutes(15);
+        $identity = (string) Str::ulid();
+        $sessionFingerprint = CheckoutSensitiveConfirmationService::fingerprintSession(session()->getId());
+        $confirmationFingerprint = hash('sha256', implode('|', [
+            CheckoutSensitiveConfirmationService::INTENT,
+            $identity,
+            $this->frontDeskActor->id,
+            $this->property->company_id,
+            $this->property->id,
+            $stay->id,
+            $idempotencyKey,
+            $sessionFingerprint,
+            $confirmedAt->toISOString(),
+            $expiresAt->toISOString(),
+        ]));
+
+        $issuance = new CheckoutSensitiveConfirmationIssuance();
+        $issuance->forceFill([
+            'confirmation_identity' => $identity,
+            'intent' => CheckoutSensitiveConfirmationService::INTENT,
+            'actor_id' => $this->frontDeskActor->id,
+            'company_id' => $this->property->company_id,
+            'property_id' => $this->property->id,
+            'front_desk_stay_id' => $stay->id,
+            'checkout_idempotency_key' => $idempotencyKey,
+            'session_fingerprint' => $sessionFingerprint,
+            'confirmation_fingerprint' => $confirmationFingerprint,
+            'confirmed_at' => $confirmedAt,
+            'expires_at' => $expiresAt,
+            'created_at' => $confirmedAt,
+        ])->save();
+
+        session([
+            CheckoutSensitiveConfirmationService::SESSION_KEY => [
+                CheckoutSensitiveConfirmationService::INTENT => [
+                    'actor_id' => $this->frontDeskActor->id,
+                    'intent' => CheckoutSensitiveConfirmationService::INTENT,
+                    'company_id' => $this->property->company_id,
+                    'property_id' => $this->property->id,
+                    'front_desk_stay_id' => $stay->id,
+                    'checkout_idempotency_key' => $idempotencyKey,
+                    'issuance_id' => $issuance->id,
+                    'confirmation_identity' => $identity,
+                    'confirmation_fingerprint' => $confirmationFingerprint,
+                    'session_fingerprint' => $sessionFingerprint,
+                    'confirmed_at' => $confirmedAt->toISOString(),
+                    'expires_at' => $expiresAt->toISOString(),
+                ],
+            ],
+        ]);
+
+        return $issuance->fresh();
+    }
+
+    private function waitUntilDatabaseTimeAfter(Carbon $expiresAt): void
+    {
+        $deadline = microtime(true) + 5;
+
+        while (microtime(true) < $deadline) {
+            $dbNow = Carbon::parse(DB::selectOne("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS wall_clock_utc")->wall_clock_utc);
+            if ($dbNow->greaterThan($expiresAt)) {
+                return;
+            }
+
+            usleep(100000);
+        }
+
+        $this->fail('Database clock did not pass checkout confirmation expiry.');
     }
 
     /**
@@ -305,14 +448,20 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
     {
         [$stay] = $this->checkedInStay('C102');
         $this->createReadyFinalReview($stay);
+        $foreignBefore = $this->foreignDomainSnapshot($stay);
 
         $receipt = $this->confirmThenExecuteJson($stay, 'p9-http-success');
+        $execution = FrontDeskCheckoutExecution::firstOrFail();
+        $handoff = FrontDeskCheckoutHousekeepingHandoff::firstOrFail();
+        $consumption = CheckoutSensitiveConfirmationConsumption::firstOrFail();
 
-        $this->assertSame(1, FrontDeskCheckoutExecution::count());
-        $this->assertSame(1, FrontDeskCheckoutHousekeepingHandoff::count());
-        $this->assertSame($receipt['checkout_execution_id'], FrontDeskCheckoutExecution::value('id'));
+        $this->assertCheckoutMutationCounts(1, 1, 1, 1, 1);
+        $this->assertSame($receipt['checkout_execution_id'], $execution->id);
+        $this->assertSame($receipt['handoff_id'], $handoff->id);
+        $this->assertSame(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Pending->value, $handoff->delivery_status->value);
+        $this->assertSame($execution->checkout_confirmation_consumption_id, $consumption->id);
         $this->assertSame(FrontDeskStayStatusEnum::CheckedOut, $stay->fresh()->status);
-        $this->assertSame(1, DB::table('checkout_sensitive_confirmation_consumptions')->count());
+        $this->assertNoForeignDomainLifecycleMutation($foreignBefore, $stay);
     }
 
     // ═══ 4. JSON committed receipt (route output structure) ═══
@@ -330,7 +479,13 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
         $this->assertSame($execution->id, $receipt['checkout_execution_id']);
         $this->assertSame($execution->property_id, $receipt['property_id']);
         $this->assertSame($execution->business_date->format('Y-m-d'), $receipt['business_date']);
+        $this->assertSame($execution->terminal_stay_status->value, $receipt['terminal_status']);
+        $this->assertSame($execution->night_audit_source_status, $receipt['night_audit_status']);
+        $this->assertSame($execution->pms_financial_attestation_status, $receipt['pms_terminal_financial_status']);
+        $this->assertSame($execution->general_cashier_attestation_status, $receipt['general_cashier_terminal_obligation_status']);
         $this->assertSame($handoff->id, $receipt['handoff_id']);
+        $this->assertSame(FrontDeskCheckoutHousekeepingHandoffStatusEnum::Pending->value, $receipt['handoff_delivery_status']);
+        $this->assertSame(1, DB::table('audit_logs')->where('event', 'front_desk_checkout_completed')->count());
         $this->assertNotEmpty($receipt['occurred_at']);
     }
 
@@ -355,12 +510,18 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
                 'idempotency_key' => 'p9-http-html',
             ], ['Accept' => 'text/html'])
             ->assertStatus(302)
-            ->assertSessionHas('checkoutExecutionReceipt');
+            ->assertSessionHas('checkoutExecutionReceipt')
+            ->assertSessionDoesntHaveErrors(['checkout_execution']);
 
         $receipt = session('checkoutExecutionReceipt');
+        $execution = FrontDeskCheckoutExecution::firstOrFail();
+        $handoff = FrontDeskCheckoutHousekeepingHandoff::firstOrFail();
         $this->assertIsArray($receipt);
+        $this->assertSame($execution->id, $receipt['checkout_execution_id'] ?? null);
+        $this->assertSame($handoff->id, $receipt['handoff_id'] ?? null);
         $this->assertSame($stay->id, $receipt['front_desk_stay_id'] ?? null);
-        $this->assertSame(1, FrontDeskCheckoutExecution::count());
+        $this->assertSame(FrontDeskStayStatusEnum::CheckedOut->value, $receipt['terminal_status'] ?? null);
+        $this->assertCheckoutMutationCounts(1, 1, 1, 1, 1);
     }
 
     // ═══ 6. Same-key replay (route-level idempotency) ═══
@@ -385,9 +546,8 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
             ]);
 
         $this->assertSame($first['checkout_execution_id'], $second->json('checkout_execution_id'));
-        $this->assertSame(1, FrontDeskCheckoutExecution::count());
-        $this->assertSame(1, FrontDeskCheckoutHousekeepingHandoff::count());
-        $this->assertSame(1, DB::table('checkout_sensitive_confirmation_consumptions')->count());
+        $this->assertSame($first['handoff_id'], $second->json('handoff_id'));
+        $this->assertCheckoutMutationCounts(1, 1, 1, 1, 1);
     }
 
     // ═══ 7. Missing execute permission returns 403 ═══
@@ -395,10 +555,19 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
     public function test_missing_permission_returns_403_before_stay_query(): void
     {
         [$stay] = $this->checkedInStay('C106');
+        $requestedStayQueries = 0;
 
         $this->frontDeskActor->revokePermissionTo(
             \Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION
         );
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        DB::listen(function (QueryExecuted $query) use ($stay, &$requestedStayQueries): void {
+            if (str_contains(strtolower($query->sql), 'front_desk_stays')
+                && in_array($stay->id, array_map(static fn ($binding) => (string) $binding, $query->bindings), true)) {
+                $requestedStayQueries++;
+            }
+        });
 
         $this->withSession($this->propertySession($this->property))
             ->postJson("/frontdesk/stays/{$stay->id}/checkout-execution", [
@@ -406,31 +575,53 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
             ])
             ->assertStatus(403);
 
-        $this->assertSame(0, FrontDeskCheckoutExecution::count());
+        $this->assertSame(0, $requestedStayQueries);
+        $this->assertCheckoutMutationCounts(0, 0, 0, 0, 0);
     }
 
     // ═══ 8. Unknown and cross-Property stays ═══
 
-    public function test_unknown_stay_returns_404(): void
+    public function test_unknown_and_authorized_cross_property_stays_are_non_disclosing_equivalent(): void
     {
-        $this->withSession($this->propertySession($this->property))
-            ->postJson('/frontdesk/stays/nonexistent-stay-id/checkout-execution', [
+        $guestId = $this->guest($this->otherProperty, 'Cross Property Guest');
+        $roomId = $this->room($this->otherProperty, 'C107X');
+        $reservationId = $this->reservation($this->otherProperty, $guestId, 'RES-CROSS-' . Str::upper(Str::random(4)), 'checked_in', $roomId);
+        $stay = new \Modules\Operations\FrontDesk\Models\FrontDeskStay();
+        $stay->forceFill([
+            'property_id' => $this->otherProperty->id,
+            'reservation_id' => $reservationId,
+            'guest_id' => $guestId,
+            'current_room_id' => $roomId,
+            'status' => FrontDeskStayStatusEnum::InHouse->value,
+            'created_by' => $this->frontDeskActor->id,
+            'updated_by' => $this->frontDeskActor->id,
+        ])->save();
+        $stay = $stay->fresh();
+
+        $unknownStayId = (string) Str::ulid();
+
+        $this->usePropertySession($this->property);
+        $unknown = $this->postJson("/frontdesk/stays/{$unknownStayId}/checkout-execution", [
                 'idempotency_key' => 'p9-http-unknown',
-            ])
-            ->assertStatus(404);
-    }
+            ]);
 
-    public function test_cross_property_stay_is_forbidden(): void
-    {
-        [$stay] = $this->checkedInStay('C107');
-
-        $this->withSession($this->propertySession($this->otherProperty))
-            ->postJson("/frontdesk/stays/{$stay->id}/checkout-execution", [
+        $this->usePropertySession($this->property);
+        $crossProperty = $this->postJson("/frontdesk/stays/{$stay->id}/checkout-execution", [
                 'idempotency_key' => 'p9-http-cross',
-            ])
-            ->assertStatus(403);
+            ]);
 
-        $this->assertSame(0, FrontDeskCheckoutExecution::count());
+        $unknown->assertStatus(404);
+        $crossProperty->assertStatus($unknown->getStatusCode());
+        $this->assertSame(array_keys($unknown->json()), array_keys($crossProperty->json()));
+        $this->assertSame($unknown->json('message'), $crossProperty->json('message'));
+
+        $encoded = json_encode($crossProperty->json(), JSON_THROW_ON_ERROR);
+        foreach ([$stay->id, $stay->reservation_id, $stay->guest_id, $stay->current_room_id] as $sensitiveId) {
+            if (is_string($sensitiveId)) {
+                $this->assertStringNotContainsString($sensitiveId, $encoded);
+            }
+        }
+        $this->assertCheckoutMutationCounts(0, 0, 0, 0, 0);
     }
 
     // ═══ 9. Idempotency conflict returns 409 ═══
@@ -442,20 +633,25 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
         $this->createReadyFinalReview($stay1);
         $this->createReadyFinalReview($stay2);
 
-        $this->confirmThenExecuteJson($stay1, 'p9-http-conflict');
+        $firstReceipt = $this->confirmThenExecuteJson($stay1, 'p9-http-conflict');
 
-        $this->usePropertySession($this->property);
+        $this->installCheckoutConfirmationSession($stay2, 'p9-http-conflict');
 
-        $this->post("/frontdesk/stays/{$stay2->id}/checkout-confirmation", [
+        $response = $this->post("/frontdesk/stays/{$stay2->id}/checkout-execution", [
             'idempotency_key' => 'p9-http-conflict',
-            'password'        => 'password',
         ], ['Accept' => 'application/json'])
             ->assertStatus(409)
             ->assertJson([
                 'message' => FrontDeskCheckoutExecutionService::ERROR_IDEMPOTENCY_CONFLICT,
             ]);
 
-        $this->assertSame(1, FrontDeskCheckoutExecution::count());
+        $encoded = json_encode($response->json(), JSON_THROW_ON_ERROR);
+        foreach ([$stay1->id, $stay1->reservation_id, $stay1->guest_id, $stay1->current_room_id, $firstReceipt['checkout_execution_id']] as $sensitiveId) {
+            if (is_string($sensitiveId)) {
+                $this->assertStringNotContainsString($sensitiveId, $encoded);
+            }
+        }
+        $this->assertCheckoutMutationCounts(1, 1, 1, 1, 1);
         $this->assertSame(0, FrontDeskCheckoutExecution::where('front_desk_stay_id', $stay2->id)->count());
     }
 
@@ -533,14 +729,36 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
 
     // ═══ 12. Expired confirmation route wiring ═══
 
-    public function test_expired_confirmation_returns_controlled_failure(): void
+    public function test_route_issued_confirmation_expires_by_database_clock_before_execution(): void
     {
         [$stay] = $this->checkedInStay('C112');
         $this->createReadyFinalReview($stay);
 
-        $this->insertExpiredCheckoutConfirmation($stay, 'p9-http-expired');
-
         $this->usePropertySession($this->property);
+        $confirmation = $this->post("/frontdesk/stays/{$stay->id}/checkout-confirmation", [
+            'idempotency_key' => 'p9-http-expired',
+            'password'        => 'password',
+        ], ['Accept' => 'application/json'])
+            ->assertStatus(200)
+            ->json();
+
+        $routeIssued = CheckoutSensitiveConfirmationIssuance::where('front_desk_stay_id', $stay->id)
+            ->where('checkout_idempotency_key', 'p9-http-expired')
+            ->firstOrFail();
+        $dbNow = Carbon::parse(DB::selectOne("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS wall_clock_utc")->wall_clock_utc);
+        $this->assertTrue($dbNow->lt($routeIssued->expires_at));
+        $this->assertSame($routeIssued->expires_at->toISOString(), $confirmation['expires_at']);
+
+        $shortExpiry = $dbNow->copy()->addSecond();
+        DB::statement('ALTER TABLE checkout_sensitive_confirmation_issuances DISABLE TRIGGER p8_csc_issue_no_update');
+        try {
+            DB::table('checkout_sensitive_confirmation_issuances')
+                ->where('id', $routeIssued->id)
+                ->update(['expires_at' => $shortExpiry]);
+        } finally {
+            DB::statement('ALTER TABLE checkout_sensitive_confirmation_issuances ENABLE TRIGGER p8_csc_issue_no_update');
+        }
+        $this->waitUntilDatabaseTimeAfter($shortExpiry);
 
         $this->post("/frontdesk/stays/{$stay->id}/checkout-execution", [
             'idempotency_key' => 'p9-http-expired',
@@ -551,8 +769,8 @@ class FrontDeskCheckoutExecutionHttpTest extends PostgresTestCase
                 'checkout_execution' => [CheckoutSensitiveConfirmationService::ERROR_EXPIRED],
             ]);
 
-        $this->assertSame(0, FrontDeskCheckoutExecution::count());
-        $this->assertSame(0, DB::table('checkout_sensitive_confirmation_consumptions')->count());
+        $this->assertCheckoutMutationCounts(0, 0, 0, 0, 0);
+        $this->assertSame(FrontDeskStayStatusEnum::InHouse, $stay->fresh()->status);
     }
 
     // ═══ 13. Browser-controlled trusted fields rejected ═══

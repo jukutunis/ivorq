@@ -150,6 +150,8 @@ try {
             'property_id'           => $fixture['property_id'],
             'front_desk_stay_id'    => $fixture['front_desk_stay_id'],
             'checkout_execution_id' => $result->checkoutExecutionId,
+            'handoff_id'            => $result->handoffId,
+            'terminal_status'       => $result->terminalStatus,
             'replayed'             => $result->replayed,
         ], JSON_THROW_ON_ERROR);
         exit(0);
@@ -180,10 +182,13 @@ try {
 
     // ── execute ────────────────────────────────────────────────────
     if ($scenario === 'execute') {
-        $writeMarker('b_before_execute', [
+        $executeReady = [
             'php_pid'     => getmypid(),
             'backend_pid' => $backendPid,
-        ]);
+        ];
+        $readyMarker = (string) ($fixture['ready_marker'] ?? $fixture['front_desk_stay_id']);
+        $writeMarker('b_before_execute', $executeReady);
+        $writeMarker('b_before_execute_' . $readyMarker, $executeReady);
         $result = app(FrontDeskCheckoutExecutionService::class)
             ->execute($actor, $fixture['front_desk_stay_id'], $fixture['checkout_idempotency_key']);
         echo json_encode([
@@ -193,6 +198,8 @@ try {
             'property_id'           => $fixture['property_id'],
             'front_desk_stay_id'    => $fixture['front_desk_stay_id'],
             'checkout_execution_id' => $result->checkoutExecutionId,
+            'handoff_id'            => $result->handoffId,
+            'terminal_status'       => $result->terminalStatus,
             'replayed'             => $result->replayed,
         ], JSON_THROW_ON_ERROR);
         exit(0);
@@ -213,6 +220,8 @@ try {
             'property_id'           => $fixture['property_id'],
             'front_desk_stay_id'    => $fixture['front_desk_stay_id'],
             'checkout_execution_id' => $result->checkoutExecutionId,
+            'handoff_id'            => $result->handoffId,
+            'terminal_status'       => $result->terminalStatus,
             'replayed'             => $result->replayed,
         ], JSON_THROW_ON_ERROR);
         exit(0);

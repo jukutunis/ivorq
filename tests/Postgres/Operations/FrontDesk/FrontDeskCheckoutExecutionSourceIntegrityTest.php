@@ -52,4 +52,28 @@ class FrontDeskCheckoutExecutionSourceIntegrityTest extends PostgresTestCase
         $this->assertStringNotContainsString('room cleanliness', strtolower($source));
         $this->assertStringNotContainsString('housekeeping completion', strtolower($source));
     }
+
+    public function test_package_9_keeps_real_authority_services_with_controlled_glfe_participation_ports(): void
+    {
+        $http = file_get_contents(base_path('tests/Postgres/Operations/FrontDesk/FrontDeskCheckoutExecutionHttpTest.php'));
+        $concurrency = file_get_contents(base_path('tests/Postgres/Operations/FrontDesk/FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest.php'));
+        $worker = file_get_contents(base_path('tests/Postgres/Operations/FrontDesk/Support/P9CheckoutExecutionConcurrencyWorker.php'));
+        $service = file_get_contents(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php'));
+
+        foreach ([$http, $concurrency, $worker] as $source) {
+            $this->assertStringContainsString('GuestLedgerPostingCompletenessParticipationPort', $source);
+            $this->assertStringContainsString('GuestLedgerSettlementHoldParticipationPort', $source);
+            $this->assertStringContainsString('GuestLedgerCompletedSettlementConflictParticipationPort', $source);
+            $this->assertStringNotContainsString('Mockery::mock', $source);
+            $this->assertStringNotContainsString('NightAuditCheckoutConcurrencyGuardService::class, fn', $source);
+            $this->assertStringNotContainsString('GuestLedgerCheckoutTerminalFinancialAttestationService::class, fn', $source);
+            $this->assertStringNotContainsString('GeneralCashierCheckoutTerminalObligationAttestationService::class, fn', $source);
+        }
+
+        $this->assertStringContainsString('GuestLedgerCheckoutTerminalFinancialAttestationService $financialAttestation', $service);
+        $this->assertStringContainsString('GeneralCashierCheckoutTerminalObligationAttestationService $cashierAttestation', $service);
+        $this->assertStringContainsString('NightAuditCheckoutConcurrencyGuardService $nightAudit', $service);
+        $this->assertStringContainsString('$this->financialAttestation->assertIssuedForCurrentTransaction', $service);
+        $this->assertStringContainsString('$this->cashierAttestation->assertIssuedForCurrentTransaction', $service);
+    }
 }

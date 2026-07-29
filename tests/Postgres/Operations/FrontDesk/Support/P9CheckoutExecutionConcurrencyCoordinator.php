@@ -201,7 +201,7 @@ class P9CheckoutExecutionConcurrencyCoordinator
     {
         $deadline = time() + $timeoutS;
         while (time() < $deadline) {
-            $row = DB::selectOne(
+            $row = DB::connection('pgsql_concurrency')->selectOne(
                 'SELECT pg_blocking_pids(pid) AS blocking_pids, wait_event_type, wait_event, state
                    FROM pg_stat_activity
                   WHERE pid = ?',
@@ -229,6 +229,43 @@ class P9CheckoutExecutionConcurrencyCoordinator
             usleep(200_000);
         }
         return false;
+    }
+
+    /**
+     * Return current pg_blocking_pids evidence for a backend PID.
+     *
+     * @return list<int>
+     */
+    public function blockingPidsFor(int $backendPid): array
+    {
+        $row = DB::connection('pgsql_concurrency')->selectOne(
+            'SELECT pg_blocking_pids(pid) AS blocking_pids
+               FROM pg_stat_activity
+              WHERE pid = ?',
+            [$backendPid]
+        );
+
+        if (! $row) {
+            return [];
+        }
+
+        return $this->parsePgIntArray($row->blocking_pids ?? '{}');
+    }
+
+    public function proveNoBlockingBetween(int $backendPidA, int $backendPidB, int $samples = 5): bool
+    {
+        for ($i = 0; $i < $samples; $i++) {
+            $aBlockedBy = $this->blockingPidsFor($backendPidA);
+            $bBlockedBy = $this->blockingPidsFor($backendPidB);
+
+            if (in_array($backendPidB, $aBlockedBy, true) || in_array($backendPidA, $bBlockedBy, true)) {
+                return false;
+            }
+
+            usleep(200_000);
+        }
+
+        return true;
     }
 
     /**
