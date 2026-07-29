@@ -488,6 +488,401 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         return $telemetry;
     }
 
+    private function installScenarioIRetryRuntimeTelemetryObservers(): object
+    {
+        $telemetry = new class {
+            public bool $active = true;
+
+            /** @var list<array<string, mixed>> */
+            public array $events = [];
+
+            /** @var list<array<string, mixed>> */
+            public array $queries = [];
+
+            private int $attempt = 1;
+
+            public function beginAuthorityAttempt(): void
+            {
+                if (! $this->active) {
+                    return;
+                }
+
+                if ($this->eventCount($this->attempt, 'final_confirmation_claim_attempt') > 0) {
+                    $this->attempt++;
+                }
+            }
+
+            /**
+             * @param array<string, mixed> $evidence
+             */
+            public function record(string $boundary, array $evidence = []): void
+            {
+                if (! $this->active) {
+                    return;
+                }
+
+                $this->events[] = [
+                    'attempt' => $this->attempt,
+                    'boundary' => $boundary,
+                    'evidence' => $evidence,
+                ];
+            }
+
+            public function recordQuery(\Illuminate\Database\Events\QueryExecuted $query): void
+            {
+                if (! $this->active || $query->connectionName !== 'pgsql_concurrency') {
+                    return;
+                }
+
+                $sql = trim(strtolower((string) preg_replace('/\s+/', ' ', $query->sql)));
+                if ($sql === '') {
+                    return;
+                }
+
+                if (str_contains($sql, 'front_desk_checkout_executions')
+                    && str_contains($sql, 'idempotency_key')
+                    && str_starts_with($sql, 'select')
+                    && ! str_contains($sql, 'for update')) {
+                    $this->queries[] = [
+                        'attempt' => $this->attempt,
+                        'category' => 'committed_replay_resolution',
+                        'connection' => $query->connectionName,
+                        'sql_shape_hash' => hash('sha256', $sql),
+                        'binding_count' => count($query->bindings),
+                    ];
+                }
+
+                if (str_contains($sql, 'txid_current()')) {
+                    $this->queries[] = [
+                        'attempt' => $this->attempt,
+                        'category' => 'postgresql_transaction_id_query',
+                        'connection' => $query->connectionName,
+                        'sql_shape_hash' => hash('sha256', $sql),
+                        'binding_count' => count($query->bindings),
+                    ];
+                }
+            }
+
+            public function eventCount(int $attempt, string $boundary): int
+            {
+                return count(array_filter(
+                    $this->events,
+                    fn (array $event): bool => (int) $event['attempt'] === $attempt
+                        && $event['boundary'] === $boundary
+                ));
+            }
+
+            public function queryCount(int $attempt, string $category): int
+            {
+                return count(array_filter(
+                    $this->queries,
+                    fn (array $query): bool => (int) $query['attempt'] === $attempt
+                        && $query['category'] === $category
+                ));
+            }
+
+            /**
+             * @return list<string>
+             */
+            public function transactionIds(): array
+            {
+                $ids = [];
+                foreach ($this->events as $event) {
+                    if ($event['boundary'] !== 'postgresql_transaction') {
+                        continue;
+                    }
+
+                    $id = trim((string) ($event['evidence']['postgres_transaction_id'] ?? ''));
+                    if ($id !== '') {
+                        $ids[] = $id;
+                    }
+                }
+
+                return $ids;
+            }
+
+            /**
+             * @return array{events: list<array<string, mixed>>, queries: list<array<string, mixed>>}
+             */
+            public function publicEvidence(): array
+            {
+                return ['events' => $this->events, 'queries' => $this->queries];
+            }
+
+            public function disable(): void
+            {
+                $this->active = false;
+            }
+        };
+
+        $realAuthorization = new \Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService(
+            app(\Shared\Services\CurrentPropertyService::class)
+        );
+        $observedAuthorization = new class($realAuthorization, $telemetry) extends \Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService {
+            public function __construct(
+                private readonly \Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService $delegate,
+                private readonly object $telemetry,
+            ) {}
+
+            public function resolveAuthorizedStay(\Modules\Foundation\User\Models\User $actor, string $frontDeskStayId): \Modules\Operations\FrontDesk\Models\FrontDeskStay
+            {
+                return $this->delegate->resolveAuthorizedStay($actor, $frontDeskStayId);
+            }
+
+            public function resolveAuthorizedContext(\Modules\Foundation\User\Models\User $actor, string $frontDeskStayId): array
+            {
+                $this->telemetry->beginAuthorityAttempt();
+                $context = $this->delegate->resolveAuthorizedContext($actor, $frontDeskStayId);
+
+                $this->telemetry->record('authorization_current_actor_authority', [
+                    'actor_authorized' => $context['actor']->id === $actor->id,
+                    'driver' => DB::connection()->getDriverName(),
+                ]);
+                $this->telemetry->record('current_company_property_resolution', [
+                    'company_resolved' => is_string($context['company']->id) && $context['company']->id !== '',
+                    'property_resolved' => is_string($context['property']->id) && $context['property']->id !== '',
+                    'property_company_match' => $context['property']->company_id === $context['company']->id,
+                ]);
+                $this->telemetry->record('requested_stay_resolution', [
+                    'stay_resolved' => $context['stay']->id === $frontDeskStayId,
+                    'stay_property_match' => $context['stay']->property_id === $context['property']->id,
+                ]);
+
+                return $context;
+            }
+
+            public function authorize(\Modules\Foundation\User\Models\User $actor): array
+            {
+                return $this->delegate->authorize($actor);
+            }
+        };
+
+        $realConfirmation = new \Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService(
+            app(\Modules\Foundation\Audit\Services\AuditService::class),
+            $realAuthorization
+        );
+        $observedConfirmation = new class($realConfirmation, $telemetry) extends \Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService {
+            public function __construct(
+                private readonly \Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService $delegate,
+                private readonly object $telemetry,
+            ) {}
+
+            public function issueForCurrentSession(\Modules\Foundation\User\Models\User $actor, string $frontDeskStayId, string $checkoutIdempotencyKey, string $password): \Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationIssuance
+            {
+                return $this->delegate->issueForCurrentSession($actor, $frontDeskStayId, $checkoutIdempotencyKey, $password);
+            }
+
+            public function claimCurrentSessionConfirmationFor(\Modules\Foundation\User\Models\User $actor, string $frontDeskStayId, string $checkoutIdempotencyKey): \Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationClaimResult
+            {
+                $result = $this->delegate->claimCurrentSessionConfirmationFor($actor, $frontDeskStayId, $checkoutIdempotencyKey);
+                $this->telemetry->record('final_confirmation_claim_attempt', [
+                    'claimed' => $result->frontDeskStayId === $frontDeskStayId,
+                    'driver' => DB::connection()->getDriverName(),
+                    'transaction_level' => DB::transactionLevel(),
+                ]);
+
+                return $result;
+            }
+
+            public function validateCurrentSessionConfirmationFor(\Modules\Foundation\User\Models\User $actor, string $frontDeskStayId, string $checkoutIdempotencyKey): \Modules\Foundation\Authorization\ValueObjects\CheckoutSensitiveConfirmationPreflightResult
+            {
+                $result = $this->delegate->validateCurrentSessionConfirmationFor($actor, $frontDeskStayId, $checkoutIdempotencyKey);
+                $this->telemetry->record('confirmation_preflight', [
+                    'validated' => $result->frontDeskStayId === $frontDeskStayId,
+                    'driver' => DB::connection()->getDriverName(),
+                ]);
+
+                return $result;
+            }
+
+            public function cleanupCurrentSessionReference(): void
+            {
+                $this->delegate->cleanupCurrentSessionReference();
+            }
+
+            public function normalizeIdempotencyKey(string $key): string
+            {
+                return $this->delegate->normalizeIdempotencyKey($key);
+            }
+        };
+
+        $realBusinessDateDependency = new \Modules\Operations\FrontDesk\Services\FrontDeskBusinessDateDependencyService(
+            app(\Modules\Foundation\Property\Services\PropertyBusinessDateProjectionService::class)
+        );
+        $observedBusinessDateDependency = new class($realBusinessDateDependency, $telemetry) extends \Modules\Operations\FrontDesk\Services\FrontDeskBusinessDateDependencyService {
+            public function __construct(
+                private readonly \Modules\Operations\FrontDesk\Services\FrontDeskBusinessDateDependencyService $delegate,
+                private readonly object $telemetry,
+            ) {}
+
+            public function project(\Modules\Foundation\User\Models\User $actor): array
+            {
+                $result = $this->delegate->project($actor);
+                $this->telemetry->record('business_date_projection', [
+                    'status' => $result['status'] ?? null,
+                    'property_resolved' => is_string($result['property_id'] ?? null) && $result['property_id'] !== '',
+                    'business_date_resolved' => is_string($result['business_date'] ?? null) && $result['business_date'] !== '',
+                ]);
+
+                return $result;
+            }
+        };
+
+        $realOperationalLock = new \Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService();
+        $observedOperationalLock = new class($realOperationalLock, $telemetry) extends \Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService {
+            public function __construct(
+                private readonly \Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService $delegate,
+                private readonly object $telemetry,
+            ) {}
+
+            public function acquire(string $companyId, string $propertyId, array $expectedEvidence): \Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext
+            {
+                $context = $this->delegate->acquire($companyId, $propertyId, $expectedEvidence);
+                $this->telemetry->record('postgresql_transaction', [
+                    'postgres_backend_pid' => $context->postgres_backend_pid,
+                    'postgres_transaction_id' => $context->postgres_transaction_id,
+                    'property_match' => $context->property_id === $propertyId,
+                    'business_date_match' => $context->business_date === (string) ($expectedEvidence['business_date'] ?? ''),
+                ]);
+
+                return $context;
+            }
+
+            public function assertIssuedForCurrentTransaction(\Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext $context): void
+            {
+                $this->delegate->assertIssuedForCurrentTransaction($context);
+            }
+        };
+
+        $realNightAudit = new \Modules\Operations\NightAudit\Services\NightAuditCheckoutConcurrencyGuardService($realOperationalLock);
+        $observedNightAudit = new class($realNightAudit, $telemetry) extends \Modules\Operations\NightAudit\Services\NightAuditCheckoutConcurrencyGuardService {
+            public function __construct(
+                private readonly \Modules\Operations\NightAudit\Services\NightAuditCheckoutConcurrencyGuardService $delegate,
+                private readonly object $telemetry,
+            ) {}
+
+            public function attest(\Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext $context): \Modules\Operations\NightAudit\ValueObjects\NightAuditCheckoutConcurrencyAttestation
+            {
+                $result = $this->delegate->attest($context);
+                $this->telemetry->record('na_a2', [
+                    'status' => $result->status,
+                    'transaction_bound' => $result->transaction_bound,
+                    'property_match' => $result->property_id === $context->property_id,
+                ]);
+
+                return $result;
+            }
+        };
+
+        $realFinancialAttestation = new \Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService(
+            app(\Modules\Operations\PMS\Services\GuestLedgerCheckoutFinancialEvaluationService::class),
+            $realOperationalLock,
+            app(\Modules\Operations\PMS\Services\Ports\GuestLedgerPostingCompletenessParticipationPort::class),
+            app(\Modules\Operations\PMS\Services\Ports\GuestLedgerSettlementHoldParticipationPort::class),
+            app(\Modules\Operations\PMS\Services\Ports\GuestLedgerCompletedSettlementConflictParticipationPort::class),
+        );
+        $observedFinancialAttestation = new class($realFinancialAttestation, $telemetry) extends \Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService {
+            public function __construct(
+                private readonly \Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService $delegate,
+                private readonly object $telemetry,
+            ) {}
+
+            public function attest(\Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext $operationalContext, string $frontDeskStayId): \Modules\Operations\PMS\ValueObjects\GuestLedgerCheckoutTerminalFinancialAttestation
+            {
+                $result = $this->delegate->attest($operationalContext, $frontDeskStayId);
+                $this->telemetry->record('glf_e', [
+                    'status' => $result->status->value,
+                    'transaction_bound' => $result->transaction_bound,
+                    'stay_match' => $result->front_desk_stay_id === $frontDeskStayId,
+                ]);
+
+                return $result;
+            }
+
+            public function assertIssuedForCurrentTransaction(\Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext $operationalContext, \Modules\Operations\PMS\ValueObjects\GuestLedgerCheckoutTerminalFinancialAttestation $attestation): void
+            {
+                $this->delegate->assertIssuedForCurrentTransaction($operationalContext, $attestation);
+            }
+        };
+
+        $realCashierAttestation = new \Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutTerminalObligationAttestationService(
+            $realOperationalLock,
+            $realFinancialAttestation
+        );
+        $observedCashierAttestation = new class($realCashierAttestation, $telemetry) extends \Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutTerminalObligationAttestationService {
+            public function __construct(
+                private readonly \Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutTerminalObligationAttestationService $delegate,
+                private readonly object $telemetry,
+            ) {}
+
+            public function attest(\Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext $operationalContext, \Modules\Operations\PMS\ValueObjects\GuestLedgerCheckoutTerminalFinancialAttestation $financialAttestation): \Modules\Operations\GeneralCashier\ValueObjects\GeneralCashierCheckoutTerminalObligationAttestation
+            {
+                $result = $this->delegate->attest($operationalContext, $financialAttestation);
+                $this->telemetry->record('gc_a2', [
+                    'status' => $result->status->value,
+                    'transaction_bound' => $result->transaction_bound,
+                    'stay_match' => $result->front_desk_stay_id === $financialAttestation->front_desk_stay_id,
+                ]);
+
+                return $result;
+            }
+
+            public function assertIssuedForCurrentTransaction(\Modules\Foundation\Property\ValueObjects\PropertyBusinessDateOperationalLockContext $operationalContext, \Modules\Operations\PMS\ValueObjects\GuestLedgerCheckoutTerminalFinancialAttestation $financialAttestation, \Modules\Operations\GeneralCashier\ValueObjects\GeneralCashierCheckoutTerminalObligationAttestation $cashierAttestation): void
+            {
+                $this->delegate->assertIssuedForCurrentTransaction($operationalContext, $financialAttestation, $cashierAttestation);
+            }
+        };
+
+        app()->instance(\Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService::class, $observedAuthorization);
+        app()->instance(\Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService::class, $observedConfirmation);
+        app()->instance(\Modules\Operations\FrontDesk\Services\FrontDeskBusinessDateDependencyService::class, $observedBusinessDateDependency);
+        app()->instance(\Modules\Foundation\Property\Services\PropertyBusinessDateOperationalLockService::class, $observedOperationalLock);
+        app()->instance(\Modules\Operations\NightAudit\Services\NightAuditCheckoutConcurrencyGuardService::class, $observedNightAudit);
+        app()->instance(\Modules\Operations\PMS\Services\GuestLedgerCheckoutTerminalFinancialAttestationService::class, $observedFinancialAttestation);
+        app()->instance(\Modules\Operations\GeneralCashier\Services\GeneralCashierCheckoutTerminalObligationAttestationService::class, $observedCashierAttestation);
+        app()->forgetInstance(\Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecutionService::class);
+
+        DB::listen(fn (\Illuminate\Database\Events\QueryExecuted $query) => $telemetry->recordQuery($query));
+
+        return $telemetry;
+    }
+
+    private function assertScenarioIRetryRuntimeTelemetry(object $telemetry, int $expectedAttempts, bool $requireThreeDistinctTransactions = false): void
+    {
+        $evidence = json_encode($telemetry->publicEvidence(), JSON_UNESCAPED_SLASHES);
+        $boundaries = [
+            'authorization_current_actor_authority',
+            'current_company_property_resolution',
+            'requested_stay_resolution',
+            'confirmation_preflight',
+            'business_date_projection',
+            'postgresql_transaction',
+            'na_a2',
+            'glf_e',
+            'gc_a2',
+            'final_confirmation_claim_attempt',
+        ];
+
+        for ($attempt = 1; $attempt <= $expectedAttempts; $attempt++) {
+            foreach ($boundaries as $boundary) {
+                $this->assertSame(1, $telemetry->eventCount($attempt, $boundary), "Boundary {$boundary} must occur once for attempt {$attempt}: {$evidence}");
+            }
+
+            $this->assertSame(1, $telemetry->queryCount($attempt, 'committed_replay_resolution'), "Committed replay query must occur once for attempt {$attempt}: {$evidence}");
+            $this->assertGreaterThanOrEqual(1, $telemetry->queryCount($attempt, 'postgresql_transaction_id_query'), "Runtime txid_current() query evidence missing for attempt {$attempt}: {$evidence}");
+        }
+
+        $transactionIds = $telemetry->transactionIds();
+        $this->assertCount($expectedAttempts, $transactionIds, $evidence);
+        foreach ($transactionIds as $transactionId) {
+            $this->assertMatchesRegularExpression('/\A[1-9][0-9]*\z/', $transactionId, $evidence);
+        }
+
+        if ($requireThreeDistinctTransactions) {
+            $this->assertSame(3, count(array_unique($transactionIds)), $evidence);
+        }
+    }
+
     /**
      * @return array{function: string, trigger: string}
      */
@@ -990,6 +1385,7 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $f = $this->createCheckoutFixture('I01', 'p9-iso-key-I1');
         $this->actingAsConcurrencyActor($f);
         $fault = $this->installCheckoutInsertSqlstateFault('40001', 2);
+        $runtimeTelemetry = $this->installScenarioIRetryRuntimeTelemetryObservers();
 
         try {
             $result = $this->withConcurrencyConnection(
@@ -1003,12 +1399,14 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
                 ['attempt' => 2, 'sqlstate' => '40001', 'raised' => true],
                 ['attempt' => 3, 'sqlstate' => 'COMMITTED_INSERT', 'raised' => false],
             ], $this->checkoutFaultTelemetry($fault));
+            $this->assertScenarioIRetryRuntimeTelemetry($runtimeTelemetry, 3, requireThreeDistinctTransactions: true);
             $this->assertSame(1, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
             $this->assertSame(1, DB::connection('pgsql_concurrency')->table('front_desk_checkout_housekeeping_handoffs')->count());
             $this->assertSame(1, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
             $this->assertSame(FrontDeskStayStatusEnum::CheckedOut, FrontDeskStay::on('pgsql_concurrency')->find($f['front_desk_stay_id'])->status);
             $this->assertRealTerminalStatuses($f['front_desk_stay_id']);
         } finally {
+            $runtimeTelemetry->disable();
             $this->dropCheckoutInsertSqlstateFault($fault);
         }
     }
@@ -1018,6 +1416,7 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $f = $this->createCheckoutFixture('I02', 'p9-iso-key-I2');
         $this->actingAsConcurrencyActor($f);
         $fault = $this->installCheckoutInsertSqlstateFault('40001', 3);
+        $runtimeTelemetry = $this->installScenarioIRetryRuntimeTelemetryObservers();
 
         try {
             try {
@@ -1035,11 +1434,13 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
                 ['attempt' => 2, 'sqlstate' => '40001', 'raised' => true],
                 ['attempt' => 3, 'sqlstate' => '40001', 'raised' => true],
             ], $this->checkoutFaultTelemetry($fault));
+            $this->assertScenarioIRetryRuntimeTelemetry($runtimeTelemetry, 3);
             $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
             $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_housekeeping_handoffs')->count());
             $this->assertSame(0, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
             $this->assertSame(FrontDeskStayStatusEnum::InHouse, FrontDeskStay::on('pgsql_concurrency')->find($f['front_desk_stay_id'])->status);
         } finally {
+            $runtimeTelemetry->disable();
             $this->dropCheckoutInsertSqlstateFault($fault);
         }
     }
@@ -1049,6 +1450,7 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $f = $this->createCheckoutFixture('I03', 'p9-iso-key-I3');
         $this->actingAsConcurrencyActor($f);
         $fault = $this->installCheckoutInsertSqlstateFault('P0001', 10);
+        $runtimeTelemetry = $this->installScenarioIRetryRuntimeTelemetryObservers();
 
         try {
             try {
@@ -1064,11 +1466,13 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             $this->assertSame([
                 ['attempt' => 1, 'sqlstate' => 'P0001', 'raised' => true],
             ], $this->checkoutFaultTelemetry($fault));
+            $this->assertScenarioIRetryRuntimeTelemetry($runtimeTelemetry, 1);
             $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
             $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_housekeeping_handoffs')->count());
             $this->assertSame(0, DB::connection('pgsql_concurrency')->table('checkout_sensitive_confirmation_consumptions')->count());
             $this->assertSame(FrontDeskStayStatusEnum::InHouse, FrontDeskStay::on('pgsql_concurrency')->find($f['front_desk_stay_id'])->status);
         } finally {
+            $runtimeTelemetry->disable();
             $this->dropCheckoutInsertSqlstateFault($fault);
         }
     }
