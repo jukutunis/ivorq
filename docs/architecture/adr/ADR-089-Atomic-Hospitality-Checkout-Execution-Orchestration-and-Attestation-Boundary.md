@@ -8,7 +8,7 @@
 * **Status:** Approved
 * **Related ADRs:** ADR-001, ADR-002, ADR-004, ADR-029, ADR-034, ADR-040, ADR-066, ADR-067, ADR-084, ADR-085, ADR-086, ADR-087, ADR-088
 * **Accepted predecessor:** FD-B13 Checkout Execution Readiness Review at `fbb289abf4bbfeb2f3ae801e05e98619a61f7814`
-* **Runtime implementation:** GLF-E accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GLF-E-S1 accepted and true fast-forward merged at `f91621b58fe5743ed2a60980a70475cae40331bc`. The savepoint rollback lock-continuity defect is corrected. GC-A2 is accepted and true fast-forward merged at `f0635b6c402ea095a1cd21b1a1510008c49e7739`. FD-C1 is accepted and merged through PR #36 at `233b2407dd3c77e86a007b77e9572d2c0d0ea36e`. FD-C2 Transactional Housekeeping Checkout Handoff / Outbox Foundation is accepted and merged through PR #38 at `13bff99e67d95ef5fbf8bdf2e69bdbbfd3e12ed2`. Package 8 - Checkout Sensitive Confirmation, Durable One-Time Consumption, and Execute Permission Foundation is accepted and merged through PR #40 at `2395884479a69dfa3a876728137676e61a7b374e`. Package 9 - Final Front Desk Checkout Command, Atomic Terminal Transaction Orchestration, Controlled Write Route, and Hospitality Interaction Layer - is the current governance-authorized boundary. Package 9 runtime remains unimplemented. Checkout execution remains unauthorized.
+* **Runtime implementation:** GLF-E accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. GLF-E-S1 accepted and true fast-forward merged at `f91621b58fe5743ed2a60980a70475cae40331bc`. The savepoint rollback lock-continuity defect is corrected. GC-A2 is accepted and true fast-forward merged at `f0635b6c402ea095a1cd21b1a1510008c49e7739`. FD-C1 is accepted and merged through PR #36 at `233b2407dd3c77e86a007b77e9572d2c0d0ea36e`. FD-C2 Transactional Housekeeping Checkout Handoff / Outbox Foundation is accepted and merged through PR #38 at `13bff99e67d95ef5fbf8bdf2e69bdbbfd3e12ed2`. Package 8 - Checkout Sensitive Confirmation, Durable One-Time Consumption, and Execute Permission Foundation is accepted and merged through PR #40 at `2395884479a69dfa3a876728137676e61a7b374e`. Package 9 - Final Front Desk Checkout Command, Atomic Terminal Transaction Orchestration, Controlled Write Route, and Hospitality Interaction Layer - is accepted and merged through PR #42 at `43ad08969e36b1ddc65b0a7227a86d02e2e1a27a`; accepted feature/metadata SHA `df27dc8b7b33caf98ba2dd61305c652069780601`; accepted final source SHA `77a82dd3951b7bb5804efb496b8939163ba2076d`. Package 11 governance is authorized only and runtime requires a separate Draft PR.
 
 ## Status
 
@@ -20,7 +20,7 @@ Accepted and fast-forward merged at:
 1682dec0fb7f654e77888a476b4ec55a1507610b
 ```
 
-NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. NA-A2 is accepted and fast-forward merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. A savepoint rollback lock-continuity defect was source-proven: an attestation could be issued inside a nested savepoint, the savepoint rolled back releasing PMS row locks, and the retained exact PHP attestation object would incorrectly pass validation because it shared the same backend PID and outer transaction ID. GLF-E-S1 is accepted and true fast-forward merged at `f91621b58fe5743ed2a60980a70475cae40331bc`. The savepoint rollback lock-continuity defect is corrected. GC-A2 is accepted and true fast-forward merged at `f0635b6c402ea095a1cd21b1a1510008c49e7739`. FD-C1 is accepted and merged through PR #36. FD-C2 is accepted and merged through PR #38. Package 8 is accepted and merged through PR #40 at `2395884479a69dfa3a876728137676e61a7b374e`; it source-proves the checkout intent, execute permission, durable immutable issuance, caller-owned PostgreSQL transaction claim, PostgreSQL expiry/rollback/source-integrity/concurrency enforcement, and additive confirmation references on FD-C1 execution evidence. Package 9 is governance-authorized as the next runtime boundary, but Package 9 runtime remains unimplemented. Checkout execution remains unauthorized.
+NA-A2 is the first runtime prerequisite slice after ADR-089 approval. It implements only shared Property / Business Date locking and Night Audit transaction participation. NA-A2 is accepted and fast-forward merged at `4241e83e6f9e470a7ff5407179cadc166fc7b555`. GLF-E is accepted and fast-forward merged at `2a42d2439f5c1c3e50e15fc604cd0e8b3bb2ade9`. A savepoint rollback lock-continuity defect was source-proven: an attestation could be issued inside a nested savepoint, the savepoint rolled back releasing PMS row locks, and the retained exact PHP attestation object would incorrectly pass validation because it shared the same backend PID and outer transaction ID. GLF-E-S1 is accepted and true fast-forward merged at `f91621b58fe5743ed2a60980a70475cae40331bc`. The savepoint rollback lock-continuity defect is corrected. GC-A2 is accepted and true fast-forward merged at `f0635b6c402ea095a1cd21b1a1510008c49e7739`. FD-C1 is accepted and merged through PR #36. FD-C2 is accepted and merged through PR #38. Package 8 is accepted and merged through PR #40 at `2395884479a69dfa3a876728137676e61a7b374e`; it source-proves the checkout intent, execute permission, durable immutable issuance, caller-owned PostgreSQL transaction claim, PostgreSQL expiry/rollback/source-integrity/concurrency enforcement, and additive confirmation references on FD-C1 execution evidence. Package 9 is accepted and merged through PR #42 at `43ad08969e36b1ddc65b0a7227a86d02e2e1a27a`.
 
 ## Context
 
@@ -38,7 +38,7 @@ NEW_ADR_REQUIRED_BEFORE_IMPLEMENTATION
 
 The current repository proves strong read-only checkout readiness foundations, but those foundations are not execution authority. GLF-D and GC-A1 are top-level `REPEATABLE READ, READ ONLY` projections, reject nested transaction participation through `GLF_D_REQUIRES_TOP_LEVEL_READ_TRANSACTION` and `GC_A1_REQUIRES_TOP_LEVEL_READ_TRANSACTION`, and return source fingerprints for review/display evidence. They do not lock owner-domain rows for a Front Desk checkout write transaction and do not create terminal financial or cashier attestations.
 
-The current Front Desk checkout execution boundary still returns `can_execute=false`. Accepted FD-C1 and FD-C2 foundations do not create executable checkout. Source synchronization still proves no checkout execution write route, no runtime execute-permission seeding, no Sensitive Action Confirmation intent registration, no final checkout command, no checkout execution UI, and no Package 9 terminal orchestration exists.
+Historical pre-Package-9 source inspection proved the Front Desk checkout execution boundary still returned `can_execute=false`, accepted FD-C1 and FD-C2 foundations did not create executable checkout, and no checkout execution write route, runtime execute-permission seeding, Sensitive Action Confirmation intent registration, final checkout command, checkout execution UI, or Package 9 terminal orchestration existed. That pre-Package-9 evidence is now superseded by accepted Package 9 runtime synchronization.
 
 ## Source-Proven Topology
 
@@ -390,7 +390,7 @@ Negative:
 - Checkout without transactional Housekeeping handoff.
 - Checkout during active Night Audit.
 - Checkout implementation before prerequisite packages.
-- Treating `can_execute=false` as optional.
+- Historical pre-Package-9 rejected behavior: treating `can_execute=false` as optional.
 
 ## Implementation Sequence
 
@@ -404,9 +404,10 @@ Runtime prerequisite categories must remain locked until ADR-089 is independentl
 6. Front Desk terminal checkout state and immutable checkout execution evidence — FD-C1 accepted and merged through PR #36 at `233b2407dd3c77e86a007b77e9572d2c0d0ea36e`.
 7. FD-C2 Transactional Housekeeping Checkout Handoff / Outbox Foundation — accepted and merged through PR #38 at `13bff99e67d95ef5fbf8bdf2e69bdbbfd3e12ed2`.
 8. Package 8 - accepted and merged through PR #40 at `2395884479a69dfa3a876728137676e61a7b374e`.
-9. Package 9 - current authorized governance boundary; runtime implementation requires a separate delivery package and Draft PR.
+9. Package 9 - accepted and merged through PR #42 at `43ad08969e36b1ddc65b0a7227a86d02e2e1a27a`.
+10. Package 11 - Housekeeping Checkout Handoff Consumption and Room Turnover Start - governance-authorized only; runtime requires a separate delivery package and Draft PR.
 
-FD-C1, FD-C2, and Package 8 are accepted. Package 8 does not create executable checkout. Package 9 is governance-authorized but runtime remains unimplemented. Full Access does not authorize skipping later packages, review, Draft PR, merge, or default-branch boundaries.
+FD-C1, FD-C2, Package 8, and Package 9 are accepted. Package 11 is governance-authorized only. Full Access does not authorize skipping later packages, review, Draft PR, merge, or default-branch boundaries.
 
 The final checkout command remains last. Runtime package codes are not assigned by this ADR.
 
@@ -432,15 +433,15 @@ FD-C1 is accepted and merged through PR #36 at `233b2407dd3c77e86a007b77e9572d2c
 - no route/controller/UI execution action;
 - no final checkout orchestration;
 - no can_execute=true;
-- checkout unauthorized.
+- historical pre-Package-9 checkout unauthorized.
 
 The runtime implementation package must source-review and select one repository-consistent terminal stay enum name rather than inventing multiple overlapping terminal states. This governance package does not authorize an enum name unless repository evidence unambiguously proves one existing standard.
 
-FD-C2 foundation scope is now accepted and merged. The existing Housekeeping Handoff decision was activated for a foundation-only runtime package. NEW_ADR_NOT_REQUIRED. ADR-089 remains the governing architecture. The dedicated checkout-specific handoff/outbox direction is frozen. The current inventory-shaped outbox_messages table must not be generalized for checkout. The handoff payload is restricted to minimized server-owned identifiers and timestamps. No guest PII, raw financial snapshots, payment data, cashier internals, Housekeeping readiness state supplied by Front Desk, or Engineering payloads. Housekeeping room-turnover ownership is preserved. The consumer must be idempotent and retryable. Delivery failure must not reopen checkout or trigger foreign-domain repair. Engineering consumption remains optional and separately authorized. FD-C2 does not invoke the future transaction order where handoff is step 10 / final persistent checkout step before commit because no checkout command exists. Package 8 is accepted and canonical. Package 9 is governance-authorized but runtime remains unimplemented. Checkout unauthorized. can_execute=false.
+FD-C2 foundation scope is now accepted and merged. The existing Housekeeping Handoff decision was activated for a foundation-only runtime package. NEW_ADR_NOT_REQUIRED. ADR-089 remains the governing architecture. The dedicated checkout-specific handoff/outbox direction is frozen. The current inventory-shaped outbox_messages table must not be generalized for checkout. The handoff payload is restricted to minimized server-owned identifiers and timestamps. No guest PII, raw financial snapshots, payment data, cashier internals, Housekeeping readiness state supplied by Front Desk, or Engineering payloads. Housekeeping room-turnover ownership is preserved. The consumer must be idempotent and retryable. Delivery failure must not reopen checkout or trigger foreign-domain repair. Engineering consumption remains optional and separately authorized. Historical pre-Package-9 FD-C2 did not invoke the later transaction order where handoff is step 10 / final persistent checkout step before commit because no checkout command existed. Historical pre-Package-9 Package 8 remained pending, and historical pre-Package-9 checkout unauthorized / can_execute=false markers were valid only at that point.
 
-The final checkout command remains unauthorized.
+Historical pre-Package-9 evidence: the final checkout command remained unauthorized at that point.
 
-## Package 8 Governance Activation Note (2026-07-26)
+## Historical Pre-Package-9 Package 8 Governance Activation Note (2026-07-26)
 
 Contract Version 1.14 historically activated Package 8 - Checkout Sensitive Confirmation, Durable One-Time Consumption, and Execute Permission Foundation after accepted FD-C2. Canonical predecessor: `13bff99e67d95ef5fbf8bdf2e69bdbbfd3e12ed2`. FD-C2 was accepted and merged through PR #38 with accepted feature head `ce05c4217dcf763ccd5e308f66a01201975036a1`. NO_NEW_ADR_REQUIRED: ADR-087 and ADR-089 remain governing.
 
@@ -454,21 +455,21 @@ Ownership invariants remain unchanged. Front Desk owns the future checkout orche
 
 This governance activation contains no runtime source, migration, model, enum, service, permission seeder, Sensitive Action Confirmation registration, durable consumption persistence, command, route, controller, request class, policy, UI, React/TypeScript, test, baseline metadata, queue, worker, event, scheduler, WebSocket, external integration, checkout execution, stay transition, Housekeeping readiness mutation, or foreign-domain mutation.
 
-Runtime status remains:
+Historical pre-Package-9 runtime status at Package 8 activation:
 
 ```text
-can_execute=false
-CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED
-checkout unauthorized at runtime
+historical pre-Package-9 can_execute=false
+historical pre-Package-9 CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED
+historical pre-Package-9 checkout unauthorized at runtime
 ```
 
 At the Package 8 governance activation point, Package 9 remained locked: final checkout command, terminal transaction orchestration, write route, stay terminal transition command, production Housekeeping handoff creation through checkout execution, final interaction layer, and checkout execution UI were unauthorized. Version 1.15 now governance-authorizes Package 9 runtime as a separate future package, but this governance PR still implements none of that runtime.
 
-## Package 9 Governance Activation Note (2026-07-27)
+## Package 10 Governance Synchronization and Package 11 Activation Note (2026-07-30)
 
-Contract Version 1.15 accepts Package 8 as merged through PR #40 at `2395884479a69dfa3a876728137676e61a7b374e` with accepted feature head `eb20396ff3f42fc6f9273d3757ee80ab996b2b4d` and final source provenance `94a87dad7422f5a7f16656d34432428f0f4a7100`. Package 8 implements and source-proves durable checkout confirmation foundation only: exact execute permission `frontdesk.checkout-execution.execute`, checkout intent `frontdesk-checkout-execution`, authoritative authorization-before-stay-query behavior, immutable issuance, active PostgreSQL transaction one-time consumption, PostgreSQL expiry revalidation after row lock acquisition, rollback-safe consumption, database duplicate protection, source integrity, concurrency proof, public issuance/claim APIs only, and additive confirmation references on FD-C1 execution evidence.
+Contract Version 1.16 accepts Package 9 as merged through PR #42 at `43ad08969e36b1ddc65b0a7227a86d02e2e1a27a`, with accepted feature/metadata SHA `df27dc8b7b33caf98ba2dd61305c652069780601` and accepted final source SHA `77a82dd3951b7bb5804efb496b8939163ba2076d`. Package 9 implements and source-proves the final Front Desk checkout command, atomic terminal transaction orchestration, controlled write route, execute authorization-before-stay-query, checkout confirmation preflight and durable claim, terminal CHECKED_OUT stay transition, immutable FD-C1 execution evidence, FD-C2 PENDING Housekeeping handoff creation, JSON and HTML/Inertia committed receipts, idempotent response-loss replay, real PostgreSQL concurrency proof, and SQLSTATE retry/revalidation proof.
 
-Package 9 - Final Front Desk Checkout Command, Atomic Terminal Transaction Orchestration, Controlled Write Route, and Hospitality Interaction Layer - is now the current governance-authorized runtime boundary. Package 9 remains a separate future runtime package and Draft PR. This governance note creates no checkout command, route, controller action, request class, service, UI, migration, model, enum, policy, seeder, permission, test, baseline metadata, execution evidence, stay transition, Housekeeping handoff, external integration, or foreign-domain mutation.
+Package 11 - Housekeeping Checkout Handoff Consumption and Room Turnover Start - is the current governance-authorized downstream boundary. It is Housekeeping-owned and requires a separate runtime branch, Draft PR, independent review, and Owner-authorized merge before runtime implementation.
 
 The selected architecture remains:
 
@@ -478,7 +479,7 @@ SINGLE_POSTGRESQL_TRANSACTION_WITH_OWNER_DOMAIN_PARTICIPATING_ATTESTATION_PORTS
 
 ADR-087 and ADR-089 remain governing. `NO_NEW_ADR_REQUIRED` is the current source-backed determination because ADR-087 freezes the Front Desk checkout command boundary and ADR-089 defines the cross-domain atomic transaction, ownership, global lock order, attestation participation, idempotency, failure recovery, durable confirmation claim, terminal outcome, and transactional handoff. Package 8 supplied the remaining confirmation and execute-authorization foundation; Package 9 is implementation of already-approved architecture.
 
-Package 9 freezes identifier-only browser input:
+Package 9 current execution browser input remains identifier-only:
 
 ```json
 {
@@ -489,19 +490,29 @@ Package 9 freezes identifier-only browser input:
 
 The browser must not submit trusted Company, Property, Tenant, actor, role, permission, membership, guest, reservation, room, stay status, business date, Night Audit status, folio balance, amount, currency, payment result, settlement result, cashier result, attestation object, source fingerprint, confirmation identity, confirmation fingerprint, consumption ID, audit timestamp, execution status, Housekeeping readiness, handoff payload, or retry outcome.
 
-The future Package 9 transaction sequence remains frozen: require PostgreSQL and a caller-owned controlled transaction; lock Property; lock current Property Business Date; lock Front Desk stay; acquire or resolve checkout idempotency/execution identity; revalidate stay relationships and terminal-state eligibility; acquire Night Audit active-run scope through NA-A2; obtain GLF-E PMS terminal financial attestation; obtain GC-A2 General Cashier terminal obligation attestation; revalidate the same Package 8 confirmation identity after lock waits and attestations; atomically claim durable one-time confirmation consumption; persist immutable FD-C1 checkout execution evidence; transition the stay once to the accepted terminal checkout state; persist FD-C2 transactional Housekeeping handoff; commit; then perform idempotent session confirmation cleanup.
+The Package 9 transaction sequence remains: require PostgreSQL and a caller-owned controlled transaction; lock Property; lock current Property Business Date; lock Front Desk stay; acquire or resolve checkout idempotency/execution identity; revalidate stay relationships and terminal-state eligibility; acquire Night Audit active-run scope through NA-A2; obtain GLF-E PMS terminal financial attestation; obtain GC-A2 General Cashier terminal obligation attestation; revalidate the same Package 8 confirmation identity after lock waits and attestations; atomically claim durable one-time confirmation consumption; persist immutable FD-C1 checkout execution evidence; transition the stay once to the accepted terminal checkout state; persist FD-C2 transactional Housekeeping handoff as PENDING; commit; then perform idempotent session confirmation cleanup.
 
 No earlier global lock may be acquired after a later global lock. No external HTTP/API call may occur inside the transaction. Same-idempotency committed replay returns immutable evidence without new confirmation, new consumption, new evidence, new handoff, or second stay transition. Conflicting authoritative identity fails closed. Rollback leaves the stay unchanged and persists no execution evidence, no durable consumption, no handoff, and no foreign-domain repair.
 
-Ownership invariants remain unchanged: Front Desk owns command, orchestration, terminal stay transition, execution evidence, idempotency outcome, and handoff creation; PMS Guest Ledger and PMS Cashiering own financial and payment lifecycle facts; General Cashier owns cashier accountability lifecycle; Business Date and Night Audit own operational date/run lifecycle and lock evidence; Housekeeping owns room-turnover lifecycle; Engineering is not a mandatory checkout gate; Accounting owns GL, AR, tax, revenue, and financial-period outcomes; Finance governs and consumes outcomes but does not own operational checkout execution.
+Ownership invariants remain unchanged: Front Desk owns command, orchestration, terminal stay transition, execution evidence, Package 9 idempotency outcome, and checkout-specific Housekeeping handoff creation; PMS Guest Ledger and PMS Cashiering own financial and payment lifecycle facts; General Cashier owns cashier accountability lifecycle; Business Date and Night Audit own operational date/run lifecycle and lock evidence; Housekeeping owns post-checkout room-turnover lifecycle; Engineering is not a mandatory checkout gate; Accounting owns GL, AR, tax, revenue, and financial-period outcomes; Finance governs and consumes outcomes but does not own operational checkout execution.
 
-Runtime status after this governance package remains:
+Current Package 10 source classification:
 
 ```text
-can_execute=false
-CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED
-checkout unauthorized at runtime
+PACKAGE_9_RUNTIME_ACCEPTED_AND_MERGED
+CHECKOUT_EXECUTION_IMPLEMENTED
+CAN_EXECUTE_SERVER_PROJECTED
+PACKAGE_11_GOVERNANCE_ACTIVATION_AUTHORIZED
+PACKAGE_11_RUNTIME_REQUIRES_SEPARATE_DRAFT_PR
+NO_NEW_ADR_REQUIRED
+EXISTING_HOUSEKEEPING_ADRS_ADR_040_ADR_086_AND_ADR_089_REMAIN_GOVERNING
 ```
+
+`CAN_EXECUTE_SERVER_PROJECTED` is not universally true. It is resolved server-side per actor, Company, Property, stay, Business Date, Night Audit, financial, cashier, final-review, permission, confirmation, and idempotency context. Browser input cannot grant execution authority.
+
+Package 11 may later consume checkout-specific FD-C2 handoffs only through a Housekeeping-owned runtime package: Property-scoped claim of eligible PENDING or retry-due FAILED handoffs; authoritative re-resolution of Property, checkout execution, Front Desk stay, reservation relationship, room relationship, and Business Date evidence where required; immutable checkout evidence and handoff source verification; creation or replay of one Housekeeping-owned room-turnover outcome using the canonical Housekeeping lifecycle; markDelivered only after that outcome is committed or replay-proven; markFailed with bounded privacy-safe retry evidence after failure; crash recovery without duplicate turnover; retry without repeating checkout; audit evidence; and real isolated PostgreSQL concurrency proof.
+
+Package 11 must use actual canonical Housekeeping state names from source: readiness states `waiting_cleaning`, `cleaning`, `waiting_inspection`, `ready_for_sale`, `ready_for_arrival`, `ready_for_vip`, and `blocked`; readiness projections `HOUSEKEEPING_READY`, `HOUSEKEEPING_BLOCKED`, and `HOUSEKEEPING_UNKNOWN`; transition types `START_CLEANING`, `SUBMIT_INSPECTION`, and `RELEASE_READY`; and cleanliness statuses `dirty`, `clean`, and `inspected`. FD-C2 handoff delivery states are `PENDING`, `CLAIMED`, `DELIVERED`, and `FAILED`. Package 11 must not freeze speculative room-turnover status names outside source-proven Housekeeping lifecycle values.
 
 ## Validation Notes
 
@@ -512,16 +523,16 @@ Source inspection for this ADR verified:
 - same Laravel/PostgreSQL topology is source-proven.
 - GLF-D and GC-A1 are read-only top-level projections and not participating execution attestations.
 - confirmation validation is dual-phase: pre-transaction and final immediately before mutation.
-- durable one-time confirmation consumption remains a frozen runtime prerequisite, occurs inside the future PostgreSQL checkout transaction, and is not implemented by this ADR.
+- durable one-time confirmation consumption was a frozen runtime prerequisite at original ADR acceptance and is accepted as Package 9 runtime behavior after Package 8 and Package 9 synchronization.
 - post-commit session invalidation is cleanup only and is not durable confirmation consumption.
 - successful checkout evidence must include the confirmation identity or safe fingerprint with database-enforced duplicate reuse protection.
 - PMS Guest Ledger / PMS Cashiering locks precede General Cashier locks and remain held while General Cashier validates.
 - Night Audit start locks `properties`, then `property_business_dates`, then active Night Audit run scope.
-- `can_execute=false` remains canonical in current Front Desk runtime.
-- no checkout execution write route exists.
+- historical pre-Package-9 `can_execute=false` was canonical in Front Desk runtime before Package 9 acceptance; current Package 9 uses `CAN_EXECUTE_SERVER_PROJECTED`.
+- historical pre-Package-9 source inspection proved no checkout execution write route existed; Package 9 later supplied the accepted controlled write route.
 - at original ADR acceptance, no runtime seeding of `frontdesk.checkout-execution.execute` existed; Package 8 later supplied the accepted execute-permission foundation.
 - at original ADR acceptance, no runtime registration of `frontdesk-checkout-execution` sensitive intent existed; Package 8 later supplied the accepted checkout-intent foundation.
-- FD-C1 terminal stay-state and immutable checkout execution evidence foundations do not create checkout execution authority.
-- FD-C2 transactional Housekeeping handoff/outbox foundation does not create checkout execution authority.
+- FD-C1 terminal stay-state and immutable checkout execution evidence foundations did not by themselves create checkout execution authority.
+- FD-C2 transactional Housekeeping handoff/outbox foundation did not by itself create checkout execution authority.
 
 No runtime source is changed by this ADR.
