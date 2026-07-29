@@ -9,6 +9,7 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Enums\FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskCheckoutExecution;
 use Modules\Operations\FrontDesk\Models\FrontDeskDepartureCheckoutFinalReview;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\GeneralCashier\Enums\GeneralCashierCheckoutObligationStatusEnum;
@@ -34,6 +35,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
     public const BLOCKER_FD_B7_NOT_READY = 'FD_B7_NOT_READY';
     public const BLOCKER_FD_B7_EVIDENCE_MISSING = 'FD_B7_EVIDENCE_MISSING';
     public const BLOCKER_STAY_NOT_IN_HOUSE = 'STAY_NOT_IN_HOUSE';
+    public const BLOCKER_CHECKOUT_ALREADY_COMPLETED = 'CHECKOUT_ALREADY_COMPLETED';
     public const BLOCKER_CHECKOUT_NOT_IMPLEMENTED = 'CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED';
     public const UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS = 'FD_B9_UNKNOWN_GUEST_LEDGER_SETTLEMENT_STATUS';
     public const UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS = 'FD_B10_UNKNOWN_GENERAL_CASHIER_OBLIGATION_STATUS';
@@ -233,22 +235,42 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'source_fingerprint' => $nightAuditLock['source_fingerprint'],
         ];
 
-        // Gate 8: No existing completed checkout execution (not yet implemented)
-        $blockerCodes[] = self::BLOCKER_CHECKOUT_NOT_IMPLEMENTED;
-        $blockerMessages[] = 'Checkout execution has not yet been implemented. No checkout execution evidence can exist until a future checkout execution package is delivered.';
+        $existingExecution = FrontDeskCheckoutExecution::withoutGlobalScopes()
+            ->where('property_id', $propertyId)
+            ->where('front_desk_stay_id', $stay->id)
+            ->orderByDesc('occurred_at')
+            ->orderByDesc('created_at')
+            ->first();
+
+        if ($existingExecution) {
+            $blockerCodes[] = self::BLOCKER_CHECKOUT_ALREADY_COMPLETED;
+            $blockerMessages[] = 'A completed checkout execution already exists for this stay.';
+        }
+
+        $canUseExecutionCommand = $this->actorCan($actor, FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION);
         $authoritativeGates['checkout_execution'] = [
             'gate' => 'No existing completed checkout execution',
-            'owner' => 'Front Desk (future)',
-            'satisfied' => false,
-            'detail' => 'Checkout execution package has not been implemented.',
+            'owner' => 'Front Desk',
+            'satisfied' => $existingExecution === null,
+            'detail' => $existingExecution
+                ? 'A committed checkout execution already exists. Use the same idempotency identity for replay receipt.'
+                : 'No committed checkout execution exists for this stay.',
+            'checkout_execution_id' => $existingExecution?->id,
+            'terminal_stay_status' => $existingExecution?->terminal_stay_status?->value,
+            'occurred_at' => $existingExecution?->occurred_at?->toISOString(),
         ];
 
         $blockerCodes = $this->sortedUnique($blockerCodes);
         $blockerMessages = $this->sortedUnique($blockerMessages);
         $reviewReasons = $this->sortedUnique($reviewReasons);
 
-        // Determine overall status. FD-B12 never executes checkout.
-        $canExecute = false;
+        // Determine overall status. Package 9 execution requires readiness plus the exact execute permission.
+        $canExecute = empty($blockerCodes)
+            && empty($reviewReasons)
+            && $canUseExecutionCommand
+            && $stayIsInHouse
+            && $latestFinalReviewStatus === 'CHECKOUT_FINAL_REVIEW_READY'
+            && $existingExecution === null;
         if (empty($blockerCodes)) {
             $overallStatus = FrontDeskDepartureCheckoutExecutionBoundaryStatusEnum::ExecutionBoundaryReady->value;
         } elseif (! empty($reviewReasons)) {
@@ -269,16 +291,18 @@ class FrontDeskDepartureCheckoutExecutionBoundaryProjectionService
             'blocker_codes' => $blockerCodes,
             'blocker_messages' => $blockerMessages,
             'review_reasons' => $reviewReasons,
+            'can_prepare_checkout_confirmation' => $canExecute,
+            'can_complete_checkout' => $canExecute,
             'authoritative_gates' => $authoritativeGates,
             'guest_ledger_settlement_readiness' => $guestLedger,
             'general_cashier_checkout_obligation' => $cashierObligation,
             'property_business_date' => $businessDate,
             'night_audit_close_lock' => $nightAuditLock,
-            'execution_not_performed_marker' => 'Checkout execution is not performed in FD-B12.',
-            'financial_settlement_marker' => 'Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.',
-            'cashier_obligation_marker' => 'Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.',
-            'business_date_marker' => 'Business Date evidence is evaluated read-only from the authoritative BD-A1 Property source. Front Desk does not initialize, close, advance, reopen, or mutate Business Date.',
-            'night_audit_lock_marker' => 'Night Audit close-lock evidence is evaluated read-only from the authoritative NA-A1 lock projection. Front Desk does not start, abort, close, advance, reopen, run checkpoints, or execute checkout.',
+            'execution_not_performed_marker' => 'Checkout execution is performed only by the Package 9 controlled POST route after sensitive confirmation.',
+            'financial_settlement_marker' => 'Financial settlement readiness is evaluated by PMS-owned checkout attestation. Front Desk does not mutate Folios, payments, deposits, refunds, or AR transfers.',
+            'cashier_obligation_marker' => 'Cashier obligation readiness is evaluated by General Cashier-owned checkout attestation. Front Desk does not mutate cashier sessions, counts, handovers, reconciliation, or accountability completion.',
+            'business_date_marker' => 'Business Date evidence is locked through the authoritative Property Business Date source. Front Desk does not initialize, close, advance, reopen, or mutate Business Date.',
+            'night_audit_lock_marker' => 'Night Audit close-lock evidence participates in the checkout transaction. Front Desk does not start, abort, close, advance, reopen, or run checkpoints.',
             'evaluated_at' => now()->toISOString(),
         ];
     }

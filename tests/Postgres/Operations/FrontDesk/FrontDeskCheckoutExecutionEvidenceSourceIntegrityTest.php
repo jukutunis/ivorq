@@ -6,20 +6,27 @@ use Tests\PostgresTestCase;
 
 class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTestCase
 {
-    // ── No checkout execution service ──────────────────────────────────────
+    // ── Dedicated checkout execution service ───────────────────────────────
 
-    public function test_no_checkout_execution_service_exists(): void
+    public function test_dedicated_checkout_execution_service_exists(): void
     {
         $servicePath = base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php');
-        $this->assertFileDoesNotExist($servicePath, 'No FrontDeskCheckoutExecutionService must exist.');
+        $this->assertFileExists($servicePath, 'Package 9 must add the dedicated FrontDeskCheckoutExecutionService.');
+
+        $source = file_get_contents($servicePath);
+        $this->assertStringContainsString('public function execute(User $actor, string $frontDeskStayId, string $idempotencyKey): FrontDeskCheckoutExecutionResult', $source);
+        $this->assertStringContainsString('DB::transaction(function ()', $source);
+        $this->assertStringContainsString('NightAuditCheckoutConcurrencyGuardService', $source);
+        $this->assertStringContainsString('GuestLedgerCheckoutTerminalFinancialAttestationService', $source);
+        $this->assertStringContainsString('GeneralCashierCheckoutTerminalObligationAttestationService', $source);
 
         $commandPath = base_path('Modules/Operations/FrontDesk/Commands/CheckoutStayCommand.php');
         $this->assertFileDoesNotExist($commandPath, 'No CheckoutStayCommand must exist.');
     }
 
-    // ── No write controller action ─────────────────────────────────────────
+    // ── Controlled write controller action ─────────────────────────────────
 
-    public function test_no_checkout_write_controller_action_exists(): void
+    public function test_controller_exposes_only_thin_package9_checkout_actions(): void
     {
         $controllerPath = base_path('app/Http/Controllers/Ivorq/FrontDeskController.php');
         $this->assertFileExists($controllerPath);
@@ -30,25 +37,23 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
             $source,
             'FrontDeskController must not contain a checkOut method.'
         );
-        $this->assertStringNotContainsString(
-            'executeCheckout',
-            $source,
-            'FrontDeskController must not contain executeCheckout.'
-        );
+        $this->assertStringContainsString('prepareCheckoutConfirmation', $source);
+        $this->assertStringContainsString('executeCheckout', $source);
+        $this->assertStringContainsString("assertOnlyFields(\$request, ['idempotency_key', 'password'], 'checkout_confirmation')", $source);
+        $this->assertStringContainsString("assertOnlyFields(\$request, ['idempotency_key'], 'checkout_execution')", $source);
+        $this->assertStringContainsString('Unsupported checkout field:', $source);
+        $this->assertStringContainsString('$checkout->execute($request->user(), $stay, $validated[\'idempotency_key\'])', $source);
     }
 
-    // ── No checkout write route ────────────────────────────────────────────
+    // ── Controlled checkout write routes ───────────────────────────────────
 
-    public function test_no_checkout_post_put_patch_delete_route_exists(): void
+    public function test_only_package9_checkout_post_routes_exist(): void
     {
         $webRoutes = file_get_contents(base_path('routes/web.php'));
 
-        // No checkout execution POST/PUT/PATCH/DELETE route
-        $this->assertStringNotContainsString(
-            "post('stays/{stay}/checkout",
-            $webRoutes,
-            'No POST /stays/{stay}/checkout route must exist in web.php.'
-        );
+        $this->assertSame(2, substr_count($webRoutes, "Route::post('/stays/{stay}/checkout"));
+        $this->assertStringContainsString("checkout-confirmation", $webRoutes);
+        $this->assertStringContainsString("checkout-execution", $webRoutes);
         $this->assertStringNotContainsString(
             "put('stays/{stay}/checkout",
             $webRoutes,
@@ -125,21 +130,26 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
         );
     }
 
-    // ── No React/TypeScript checkout action ────────────────────────────────
+    // ── Controlled React/TypeScript checkout action ────────────────────────
 
-    public function test_no_react_typescript_checkout_action_exists(): void
+    public function test_react_checkout_action_posts_only_confirmation_and_idempotency_payloads(): void
     {
-        $jsBase = base_path('resources/js');
-        if (!is_dir($jsBase)) {
-            $this->markTestSkipped('resources/js directory not found.');
-            return;
-        }
+        $source = file_get_contents(base_path('resources/js/Pages/Ivorq/FrontDesk/FrontDeskWorkspace.tsx'));
 
-        $this->assertNoPatternInDirectory(
-            $jsBase,
-            ['executeCheckout', 'ExecuteCheckout', 'checkoutExecutionButton', 'CheckoutExecutionButton', 'execute-checkout', 'handleCheckout', 'handleCheckOut', 'postCheckout', 'checkOutStay'],
-            'React/TypeScript must not contain checkout execution actions.'
-        );
+        $this->assertStringContainsString('Review & Complete Checkout', $source);
+        $this->assertStringContainsString('checkout-confirmation', $source);
+        $this->assertStringContainsString('checkout-execution', $source);
+        $this->assertStringContainsString('{ idempotency_key: idempotencyKey, password }', $source);
+        $this->assertStringContainsString('{ idempotency_key: idempotencyKey }', $source);
+        $this->assertStringContainsString('finally {', $source);
+        $this->assertStringContainsString("setPassword('');", $source);
+        $this->assertStringContainsString('receipt.night_audit_status', $source);
+        $this->assertStringContainsString('receipt.pms_terminal_financial_status', $source);
+        $this->assertStringContainsString('receipt.general_cashier_terminal_obligation_status', $source);
+        $this->assertStringNotContainsString('Financial: {guestLedger.status', $source);
+        $this->assertStringNotContainsString('Cashier: {cashierObligation.status', $source);
+        $this->assertStringNotContainsString('localStorage', $source);
+        $this->assertStringNotContainsString('sessionStorage', $source);
     }
 
     // ── No production call to FrontDeskCheckoutExecution::create ──────────
@@ -156,79 +166,94 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
 
     // ── No production call changes a stay to CHECKED_OUT ───────────────────
 
-    public function test_no_production_call_changes_stay_to_checked_out(): void
+    public function test_only_package9_execution_service_changes_stay_to_checked_out(): void
     {
-        // The PMS FrontDeskService uses lowercase 'checked_out' via PMS enums
-        // Front Desk operational code must not use FrontDeskStayStatusEnum::CheckedOut
-        $this->assertNoProductionPatternInModule(
-            'Modules/Operations/FrontDesk',
-            ["FrontDeskStayStatusEnum::CheckedOut", "status' => 'CHECKED_OUT", 'status" => "CHECKED_OUT'],
-            'Front Desk production code must not transition a stay to CHECKED_OUT.'
-        );
+        $servicePath = base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php');
+        $source = file_get_contents($servicePath);
+
+        $this->assertStringContainsString('FrontDeskStayStatusEnum::CheckedOut', $source);
+        $this->assertStringContainsString("'status' => FrontDeskStayStatusEnum::CheckedOut", $source);
     }
 
-    // ── Boundary still contains blocker ────────────────────────────────────
+    // ── Boundary activates Package 9 command ───────────────────────────────
 
-    public function test_boundary_still_contains_checkout_execution_not_yet_implemented(): void
+    public function test_boundary_does_not_use_checkout_execution_not_yet_implemented_as_live_blocker(): void
     {
         $boundaryPath = base_path('Modules/Operations/FrontDesk/Services/FrontDeskDepartureCheckoutExecutionBoundaryProjectionService.php');
         $this->assertFileExists($boundaryPath);
 
         $source = file_get_contents($boundaryPath);
-        $this->assertStringContainsString(
-            'CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED',
-            $source,
-            'Boundary must still contain CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED.'
-        );
+        $this->assertStringNotContainsString('$blockerCodes[] = self::BLOCKER_CHECKOUT_NOT_IMPLEMENTED;', $source);
+        $this->assertStringContainsString('FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION', $source);
     }
 
-    public function test_boundary_still_assigns_can_execute_false(): void
+    public function test_boundary_can_execute_is_permission_and_blocker_gated(): void
     {
         $boundaryPath = base_path('Modules/Operations/FrontDesk/Services/FrontDeskDepartureCheckoutExecutionBoundaryProjectionService.php');
         $this->assertFileExists($boundaryPath);
 
         $source = file_get_contents($boundaryPath);
 
-        // can_execute is hardcoded to false
-        $this->assertStringContainsString('$canExecute = false;', $source);
+        $this->assertStringContainsString('FrontDeskCheckoutExecution::withoutGlobalScopes()', $source);
+        $this->assertStringContainsString('BLOCKER_CHECKOUT_ALREADY_COMPLETED', $source);
+        $this->assertStringContainsString('$existingExecution === null', $source);
+        $this->assertStringContainsString('empty($reviewReasons)', $source);
         $this->assertStringContainsString("'can_execute'", $source);
-
-        // Must not contain can_execute = true
-        $this->assertStringNotContainsString(
-            '$canExecute = true;',
-            $source,
-            'Boundary must not set canExecute to true.'
-        );
     }
 
-    public function test_boundary_does_not_query_new_evidence_table(): void
+    public function test_boundary_reads_checkout_execution_evidence_without_mutating_it(): void
     {
         $boundaryPath = base_path('Modules/Operations/FrontDesk/Services/FrontDeskDepartureCheckoutExecutionBoundaryProjectionService.php');
         $this->assertFileExists($boundaryPath);
 
         $source = file_get_contents($boundaryPath);
-        $this->assertStringNotContainsString(
-            'front_desk_checkout_executions',
-            $source,
-            'Boundary must not query the new evidence table.'
-        );
-        $this->assertStringNotContainsString(
-            'FrontDeskCheckoutExecution',
-            $source,
-            'Boundary must not reference FrontDeskCheckoutExecution model.'
-        );
+        $this->assertStringContainsString('FrontDeskCheckoutExecution::withoutGlobalScopes()', $source);
+        $this->assertStringNotContainsString('new FrontDeskCheckoutExecution', $source);
+        $this->assertStringNotContainsString('->forceFill([', $source);
+        $this->assertStringNotContainsString('->save()', $source);
     }
 
-    // ── No Package 7, 8, or 9 source ───────────────────────────────────────
+    public function test_execution_service_claims_authoritative_confirmation_and_cleanup_is_non_authoritative_after_commit(): void
+    {
+        $source = file_get_contents(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php'));
 
-    public function test_no_package_9_source_introduced(): void
+        $this->assertStringContainsString('validateCurrentSessionConfirmationFor', $source);
+        $this->assertStringContainsString('claimCurrentSessionConfirmationFor($actor, $stay->id, $idempotencyKey)', $source);
+        $this->assertStringNotContainsString('claimCurrentSessionConfirmationFromPreflight', $source);
+        $this->assertStringContainsString('cleanupConfirmationSessionAfterCommit', $source);
+        $this->assertStringContainsString('try {', $source);
+        $this->assertStringContainsString('Log::warning', $source);
+        $this->assertStringContainsString('confirmedAt->equalTo($preflight->confirmedAt)', $source);
+        $this->assertStringContainsString('expiresAt->equalTo($preflight->expiresAt)', $source);
+    }
+
+    public function test_execution_result_contains_minimized_committed_attestation_statuses_without_fingerprints(): void
+    {
+        $result = file_get_contents(base_path('Modules/Operations/FrontDesk/ValueObjects/FrontDeskCheckoutExecutionResult.php'));
+        $service = file_get_contents(base_path('Modules/Operations/FrontDesk/Services/FrontDeskCheckoutExecutionService.php'));
+
+        foreach (['night_audit_status', 'pms_terminal_financial_status', 'general_cashier_terminal_obligation_status'] as $key) {
+            $this->assertStringContainsString($key, $result);
+        }
+
+        $this->assertStringContainsString('night_audit_source_status', $service);
+        $this->assertStringContainsString('pms_financial_attestation_status', $service);
+        $this->assertStringContainsString('general_cashier_attestation_status', $service);
+        $this->assertStringNotContainsString('night_audit_source_fingerprint\' => $this', $result);
+        $this->assertStringNotContainsString('pms_financial_attestation_fingerprint\' => $this', $result);
+        $this->assertStringNotContainsString('general_cashier_attestation_fingerprint\' => $this', $result);
+    }
+
+    // ── No extra command object ────────────────────────────────────────────
+
+    public function test_no_extra_checkout_command_object_introduced(): void
     {
         $fdBase = base_path('Modules/Operations/FrontDesk');
 
         // Package 9: Final checkout command
         $this->assertFileDoesNotExist(
             $fdBase . '/Commands/CheckoutStayCommand.php',
-            'No checkout command (Package 9) must exist.'
+            'Package 9 uses the dedicated service, not an extra command object.'
         );
     }
 
@@ -299,15 +324,15 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
         }
     }
 
-    // ── Contract Version remains 1.13 ─────────────────────────────────────
+    // ── Contract Version remains 1.15 ─────────────────────────────────────
 
-    public function test_contract_version_remains_1_14(): void
+    public function test_contract_version_remains_1_15(): void
     {
         $contractPath = base_path('.agents/contracts/IVORQ-Package-Execution-Contract.md');
         $this->assertFileExists($contractPath);
 
         $source = file_get_contents($contractPath);
-        $this->assertStringContainsString('Version: 1.14', $source, 'Contract Version must remain 1.14.');
+        $this->assertStringContainsString('Version: 1.15', $source, 'Contract Version must remain 1.15.');
     }
 
     // ── No ADR or contract file changed ────────────────────────────────────

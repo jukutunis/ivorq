@@ -229,30 +229,37 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_package_8_measurement(): void
+    public function test_frontdesk_operational_baseline_matches_package_9_measurement(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
         $this->assertEquals('active', $baseline->status ?? null);
-        $this->assertCount(63, $baseline->classes, 'Front Desk baseline must have exactly 63 classes.');
+        $this->assertCount(68, $baseline->classes, 'Front Desk baseline must have exactly 68 classes.');
 
-        // The last seven classes are the FD-C2 + Package 8 tests.
-        $lastSeven = array_slice($baseline->classes, -7);
-        $this->assertSame('FrontDeskCheckoutHousekeepingHandoffFoundationTest', $lastSeven[0]);
-        $this->assertSame('FrontDeskCheckoutHousekeepingHandoffMigrationProofTest', $lastSeven[1]);
-        $this->assertSame('FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest', $lastSeven[2]);
-        $this->assertSame('FrontDeskCheckoutConfirmationAuthorizationFoundationTest', $lastSeven[3]);
-        $this->assertSame('FrontDeskCheckoutConfirmationMigrationProofTest', $lastSeven[4]);
-        $this->assertSame('FrontDeskCheckoutConfirmationSourceIntegrityTest', $lastSeven[5]);
-        $this->assertSame('FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest', $lastSeven[6]);
+        // The last twelve classes are the FD-C2, Package 8 confirmation, and corrected Package 9 execution tests.
+        $lastTwelve = array_slice($baseline->classes, -12);
+        $this->assertSame([
+            'FrontDeskCheckoutHousekeepingHandoffFoundationTest',
+            'FrontDeskCheckoutHousekeepingHandoffMigrationProofTest',
+            'FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest',
+            'FrontDeskCheckoutConfirmationAuthorizationFoundationTest',
+            'FrontDeskCheckoutConfirmationMigrationProofTest',
+            'FrontDeskCheckoutConfirmationSourceIntegrityTest',
+            'FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest',
+            'FrontDeskCheckoutExecutionFoundationTest',
+            'FrontDeskCheckoutExecutionRollbackTest',
+            'FrontDeskCheckoutExecutionHttpTest',
+            'FrontDeskCheckoutExecutionSourceIntegrityTest',
+            'FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest',
+        ], $lastTwelve);
 
-        $this->assertEquals(686, $baseline->expected->tests ?? null);
-        $this->assertEquals(6679, $baseline->expected->assertions ?? null);
+        $this->assertEquals(729, $baseline->expected->tests ?? null);
+        $this->assertEquals(5539, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '94a87dad7422f5a7f16656d34432428f0f4a7100',
+            '77a82dd3951b7bb5804efb496b8939163ba2076d',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -261,7 +268,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'Provenance SHA must be a full 40-character hex string.'
         );
         $this->assertEquals(
-            'sprint-package-8-checkout-confirmation-authorization-foundation',
+            'sprint-package-9-final-checkout-execution',
             $baseline->provenance->branch ?? null
         );
 
@@ -269,29 +276,26 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('FD-C1', $baseline->description ?? '');
         $this->assertStringContainsString('immutable checkout execution evidence', $baseline->description ?? '');
         $this->assertStringContainsString('referential integrity', $baseline->description ?? '');
-        $this->assertStringContainsString('can_execute=false', $baseline->description ?? '');
+        $this->assertStringContainsString('Package 9 controlled checkout execution', $baseline->description ?? '');
         $this->assertStringContainsString('FD-B12', $baseline->description ?? '');
         $this->assertStringContainsString('Departure Preparation (FD-A1, FD-A2, FD-B1, FD-B2)', $baseline->description ?? '');
 
         $this->assertStringContainsString('CHECKED_OUT', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_ce_property_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_ce_stay_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_ce_reservation_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_ce_final_review_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_ce_business_date_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_ce_created_by_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('idempotency trim enforcement', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('FD_C1_CHECKOUT_EXECUTION_EVIDENCE_IMMUTABLE', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('stale boundary assertions', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('CHECKED_OUT exists', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('departure preparation does not execute checkout', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('zero-failure', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Contract Version 1.14', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('No checkout command', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 9 final runtime proof closure', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('FrontDeskCheckoutExecutionService', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('zero-failure final registered', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('1,708,649ms', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('729 tests / 5539 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('2,328,853ms', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Exit code: 0', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 9 isolated concurrency passed 15 tests / 417 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('three distinct PostgreSQL transaction IDs', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 9 focused batch passed 41 tests / 708 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('authorization-first zero requested-stay query proof', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Scenario I runtime revalidation telemetry', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('execution-route idempotency conflict proof', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Adjacent NA-A2 + GLF-E + registered GC-A2 authority measurement passed 150 tests / 1447 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero Package 9 disposable database residue', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('ControlledGoodsReceiptPostingTest.php:208', $baseline->provenance->note ?? '');
 
         // ── FD-C2 assertions ──────────────────────────────────────────────
         $this->assertStringContainsString('FD-C2', $baseline->description ?? '');
@@ -299,63 +303,23 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('dedicated checkout-specific persistence', $baseline->description ?? '');
         $this->assertStringContainsString('no Housekeeping readiness mutation', $baseline->description ?? '');
 
-        $this->assertStringContainsString('FD-C2', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_chh_property_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_chh_stay_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_chh_reservation_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_chh_execution_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_chh_business_date_fk', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_PAYLOAD_IMMUTABLE', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_DELETE_FORBIDDEN', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_SOURCE_MISMATCH', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Raw claim token never persisted', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Dedicated table', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('outbox_messages unchanged', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('No production handoff creation path', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('No Housekeeping readiness mutation', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('CHECKOUT_EXECUTION_NOT_YET_IMPLEMENTED', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Package 9 locked', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('checkout-to-Housekeeping handoff', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no Housekeeping readiness mutation', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
 
         // ── FD-C2 correction markers ──────────────────────────────────────
         $this->assertStringContainsString('Package 8 checkout confirmation plus execute authorization foundation', $baseline->description ?? '');
-        $this->assertStringContainsString('PACKAGE_8_FINAL_SOURCE_SHA 94a87dad7422f5a7f16656d34432428f0f4a7100', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Package 8 exact final focused batch: 33 tests / 333 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Duration: 227,293ms', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Adjacent SensitiveActionConfirmation plus FD-C1/FD-C2 batch: 216 tests / 4761 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Duration: 161,340ms', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('no public method accepts CheckoutSensitiveConfirmationContext', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('reflection proof is safe for named, union, and intersection types', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('frontdesk.checkout-execution.execute', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('frontdesk-checkout-execution', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('checkout_sensitive_confirmation_issuances', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('checkout_sensitive_confirmation_consumptions', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('issueForCurrentSession', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('claimCurrentSessionConfirmationFor', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('resolveAuthorizedContext', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('authorization before stay query', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('exact execute permission only', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('p8_csc_issue_source_guard', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('p8_csc_consume_insert_guard', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_ce_p8_confirmation_source_guard', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('P8_CHECKOUT_CONFIRMATION_ISSUANCE_SOURCE_MISMATCH', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('P8_CHECKOUT_CONFIRMATION_CONSUMPTION_CONTEXT_MISMATCH', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('P8_CHECKOUT_EXECUTION_CONFIRMATION_SOURCE_MISMATCH', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('P8_CHECKOUT_CONFIRMATION_ACTIVE_TRANSACTION_REQUIRED', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('P8_CHECKOUT_CONFIRMATION_ALREADY_CONSUMED', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('P8_CHECKOUT_EXECUTE_PERMISSION_MISSING', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('fd_ce_p8_confirmation_consumption_unique', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Raw passwords are never persisted', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Raw session IDs are never persisted', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('database-native clock_timestamp() expiry validation after lock', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('disposable PostgreSQL databases', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('pg_blocking_pids blocker evidence', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('same-checkout-identity duplicate prevention', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('different-property non-serialization proof', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Complete active runner after metadata refresh: 14 passed / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 9 controlled checkout execution', $baseline->description ?? '');
+        $this->assertStringContainsString('checkout-confirmation POST route', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('checkout-execution POST route', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('durable issuance/consumption evidence', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('sensitive confirmation preflight and transaction claim', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('real HTTP confirmation-to-execution lifecycle', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('runtime SQLSTATE telemetry assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Full active registry runner passed 14 baselines / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('GLF-C worker proof mapped deposit application/refund over-application as bounded rejection evidence', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('npm run build passed', $baseline->provenance->note ?? '');
+        $this->assertStringNotContainsString('claimCurrentSessionConfirmationFromPreflight', $baseline->provenance->note ?? '');
 
         // Prove no arithmetic-derived claims remain in the accepted note
         $this->assertStringNotContainsString('did not complete', $baseline->provenance->note ?? '');
@@ -379,7 +343,11 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('8eca2e7bac4b9e15a0ed93a50f29f43c90a6622e', $baseline->provenance->sha ?? null);
+        $this->assertEquals('546041416a709194f23010b5395d8acfe4a9d9bb', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-package-9-final-checkout-execution', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('GUEST_DEPOSIT_OVER_APPLICATION', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('BOUNDED_REJECT', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Full active registry runner passed 14 baselines / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
         $this->assertEquals('active', $baseline->status ?? null);
     }
 
@@ -829,24 +797,20 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationSourceIntegrityTest', $baseline->classes[1]);
         $this->assertEquals('GuestLedgerCheckoutTerminalFinancialAttestationConcurrencyProofTest', $baseline->classes[2]);
         $this->assertEquals(63, $baseline->expected->tests ?? null, 'GLF-E must have 63 tests.');
-        $this->assertEquals(271, $baseline->expected->assertions ?? null, 'GLF-E must have 271 assertions.');
+        $this->assertEquals(273, $baseline->expected->assertions ?? null, 'GLF-E must have 273 assertions.');
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertEquals([], $baseline->accepted_debt);
-        $this->assertEquals('e7b8615df23067c2f119adbb1bf2906f21e854a4', $baseline->provenance->sha ?? null);
-        $this->assertEquals('sprint-glf-e-s1-savepoint-lock-continuity', $baseline->provenance->branch ?? null);
+        $this->assertEquals('546041416a709194f23010b5395d8acfe4a9d9bb', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-package-9-final-checkout-execution', $baseline->provenance->branch ?? null);
         $this->assertEquals('batch', $baseline->execution_mode ?? null, 'GLF-E must use batch execution mode.');
-        $this->assertStringContainsString('13 passed / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Distinct PHP PIDs', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('savepoint', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('pg_stat_activity', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('pg_blocking_pids', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('DomainException', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('GLF_E_INVALID_TERMINAL_FINANCIAL_ATTESTATION', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Full active registry runner passed 14 baselines / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('distinct PHP/PG PIDs', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero-write SQL proof', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Transaction-local GLF-E capability', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('set_config', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no raw capability leakage', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero business writes', $baseline->provenance->note ?? '');
     }
 
     public function test_gc_a2_baseline_matches_proof_commit_measurement(): void
@@ -861,43 +825,32 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'GeneralCashierCheckoutTerminalObligationAttestationConcurrencyProofTest',
         ], $baseline->classes);
         $this->assertEquals(67, $baseline->expected->tests ?? null);
-        $this->assertEquals(253, $baseline->expected->assertions ?? null);
+        $this->assertEquals(260, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('8b2e28cacd4ea2693b33ffbded023814077e7fbd', $baseline->provenance->sha ?? null);
-        $this->assertEquals('sprint-gc-a2-checkout-terminal-obligation-attestation', $baseline->provenance->branch ?? null);
+        $this->assertEquals('546041416a709194f23010b5395d8acfe4a9d9bb', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-package-9-final-checkout-execution', $baseline->provenance->branch ?? null);
 
         // Execution mode (already asserted on the field above)
-        $this->assertStringContainsString('Registered individual runner total', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('registered individual runner total', $baseline->provenance->note ?? '');
 
         // Per-class results
-        $this->assertStringContainsString('Foundation 44 tests / 124 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('SourceIntegrity 18 tests / 73 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('ConcurrencyProof 5 tests / 56 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Foundation 44 tests / 131 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('SourceIntegrity 18 tests / 73 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('ConcurrencyProof 5 tests / 56 assertions', $baseline->provenance->note ?? '');
 
         // Registered individual total
-        $this->assertStringContainsString('67 tests / 253 assertions / 0 failures / 0 errors / 0 skipped', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('67 tests / 260 assertions / 0 failures / 0 errors / 0 skipped', $baseline->provenance->note ?? '');
 
         // Combined batch is not registered mode
         $this->assertStringContainsString('Combined batch execution is not the registered mode', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('three DatabaseMigrations classes conflict when combined', $baseline->provenance->note ?? '');
 
-        // Predecessor results
-        $this->assertStringContainsString('NA-A2: 20/914/0/0 PASS', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('GLF-E: 63/271/0/0 PASS', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('GC-A1: 38/231/0/0 PASS', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('GLF-D: 60/253/0/0 PASS', $baseline->provenance->note ?? '');
-
         // Complete active runner
-        $this->assertStringContainsString('Complete active runner: 14 passed / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
-
-        // Non-PostgreSQL guard
-        $this->assertStringContainsString('Non-PostgreSQL public guard proven', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Full active registry runner passed 14 baselines / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
 
         // Capability lifecycle
-        $this->assertStringContainsString('can_execute=false', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('checkout unauthorized', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Transaction-local GC-A2 capability', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Only SHA-256 capability hash retained', $baseline->provenance->note ?? '');
 
@@ -926,9 +879,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('No permission/confirmation', $baseline->provenance->note ?? '');
 
         // GC-A2 scope
-        $this->assertStringContainsString('pg_stat_activity lock proof', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('pg_blocking_pids blocker proof', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Inventory Reversal inherited debt unchanged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('pg_stat_activity and pg_blocking_pids lock proof retained', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Exact NA-A2 context required', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Exact GLF-E object required', $baseline->provenance->note ?? '');
     }

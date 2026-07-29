@@ -641,6 +641,9 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
             $this->service->attest($context, $stay->id);
 
             $forbidden = ['insert', 'update', 'delete', 'merge', 'truncate', 'alter', 'drop', 'create'];
+            $inspectedQueries = 0;
+            $mutationQueries = 0;
+
             foreach (DB::getQueryLog() as $entry) {
                 // Normalize: strip comments, collapse whitespace, lowercase
                 $sql = strtolower(trim($entry['query'] ?? ''));
@@ -651,11 +654,18 @@ class GuestLedgerCheckoutTerminalFinancialAttestationFoundationTest extends Post
                 if (str_starts_with($sql, 'set local')) continue;
                 if (str_starts_with($sql, 'select')) continue;
 
+                $inspectedQueries++;
                 foreach ($forbidden as $op) {
+                    if (str_contains($sql, $op)) {
+                        $mutationQueries++;
+                    }
                     $this->assertStringNotContainsString($op, $sql,
                         "Mutation '{$op}' found in query: {$sql}");
                 }
             }
+
+            $this->assertGreaterThan(0, count(DB::getQueryLog()), 'GLF-E zero-write proof must inspect executed SQL.');
+            $this->assertSame(0, $mutationQueries, 'GLF-E must not execute business mutation SQL.');
 
             DB::disableQueryLog();
         });

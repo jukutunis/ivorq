@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use Modules\Foundation\Audit\Services\AuditService;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationConsumption;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationIssuance;
+use Modules\Foundation\Authorization\ValueObjects\CheckoutSensitiveConfirmationPreflightResult;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService;
@@ -171,6 +172,70 @@ class CheckoutSensitiveConfirmationService
         ));
     }
 
+    public function validateCurrentSessionConfirmationFor(User $actor, string $frontDeskStayId, string $checkoutIdempotencyKey): CheckoutSensitiveConfirmationPreflightResult
+    {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            throw new DomainException(self::ERROR_POSTGRESQL_REQUIRED);
+        }
+
+        $resolved = $this->checkoutAuthorization->resolveAuthorizedContext($actor, $frontDeskStayId);
+        $context = new CheckoutSensitiveConfirmationContext(
+            actor: $resolved['actor'],
+            company: $resolved['company'],
+            property: $resolved['property'],
+            stay: $resolved['stay'],
+            checkoutIdempotencyKey: $checkoutIdempotencyKey,
+            sessionFingerprint: self::fingerprintSession(session()->getId()),
+        );
+
+        $this->assertAuthoritativeContext($context);
+
+        $reference = $this->sessionReference();
+        if ($reference === null) {
+            throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+        }
+
+        $idempotencyKey = $this->normalizeIdempotencyKey($context->checkoutIdempotencyKey);
+        $issuanceId = (string) ($reference['issuance_id'] ?? '');
+        if ($issuanceId === '') {
+            throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+        }
+
+        /** @var CheckoutSensitiveConfirmationIssuance|null $issuance */
+        $issuance = CheckoutSensitiveConfirmationIssuance::query()
+            ->whereKey($issuanceId)
+            ->first();
+
+        if (! $issuance) {
+            throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+        }
+
+        $dbNow = $this->postgresWallClockUtc();
+        $this->assertIssuanceMatchesContext($issuance, $context, $idempotencyKey, $reference, $dbNow);
+
+        $consumed = CheckoutSensitiveConfirmationConsumption::query()
+            ->where('issuance_id', $issuance->id)
+            ->exists();
+
+        if ($consumed) {
+            throw new DomainException(self::ERROR_ALREADY_CONSUMED);
+        }
+
+        return new CheckoutSensitiveConfirmationPreflightResult(
+            issuanceId: $issuance->id,
+            confirmationIdentity: $issuance->confirmation_identity,
+            confirmationFingerprint: $issuance->confirmation_fingerprint,
+            actorId: $issuance->actor_id,
+            companyId: $issuance->company_id,
+            propertyId: $issuance->property_id,
+            frontDeskStayId: $issuance->front_desk_stay_id,
+            checkoutIdempotencyKey: $issuance->checkout_idempotency_key,
+            sessionFingerprint: $issuance->session_fingerprint,
+            confirmedAt: Carbon::parse($issuance->confirmed_at),
+            expiresAt: Carbon::parse($issuance->expires_at),
+        );
+    }
+
     private function claimCurrentSessionConfirmation(CheckoutSensitiveConfirmationContext $context): CheckoutSensitiveConfirmationClaimResult
     {
         if (DB::connection()->getDriverName() !== 'pgsql') {
@@ -221,6 +286,7 @@ class CheckoutSensitiveConfirmationService
                 'consumed_at' => $dbNow,
                 'created_at' => $dbNow,
             ])->save();
+            $consumption->refresh();
         } catch (QueryException $exception) {
             $this->mapPersistenceQueryException($exception);
         }
@@ -237,7 +303,7 @@ class CheckoutSensitiveConfirmationService
             checkoutIdempotencyKey: $issuance->checkout_idempotency_key,
             confirmedAt: Carbon::parse($issuance->confirmed_at),
             expiresAt: Carbon::parse($issuance->expires_at),
-            consumedAt: $dbNow,
+            consumedAt: $consumption->consumed_at,
         );
     }
 

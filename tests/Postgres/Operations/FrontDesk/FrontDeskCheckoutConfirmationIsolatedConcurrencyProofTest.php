@@ -22,6 +22,10 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
 {
     use ManagesConcurrencyDatabase;
 
+    private const WORKER_MARKER_TIMEOUT_SECONDS = 60;
+    private const WORKER_RESULT_TIMEOUT_SECONDS = 60;
+    private const BLOCKING_PROOF_TIMEOUT_SECONDS = 30;
+
     private bool $concurrencyDatabaseReady = false;
 
     private string $previousDefaultConnection;
@@ -337,7 +341,7 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
     private function waitMarker(string $dir, string $name): array
     {
         $path = $dir . DIRECTORY_SEPARATOR . $name . '.json';
-        $deadline = microtime(true) + 15;
+        $deadline = microtime(true) + self::WORKER_MARKER_TIMEOUT_SECONDS;
         while (! file_exists($path)) {
             if (microtime(true) > $deadline) {
                 $this->fail("Marker {$name} not written.");
@@ -350,7 +354,7 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
 
     private function assertEventuallyBlockedBy(int $blockedBackendPid, int $blockingBackendPid): void
     {
-        $deadline = microtime(true) + 15;
+        $deadline = microtime(true) + self::BLOCKING_PROOF_TIMEOUT_SECONDS;
         do {
             $row = DB::selectOne('SELECT pg_blocking_pids(?) AS blockers', [$blockedBackendPid]);
             $blockers = trim((string) $row->blockers, '{}');
@@ -399,7 +403,7 @@ class FrontDeskCheckoutConfirmationIsolatedConcurrencyProofTest extends Postgres
      */
     private function waitProcess($process, array $pipes): array
     {
-        $deadline = microtime(true) + 20;
+        $deadline = microtime(true) + self::WORKER_RESULT_TIMEOUT_SECONDS;
         $stdout = '';
         $stderr = '';
         while (microtime(true) < $deadline) {

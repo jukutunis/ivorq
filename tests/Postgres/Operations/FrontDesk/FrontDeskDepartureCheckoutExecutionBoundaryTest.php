@@ -573,7 +573,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertContains('CHECKOUT_RELEVANT_FOLIOS_EVIDENCE_UNAVAILABLE', $b['guest_ledger_settlement_readiness']['evidence_unavailable_codes']);
     }
 
-    public function test_guest_ledger_ready_satisfies_only_financial_gate_and_can_execute_remains_false(): void
+    public function test_guest_ledger_ready_satisfies_only_financial_gate_and_execute_still_requires_all_gates_and_permission(): void
     {
         $this->bindClearGuestLedgerPorts();
         $s = $this->checkedInStay('8220');
@@ -587,7 +587,6 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FINANCIAL_SETTLEMENT_UNAVAILABLE, $b['blocker_codes']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_FINANCIAL_SETTLEMENT_BLOCKED, $b['blocker_codes']);
         $this->assertFalse($b['can_execute']);
-        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CHECKOUT_NOT_IMPLEMENTED, $b['blocker_codes']);
     }
 
     public function test_guest_ledger_blocked_maps_to_front_desk_financial_blocker_with_nested_source_codes(): void
@@ -731,7 +730,6 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE, $b['blocker_codes']);
         $this->assertSame(FrontDeskNightAuditLockDependencyService::STATUS_CLEAR, $b['night_audit_close_lock']['status']);
         $this->assertTrue($b['authoritative_gates']['night_audit_lock']['satisfied']);
-        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CHECKOUT_NOT_IMPLEMENTED, $b['blocker_codes']);
         $this->assertFalse($b['can_execute']);
     }
 
@@ -1011,7 +1009,6 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertNull($gate['started_at']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_CLOSE_LOCK_ACTIVE, $b['blocker_codes']);
         $this->assertNotContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_NIGHT_AUDIT_LOCK_UNAVAILABLE, $b['blocker_codes']);
-        $this->assertContains(FrontDeskDepartureCheckoutExecutionBoundaryProjectionService::BLOCKER_CHECKOUT_NOT_IMPLEMENTED, $b['blocker_codes']);
         $this->assertFalse($b['can_execute']);
     }
 
@@ -1758,7 +1755,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        $this->assertSame('Checkout execution is not performed in FD-B12.', $b['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is performed only by the Package 9 controlled POST route after sensitive confirmation.', $b['execution_not_performed_marker']);
     }
 
     // ── All Authoritative Gates Present ──
@@ -1818,7 +1815,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertSame('EXECUTION_BOUNDARY_BLOCKED', $boundary['execution_boundary_status']);
         $this->assertNotEmpty($boundary['blocker_codes']);
         $this->assertIsArray($boundary['review_reasons']);
-        $this->assertSame('Checkout execution is not performed in FD-B12.', $boundary['execution_not_performed_marker']);
+        $this->assertSame('Checkout execution is performed only by the Package 9 controlled POST route after sensitive confirmation.', $boundary['execution_not_performed_marker']);
     }
 
     public function test_queue_does_not_silently_normalize_boundary_exception(): void
@@ -1854,7 +1851,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $routes = collect(Route::getRoutes()->getRoutes());
 
         $getFound = false;
-        $writeFound = false;
+        $boundaryWriteFound = false;
+        $executionWriteFound = false;
 
         foreach ($routes as $route) {
             $uri = $route->uri();
@@ -1866,7 +1864,7 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
                     $getFound = true;
                 }
                 if (array_intersect(['POST', 'PUT', 'PATCH', 'DELETE'], $methods)) {
-                    $writeFound = true;
+                    $boundaryWriteFound = true;
                 }
             }
 
@@ -1874,21 +1872,22 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             if (preg_match('/checkout-execut(?:e|ion)\b/', $uri)) {
                 $methods = $route->methods();
                 if (array_intersect(['POST', 'PUT', 'PATCH', 'DELETE'], $methods)) {
-                    $writeFound = true;
+                    $executionWriteFound = true;
                 }
             }
         }
 
         $this->assertTrue($getFound, 'GET route for checkout-execution-boundary must exist.');
-        $this->assertFalse($writeFound, 'No POST/PUT/PATCH/DELETE checkout execution route may exist.');
+        $this->assertFalse($boundaryWriteFound, 'No POST/PUT/PATCH/DELETE checkout execution boundary route may exist.');
+        $this->assertTrue($executionWriteFound, 'Package 9 POST checkout execution route must exist.');
     }
 
-    public function test_no_checkout_execution_write_route_exists(): void
+    public function test_only_package9_checkout_execution_write_route_exists(): void
     {
         $allRoutes = collect(Route::getRoutes()->getRoutes());
 
-        $forbiddenWriteRoutes = [];
-        $forbiddenWriteRouteNames = [];
+        $writeRoutes = [];
+        $writeRouteNames = [];
 
         foreach ($allRoutes as $route) {
             $uri = $route->uri();
@@ -1903,20 +1902,20 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
             // Collect any checkout-execution URI with a write method
             if (str_contains($uri, 'checkout-execut')) {
                 if (array_intersect(['POST', 'PUT', 'PATCH', 'DELETE'], $methods)) {
-                    $forbiddenWriteRoutes[] = implode(',', $methods) . ' ' . $uri;
+                    $writeRoutes[] = implode(',', $methods) . ' ' . $uri;
                 }
             }
 
             // Collect any checkout-execution write route name (store/create/execute/update/destroy)
             foreach (['store', 'create', 'execute', 'update', 'destroy'] as $action) {
                 if (str_contains($name, 'checkout-execution.' . $action)) {
-                    $forbiddenWriteRouteNames[] = $name;
+                    $writeRouteNames[] = $name;
                 }
             }
         }
 
-        $this->assertSame([], $forbiddenWriteRoutes, 'No POST/PUT/PATCH/DELETE checkout execution route may exist.');
-        $this->assertSame([], $forbiddenWriteRouteNames, 'No checkout execution write route name may exist.');
+        $this->assertSame(['POST frontdesk/stays/{stay}/checkout-execution'], $writeRoutes);
+        $this->assertSame(['frontdesk.stays.checkout-execution.store'], $writeRouteNames);
     }
 
     // ── Workspace Boundary ──
@@ -1928,9 +1927,9 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
 
         $b = $this->service()->boundary($this->frontDeskActor, $s[0]->id);
 
-        $this->assertSame('Checkout execution is not performed in FD-B12.', $b['execution_not_performed_marker']);
-        $this->assertSame('Financial settlement readiness is evaluated read-only by PMS Guest Ledger GLF-D. Front Desk does not own or mutate Folios, payments, deposits, refunds, or AR transfers.', $b['financial_settlement_marker']);
-        $this->assertSame('Cashier obligation readiness is evaluated read-only by General Cashier GC-A1. Front Desk does not own or mutate cashier sessions, guest cash transactions, counts, handovers, reconciliation, or accountability completion.', $b['cashier_obligation_marker']);
+        $this->assertSame('Checkout execution is performed only by the Package 9 controlled POST route after sensitive confirmation.', $b['execution_not_performed_marker']);
+        $this->assertSame('Financial settlement readiness is evaluated by PMS-owned checkout attestation. Front Desk does not mutate Folios, payments, deposits, refunds, or AR transfers.', $b['financial_settlement_marker']);
+        $this->assertSame('Cashier obligation readiness is evaluated by General Cashier-owned checkout attestation. Front Desk does not mutate cashier sessions, counts, handovers, reconciliation, or accountability completion.', $b['cashier_obligation_marker']);
     }
 
     public function test_workspace_source_contract(): void
@@ -1963,8 +1962,8 @@ class FrontDeskDepartureCheckoutExecutionBoundaryTest extends PostgresTestCase
         $this->assertStringContainsString("'neutral'", $source, 'EVIDENCE_UNAVAILABLE must map to neutral badge status.');
 
         // 3. Required marker strings
-        $this->assertStringContainsString('Checkout execution not yet available', $source, 'Disabled affordance marker must exist.');
-        $this->assertStringContainsString('Checkout execution is not performed in FD-B12.', $source, 'Not-performed marker must exist.');
+        $this->assertStringContainsString('Review & Complete Checkout', $source, 'Package 9 checkout action marker must exist.');
+        $this->assertStringContainsString('Checkout is terminal.', $source, 'Terminal warning marker must exist.');
         $this->assertStringContainsString('Night Audit Close Lock', $source, 'Workspace must render read-only Night Audit close-lock card.');
         $this->assertStringContainsString('Close lock:', $source, 'Workspace must render Night Audit close-lock state.');
         $this->assertStringContainsString('PMS Guest Ledger Settlement', $source, 'Workspace must render PMS Guest Ledger settlement summary.');

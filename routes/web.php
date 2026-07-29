@@ -67,6 +67,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('frontdesk.stays.departure-checkout-final-review.index');
         Route::get('/stays/{stay}/departure-checkout-execution-boundary', [FrontDeskController::class, 'departureCheckoutExecutionBoundary'])
             ->name('frontdesk.stays.departure-checkout-execution-boundary.index');
+        Route::post('/stays/{stay}/checkout-confirmation', [FrontDeskController::class, 'prepareCheckoutConfirmation'])
+            ->name('frontdesk.stays.checkout-confirmation.store');
+        Route::post('/stays/{stay}/checkout-execution', [FrontDeskController::class, 'executeCheckout'])
+            ->name('frontdesk.stays.checkout-execution.store');
     });
 
     Route::get('/housekeeping', fn() => redirect('/housekeeping/room-board'));
