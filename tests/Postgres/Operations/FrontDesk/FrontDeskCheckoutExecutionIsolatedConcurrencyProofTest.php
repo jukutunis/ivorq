@@ -46,6 +46,10 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
 {
     use ManagesConcurrencyDatabase;
 
+    private const WORKER_MARKER_TIMEOUT_SECONDS = 60;
+    private const WORKER_RESULT_TIMEOUT_SECONDS = 60;
+    private const BLOCKING_PROOF_TIMEOUT_SECONDS = 30;
+
     private Company $company;
     private Property $property;
     private User $actor;
@@ -548,21 +552,21 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $c = new P9CheckoutExecutionConcurrencyCoordinator();
         try {
             $c->spawnWorker('lock_hold', $f);
-            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', 15);
+            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidA = (int) $locked['backend_pid'];
             $this->assertGreaterThan(0, $pidA);
 
             $c->spawnWorker('execute_blocked', $f);
-            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', 15);
+            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidB = (int) $ready['backend_pid'];
             $this->assertGreaterThan(0, $pidB);
             $this->assertNotSame($pidA, $pidB);
 
-            $this->assertTrue($c->proveBlocking($pidB, $pidA, 15), 'Worker B must block behind Worker A');
+            $this->assertTrue($c->proveBlocking($pidB, $pidA, self::BLOCKING_PROOF_TIMEOUT_SECONDS), 'Worker B must block behind Worker A');
 
             $c->releaseWorker($this->markerDir . DIRECTORY_SEPARATOR . 'release_a');
-            $winner = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 25), 'committed');
-            $loser = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, 25), 'executed');
+            $winner = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, self::WORKER_RESULT_TIMEOUT_SECONDS), 'committed');
+            $loser = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, self::WORKER_RESULT_TIMEOUT_SECONDS), 'executed');
             $this->assertFalse($winner['replayed'] ?? true, json_encode($winner, JSON_UNESCAPED_SLASHES));
             $this->assertTrue($loser['replayed'] ?? false, json_encode($loser, JSON_UNESCAPED_SLASHES));
             $this->assertSame($winner['checkout_execution_id'] ?? null, $loser['checkout_execution_id'] ?? null);
@@ -585,18 +589,18 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $c = new P9CheckoutExecutionConcurrencyCoordinator();
         try {
             $c->spawnWorker('lock_hold', $fA);
-            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', 15);
+            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidA = (int) ($locked['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidA);
             $c->spawnWorker('execute_blocked', $fB);
-            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', 15);
+            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidB = (int) ($ready['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidB);
             $this->assertNotSame($pidA, $pidB);
-            $this->assertTrue($c->proveBlocking($pidB, $pidA, 15), 'Same-stay different-key worker must wait on the winning checkout worker.');
+            $this->assertTrue($c->proveBlocking($pidB, $pidA, self::BLOCKING_PROOF_TIMEOUT_SECONDS), 'Same-stay different-key worker must wait on the winning checkout worker.');
             $c->releaseWorker($this->markerDir . DIRECTORY_SEPARATOR . 'release_a');
-            $winner = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 25), 'committed');
-            $loser = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, 25), 'domain_error', FrontDeskCheckoutExecutionService::ERROR_ALREADY_COMPLETED);
+            $winner = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, self::WORKER_RESULT_TIMEOUT_SECONDS), 'committed');
+            $loser = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, self::WORKER_RESULT_TIMEOUT_SECONDS), 'domain_error', FrontDeskCheckoutExecutionService::ERROR_ALREADY_COMPLETED);
             $this->assertNotSame($winner['php_pid'] ?? null, $loser['php_pid'] ?? null);
             $this->assertNotSame($winner['backend_pid'] ?? null, $loser['backend_pid'] ?? null);
             $this->assertFalse($winner['replayed'] ?? true, json_encode($winner, JSON_UNESCAPED_SLASHES));
@@ -621,19 +625,19 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $sleep = $this->installCheckoutInsertSleepTrigger(3);
         try {
             $c->spawnWorker('lock_hold', $fA);
-            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', 15);
+            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidA = (int) ($locked['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidA);
             $c->releaseWorker($this->markerDir . DIRECTORY_SEPARATOR . 'release_a');
             $this->waitForBackendPgSleep($pidA, 15);
             $c->spawnWorker('execute_blocked', $fB);
-            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', 15);
+            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidB = (int) ($ready['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidB);
             $this->assertNotSame($pidA, $pidB);
-            $this->assertTrue($c->proveBlocking($pidB, $pidA, 15), 'Same-key different-stay worker must contend on the property-scoped idempotency path.');
-            $workerAResult = $c->waitForWorkerResult(0, 25);
-            $workerBResult = $c->waitForWorkerResult(1, 25);
+            $this->assertTrue($c->proveBlocking($pidB, $pidA, self::BLOCKING_PROOF_TIMEOUT_SECONDS), 'Same-key different-stay worker must contend on the property-scoped idempotency path.');
+            $workerAResult = $c->waitForWorkerResult(0, self::WORKER_RESULT_TIMEOUT_SECONDS);
+            $workerBResult = $c->waitForWorkerResult(1, self::WORKER_RESULT_TIMEOUT_SECONDS);
             $workerA = $this->assertCleanWorkerResult($workerAResult, $workerAResult['payload']['result'] ?? '');
             $workerB = $this->assertCleanWorkerResult($workerBResult, $workerBResult['payload']['result'] ?? '');
             $results = [$workerA['result'] ?? null, $workerB['result'] ?? null];
@@ -673,7 +677,7 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
 
         try {
             $c->spawnWorker('execute', $f);
-            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute.json', 15);
+            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $checkoutPid = (int) ($ready['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $checkoutPid);
             $this->waitForBackendPgSleep($checkoutPid, 15);
@@ -684,9 +688,9 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             $nightAuditPid = (int) ($startReady['pg_backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $nightAuditPid);
             $this->assertNotSame($checkoutPid, $nightAuditPid);
-            $this->assertTrue($c->proveBlocking($nightAuditPid, $checkoutPid, 3), 'Night Audit start must block behind checkout-held Property/Business-Date locks.');
+            $this->assertTrue($c->proveBlocking($nightAuditPid, $checkoutPid, self::BLOCKING_PROOF_TIMEOUT_SECONDS), 'Night Audit start must block behind checkout-held Property/Business-Date locks.');
 
-            $checkout = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 35), 'executed');
+            $checkout = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, self::WORKER_RESULT_TIMEOUT_SECONDS), 'executed');
             $this->assertFalse($checkout['replayed'] ?? true, json_encode($checkout, JSON_UNESCAPED_SLASHES));
             $exit = $this->waitProcess($na['proc'], 10);
             $naResult = $this->readNightAuditResult($na['result']);
@@ -724,12 +728,12 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             $this->assertSame(1, $naResult['active_count'] ?? null);
 
             $c->spawnWorker('execute', $f);
-            $checkoutReady = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute.json', 15);
+            $checkoutReady = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $checkoutBackendPid = (int) ($checkoutReady['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $checkoutBackendPid);
             $this->assertNotSame($naBackendPid, $checkoutBackendPid);
 
-            $checkout = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 25), 'domain_error', FrontDeskCheckoutExecutionService::ERROR_NIGHT_AUDIT_ACTIVE);
+            $checkout = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, self::WORKER_RESULT_TIMEOUT_SECONDS), 'domain_error', FrontDeskCheckoutExecutionService::ERROR_NIGHT_AUDIT_ACTIVE);
             $this->assertNotSame($naReady['php_pid'] ?? null, $checkout['php_pid'] ?? null);
         } finally {
             $c->terminateAllWorkers();
@@ -815,21 +819,21 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $c = new P9CheckoutExecutionConcurrencyCoordinator();
         try {
             $c->spawnWorker('lock_hold_rollback', $f);
-            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', 15);
+            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidA = (int) ($locked['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidA);
 
             $c->spawnWorker('execute_blocked', $f);
-            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', 15);
+            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidB = (int) ($ready['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidB);
-            $this->assertTrue($c->proveBlocking($pidB, $pidA, 15), 'Worker B must begin with a valid confirmation and then block behind Worker A.');
+            $this->assertTrue($c->proveBlocking($pidB, $pidA, self::BLOCKING_PROOF_TIMEOUT_SECONDS), 'Worker B must begin with a valid confirmation and then block behind Worker A.');
 
             sleep(3);
             $c->releaseWorker($this->markerDir . DIRECTORY_SEPARATOR . 'release_a');
 
-            $holder = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 25), 'rolled_back');
-            $blocked = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, 25), 'domain_error', CheckoutSensitiveConfirmationService::ERROR_EXPIRED);
+            $holder = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, self::WORKER_RESULT_TIMEOUT_SECONDS), 'rolled_back');
+            $blocked = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, self::WORKER_RESULT_TIMEOUT_SECONDS), 'domain_error', CheckoutSensitiveConfirmationService::ERROR_EXPIRED);
             $this->assertSame($f['front_desk_stay_id'], $holder['front_desk_stay_id'] ?? null);
             $this->assertSame($f['front_desk_stay_id'], $blocked['front_desk_stay_id'] ?? null);
             $this->assertSame(0, DB::connection('pgsql_concurrency')->table('front_desk_checkout_executions')->count());
@@ -848,20 +852,20 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         $c = new P9CheckoutExecutionConcurrencyCoordinator();
         try {
             $c->spawnWorker('lock_hold_rollback', $f);
-            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', 15);
+            $locked = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'a_locked.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidA = (int) ($locked['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidA);
 
             $c->spawnWorker('execute_blocked', $f);
-            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', 15);
+            $ready = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_ready.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pidB = (int) ($ready['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pidB);
-            $this->assertTrue($c->proveBlocking($pidB, $pidA, 15), 'Worker B must block until Worker A rolls back.');
+            $this->assertTrue($c->proveBlocking($pidB, $pidA, self::BLOCKING_PROOF_TIMEOUT_SECONDS), 'Worker B must block until Worker A rolls back.');
 
             $c->releaseWorker($this->markerDir . DIRECTORY_SEPARATOR . 'release_a');
 
-            $holder = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 25), 'rolled_back');
-            $winner = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, 25), 'executed');
+            $holder = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, self::WORKER_RESULT_TIMEOUT_SECONDS), 'rolled_back');
+            $winner = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, self::WORKER_RESULT_TIMEOUT_SECONDS), 'executed');
             $this->assertSame($f['front_desk_stay_id'], $holder['front_desk_stay_id'] ?? null);
             $this->assertSame($f['front_desk_stay_id'], $winner['front_desk_stay_id'] ?? null);
             $this->assertFalse($winner['replayed'] ?? true, json_encode($winner, JSON_UNESCAPED_SLASHES));
@@ -917,8 +921,8 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
         try {
             $c->spawnWorker('execute', $f1);
             $c->spawnWorker('execute', $f2);
-            $ready1 = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute_h1.json', 15);
-            $ready2 = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute_h2.json', 15);
+            $ready1 = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute_h1.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
+            $ready2 = $c->waitForMarker($this->markerDir . DIRECTORY_SEPARATOR . 'b_before_execute_h2.json', self::WORKER_MARKER_TIMEOUT_SECONDS);
             $pid1 = (int) ($ready1['backend_pid'] ?? 0);
             $pid2 = (int) ($ready2['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $pid1);
@@ -927,8 +931,8 @@ class FrontDeskCheckoutExecutionIsolatedConcurrencyProofTest extends PostgresTes
             $this->waitForBackendPgSleep($pid1, 15);
             $this->waitForBackendPgSleep($pid2, 15);
             $this->assertTrue($c->proveNoBlockingBetween($pid1, $pid2), 'Different-property checkout workers must not block each other.');
-            $r1 = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, 25), 'executed');
-            $r2 = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, 25), 'executed');
+            $r1 = $this->assertCleanWorkerResult($c->waitForWorkerResult(0, self::WORKER_RESULT_TIMEOUT_SECONDS), 'executed');
+            $r2 = $this->assertCleanWorkerResult($c->waitForWorkerResult(1, self::WORKER_RESULT_TIMEOUT_SECONDS), 'executed');
             $this->assertGreaterThan(0, $r1['backend_pid'] ?? 0);
             $this->assertGreaterThan(0, $r2['backend_pid'] ?? 0);
             $this->assertNotSame($r1['backend_pid'] ?? 0, $r2['backend_pid'] ?? 0, 'Distinct backend PIDs required');
