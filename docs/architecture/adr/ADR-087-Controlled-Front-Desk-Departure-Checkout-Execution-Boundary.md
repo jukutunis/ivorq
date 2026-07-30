@@ -40,7 +40,8 @@ CAN_EXECUTE_SERVER_PROJECTED
 PACKAGE_11_GOVERNANCE_ACTIVATION_AUTHORIZED
 PACKAGE_11_RUNTIME_REQUIRES_SEPARATE_DRAFT_PR
 NO_NEW_ADR_REQUIRED
-EXISTING_HOUSEKEEPING_ADRS_ADR_040_ADR_086_AND_ADR_089_REMAIN_GOVERNING
+ADR_086_AMENDMENT_REQUIRED_AND_INCLUDED
+ADR_040_ADR_086_ADR_087_ADR_089_REMAIN_GOVERNING
 ```
 
 `CAN_EXECUTE_SERVER_PROJECTED` is not universally true. It is resolved server-side per actor, Company, Property, stay, Business Date, Night Audit, financial, cashier, final-review, permission, confirmation, and idempotency context. Browser input cannot grant execution authority.
@@ -82,9 +83,13 @@ The Package 9 browser execution request remains identifier-only:
 
 The browser must not submit or control trusted Company, Property, Tenant, actor, role, permission, membership, guest, reservation, room, stay status, business date, Night Audit, folio, amount, currency, payment, settlement, cashier, attestation, source fingerprint, confirmation, audit timestamp, execution, Housekeeping readiness, handoff, or retry outcome values. All trusted values remain server-resolved.
 
-Package 11 - Housekeeping Checkout Handoff Consumption and Room Turnover Start - is not a continuation of Front Desk checkout execution. It is a Housekeeping-owned downstream consumption package for checkout-specific FD-C2 handoffs. A later runtime PR may consume eligible PENDING or retry-due FAILED handoffs, independently re-resolve source identity, verify immutable checkout evidence and handoff source integrity, create or replay one Housekeeping-owned room-turnover outcome through the existing canonical Housekeeping lifecycle, markDelivered only after the Housekeeping-owned outcome is committed or proven as an idempotent replay, markFailed with retry evidence after bounded failure, recover crash-after-Housekeeping-commit-before-DELIVERED without duplicate outcome, and prove the required concurrency/failure cases with real isolated PostgreSQL processes.
+Package 11 - Housekeeping Checkout Handoff Consumption and Room Turnover Start - is not a continuation of Front Desk checkout execution. It is a Housekeeping-owned downstream consumption package for checkout-specific FD-C2 handoffs. Source determination for the Package 10 correction proves no canonical durable idempotent checkout-turnover intake target currently exists. `CleaningTaskService::generateDepartureTask()` directly creates a `checkout_cleaning` task without accepted durable source-identity, source-hash, checkout-execution, handoff, or idempotency protection. A `CleaningTask` row alone is not accepted as the recovery identity unless Package 11 explicitly hardens it with the required source identity, uniqueness, immutability, and replay contract.
 
-Package 11 must use actual canonical Housekeeping state names from source: readiness states `waiting_cleaning`, `cleaning`, `waiting_inspection`, `ready_for_sale`, `ready_for_arrival`, `ready_for_vip`, and `blocked`; readiness projections `HOUSEKEEPING_READY`, `HOUSEKEEPING_BLOCKED`, and `HOUSEKEEPING_UNKNOWN`; transition types `START_CLEANING`, `SUBMIT_INSPECTION`, and `RELEASE_READY`; and cleanliness statuses `dirty`, `clean`, and `inspected`. The FD-C2 handoff delivery states are `PENDING`, `CLAIMED`, `DELIVERED`, and `FAILED`. Package 11 must not freeze speculative room-turnover status names outside source-proven Housekeeping lifecycle values.
+Package 11 must add one dedicated Housekeeping-owned durable checkout-turnover intake evidence boundary before marking an FD-C2 handoff DELIVERED. Task creation and readiness mutation must be correlated to that durable intake identity; duplicate delivery must resolve the same intake and same task/outcome; and crash after Housekeeping commit but before FD-C2 markDelivered must recover through the intake identity. Package 11 must not create a parallel generic workflow framework.
+
+Package 11 must use actual canonical Housekeeping state names from source: readiness states `dirty`, `waiting_cleaning`, `cleaning`, `waiting_inspection`, `ready_for_sale`, `ready_for_arrival`, `ready_for_vip`, and `blocked`; readiness projections `HOUSEKEEPING_READY`, `HOUSEKEEPING_BLOCKED`, and `HOUSEKEEPING_UNKNOWN`; currently source-proven transition types `START_CLEANING`, `SUBMIT_INSPECTION`, and `RELEASE_READY`; and cleanliness statuses `dirty`, `clean`, and `inspected`. The FD-C2 handoff delivery states are `PENDING`, `CLAIMED`, `DELIVERED`, and `FAILED`. No checkout-turnover intake transition type currently exists; Package 11 may add one only through the amended ADR-086 boundary and its own runtime PR.
+
+Room-state ownership remains frozen: only Housekeeping may change cleanliness/readiness; Front Desk remains prohibited from changing either; accepted checkout evidence is a trigger/source reference, not authority to bypass Housekeeping services; matching existing dirty/waiting-cleaning intake may replay; contradictory active cleaning, inspection, or blocked evidence must fail closed or enter an explicitly controlled Housekeeping exception path; Package 11 must not silently overwrite an active Housekeeping lifecycle; and handoff delivery does not mean room READY.
 
 ## Decision
 

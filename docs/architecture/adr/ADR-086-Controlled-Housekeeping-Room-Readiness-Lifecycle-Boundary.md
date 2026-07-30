@@ -208,6 +208,66 @@ Forbidden Front Desk changes:
 - Final checkout.
 - Folio/Payment/Revenue/Tax/AR/GL/Night Audit.
 
+## Package 11 Checkout Turnover Intake Boundary
+
+Decision:
+
+```text
+HOUSEKEEPING_CHECKOUT_TURNOVER_INTAKE_REQUIRED
+```
+
+Package 11 runtime must introduce one durable Housekeeping-owned checkout-turnover intake identity before marking an FD-C2 handoff DELIVERED. This is an amendment to ADR-086, not a new ADR.
+
+The logical intake evidence must be Housekeeping-owned, Property-scoped, server-generated, immutable, audit-backed, independently source-validated, idempotent, and privacy-minimized.
+
+The intake evidence must bind at minimum:
+
+- `property_id`;
+- FD-C2 handoff identity;
+- `checkout_execution_id`;
+- `front_desk_stay_id`;
+- reservation relationship;
+- authoritative `room_id`;
+- accepted business-date reference where source-compatible;
+- source hash or fingerprint;
+- server-owned `occurred_at`;
+- server-owned actor or system-consumer identity.
+
+Required uniqueness and replay boundary:
+
+- one Housekeeping intake per Property plus FD-C2 handoff;
+- one Housekeeping intake per Property plus checkout execution;
+- replay returns the same intake identity;
+- conflicting relationships fail closed.
+
+The exact PHP class and table name may follow repository conventions, but the logical aggregate and uniqueness contract are mandatory.
+
+Canonical Package 11 source determination:
+
+- no canonical durable idempotent checkout-turnover intake target currently exists;
+- `dirty` is both a source-supported readiness state and `RoomCleanlinessStatusEnum` cleanliness status;
+- source-supported readiness states are `dirty`, `waiting_cleaning`, `cleaning`, `waiting_inspection`, `ready_for_sale`, `ready_for_arrival`, `ready_for_vip`, and `blocked`;
+- source-supported cleanliness statuses are `dirty`, `clean`, and `inspected`;
+- readiness projections are `HOUSEKEEPING_READY`, `HOUSEKEEPING_BLOCKED`, and `HOUSEKEEPING_UNKNOWN`;
+- currently source-proven transition types are only `START_CLEANING`, `SUBMIT_INSPECTION`, and `RELEASE_READY`;
+- no checkout-turnover intake transition type currently exists.
+
+Package 11 may add a narrowly governed checkout-turnover intake transition only according to this amendment and its own runtime PR. It must not claim that ADR-086 previously contained a checkout-handoff intake transition.
+
+Room-state ownership remains frozen:
+
+- only Housekeeping may change cleanliness or readiness;
+- Front Desk remains prohibited from changing either;
+- accepted checkout evidence is a trigger/source reference, not authority to bypass Housekeeping services;
+- matching existing dirty/waiting-cleaning intake may replay;
+- contradictory active cleaning, inspection, or blocked evidence must fail closed or enter an explicitly controlled Housekeeping exception path;
+- Package 11 must not silently overwrite an active Housekeeping lifecycle;
+- handoff delivery does not mean room READY.
+
+Package 11 runtime must correlate task creation and readiness mutation to the durable intake identity; duplicate delivery must resolve the same intake and same task/outcome; and crash after Housekeeping commit but before FD-C2 markDelivered must recover through the intake identity. Legacy `CleaningTaskService::generateDepartureTask()` alone is not sufficient because it directly creates a `checkout_cleaning` task without accepted durable source-identity, source-hash, checkout-execution, handoff, or idempotency protection. A `CleaningTask` row alone is not accepted as the recovery identity unless the Package 11 runtime explicitly hardens it with the required source identity, uniqueness, immutability, and replay contract.
+
+Package 11 must not create a parallel generic workflow framework.
+
 ### Explicit Non-Goals
 
 This ADR does not authorize:
