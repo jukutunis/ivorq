@@ -163,6 +163,95 @@ class FrontDeskCheckoutHousekeepingHandoffDeliveryService
     }
 
     /**
+     * Claim the next eligible checkout-to-Housekeeping handoff for one Property.
+     *
+     * Returns null when no PENDING, retry-due FAILED, or expired CLAIMED row is
+     * eligible. The raw claim token exists only in this return value and is not
+     * persisted.
+     */
+    public function claimNextAvailable(
+        string $propertyId,
+        int $leaseSeconds = 60
+    ): ?array {
+        if ($leaseSeconds < 1 || $leaseSeconds > 300) {
+            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_LEASE');
+        }
+
+        $currentPropertyId = $this->currentProperty->resolveOrFail();
+
+        if ($propertyId !== $currentPropertyId) {
+            throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
+        }
+
+        return DB::transaction(function () use ($currentPropertyId, $leaseSeconds): ?array {
+            $row = DB::selectOne(
+                "
+                SELECT id
+                FROM front_desk_checkout_housekeeping_handoffs
+                WHERE property_id = ?
+                  AND delivery_status <> 'DELIVERED'
+                  AND (
+                    (delivery_status IN ('PENDING', 'FAILED') AND available_at <= (clock_timestamp() AT TIME ZONE 'UTC'))
+                    OR
+                    (delivery_status = 'CLAIMED' AND claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC'))
+                  )
+                ORDER BY available_at ASC, occurred_at ASC, id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+                ",
+                [$currentPropertyId],
+            );
+
+            if ($row === null) {
+                return null;
+            }
+
+            $handoff = FrontDeskCheckoutHousekeepingHandoff::query()
+                ->forProperty($currentPropertyId)
+                ->where('id', $row->id)
+                ->first();
+
+            if (! $handoff) {
+                return null;
+            }
+
+            $dbNow = $this->resolveDatabaseWallClock();
+            $rawToken = bin2hex(random_bytes(32));
+            $tokenHash = hash('sha256', $rawToken);
+            $claimExpiresAt = $dbNow->copy()->addSeconds($leaseSeconds);
+
+            $handoff->delivery_status = FrontDeskCheckoutHousekeepingHandoffStatusEnum::Claimed;
+            $handoff->attempts = $handoff->attempts + 1;
+            $handoff->claimed_at = $dbNow;
+            $handoff->claim_expires_at = $claimExpiresAt;
+            $handoff->claim_token_hash = $tokenHash;
+            $handoff->delivered_at = null;
+            $handoff->failed_at = null;
+            $handoff->last_error_code = null;
+            try {
+                $handoff->save();
+            } catch (QueryException $e) {
+                $this->throwTriggerDomainException($e);
+            }
+
+            $handoff->refresh();
+
+            return [
+                'handoff_id' => $handoff->id,
+                'property_id' => $handoff->property_id,
+                'claim_token' => $rawToken,
+                'claimed_at' => $handoff->claimed_at->toIso8601String(),
+                'claim_expires_at' => $handoff->claim_expires_at->toIso8601String(),
+                'attempts' => $handoff->attempts,
+                'front_desk_stay_id' => $handoff->front_desk_stay_id,
+                'checkout_execution_id' => $handoff->checkout_execution_id,
+                'reservation_id' => $handoff->reservation_id,
+                'business_date' => $handoff->business_date->toDateString(),
+            ];
+        });
+    }
+
+    /**
      * Mark a claimed handoff as delivered.
      *
      * @throws DomainException when the claim token is invalid or the claim is expired.

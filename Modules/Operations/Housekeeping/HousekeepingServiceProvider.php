@@ -28,6 +28,7 @@ use Modules\Operations\Housekeeping\Policies\TaskAssignmentPolicy;
 use Modules\Operations\Housekeeping\Models\CleaningChecklist;
 use Modules\Operations\Housekeeping\Models\RoomInspection;
 use Modules\Operations\Housekeeping\Models\TaskAssignment;
+use Modules\Operations\Housekeeping\Console\Commands\ConsumeCheckoutTurnoverHandoffsCommand;
 
 class HousekeepingServiceProvider extends ServiceProvider
 {
@@ -36,6 +37,9 @@ class HousekeepingServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadMigrationsFrom(__DIR__ . '/database/migrations');
+        $this->commands([
+            ConsumeCheckoutTurnoverHandoffsCommand::class,
+        ]);
 
         // Observers
         Room::observe(RoomObserver::class);

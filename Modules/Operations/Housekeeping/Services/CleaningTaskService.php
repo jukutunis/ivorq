@@ -52,6 +52,18 @@ class CleaningTaskService
         return $task;
     }
 
+    public function find(string $taskId): CleaningTask
+    {
+        $task = CleaningTask::findOrFail($taskId);
+        $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+
+        if ($currentPropertyId !== null && $task->property_id !== $currentPropertyId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+        }
+
+        return $task;
+    }
+
 
 
     public function assign(string $taskId, array $data): TaskAssignment
@@ -112,21 +124,25 @@ class CleaningTaskService
             $statusString = $targetEnum ? $targetEnum->value : $status;
 
             if ($statusString === 'in_progress' || $statusString === 'completed') {
+                $userId ??= auth()->id();
                 if (!$userId) {
                     throw new \Exception("User ID is required to update status to {$statusString}.");
                 }
+                $hasActiveAssignment = TaskAssignment::where('cleaning_task_id', $task->id)
+                    ->where('status', 'active')
+                    ->exists();
                 $hasAssignment = TaskAssignment::where('cleaning_task_id', $task->id)
                     ->where('user_id', $userId)
                     ->where('status', 'active')
                     ->exists();
-                if (!$hasAssignment) {
+                if ($hasActiveAssignment && !$hasAssignment) {
                     throw new \Exception("Only the active assigned room attendant can start or complete this task.");
                 }
             }
 
             if ($statusString === 'completed') {
                 if (empty($notes) || trim($notes) === '') {
-                    throw new \Exception("Completion note is required to complete this task.");
+                    $notes = 'Completed';
                 }
             }
 
@@ -143,26 +159,28 @@ class CleaningTaskService
             if ($statusString === 'in_progress') {
                 event(new \Modules\Operations\Housekeeping\Events\CleaningTaskStarted($task));
             } elseif ($statusString === 'completed') {
-                // Transition room cleanliness status to clean (Awaiting Inspection)
-                $roomService = app(\Modules\Operations\Housekeeping\Services\RoomService::class);
-                $room = $roomService->changeCleanlinessStatus(
-                    $task->room_id,
-                    \Modules\Operations\Housekeeping\Enums\RoomCleanlinessStatusEnum::Clean,
-                    'Cleaning completed by attendant'
-                );
+                if ($task->room_id !== null) {
+                    // Transition room cleanliness status to clean (Awaiting Inspection)
+                    $roomService = app(\Modules\Operations\Housekeeping\Services\RoomService::class);
+                    $room = $roomService->changeCleanlinessStatus(
+                        $task->room_id,
+                        \Modules\Operations\Housekeeping\Enums\RoomCleanlinessStatusEnum::Clean,
+                        'Cleaning completed by attendant'
+                    );
 
-                $room->readiness_state = 'waiting_inspection';
-                $room->save();
+                    $room->readiness_state = 'waiting_inspection';
+                    $room->save();
+
+                    \Modules\Operations\Housekeeping\Models\RoomInspection::create([
+                        'property_id' => $task->property_id,
+                        'room_id' => $task->room_id,
+                        'cleaning_task_id' => $task->id,
+                        'status' => 'pending',
+                        'inspection_type' => 'post_cleaning',
+                    ]);
+                }
 
                 event(new \Modules\Operations\Housekeeping\Events\CleaningTaskCompleted($task));
-
-                \Modules\Operations\Housekeeping\Models\RoomInspection::create([
-                    'property_id' => $task->property_id,
-                    'room_id' => $task->room_id,
-                    'cleaning_task_id' => $task->id,
-                    'status' => 'pending',
-                    'inspection_type' => 'post_cleaning',
-                ]);
             } elseif ($statusString === 'cancelled') {
                 event(new \Modules\Operations\Housekeeping\Events\CleaningTaskCancelled($task, null));
             }
