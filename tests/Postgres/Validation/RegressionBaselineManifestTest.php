@@ -254,12 +254,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ], $lastTwelve);
 
         $this->assertEquals(729, $baseline->expected->tests ?? null);
-        $this->assertEquals(5539, $baseline->expected->assertions ?? null);
+        $this->assertEquals(5569, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '77a82dd3951b7bb5804efb496b8939163ba2076d',
+            '6f0f82c04d78b6513f3fe64e7abbd4d84d0639b1',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -268,7 +268,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'Provenance SHA must be a full 40-character hex string.'
         );
         $this->assertEquals(
-            'sprint-package-9-final-checkout-execution',
+            'sprint-package-11-housekeeping-checkout-turnover-intake',
             $baseline->provenance->branch ?? null
         );
 
@@ -284,8 +284,8 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('Package 9 final runtime proof closure', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('FrontDeskCheckoutExecutionService', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('729 tests / 5539 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('2,328,853ms', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('729 tests / 5569 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('2,250,203ms', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Exit code: 0', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 9 isolated concurrency passed 15 tests / 417 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('three distinct PostgreSQL transaction IDs', $baseline->provenance->note ?? '');
@@ -296,6 +296,8 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('Adjacent NA-A2 + GLF-E + registered GC-A2 authority measurement passed 150 tests / 1447 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('zero Package 9 disposable database residue', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('ControlledGoodsReceiptPostingTest.php:208', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 11 adjacent Front Desk synchronization', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Version 1.17', $baseline->provenance->note ?? '');
 
         // ── FD-C2 assertions ──────────────────────────────────────────────
         $this->assertStringContainsString('FD-C2', $baseline->description ?? '');
@@ -313,18 +315,45 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('checkout-confirmation POST route', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('checkout-execution POST route', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('durable issuance/consumption evidence', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('sensitive confirmation preflight and transaction claim', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('real HTTP confirmation-to-execution lifecycle', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('runtime SQLSTATE telemetry assertions', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Full active registry runner passed 14 baselines / 0 failed / 0 skipped', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('GLF-C worker proof mapped deposit application/refund over-application as bounded rejection evidence', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('npm run build passed', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 11 touched FD-C2 claim-next delivery behavior', $baseline->provenance->note ?? '');
         $this->assertStringNotContainsString('claimCurrentSessionConfirmationFromPreflight', $baseline->provenance->note ?? '');
 
         // Prove no arithmetic-derived claims remain in the accepted note
         $this->assertStringNotContainsString('did not complete', $baseline->provenance->note ?? '');
         $this->assertStringNotContainsString('arithmetic from independently verified focused results', $baseline->provenance->note ?? '');
         $this->assertStringNotContainsString('No CURRENT_TIMESTAMP database-clock checks in trigger', $baseline->provenance->note ?? '');
+    }
+
+    public function test_housekeeping_room_readiness_baseline_includes_package_11_turnover_intake(): void
+    {
+        $baseline = $this->findBaseline('housekeeping-room-readiness-baseline');
+        $this->assertNotNull($baseline, 'housekeeping-room-readiness-baseline must exist.');
+        $this->assertEquals('active', $baseline->status ?? null);
+        $this->assertCount(12, $baseline->classes, 'Housekeeping baseline must have exactly 12 classes after Package 11.');
+
+        $this->assertSame([
+            'HousekeepingCheckoutTurnoverIntakeFoundationTest',
+            'HousekeepingCheckoutTurnoverIntakeMigrationProofTest',
+            'HousekeepingCheckoutTurnoverIntakeSourceIntegrityTest',
+            'HousekeepingCheckoutTurnoverConsumerCommandTest',
+            'HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest',
+        ], array_slice($baseline->classes, -5));
+
+        $this->assertEquals(86, $baseline->expected->tests ?? null);
+        $this->assertEquals(924, $baseline->expected->assertions ?? null);
+        $this->assertEquals(0, $baseline->expected->failures ?? null);
+        $this->assertEquals(0, $baseline->expected->errors ?? null);
+        $this->assertSame([], $baseline->accepted_debt ?? null);
+        $this->assertEquals('6f0f82c04d78b6513f3fe64e7abbd4d84d0639b1', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-package-11-housekeeping-checkout-turnover-intake', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('12 exact classes / 86 tests / 924 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 11 focused batch passed 23 tests / 703 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('scenarios A-J', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('distinct PHP and PostgreSQL backend PIDs', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('CleaningTask and Room/RoomService passed 46 tests / 97 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
     }
 
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void

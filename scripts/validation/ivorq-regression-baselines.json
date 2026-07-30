@@ -83,15 +83,15 @@
       ],
       "expected": {
         "tests": 729,
-        "assertions": 5539,
+        "assertions": 5569,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-29",
-        "branch": "sprint-package-9-final-checkout-execution",
-        "sha": "77a82dd3951b7bb5804efb496b8939163ba2076d",
-        "note": "Package 9 final runtime proof closure measured exact 68-class Front Desk baseline at 729 tests / 5539 assertions / 0 failures / 0 errors. Duration: 2,328,853ms. Exit code: 0. Full active registry runner passed 14 baselines / 0 failed / 0 skipped after the GLF-C worker proof mapped deposit application/refund over-application as bounded rejection evidence. Package 9 isolated concurrency passed 15 tests / 417 assertions / 0 failures / 0 errors after Scenario I runtime revalidation telemetry proved authorization/current actor authority, current Company and Property resolution, requested stay resolution, committed replay resolution, confirmation preflight, Business Date projection, a new PostgreSQL transaction, NA-A2, GLF-E, GC-A2, and final confirmation claim attempt once per retry attempt, with three distinct PostgreSQL transaction IDs for the three-attempt 40001 success case. Package 9 focused batch passed 41 tests / 708 assertions / 0 failures / 0 errors after real HTTP confirmation-to-execution lifecycle, authorization-first zero requested-stay query proof, non-disclosing unknown/cross-Property parity, execution-route idempotency conflict proof, exact completion audit counts, JSON and HTML/Inertia receipt persistence checks, replay same execution and handoff IDs, worker exit/stderr/result validation, valid-at-start confirmation expiry, rollback release proof, different-Property worker identity/nonserialization proof, pg_blocking_pids evidence, runtime SQLSTATE telemetry assertions, runtime SQLSTATE 40001/P0001 retry telemetry, and Scenario I runtime revalidation telemetry. Package 8 confirmation batch passed 33 tests / 346 assertions. Adjacent NA-A2 + GLF-E + registered GC-A2 authority measurement passed 150 tests / 1447 assertions. GLF-C deposit/refund/AR lifecycle and concurrency passed 30 tests / 326 assertions. npm run build passed. Test database integrity check confirmed APP_ENV testing, current_database ivorq_testing, Package 8/FD-C1/FD-C2 guard triggers present, zero Package 9 disposable trigger/function/sequence residue, and zero Package 9 disposable database residue. Package 9 markers retained: checkout-confirmation POST route, checkout-execution POST route, FrontDeskCheckoutExecutionService, FrontDeskCheckoutExecutionResult, real GLF-E service with controlled canonical participation-port fixtures, durable issuance/consumption evidence, controlled replay receipt, terminal CHECKED_OUT transition, checkout-to-Housekeeping handoff, no Housekeeping readiness mutation, authoritative Business Date lock, Night Audit checkout concurrency attestation, PMS terminal financial attestation, General Cashier terminal obligation attestation, sensitive confirmation preflight and transaction claim, source hashes, audit log, no Folio/payment/deposit/refund/AR mutation by Front Desk, no cashier session/count/handover/reconciliation mutation by Front Desk, no Business Date or Night Audit mutation by Front Desk. Repeated deprecation from tests/Postgres/Operations/Inventory/ControlledGoodsReceiptPostingTest.php:208 is pre-existing and the Package 9 source commit touches only Front Desk proof/support files. No new accepted debt."
+        "measured_at": "2026-07-30",
+        "branch": "sprint-package-11-housekeeping-checkout-turnover-intake",
+        "sha": "6f0f82c04d78b6513f3fe64e7abbd4d84d0639b1",
+        "note": "Package 11 adjacent Front Desk synchronization measured exact 68-class Front Desk baseline at 729 tests / 5569 assertions / 0 failures / 0 errors. Duration: 2,250,203ms. Exit code: 0. Complete active registry runner passed 14 baselines / 0 failed / 0 skipped; Inventory Reversal inherited debt unchanged at 8 tests / 72 assertions / 2 accepted errors. Package 11 touched FD-C2 claim-next delivery behavior and refreshed contract-version source integrity assertions to approved contract Version 1.17. Package 9 final runtime proof closure remains retained: Package 9 isolated concurrency passed 15 tests / 417 assertions / 0 failures / 0 errors after Scenario I runtime revalidation telemetry proved authorization/current actor authority, current Company and Property resolution, requested stay resolution, committed replay resolution, confirmation preflight, Business Date projection, a new PostgreSQL transaction, NA-A2, GLF-E, GC-A2, and final confirmation claim attempt once per retry attempt, with three distinct PostgreSQL transaction IDs for the three-attempt 40001 success case. Package 9 focused batch passed 41 tests / 708 assertions / 0 failures / 0 errors after real HTTP confirmation-to-execution lifecycle, authorization-first zero requested-stay query proof, non-disclosing unknown/cross-Property parity, execution-route idempotency conflict proof, exact completion audit counts, JSON and HTML/Inertia receipt persistence checks, replay same execution and handoff IDs, worker exit/stderr/result validation, valid-at-start confirmation expiry, rollback release proof, different-Property worker identity/nonserialization proof, pg_blocking_pids evidence, runtime SQLSTATE telemetry assertions, runtime SQLSTATE 40001/P0001 retry telemetry, and Scenario I runtime revalidation telemetry. Package 8 confirmation batch passed 33 tests / 346 assertions. Adjacent NA-A2 + GLF-E + registered GC-A2 authority measurement passed 150 tests / 1447 assertions. GLF-C deposit/refund/AR lifecycle and concurrency passed 30 tests / 326 assertions. Test database integrity check retained zero Package 9 disposable trigger/function/sequence residue and zero Package 9 disposable database residue. Package 9 markers retained: checkout-confirmation POST route, checkout-execution POST route, FrontDeskCheckoutExecutionService, FrontDeskCheckoutExecutionResult, durable issuance/consumption evidence, controlled replay receipt, terminal CHECKED_OUT transition, checkout-to-Housekeeping handoff, no Housekeeping readiness mutation, source hashes, audit log, no Folio/payment/deposit/refund/AR mutation by Front Desk, no cashier session/count/handover/reconciliation mutation by Front Desk, no Business Date or Night Audit mutation by Front Desk. Repeated deprecation from tests/Postgres/Operations/Inventory/ControlledGoodsReceiptPostingTest.php:208 is pre-existing. No new accepted debt."
       },
       "accepted_debt": [],
       "status": "active"
@@ -233,7 +233,7 @@
     },
     {
       "id": "housekeeping-room-readiness-baseline",
-      "description": "Housekeeping room readiness operational tests covering authorization, immutability, projections, transitions, workspace, concurrency, and Front Desk dependency (HK-B1). All 7 test classes pass cleanly as a single batch.",
+      "description": "Housekeeping room readiness operational tests covering authorization, immutability, projections, transitions, workspace, concurrency, Front Desk dependency (HK-B1), and Package 11 checkout-turnover handoff consumption into durable Housekeeping-owned intake/task/readiness outcomes. All 12 test classes pass cleanly as a single batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -245,18 +245,24 @@
         "HousekeepingRoomReadinessIsolatedConcurrencyProofTest",
         "HousekeepingRoomReadinessProjectionTest",
         "HousekeepingRoomReadinessTransitionTest",
-        "HousekeepingRoomReadinessWorkspaceTest"
+        "HousekeepingRoomReadinessWorkspaceTest",
+        "HousekeepingCheckoutTurnoverIntakeFoundationTest",
+        "HousekeepingCheckoutTurnoverIntakeMigrationProofTest",
+        "HousekeepingCheckoutTurnoverIntakeSourceIntegrityTest",
+        "HousekeepingCheckoutTurnoverConsumerCommandTest",
+        "HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 63,
-        "assertions": 221,
+        "tests": 86,
+        "assertions": 924,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-09",
-        "branch": "ivorq-enterprise-core",
-        "sha": "4861ca313a774ea9ecaebc04a8135aaafd70eea9"
+        "measured_at": "2026-07-30",
+        "branch": "sprint-package-11-housekeeping-checkout-turnover-intake",
+        "sha": "6f0f82c04d78b6513f3fe64e7abbd4d84d0639b1",
+        "note": "Package 11 measured Housekeeping baseline as 12 exact classes / 86 tests / 924 assertions / 0 failures / 0 errors after adding durable checkout-turnover intake foundation, migration proof, source-integrity proof, command proof, and isolated concurrency proof. Package 11 focused batch passed 23 tests / 703 assertions / 0 failures / 0 errors. Complete active registry runner passed 14 baselines / 0 failed / 0 skipped; Inventory Reversal inherited debt unchanged at 8 tests / 72 assertions / 2 accepted errors. Package 11 isolated concurrency proof covers scenarios A-J with real worker processes, distinct PHP and PostgreSQL backend PIDs, exact row counts, committed replay, crash-before-delivery replay, expired/stale token rejection, safe FAILED retry evidence, cross-Property nonblocking evidence, cross-Property access rejection, malformed source fail-closed cases, and proof that delivery replay never reruns Package 9 checkout. Lifecycle regressions for CleaningTask and Room/RoomService passed 46 tests / 97 assertions under PostgreSQL by exact Feature file path. FD-C2 adjacent batch passed 120 tests / 1361 assertions. Package 9 individual gates remained green. Repeated deprecation from tests/Postgres/Operations/Inventory/ControlledGoodsReceiptPostingTest.php:208 is pre-existing. No new accepted debt."
       },
       "accepted_debt": [],
       "status": "active"
