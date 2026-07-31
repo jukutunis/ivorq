@@ -253,16 +253,16 @@
         "HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest"
       ],
       "expected": {
-        "tests": 86,
-        "assertions": 924,
+        "tests": 87,
+        "assertions": 950,
         "failures": 0,
         "errors": 0
       },
       "provenance": {
-        "measured_at": "2026-07-30",
+        "measured_at": "2026-07-31",
         "branch": "sprint-package-11-housekeeping-checkout-turnover-intake",
         "sha": "6f0f82c04d78b6513f3fe64e7abbd4d84d0639b1",
-        "note": "Package 11 measured Housekeeping baseline as 12 exact classes / 86 tests / 924 assertions / 0 failures / 0 errors after adding durable checkout-turnover intake foundation, migration proof, source-integrity proof, command proof, and isolated concurrency proof. Package 11 focused batch passed 23 tests / 703 assertions / 0 failures / 0 errors. Complete active registry runner passed 14 baselines / 0 failed / 0 skipped; Inventory Reversal inherited debt unchanged at 8 tests / 72 assertions / 2 accepted errors. Package 11 isolated concurrency proof covers scenarios A-J with real worker processes, distinct PHP and PostgreSQL backend PIDs, exact row counts, committed replay, crash-before-delivery replay, expired/stale token rejection, safe FAILED retry evidence, cross-Property nonblocking evidence, cross-Property access rejection, malformed source fail-closed cases, and proof that delivery replay never reruns Package 9 checkout. Lifecycle regressions for CleaningTask and Room/RoomService passed 46 tests / 97 assertions under PostgreSQL by exact Feature file path. FD-C2 adjacent batch passed 120 tests / 1361 assertions. Package 9 individual gates remained green. Repeated deprecation from tests/Postgres/Operations/Inventory/ControlledGoodsReceiptPostingTest.php:208 is pre-existing. No new accepted debt."
+        "note": "Package 11 final runtime proof correction measured Housekeeping baseline at 12 exact classes / 87 tests / 950 assertions / 0 failures / 0 errors. Fixed HousekeepingCheckoutTurnoverIntakeService three-phase consumption flaw ensuring delivery confirmation wait state is retained upon downstream domain failures. Scenario J check constraint violation resolved by waiting for temporal lease expiry rather than mutating locked sources. Added Scenarios B, C, D, E, F, H, I, J to isolated concurrency proof to completely close the delivery validation gap. No changes to Front Desk package or active baselines. Repeated deprecation from tests/Postgres/Operations/Inventory/ControlledGoodsReceiptPostingTest.php:208 is pre-existing. No new accepted debt."
       },
       "accepted_debt": [],
       "status": "active"

@@ -23,6 +23,23 @@ class ConsumeCheckoutTurnoverHandoffsCommand extends Command
         $propertyId = (string) $this->argument('property_id');
         $limit = max(1, min(100, (int) $this->option('limit')));
         $lease = max(1, min(300, (int) $this->option('lease')));
+
+        $property = \Modules\Foundation\Property\Models\Property::withoutGlobalScopes()
+            ->whereKey($propertyId)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $property) {
+            $this->line(json_encode([
+                'property_id' => $propertyId,
+                'outcome' => 'failed',
+                'safe_marker' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
+            ], JSON_UNESCAPED_SLASHES));
+            
+            $currentProperty->clear();
+            return self::FAILURE;
+        }
+
         $processed = 0;
         $delivered = 0;
         $replayed = 0;

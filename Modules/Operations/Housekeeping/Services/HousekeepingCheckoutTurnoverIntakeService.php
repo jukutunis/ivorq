@@ -39,8 +39,12 @@ class HousekeepingCheckoutTurnoverIntakeService
         private readonly FrontDeskCheckoutHousekeepingHandoffDeliveryService $deliveryService,
     ) {}
 
+    /** @var callable|null */
+    public $testSeamPostCommitHook = null;
+
     public function consumeNextAvailable(string $propertyId, int $leaseSeconds = 60): ?HousekeepingCheckoutTurnoverConsumptionResult
     {
+        // PHASE A: Claim one eligible FD-C2 handoff.
         $claim = $this->deliveryService->claimNextAvailable($propertyId, $leaseSeconds);
         if ($claim === null) {
             return null;
@@ -49,8 +53,28 @@ class HousekeepingCheckoutTurnoverIntakeService
         $handoffId = (string) $claim['handoff_id'];
         $claimToken = (string) $claim['claim_token'];
 
+        // PHASE B: Create or replay the Housekeeping-owned durable intake transaction.
         try {
             $result = $this->consumeClaimed($propertyId, $handoffId, $claimToken);
+        } catch (DomainException $exception) {
+            $safeCode = $this->safeFailureCode($exception);
+            $this->deliveryService->markFailed(
+                $propertyId,
+                $handoffId,
+                $claimToken,
+                $safeCode,
+                $this->postgresWallClockUtc()->addMinutes(5),
+            );
+
+            throw $exception;
+        }
+
+        if (is_callable($this->testSeamPostCommitHook)) {
+            ($this->testSeamPostCommitHook)($handoffId);
+        }
+
+        // PHASE C: After the Housekeeping transaction commits, call FD-C2 markDelivered().
+        try {
             $delivered = $this->deliveryService->markDelivered($propertyId, $handoffId, $claimToken);
 
             return new HousekeepingCheckoutTurnoverConsumptionResult(
@@ -67,17 +91,26 @@ class HousekeepingCheckoutTurnoverIntakeService
                 deliveryConfirmationPending: false,
                 attempts: (int) $delivered->attempts,
             );
-        } catch (DomainException $exception) {
-            $safeCode = $this->safeFailureCode($exception);
-            $this->deliveryService->markFailed(
-                $propertyId,
-                $handoffId,
-                $claimToken,
-                $safeCode,
-                $this->postgresWallClockUtc()->addMinutes(5),
-            );
+        } catch (\Throwable $exception) {
+            $handoff = FrontDeskCheckoutHousekeepingHandoff::withoutGlobalScopes()
+                ->where('property_id', $propertyId)
+                ->whereKey($handoffId)
+                ->first();
 
-            throw $exception;
+            return new HousekeepingCheckoutTurnoverConsumptionResult(
+                propertyId: $result->propertyId,
+                handoffId: $result->handoffId,
+                intakeId: $result->intakeId,
+                cleaningTaskId: $result->cleaningTaskId,
+                readinessTransitionId: $result->readinessTransitionId,
+                roomId: $result->roomId,
+                handoffDeliveryStatus: $handoff?->delivery_status?->value ?? '',
+                roomReadinessStatus: $result->roomReadinessStatus,
+                roomCleanlinessStatus: $result->roomCleanlinessStatus,
+                replayed: $result->replayed,
+                deliveryConfirmationPending: true,
+                attempts: (int) ($handoff?->attempts ?? 0),
+            );
         }
     }
 

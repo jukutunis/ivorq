@@ -165,6 +165,11 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
             $this->expectDomain(fn () => $delivery->markFailed($this->property->id, $sourceD['handoff']->id, $claimD['claim_token'], 'HK_P11_INTERNAL_RETRYABLE_FAILURE', now()->addMinutes(5)), 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
             $this->assertNoOutcomeForHandoff($sourceD['handoff']->id);
 
+            // Cleanup D so its expired claim doesn't get picked up by consumeNextAvailable in Scenario J
+            $cleanupClaimD = $delivery->claimAvailable($this->property->id, $sourceD['handoff']->id, 60);
+            $service->consumeClaimed($this->property->id, $sourceD['handoff']->id, $cleanupClaimD['claim_token']);
+            $delivery->markDelivered($this->property->id, $sourceD['handoff']->id, $cleanupClaimD['claim_token']);
+
             $roomE = $this->p11Room($this->property);
             $sourceE = $this->p11CheckoutSource($this->property, $roomE);
             $claimE1 = $delivery->claimAvailable($this->property->id, $sourceE['handoff']->id, 1);
@@ -208,6 +213,52 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
             $this->assertCrossPropertyAccessFailsClosed($service, $delivery);
             $this->assertMalformedSourcesFailClosed($service, $delivery);
             $this->assertDeliveryReplayNeverRerunsCheckout($service);
+
+            // Scenario J: Post-commit crash simulation
+            $roomJ = $this->p11Room($this->property);
+            $sourceJ = $this->p11CheckoutSource($this->property, $roomJ);
+
+            $service->testSeamPostCommitHook = function () {
+                throw new \RuntimeException('Simulated post-commit crash');
+            };
+
+            $beforeJ = $this->outcomeCounts();
+
+            try {
+                $service->consumeNextAvailable($this->property->id, 1);
+                $this->fail('Scenario J should have crashed before markDelivered.');
+            } catch (\RuntimeException $e) {
+                if ($e->getMessage() !== 'Simulated post-commit crash') {
+                    throw $e; // Re-throw if it's PHPUnit's assertion failure
+                }
+                $this->assertSame('Simulated post-commit crash', $e->getMessage());
+            }
+
+            $service->testSeamPostCommitHook = null;
+
+            $afterJ = $this->outcomeCounts();
+            $this->assertSame($beforeJ['intakes'] + 1, $afterJ['intakes'], 'Scenario J must commit exactly 1 intake.');
+            $this->assertSame($beforeJ['tasks'] + 1, $afterJ['tasks'], 'Scenario J must commit exactly 1 task.');
+            $this->assertSame($beforeJ['transitions'] + 1, $afterJ['transitions'], 'Scenario J must commit exactly 1 transition.');
+
+            $this->assertSame('CLAIMED', $this->handoffStatus($sourceJ['handoff']->id), 'Scenario J handoff must remain CLAIMED after simulated crash.');
+            $this->assertRoomState($roomJ, 'waiting_cleaning', 'dirty');
+
+            // Phase C replay logic: The consumer catches up by replaying Phase B and then proceeding to Phase C
+            // We simulate claim expiration so consumeNextAvailable can pick it up.
+            $this->waitForClaimExpiry($sourceJ['handoff']->id);
+
+            // Now consumeNextAvailable will pick it up again!
+            $resultJ = $service->consumeNextAvailable($this->property->id, 60);
+
+            $this->assertNotNull($resultJ);
+            $this->assertTrue($resultJ->replayed, 'Scenario J replay must indicate it was replayed.');
+            $this->assertFalse($resultJ->deliveryConfirmationPending, 'Scenario J replay via consumeNextAvailable successfully delivers.');
+
+            $this->assertSame('DELIVERED', $this->handoffStatus($sourceJ['handoff']->id), 'Scenario J handoff must become DELIVERED after explicit recovery.');
+
+            $finalJ = $this->outcomeCounts();
+            $this->assertSame($afterJ['intakes'], $finalJ['intakes'], 'Scenario J must not create duplicate facts upon recovery.');
         });
     }
 
