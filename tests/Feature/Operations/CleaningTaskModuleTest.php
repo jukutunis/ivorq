@@ -6,9 +6,11 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
 use Modules\Operations\Housekeeping\Enums\AssignmentStatusEnum;
+use Modules\Operations\Housekeeping\Enums\RoomCleanlinessStatusEnum;
 use Modules\Operations\Housekeeping\Enums\TaskStatusEnum;
 use Modules\Operations\Housekeeping\Enums\TaskTypeEnum;
 use Modules\Operations\Housekeeping\Models\CleaningTask;
+use Modules\Operations\Housekeeping\Services\RoomService;
 use Modules\Operations\Housekeeping\Services\CleaningTaskService;
 use Shared\Services\CurrentPropertyService;
 use Tests\Feature\Operations\Concerns\CreatesOperationsData;
@@ -77,7 +79,7 @@ class CleaningTaskModuleTest extends TestCase
             'status'           => 'active',
         ]);
 
-        $this->assertSame(TaskStatusEnum::Assigned, $service->find($task->id)->status);
+        $this->assertSame(TaskStatusEnum::Assigned, $task->refresh()->status);
     }
 
     // ── Start ─────────────────────────────────────────────────────────────────
@@ -87,6 +89,7 @@ class CleaningTaskModuleTest extends TestCase
         $company  = $this->createCompany();
         $property = $this->createProperty($company);
         $admin    = $this->createPropertyAdmin($property);
+        $department = $this->createDepartment($property);
 
         $this->actingAs($admin);
         app(CurrentPropertyService::class)->setId($property->id);
@@ -94,8 +97,14 @@ class CleaningTaskModuleTest extends TestCase
         $service = app(CleaningTaskService::class);
         $task    = $this->makeTask($property->toArray(), 'TSK-S01');
 
-        $service->changeStatus($task->id, TaskStatusEnum::Assigned);
-        $started = $service->changeStatus($task->id, TaskStatusEnum::InProgress);
+        $assignment = $service->assign($task->id, [
+            'user_id'       => $admin->id,
+            'department_id' => $department->id,
+        ]);
+
+        $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
+
+        $started = $service->changeStatus($task->id, TaskStatusEnum::InProgress, $admin->id);
 
         $this->assertSame(TaskStatusEnum::InProgress, $started->status);
         $this->assertNotNull($started->started_at);
@@ -108,19 +117,46 @@ class CleaningTaskModuleTest extends TestCase
         $company  = $this->createCompany();
         $property = $this->createProperty($company);
         $admin    = $this->createPropertyAdmin($property);
+        $department = $this->createDepartment($property);
 
         $this->actingAs($admin);
         app(CurrentPropertyService::class)->setId($property->id);
 
         $service = app(CleaningTaskService::class);
-        $task    = $this->makeTask($property->toArray(), 'TSK-CP1');
+        $room = app(RoomService::class)->create([
+            'property_id' => $property->id,
+            'room_number' => 'CP1',
+            'room_type'   => 'standard',
+        ]);
+        $task = $this->makeTask($property->toArray(), 'TSK-CP1', ['room_id' => $room->id]);
 
-        $service->changeStatus($task->id, TaskStatusEnum::Assigned);
-        $service->changeStatus($task->id, TaskStatusEnum::InProgress);
-        $completed = $service->changeStatus($task->id, TaskStatusEnum::Completed);
+        $assignment = $service->assign($task->id, [
+            'user_id'       => $admin->id,
+            'department_id' => $department->id,
+        ]);
+
+        $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
+
+        $service->changeStatus($task->id, TaskStatusEnum::InProgress, $admin->id);
+        $completed = $service->changeStatus(
+            $task->id,
+            TaskStatusEnum::Completed,
+            $admin->id,
+            'Room cleaned and ready for inspection.'
+        );
 
         $this->assertSame(TaskStatusEnum::Completed, $completed->status);
         $this->assertNotNull($completed->completed_at);
+        $this->assertSame($admin->id, $completed->completed_by);
+        $this->assertSame(RoomCleanlinessStatusEnum::Clean, $room->refresh()->cleanliness_status);
+        $this->assertSame('waiting_inspection', $room->readiness_state);
+        $this->assertDatabaseHas('room_inspections', [
+            'property_id'       => $property->id,
+            'room_id'           => $room->id,
+            'cleaning_task_id'  => $task->id,
+            'status'            => 'pending',
+            'inspection_type'   => 'post_cleaning',
+        ]);
     }
 
     // ── Cancel ────────────────────────────────────────────────────────────────
@@ -166,21 +202,38 @@ class CleaningTaskModuleTest extends TestCase
 
     // ── completed_by ─────────────────────────────────────────────────────────
 
-    public function test_completed_by_is_set_to_authenticated_user(): void
+    public function test_completed_by_is_set_to_explicit_active_assigned_user(): void
     {
         $company  = $this->createCompany();
         $property = $this->createProperty($company);
         $admin    = $this->createPropertyAdmin($property);
+        $department = $this->createDepartment($property);
 
         $this->actingAs($admin);
         app(CurrentPropertyService::class)->setId($property->id);
 
         $service = app(CleaningTaskService::class);
-        $task    = $this->makeTask($property->toArray(), 'TSK-CB1');
+        $room = app(RoomService::class)->create([
+            'property_id' => $property->id,
+            'room_number' => 'CB1',
+            'room_type'   => 'standard',
+        ]);
+        $task = $this->makeTask($property->toArray(), 'TSK-CB1', ['room_id' => $room->id]);
 
-        $service->changeStatus($task->id, TaskStatusEnum::Assigned);
-        $service->changeStatus($task->id, TaskStatusEnum::InProgress);
-        $completed = $service->changeStatus($task->id, TaskStatusEnum::Completed);
+        $assignment = $service->assign($task->id, [
+            'user_id'       => $admin->id,
+            'department_id' => $department->id,
+        ]);
+
+        $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
+
+        $service->changeStatus($task->id, TaskStatusEnum::InProgress, $admin->id);
+        $completed = $service->changeStatus(
+            $task->id,
+            TaskStatusEnum::Completed,
+            $admin->id,
+            'Explicit assigned attendant completed the cleaning task.'
+        );
 
         $this->assertSame($admin->id, $completed->completed_by);
     }
