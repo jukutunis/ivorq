@@ -3,7 +3,12 @@
 namespace Tests\Postgres\Operations\Housekeeping;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutHousekeepingHandoffDeliveryService;
+use Modules\Operations\Housekeeping\Services\HousekeepingCheckoutTurnoverIntakeService;
+use RuntimeException;
+use Shared\Services\CurrentPropertyService;
 use Tests\Postgres\Operations\Housekeeping\Concerns\CreatesHousekeepingCheckoutTurnoverIntakeData;
 use Tests\PostgresTestCase;
 
@@ -29,8 +34,7 @@ class HousekeepingCheckoutTurnoverConsumerCommandTest extends PostgresTestCase
             '--lease' => 60,
         ])->assertExitCode(0);
 
-        session()->forget('current_property_id');
-        $this->assertNull(app(\Shared\Services\CurrentPropertyService::class)->getPropertyId());
+        $this->assertNull($this->currentPropertyOverride());
         $this->assertSame(1, DB::table('housekeeping_checkout_turnover_intakes')->count());
     }
 
@@ -47,8 +51,7 @@ class HousekeepingCheckoutTurnoverConsumerCommandTest extends PostgresTestCase
             ], JSON_UNESCAPED_SLASHES))
             ->assertExitCode(1);
 
-        session()->forget('current_property_id');
-        $this->assertNull(app(\Shared\Services\CurrentPropertyService::class)->getPropertyId());
+        $this->assertNull($this->currentPropertyOverride());
         $this->assertSame(0, DB::table('housekeeping_checkout_turnover_intakes')->count());
     }
 
@@ -66,8 +69,7 @@ class HousekeepingCheckoutTurnoverConsumerCommandTest extends PostgresTestCase
             ], JSON_UNESCAPED_SLASHES))
             ->assertExitCode(1);
 
-        session()->forget('current_property_id');
-        $this->assertNull(app(\Shared\Services\CurrentPropertyService::class)->getPropertyId());
+        $this->assertNull($this->currentPropertyOverride());
         $this->assertSame(0, DB::table('housekeeping_checkout_turnover_intakes')->count());
     }
 
@@ -107,5 +109,44 @@ class HousekeepingCheckoutTurnoverConsumerCommandTest extends PostgresTestCase
         $this->assertStringNotContainsString('555-0199', $output);
         $this->assertStringNotContainsString('Exception', $output);
         $this->assertStringNotContainsString('DomainException', $output);
+    }
+
+    public function test_command_unexpected_failure_outputs_only_safe_marker_and_clears_context(): void
+    {
+        $this->app->instance(HousekeepingCheckoutTurnoverIntakeService::class, new class(
+            app(CurrentPropertyService::class),
+            app(FrontDeskCheckoutHousekeepingHandoffDeliveryService::class),
+        ) extends HousekeepingCheckoutTurnoverIntakeService {
+            public function consumeNextAvailable(string $propertyId, int $leaseSeconds = 60): ?\Modules\Operations\Housekeeping\ValueObjects\HousekeepingCheckoutTurnoverConsumptionResult
+            {
+                throw new RuntimeException('raw internal failure must not be printed');
+            }
+        });
+
+        $exitCode = Artisan::call('housekeeping:consume-checkout-turnover-handoffs', [
+            'property_id' => $this->property->id,
+            '--limit' => 1,
+        ]);
+
+        $output = Artisan::output();
+
+        $this->assertSame(1, $exitCode);
+        $this->assertStringContainsString(json_encode([
+            'property_id' => $this->property->id,
+            'outcome' => 'failed',
+            'safe_marker' => HousekeepingCheckoutTurnoverIntakeService::ERROR_INTERNAL_RETRYABLE_FAILURE,
+        ], JSON_UNESCAPED_SLASHES), $output);
+        $this->assertStringNotContainsString('raw internal failure must not be printed', $output);
+        $this->assertStringNotContainsString('RuntimeException', $output);
+        $this->assertNull($this->currentPropertyOverride());
+    }
+
+    private function currentPropertyOverride(): ?string
+    {
+        $service = app(CurrentPropertyService::class);
+        $property = new \ReflectionProperty($service, 'propertyId');
+        $property->setAccessible(true);
+
+        return $property->getValue($service);
     }
 }

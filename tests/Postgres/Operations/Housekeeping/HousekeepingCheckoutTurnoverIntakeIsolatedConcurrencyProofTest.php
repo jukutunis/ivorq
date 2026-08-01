@@ -218,9 +218,9 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
             $roomJ = $this->p11Room($this->property);
             $sourceJ = $this->p11CheckoutSource($this->property, $roomJ);
 
-            $service->testSeamPostCommitHook = function () {
+            $service->setPostCommitTestingHookForTesting(function () {
                 throw new \RuntimeException('Simulated post-commit crash');
-            };
+            });
 
             $beforeJ = $this->outcomeCounts();
 
@@ -234,7 +234,7 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
                 $this->assertSame('Simulated post-commit crash', $e->getMessage());
             }
 
-            $service->testSeamPostCommitHook = null;
+            $service->setPostCommitTestingHookForTesting(null);
 
             $afterJ = $this->outcomeCounts();
             $this->assertSame($beforeJ['intakes'] + 1, $afterJ['intakes'], 'Scenario J must commit exactly 1 intake.');

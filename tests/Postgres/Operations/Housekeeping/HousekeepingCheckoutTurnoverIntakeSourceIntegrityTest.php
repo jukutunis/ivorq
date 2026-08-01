@@ -38,6 +38,35 @@ class HousekeepingCheckoutTurnoverIntakeSourceIntegrityTest extends PostgresTest
         $this->assertStringContainsString('markFailed', $service);
     }
 
+    public function test_post_commit_testing_hook_is_private_testing_only_and_inert_by_default(): void
+    {
+        $service = file_get_contents(base_path('Modules/Operations/Housekeeping/Services/HousekeepingCheckoutTurnoverIntakeService.php'));
+
+        $this->assertStringContainsString('private $postCommitTestingHook = null', $service);
+        $this->assertStringContainsString('setPostCommitTestingHookForTesting', $service);
+        $this->assertStringContainsString("app()->environment('testing')", $service);
+        $this->assertStringContainsString('HK_P11_TESTING_HOOK_NOT_AVAILABLE', $service);
+        $this->assertStringNotContainsString('public $testSeamPostCommitHook', $service);
+    }
+
+    public function test_phase_c_pending_delivery_is_limited_to_fd_c2_claim_state_domain_markers(): void
+    {
+        $service = file_get_contents(base_path('Modules/Operations/Housekeeping/Services/HousekeepingCheckoutTurnoverIntakeService.php'));
+
+        $this->assertStringContainsString('catch (DomainException $exception)', $service);
+        $this->assertStringNotContainsString('catch (\\Throwable $exception)', $service);
+        $this->assertStringContainsString('isFdC2ClaimStateDomainException', $service);
+
+        foreach ([
+            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM',
+            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_CLAIM_TOKEN',
+            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE',
+            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION',
+        ] as $marker) {
+            $this->assertStringContainsString($marker, $service);
+        }
+    }
+
     public function test_no_scheduler_queue_broker_or_external_http_in_consumer(): void
     {
         $service = file_get_contents(base_path('Modules/Operations/Housekeeping/Services/HousekeepingCheckoutTurnoverIntakeService.php'));

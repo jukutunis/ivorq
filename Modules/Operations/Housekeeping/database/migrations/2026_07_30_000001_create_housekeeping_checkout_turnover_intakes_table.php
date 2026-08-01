@@ -185,7 +185,7 @@ return new class extends Migration
                    OR s_property_id <> NEW.property_id
                    OR s_reservation_id <> NEW.reservation_id
                    OR s_status <> 'CHECKED_OUT'
-                   OR s_room_id <> NEW.room_id THEN
+                   OR s_room_id IS DISTINCT FROM NEW.room_id THEN
                     RAISE EXCEPTION 'HK_P11_SOURCE_CONFLICT';
                 END IF;
 
@@ -203,7 +203,7 @@ return new class extends Migration
                 FROM cleaning_tasks
                 WHERE id = NEW.cleaning_task_id;
 
-                IF NOT FOUND OR c_property_id <> NEW.property_id OR c_room_id <> NEW.room_id OR c_task_type <> 'checkout_cleaning' THEN
+                IF NOT FOUND OR c_property_id <> NEW.property_id OR c_room_id IS DISTINCT FROM NEW.room_id OR c_task_type IS DISTINCT FROM 'checkout_cleaning' THEN
                     RAISE EXCEPTION 'HK_P11_SOURCE_CONFLICT';
                 END IF;
 
@@ -216,8 +216,8 @@ return new class extends Migration
                    OR t_property_id <> NEW.property_id
                    OR t_room_id <> NEW.room_id
                    OR t_type <> 'CHECKOUT_TURNOVER_INTAKE'
-                   OR t_source_type <> 'front_desk_checkout_housekeeping_handoff'
-                   OR t_source_id <> NEW.front_desk_checkout_housekeeping_handoff_id
+                   OR t_source_type IS DISTINCT FROM 'front_desk_checkout_housekeeping_handoff'
+                   OR t_source_id IS DISTINCT FROM NEW.front_desk_checkout_housekeeping_handoff_id
                    OR t_to_status <> 'waiting_cleaning' THEN
                     RAISE EXCEPTION 'HK_P11_SOURCE_CONFLICT';
                 END IF;

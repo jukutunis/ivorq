@@ -40,7 +40,16 @@ class HousekeepingCheckoutTurnoverIntakeService
     ) {}
 
     /** @var callable|null */
-    public $testSeamPostCommitHook = null;
+    private $postCommitTestingHook = null;
+
+    public function setPostCommitTestingHookForTesting(?callable $hook): void
+    {
+        if (! app()->environment('testing')) {
+            throw new \LogicException('HK_P11_TESTING_HOOK_NOT_AVAILABLE');
+        }
+
+        $this->postCommitTestingHook = $hook;
+    }
 
     public function consumeNextAvailable(string $propertyId, int $leaseSeconds = 60): ?HousekeepingCheckoutTurnoverConsumptionResult
     {
@@ -58,19 +67,24 @@ class HousekeepingCheckoutTurnoverIntakeService
             $result = $this->consumeClaimed($propertyId, $handoffId, $claimToken);
         } catch (DomainException $exception) {
             $safeCode = $this->safeFailureCode($exception);
-            $this->deliveryService->markFailed(
-                $propertyId,
-                $handoffId,
-                $claimToken,
-                $safeCode,
-                $this->postgresWallClockUtc()->addMinutes(5),
-            );
+            try {
+                $this->deliveryService->markFailed(
+                    $propertyId,
+                    $handoffId,
+                    $claimToken,
+                    $safeCode,
+                    $this->postgresWallClockUtc()->addMinutes(5),
+                );
+            } catch (DomainException) {
+                // Preserve the original Housekeeping failure; FD-C2 claim state
+                // may already have moved under another delivery attempt.
+            }
 
             throw $exception;
         }
 
-        if (is_callable($this->testSeamPostCommitHook)) {
-            ($this->testSeamPostCommitHook)($handoffId);
+        if (is_callable($this->postCommitTestingHook)) {
+            ($this->postCommitTestingHook)($handoffId);
         }
 
         // PHASE C: After the Housekeeping transaction commits, call FD-C2 markDelivered().
@@ -91,7 +105,11 @@ class HousekeepingCheckoutTurnoverIntakeService
                 deliveryConfirmationPending: false,
                 attempts: (int) $delivered->attempts,
             );
-        } catch (\Throwable $exception) {
+        } catch (DomainException $exception) {
+            if (! $this->isFdC2ClaimStateDomainException($exception)) {
+                throw $exception;
+            }
+
             $handoff = FrontDeskCheckoutHousekeepingHandoff::withoutGlobalScopes()
                 ->where('property_id', $propertyId)
                 ->whereKey($handoffId)
@@ -537,6 +555,16 @@ class HousekeepingCheckoutTurnoverIntakeService
             self::ERROR_ACTIVE_TASK_CONFLICT => self::ERROR_ACTIVE_TASK_CONFLICT,
             default => self::ERROR_INTERNAL_RETRYABLE_FAILURE,
         };
+    }
+
+    private function isFdC2ClaimStateDomainException(DomainException $exception): bool
+    {
+        return in_array($exception->getMessage(), [
+            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM',
+            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_CLAIM_TOKEN',
+            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE',
+            'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_TRANSITION',
+        ], true);
     }
 
     private function postgresWallClockUtc(): Carbon

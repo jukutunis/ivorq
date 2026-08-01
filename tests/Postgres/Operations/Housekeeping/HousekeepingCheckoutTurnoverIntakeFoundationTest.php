@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\DB;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutHousekeepingHandoffDeliveryService;
 use Modules\Operations\Housekeeping\Models\HousekeepingCheckoutTurnoverIntake;
 use Modules\Operations\Housekeeping\Services\HousekeepingCheckoutTurnoverIntakeService;
+use RuntimeException;
+use Shared\Services\CurrentPropertyService;
 use Tests\Postgres\Operations\Housekeeping\Concerns\CreatesHousekeepingCheckoutTurnoverIntakeData;
 use Tests\PostgresTestCase;
 
@@ -143,6 +145,190 @@ class HousekeepingCheckoutTurnoverIntakeFoundationTest extends PostgresTestCase
         $this->assertSame(1, DB::table('audit_logs')->where('event', 'housekeeping_checkout_turnover_intake_committed')->count());
     }
 
+    public function test_expired_claim_after_housekeeping_commit_returns_pending_delivery_result_and_later_reclaims_same_ids(): void
+    {
+        $roomId = $this->p11Room($this->property);
+        $source = $this->p11CheckoutSource($this->property, $roomId);
+        $service = app(HousekeepingCheckoutTurnoverIntakeService::class);
+
+        $service->setPostCommitTestingHookForTesting(fn (string $handoffId) => $this->waitForHandoffClaimExpiry($handoffId));
+
+        try {
+            $pending = $service->consumeNextAvailable($this->property->id, 1);
+        } finally {
+            $service->setPostCommitTestingHookForTesting(null);
+        }
+
+        $this->assertNotNull($pending);
+        $this->assertSame($source['handoff']->id, $pending->handoffId);
+        $this->assertTrue($pending->deliveryConfirmationPending);
+        $this->assertSame('CLAIMED', $pending->handoffDeliveryStatus);
+        $this->assertFalse($pending->replayed);
+        $this->assertSame(1, DB::table('housekeeping_checkout_turnover_intakes')->count());
+
+        $delivered = $service->consumeNextAvailable($this->property->id, 60);
+
+        $this->assertNotNull($delivered);
+        $this->assertTrue($delivered->replayed);
+        $this->assertFalse($delivered->deliveryConfirmationPending);
+        $this->assertSame('DELIVERED', $delivered->handoffDeliveryStatus);
+        $this->assertSame($pending->intakeId, $delivered->intakeId);
+        $this->assertSame($pending->cleaningTaskId, $delivered->cleaningTaskId);
+        $this->assertSame($pending->readinessTransitionId, $delivered->readinessTransitionId);
+        $this->assertSame(1, DB::table('housekeeping_checkout_turnover_intakes')->count());
+        $this->assertSame(1, DB::table('cleaning_tasks')->where('task_type', 'checkout_cleaning')->count());
+        $this->assertSame(1, DB::table('housekeeping_room_readiness_transitions')->where('transition_type', 'CHECKOUT_TURNOVER_INTAKE')->count());
+        $this->assertSame(1, DB::table('audit_logs')->where('event', 'housekeeping_checkout_turnover_intake_committed')->count());
+    }
+
+    public function test_stale_token_after_housekeeping_commit_returns_pending_without_marking_failed(): void
+    {
+        $roomId = $this->p11Room($this->property);
+        $source = $this->p11CheckoutSource($this->property, $roomId);
+        $delivery = app(FrontDeskCheckoutHousekeepingHandoffDeliveryService::class);
+        $service = app(HousekeepingCheckoutTurnoverIntakeService::class);
+
+        $service->setPostCommitTestingHookForTesting(function (string $handoffId) use ($delivery): void {
+            $this->waitForHandoffClaimExpiry($handoffId);
+            $delivery->claimAvailable($this->property->id, $handoffId, 60);
+        });
+
+        try {
+            $pending = $service->consumeNextAvailable($this->property->id, 1);
+        } finally {
+            $service->setPostCommitTestingHookForTesting(null);
+        }
+
+        $this->assertNotNull($pending);
+        $this->assertSame($source['handoff']->id, $pending->handoffId);
+        $this->assertTrue($pending->deliveryConfirmationPending);
+        $this->assertSame('CLAIMED', $pending->handoffDeliveryStatus);
+        $this->assertSame(2, $pending->attempts);
+        $this->assertSame(1, DB::table('housekeeping_checkout_turnover_intakes')->count());
+        $this->assertSame(0, DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $source['handoff']->id)->where('delivery_status', 'FAILED')->count());
+    }
+
+    public function test_allowlisted_phase_c_domain_exception_does_not_mark_failed_after_commit(): void
+    {
+        $roomId = $this->p11Room($this->property);
+        $source = $this->p11CheckoutSource($this->property, $roomId);
+        $realDelivery = app(FrontDeskCheckoutHousekeepingHandoffDeliveryService::class);
+        $fakeDelivery = new class(app(CurrentPropertyService::class), $realDelivery) extends FrontDeskCheckoutHousekeepingHandoffDeliveryService {
+            public bool $markFailedCalled = false;
+
+            public function __construct(
+                CurrentPropertyService $currentProperty,
+                private readonly FrontDeskCheckoutHousekeepingHandoffDeliveryService $realDelivery,
+            ) {
+                parent::__construct($currentProperty);
+            }
+
+            public function claimNextAvailable(string $propertyId, int $leaseSeconds = 60): ?array
+            {
+                return $this->realDelivery->claimNextAvailable($propertyId, $leaseSeconds);
+            }
+
+            public function markDelivered(string $propertyId, string $handoffId, string $claimToken): \Modules\Operations\FrontDesk\Models\FrontDeskCheckoutHousekeepingHandoff
+            {
+                throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
+            }
+
+            public function markFailed(string $propertyId, string $handoffId, string $claimToken, string $errorCode, \DateTimeInterface $retryAt): \Modules\Operations\FrontDesk\Models\FrontDeskCheckoutHousekeepingHandoff
+            {
+                $this->markFailedCalled = true;
+
+                return $this->realDelivery->markFailed($propertyId, $handoffId, $claimToken, $errorCode, $retryAt);
+            }
+        };
+
+        $service = new HousekeepingCheckoutTurnoverIntakeService(app(CurrentPropertyService::class), $fakeDelivery);
+
+        $result = $service->consumeNextAvailable($this->property->id, 60);
+
+        $this->assertNotNull($result);
+        $this->assertSame($source['handoff']->id, $result->handoffId);
+        $this->assertTrue($result->deliveryConfirmationPending);
+        $this->assertFalse($fakeDelivery->markFailedCalled);
+        $this->assertSame(1, DB::table('housekeeping_checkout_turnover_intakes')->count());
+        $this->assertSame(0, DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $source['handoff']->id)->where('delivery_status', 'FAILED')->count());
+    }
+
+    public function test_unexpected_phase_c_throwable_is_not_converted_to_pending_delivery(): void
+    {
+        $roomId = $this->p11Room($this->property);
+        $this->p11CheckoutSource($this->property, $roomId);
+        $realDelivery = app(FrontDeskCheckoutHousekeepingHandoffDeliveryService::class);
+        $fakeDelivery = new class(app(CurrentPropertyService::class), $realDelivery) extends FrontDeskCheckoutHousekeepingHandoffDeliveryService {
+            public function __construct(
+                CurrentPropertyService $currentProperty,
+                private readonly FrontDeskCheckoutHousekeepingHandoffDeliveryService $realDelivery,
+            ) {
+                parent::__construct($currentProperty);
+            }
+
+            public function claimNextAvailable(string $propertyId, int $leaseSeconds = 60): ?array
+            {
+                return $this->realDelivery->claimNextAvailable($propertyId, $leaseSeconds);
+            }
+
+            public function markDelivered(string $propertyId, string $handoffId, string $claimToken): \Modules\Operations\FrontDesk\Models\FrontDeskCheckoutHousekeepingHandoff
+            {
+                throw new RuntimeException('HK_P11_TEST_UNEXPECTED_PHASE_C_THROWABLE');
+            }
+        };
+
+        $service = new HousekeepingCheckoutTurnoverIntakeService(app(CurrentPropertyService::class), $fakeDelivery);
+
+        try {
+            $service->consumeNextAvailable($this->property->id, 60);
+            $this->fail('Unexpected Phase C throwable must not be converted to delivery pending.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('HK_P11_TEST_UNEXPECTED_PHASE_C_THROWABLE', $exception->getMessage());
+        }
+
+        $this->assertSame(1, DB::table('housekeeping_checkout_turnover_intakes')->count());
+    }
+
+    public function test_phase_b_original_domain_exception_survives_secondary_mark_failed_rejection(): void
+    {
+        $roomId = $this->p11Room($this->property, [
+            'cleanliness_status' => 'dirty',
+            'readiness_state' => 'blocked',
+        ]);
+        $source = $this->p11CheckoutSource($this->property, $roomId);
+        $realDelivery = app(FrontDeskCheckoutHousekeepingHandoffDeliveryService::class);
+        $fakeDelivery = new class(app(CurrentPropertyService::class), $realDelivery) extends FrontDeskCheckoutHousekeepingHandoffDeliveryService {
+            public function __construct(
+                CurrentPropertyService $currentProperty,
+                private readonly FrontDeskCheckoutHousekeepingHandoffDeliveryService $realDelivery,
+            ) {
+                parent::__construct($currentProperty);
+            }
+
+            public function claimNextAvailable(string $propertyId, int $leaseSeconds = 60): ?array
+            {
+                return $this->realDelivery->claimNextAvailable($propertyId, $leaseSeconds);
+            }
+
+            public function markFailed(string $propertyId, string $handoffId, string $claimToken, string $errorCode, \DateTimeInterface $retryAt): \Modules\Operations\FrontDesk\Models\FrontDeskCheckoutHousekeepingHandoff
+            {
+                throw new DomainException('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
+            }
+        };
+
+        $service = new HousekeepingCheckoutTurnoverIntakeService(app(CurrentPropertyService::class), $fakeDelivery);
+
+        try {
+            $service->consumeNextAvailable($this->property->id, 60);
+            $this->fail('Phase B lifecycle conflict must fail closed.');
+        } catch (DomainException $exception) {
+            $this->assertSame(HousekeepingCheckoutTurnoverIntakeService::ERROR_ROOM_LIFECYCLE_CONFLICT, $exception->getMessage());
+        }
+
+        $this->assertSame(0, DB::table('housekeeping_checkout_turnover_intakes')->count());
+        $this->assertSame(0, DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $source['handoff']->id)->where('delivery_status', 'FAILED')->count());
+    }
+
     public function test_active_checkout_cleaning_task_without_intake_fails_closed(): void
     {
         $roomId = $this->p11Room($this->property);
@@ -198,5 +384,24 @@ class HousekeepingCheckoutTurnoverIntakeFoundationTest extends PostgresTestCase
         $this->expectException(DomainException::class);
         $intake->room_readiness_after = 'ready_for_sale';
         $intake->save();
+    }
+
+    private function waitForHandoffClaimExpiry(string $handoffId): void
+    {
+        $deadline = microtime(true) + 10;
+        while (microtime(true) < $deadline) {
+            $expired = DB::table('front_desk_checkout_housekeeping_handoffs')
+                ->where('id', $handoffId)
+                ->whereRaw("claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC')")
+                ->exists();
+
+            if ($expired) {
+                return;
+            }
+
+            usleep(100_000);
+        }
+
+        $this->fail("Claim did not expire for handoff {$handoffId}");
     }
 }

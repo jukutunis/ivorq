@@ -4,8 +4,10 @@ namespace Modules\Operations\Housekeeping\Console\Commands;
 
 use DomainException;
 use Illuminate\Console\Command;
+use Modules\Foundation\Property\Models\Property;
 use Modules\Operations\Housekeeping\Services\HousekeepingCheckoutTurnoverIntakeService;
 use Shared\Services\CurrentPropertyService;
+use Throwable;
 
 class ConsumeCheckoutTurnoverHandoffsCommand extends Command
 {
@@ -24,30 +26,29 @@ class ConsumeCheckoutTurnoverHandoffsCommand extends Command
         $limit = max(1, min(100, (int) $this->option('limit')));
         $lease = max(1, min(300, (int) $this->option('lease')));
 
-        $property = \Modules\Foundation\Property\Models\Property::withoutGlobalScopes()
-            ->whereKey($propertyId)
-            ->where('is_active', true)
-            ->first();
-
-        if (! $property) {
-            $this->line(json_encode([
-                'property_id' => $propertyId,
-                'outcome' => 'failed',
-                'safe_marker' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
-            ], JSON_UNESCAPED_SLASHES));
-            
-            $currentProperty->clear();
-            return self::FAILURE;
-        }
-
         $processed = 0;
         $delivered = 0;
         $replayed = 0;
         $failed = 0;
 
-        $currentProperty->setPropertyId($propertyId);
-
         try {
+            $property = Property::withoutGlobalScopes()
+                ->whereKey($propertyId)
+                ->where('is_active', true)
+                ->first();
+
+            if (! $property) {
+                $this->line(json_encode([
+                    'property_id' => $propertyId,
+                    'outcome' => 'failed',
+                    'safe_marker' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
+                ], JSON_UNESCAPED_SLASHES));
+
+                return self::FAILURE;
+            }
+
+            $currentProperty->setPropertyId($propertyId);
+
             while ($processed < $limit) {
                 try {
                     $result = $consumer->consumeNextAvailable($propertyId, $lease);
@@ -74,6 +75,14 @@ class ConsumeCheckoutTurnoverHandoffsCommand extends Command
                     ], JSON_UNESCAPED_SLASHES));
                 }
             }
+        } catch (Throwable) {
+            $this->line(json_encode([
+                'property_id' => $propertyId,
+                'outcome' => 'failed',
+                'safe_marker' => HousekeepingCheckoutTurnoverIntakeService::ERROR_INTERNAL_RETRYABLE_FAILURE,
+            ], JSON_UNESCAPED_SLASHES));
+
+            return self::FAILURE;
         } finally {
             $currentProperty->clear();
         }
