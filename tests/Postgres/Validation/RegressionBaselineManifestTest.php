@@ -38,6 +38,28 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertIsObject($decoded, 'Manifest root must be an object.');
     }
 
+    public function test_manifest_and_registry_do_not_contain_utf8_mojibake_markers(): void
+    {
+        $markers = array_map(
+            static fn (string $hex): string => hex2bin($hex),
+            [
+                'c383c2a2',
+                'c383c692',
+                'c3afc2bfc2bd',
+            ],
+        );
+
+        foreach ([
+            $this->manifestPath,
+            base_path('docs/validation/IVORQ-Regression-Baseline-Registry.md'),
+        ] as $path) {
+            $content = file_get_contents($path);
+            foreach ($markers as $marker) {
+                $this->assertStringNotContainsString($marker, $content, "{$path} contains UTF-8 mojibake marker.");
+            }
+        }
+    }
+
     public function test_manifest_has_required_top_level_fields(): void
     {
         $this->assertObjectHasProperty('$schema', $this->manifest);
@@ -341,22 +363,25 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest',
         ], array_slice($baseline->classes, -5));
 
-        $this->assertEquals(92, $baseline->expected->tests ?? null);
-        $this->assertEquals(1241, $baseline->expected->assertions ?? null);
+        $this->assertEquals(100, $baseline->expected->tests ?? null);
+        $this->assertEquals(1620, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('fc8d89104df4c8af3ec5d47073f2fa2abbd884db', $baseline->provenance->sha ?? null);
+        $this->assertEquals('388d243c536964ce73ade3d3f30994070135cef2', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-package-11-housekeeping-checkout-turnover-intake', $baseline->provenance->branch ?? null);
-        $this->assertStringContainsString('12 exact classes / 92 tests / 1241 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Package 11 focused batch passed 29 tests / 1020 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('12 exact classes / 100 tests / 1620 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 11 focused batch passed 37 tests / 1399 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('UP/DOWN/REAPPLY', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('24 malformed direct-SQL cases', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('scenarios A-J', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('splits scenarios A-J into 10 separate tests', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('distinct PHP and PostgreSQL backend PIDs', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Scenario C proves a real worker exits after the Housekeeping transaction commits and before markDelivered', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Scenario J proves replay has exact zero delta', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('P11_WORKER_INTERNAL_FAILURE', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('CleaningTask, Room/RoomService, and RoomInspection lifecycle regressions passed 46 tests / 109 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('CleaningTaskService has no runtime change', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('No new accepted debt', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no new accepted debt', $baseline->provenance->note ?? '');
     }
 
     public function test_guest_deposit_refund_ar_transfer_baseline_matches_commit_one_measurement(): void
