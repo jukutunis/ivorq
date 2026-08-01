@@ -42,6 +42,9 @@ class HousekeepingCheckoutTurnoverIntakeService
     /** @var callable|null */
     private $postCommitTestingHook = null;
 
+    /** @var callable|null */
+    private $insideTransactionTestingHook = null;
+
     public function setPostCommitTestingHookForTesting(?callable $hook): void
     {
         if (! app()->environment('testing')) {
@@ -49,6 +52,15 @@ class HousekeepingCheckoutTurnoverIntakeService
         }
 
         $this->postCommitTestingHook = $hook;
+    }
+
+    public function setInsideTransactionTestingHookForTesting(?callable $hook): void
+    {
+        if (! app()->environment('testing')) {
+            throw new \LogicException('HK_P11_TESTING_HOOK_NOT_AVAILABLE');
+        }
+
+        $this->insideTransactionTestingHook = $hook;
     }
 
     public function consumeNextAvailable(string $propertyId, int $leaseSeconds = 60): ?HousekeepingCheckoutTurnoverConsumptionResult
@@ -153,6 +165,16 @@ class HousekeepingCheckoutTurnoverIntakeService
             }
 
             $room = $this->lockAuthoritativeRoom($propertyId, $source['stay']->current_room_id);
+
+            if (is_callable($this->insideTransactionTestingHook)) {
+                ($this->insideTransactionTestingHook)([
+                    'property_id' => $propertyId,
+                    'handoff_id' => $source['handoff']->id,
+                    'room_id' => $room->id,
+                    'postgres_backend_pid' => (int) DB::selectOne('SELECT pg_backend_pid() AS pid')->pid,
+                ]);
+            }
+
             $beforeReadiness = (string) ($room->readiness_state ?? 'unknown');
             $beforeCleanliness = $room->cleanliness_status instanceof RoomCleanlinessStatusEnum
                 ? $room->cleanliness_status->value

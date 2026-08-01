@@ -3,6 +3,7 @@
 namespace Tests\Postgres\Operations\Housekeeping;
 
 use DomainException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutHousekeepingHandoffDeliveryService;
@@ -37,308 +38,506 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
         parent::tearDown();
     }
 
-    public function test_scenarios_a_and_g_use_real_workers_with_distinct_process_and_backend_identity(): void
+    public function test_scenario_a_two_workers_same_handoff_has_one_winner_and_one_safe_loser(): void
     {
         $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
 
         try {
-            $roomId = $this->onConcurrencyConnection(fn () => $this->p11Room($this->property));
-            $source = $this->onConcurrencyConnection(fn () => $this->p11CheckoutSource($this->property, $roomId));
+            $source = $this->createTurnoverSource();
+            $env = $this->workerEnv();
 
-            $readyA = $coordinator->tempFile('p11_ready_a_');
-            $readyB = $coordinator->tempFile('p11_ready_b_');
-            $release = $coordinator->tempFile('p11_release_');
+            $workerA = $coordinator->spawn('consume_next', [
+                'property_id' => $this->property->id,
+                'lease_seconds' => 60,
+            ], $env);
+            $workerB = $coordinator->spawn('consume_next', [
+                'property_id' => $this->property->id,
+                'lease_seconds' => 60,
+            ], $env);
+
+            $first = $this->assertWorkerResult($coordinator->wait($workerA), 0);
+            $second = $this->assertWorkerResult($coordinator->wait($workerB), 0);
+            $this->assertNotSame($first['php_pid'], $second['php_pid']);
+            $this->assertNotSame($first['postgres_backend_pid'], $second['postgres_backend_pid']);
+
+            $workers = [$first, $second];
+            $winners = array_values(array_filter($workers, fn (array $worker) => $worker['outcome'] === 'consumed'));
+            $losers = array_values(array_filter($workers, fn (array $worker) => $worker['outcome'] === 'no_available'));
+
+            $this->assertCount(1, $winners);
+            $this->assertCount(1, $losers);
+            $this->assertSame($source['handoff_id'], $winners[0]['result']['handoff_id']);
+            $this->assertScenarioCounts(1, 1, 1, 1);
+            $this->assertSame(1, $this->cx()->table('rooms')->where('readiness_state', 'waiting_cleaning')->where('cleanliness_status', 'dirty')->count());
+            $this->assertSame('DELIVERED', $this->handoffStatus($source['handoff_id']));
+            $this->assertRoomState($source['room_id'], 'waiting_cleaning', 'dirty');
+        } finally {
+            $coordinator->terminateAll();
+        }
+    }
+
+    public function test_scenario_b_committed_replay_uses_second_real_worker_and_returns_identical_ids(): void
+    {
+        $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
+
+        try {
+            $source = $this->createTurnoverSource();
+            $token = $coordinator->tempFile('p11_secret_b_');
+            $env = $this->workerEnv();
+
+            $firstWorker = $coordinator->spawn('consume_next_store_secret', [
+                'property_id' => $this->property->id,
+                'lease_seconds' => 60,
+                'token_path' => $token,
+            ], $env);
+            $first = $this->assertWorkerResult($coordinator->wait($firstWorker), 0, 'consumed');
+            $this->assertFalse($first['result']['replayed']);
+
+            $replayWorker = $coordinator->spawn('consume_claimed_from_secret', [
+                'property_id' => $this->property->id,
+                'token_path' => $token,
+                'mark_delivered' => true,
+            ], $env);
+            $replay = $this->assertWorkerResult($coordinator->wait($replayWorker), 0, 'consumed');
+            $this->assertTrue($replay['result']['replayed']);
+            $this->assertSame($source['handoff_id'], $replay['result']['handoff_id']);
+            $this->assertSame($first['result']['intake_id'], $replay['result']['intake_id']);
+            $this->assertSame($first['result']['cleaning_task_id'], $replay['result']['cleaning_task_id']);
+            $this->assertSame($first['result']['readiness_transition_id'], $replay['result']['readiness_transition_id']);
+            $this->assertScenarioCounts(1, 1, 1, 1);
+
+            $coordinator->deleteFile($token);
+            $this->assertFileDoesNotExist($token);
+        } finally {
+            $coordinator->terminateAll();
+        }
+    }
+
+    public function test_scenario_c_real_worker_exits_after_housekeeping_commit_and_recovery_replays(): void
+    {
+        $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
+
+        try {
+            $source = $this->createTurnoverSource();
+            $env = $this->workerEnv();
+
+            $crashWorker = $coordinator->spawn('consume_next', [
+                'property_id' => $this->property->id,
+                'lease_seconds' => 1,
+                'post_commit_exit_code' => 77,
+            ], $env);
+            $crash = $this->assertWorkerResult($coordinator->wait($crashWorker), 77, 'post_commit_terminated');
+            $this->assertSame('P11_WORKER_POST_COMMIT_TERMINATED', $crash['marker']);
+            $this->assertSame($source['handoff_id'], $crash['handoff_id']);
+            $this->assertSame('CLAIMED', $this->handoffStatus($source['handoff_id']));
+            $this->assertScenarioCounts(1, 1, 1, 1);
+            $this->assertRoomState($source['room_id'], 'waiting_cleaning', 'dirty');
+
+            $committed = $this->intakeForHandoff($source['handoff_id']);
+            $this->waitForClaimExpiry($source['handoff_id']);
+
+            $recoveryWorker = $coordinator->spawn('consume_next', [
+                'property_id' => $this->property->id,
+                'lease_seconds' => 60,
+            ], $env);
+            $recovery = $this->assertWorkerResult($coordinator->wait($recoveryWorker), 0, 'consumed');
+            $this->assertTrue($recovery['result']['replayed']);
+            $this->assertSame($committed->id, $recovery['result']['intake_id']);
+            $this->assertSame($committed->cleaning_task_id, $recovery['result']['cleaning_task_id']);
+            $this->assertSame($committed->room_readiness_transition_id, $recovery['result']['readiness_transition_id']);
+            $this->assertSame('DELIVERED', $this->handoffStatus($source['handoff_id']));
+            $this->assertScenarioCounts(1, 1, 1, 1);
+        } finally {
+            $coordinator->terminateAll();
+        }
+    }
+
+    public function test_scenario_d_expired_claim_token_cannot_deliver_or_fail_from_real_workers(): void
+    {
+        $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
+
+        try {
+            $source = $this->createTurnoverSource();
+            $token = $coordinator->tempFile('p11_secret_d_');
+            $env = $this->workerEnv();
+
+            $claimWorker = $coordinator->spawn('claim_available', [
+                'property_id' => $this->property->id,
+                'handoff_id' => $source['handoff_id'],
+                'lease_seconds' => 1,
+                'token_path' => $token,
+            ], $env);
+            $claim = $this->assertWorkerResult($coordinator->wait($claimWorker), 0, 'claimed');
+            $this->assertSame($source['handoff_id'], $claim['handoff_id']);
+            $this->waitForClaimExpiry($source['handoff_id']);
+
+            $deliverWorker = $coordinator->spawn('mark_delivered_from_secret', [
+                'property_id' => $this->property->id,
+                'token_path' => $token,
+            ], $env);
+            $deliver = $this->assertWorkerResult($coordinator->wait($deliverWorker), 0, 'domain_error');
+            $this->assertSame('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM', $deliver['domain_error']);
+
+            $failWorker = $coordinator->spawn('mark_failed_from_secret', [
+                'property_id' => $this->property->id,
+                'token_path' => $token,
+            ], $env);
+            $fail = $this->assertWorkerResult($coordinator->wait($failWorker), 0, 'domain_error');
+            $this->assertSame('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM', $fail['domain_error']);
+            $this->assertNoOutcomeForHandoff($source['handoff_id']);
+            $this->assertSame('CLAIMED', $this->handoffStatus($source['handoff_id']));
+
+            $coordinator->deleteFile($token);
+            $this->assertFileDoesNotExist($token);
+        } finally {
+            $coordinator->terminateAll();
+        }
+    }
+
+    public function test_scenario_e_stale_token_after_reclaim_cannot_deliver_or_fail(): void
+    {
+        $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
+
+        try {
+            $source = $this->createTurnoverSource();
+            $oldToken = $coordinator->tempFile('p11_secret_e_old_');
+            $newToken = $coordinator->tempFile('p11_secret_e_new_');
+            $env = $this->workerEnv();
+
+            $oldClaimWorker = $coordinator->spawn('claim_available', [
+                'property_id' => $this->property->id,
+                'handoff_id' => $source['handoff_id'],
+                'lease_seconds' => 1,
+                'token_path' => $oldToken,
+            ], $env);
+            $this->assertWorkerResult($coordinator->wait($oldClaimWorker), 0, 'claimed');
+            $this->waitForClaimExpiry($source['handoff_id']);
+
+            $newClaimWorker = $coordinator->spawn('claim_available', [
+                'property_id' => $this->property->id,
+                'handoff_id' => $source['handoff_id'],
+                'lease_seconds' => 60,
+                'token_path' => $newToken,
+            ], $env);
+            $newClaim = $this->assertWorkerResult($coordinator->wait($newClaimWorker), 0, 'claimed');
+            $this->assertSame(2, $newClaim['attempts']);
+
+            foreach (['mark_delivered_from_secret', 'mark_failed_from_secret'] as $mode) {
+                $oldWorker = $coordinator->spawn($mode, [
+                    'property_id' => $this->property->id,
+                    'token_path' => $oldToken,
+                ], $env);
+                $oldResult = $this->assertWorkerResult($coordinator->wait($oldWorker), 0, 'domain_error');
+                $this->assertSame('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_CLAIM_TOKEN', $oldResult['domain_error']);
+            }
+
+            $currentWorker = $coordinator->spawn('consume_claimed_from_secret', [
+                'property_id' => $this->property->id,
+                'token_path' => $newToken,
+                'mark_delivered' => true,
+            ], $env);
+            $current = $this->assertWorkerResult($coordinator->wait($currentWorker), 0, 'consumed');
+            $this->assertFalse($current['result']['replayed']);
+            $this->assertScenarioCounts(1, 1, 1, 1);
+            $this->assertSame('DELIVERED', $this->handoffStatus($source['handoff_id']));
+
+            $coordinator->deleteFile($oldToken);
+            $coordinator->deleteFile($newToken);
+            $this->assertFileDoesNotExist($oldToken);
+            $this->assertFileDoesNotExist($newToken);
+        } finally {
+            $coordinator->terminateAll();
+        }
+    }
+
+    public function test_scenario_f_phase_b_failure_uses_consume_next_and_persists_failed_retry_evidence(): void
+    {
+        $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
+
+        try {
+            $source = $this->createTurnoverSource($this->property, [
+                'readiness_state' => 'blocked',
+                'cleanliness_status' => 'dirty',
+            ]);
+            $before = $this->outcomeCounts();
+
+            $worker = $coordinator->spawn('consume_next', [
+                'property_id' => $this->property->id,
+                'lease_seconds' => 60,
+            ], $this->workerEnv());
+            $result = $this->assertWorkerResult($coordinator->wait($worker), 0, 'domain_error');
+            $this->assertSame(HousekeepingCheckoutTurnoverIntakeService::ERROR_ROOM_LIFECYCLE_CONFLICT, $result['domain_error']);
+            $this->assertSame($before, $this->outcomeCounts());
+
+            $handoff = $this->cx()->table('front_desk_checkout_housekeeping_handoffs')->where('id', $source['handoff_id'])->first();
+            $this->assertSame('FAILED', $handoff->delivery_status);
+            $this->assertSame(HousekeepingCheckoutTurnoverIntakeService::ERROR_ROOM_LIFECYCLE_CONFLICT, $handoff->last_error_code);
+            $this->assertNotNull($handoff->failed_at);
+            $this->assertDatabaseTimestampInFuture((string) $handoff->available_at);
+        } finally {
+            $coordinator->terminateAll();
+        }
+    }
+
+    public function test_scenario_g_different_properties_hold_real_locks_without_serializing(): void
+    {
+        $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
+
+        try {
+            $sourceA = $this->createTurnoverSource($this->property);
+            $sourceB = $this->createTurnoverSource($this->otherProperty);
+            $readyA = $coordinator->tempFile('p11_ready_g_a_');
+            $readyB = $coordinator->tempFile('p11_ready_g_b_');
+            $release = $coordinator->tempFile('p11_release_g_');
             @unlink($release);
             $env = $this->workerEnv();
 
             $workerA = $coordinator->spawn('consume_next', [
                 'property_id' => $this->property->id,
                 'lease_seconds' => 60,
-                'ready_marker' => $readyA,
-                'release_path' => $release,
+                'inside_tx_ready_marker' => $readyA,
+                'inside_tx_release_path' => $release,
             ], $env);
             $workerB = $coordinator->spawn('consume_next', [
-                'property_id' => $this->property->id,
-                'lease_seconds' => 60,
-                'ready_marker' => $readyB,
-                'release_path' => $release,
-            ], $env);
-
-            $readyEvidenceA = $coordinator->waitForReady($readyA);
-            $readyEvidenceB = $coordinator->waitForReady($readyB);
-            $this->assertNotSame($readyEvidenceA['php_pid'], $readyEvidenceB['php_pid']);
-            $this->assertNotSame($readyEvidenceA['postgres_backend_pid'], $readyEvidenceB['postgres_backend_pid']);
-
-            $coordinator->release($release);
-            $first = $coordinator->wait($workerA);
-            $second = $coordinator->wait($workerB);
-            $workers = [$first['data'], $second['data']];
-            $winners = array_values(array_filter($workers, fn (array $worker) => $worker['outcome'] === 'consumed'));
-            $losers = array_values(array_filter($workers, fn (array $worker) => $worker['outcome'] === 'no_available'));
-
-            $this->assertCount(1, $winners, 'Scenario A requires exactly one claim/consume winner. Workers: ' . json_encode($workers));
-            $this->assertCount(1, $losers, 'Scenario A requires the loser to make no mutation. Workers: ' . json_encode($workers));
-            $this->assertSame($source['handoff']->id, $winners[0]['result']['handoff_id']);
-            $this->assertScenarioCounts(1, 1, 1, 1);
-            $this->assertSame('DELIVERED', $this->handoffStatus($source['handoff']->id));
-            $this->assertRoomState($roomId, 'waiting_cleaning', 'dirty');
-
-            $roomA = $this->onConcurrencyConnection(fn () => $this->p11Room($this->property));
-            $this->onConcurrencyConnection(fn () => $this->p11CheckoutSource($this->property, $roomA));
-            $this->onConcurrencyConnection(function () {
-                app(CurrentPropertyService::class)->setPropertyId($this->otherProperty->id);
-            });
-            $roomB = $this->onConcurrencyConnection(fn () => $this->p11Room($this->otherProperty));
-            $this->onConcurrencyConnection(fn () => $this->p11CheckoutSource($this->otherProperty, $roomB));
-
-            $readyPropertyA = $coordinator->tempFile('p11_ready_pa_');
-            $readyPropertyB = $coordinator->tempFile('p11_ready_pb_');
-            $releaseProperties = $coordinator->tempFile('p11_release_props_');
-            @unlink($releaseProperties);
-            $propertyWorkerA = $coordinator->spawn('consume_next', [
-                'property_id' => $this->property->id,
-                'lease_seconds' => 60,
-                'ready_marker' => $readyPropertyA,
-                'release_path' => $releaseProperties,
-            ], $env);
-            $propertyWorkerB = $coordinator->spawn('consume_next', [
                 'property_id' => $this->otherProperty->id,
                 'lease_seconds' => 60,
-                'ready_marker' => $readyPropertyB,
-                'release_path' => $releaseProperties,
+                'inside_tx_ready_marker' => $readyB,
+                'inside_tx_release_path' => $release,
             ], $env);
 
-            $readyPropertyEvidenceA = $coordinator->waitForReady($readyPropertyA);
-            $readyPropertyEvidenceB = $coordinator->waitForReady($readyPropertyB);
-            $this->assertSame([], $coordinator->blockingPids((int) $readyPropertyEvidenceA['postgres_backend_pid']));
-            $this->assertSame([], $coordinator->blockingPids((int) $readyPropertyEvidenceB['postgres_backend_pid']));
-            $this->assertNotSame($readyPropertyEvidenceA['postgres_backend_pid'], $readyPropertyEvidenceB['postgres_backend_pid']);
+            $markerA = $coordinator->waitForReady($readyA);
+            $markerB = $coordinator->waitForReady($readyB);
+            $this->assertSame('P11_INSIDE_TRANSACTION_LOCKS_HELD', $markerA['marker']);
+            $this->assertSame('P11_INSIDE_TRANSACTION_LOCKS_HELD', $markerB['marker']);
+            $this->assertNotSame($markerA['php_pid'], $markerB['php_pid']);
+            $this->assertNotSame($markerA['postgres_backend_pid'], $markerB['postgres_backend_pid']);
+            $this->assertGreaterThan(0, $markerA['transaction_level']);
+            $this->assertGreaterThan(0, $markerB['transaction_level']);
+            $this->assertTrue((bool) $markerA['xact_start_present']);
+            $this->assertTrue((bool) $markerB['xact_start_present']);
 
-            $coordinator->release($releaseProperties);
-            $propertyResultA = $coordinator->wait($propertyWorkerA);
-            $propertyResultB = $coordinator->wait($propertyWorkerB);
-            $this->assertSame('consumed', $propertyResultA['data']['outcome']);
-            $this->assertSame('consumed', $propertyResultB['data']['outcome']);
-            $this->assertNotSame($propertyResultA['data']['result']['handoff_id'], $propertyResultB['data']['result']['handoff_id']);
-            $this->assertScenarioCounts(3, 3, 3, 3);
+            $this->onConcurrencyConnection(function () use ($coordinator, $markerA, $markerB): void {
+                $this->assertTrue($coordinator->backendHasActiveTransaction((int) $markerA['postgres_backend_pid']));
+                $this->assertTrue($coordinator->backendHasActiveTransaction((int) $markerB['postgres_backend_pid']));
+                $this->assertTrue($coordinator->rowLockIsHeld('front_desk_checkout_housekeeping_handoffs', (string) $markerA['handoff_id']));
+                $this->assertTrue($coordinator->rowLockIsHeld('rooms', (string) $markerA['room_id']));
+                $this->assertTrue($coordinator->rowLockIsHeld('front_desk_checkout_housekeeping_handoffs', (string) $markerB['handoff_id']));
+                $this->assertTrue($coordinator->rowLockIsHeld('rooms', (string) $markerB['room_id']));
+                $this->assertSame([], $coordinator->blockingPids((int) $markerA['postgres_backend_pid']));
+                $this->assertSame([], $coordinator->blockingPids((int) $markerB['postgres_backend_pid']));
+            });
+
+            $coordinator->release($release);
+            $resultA = $this->assertWorkerResult($coordinator->wait($workerA), 0, 'consumed');
+            $resultB = $this->assertWorkerResult($coordinator->wait($workerB), 0, 'consumed');
+            $this->assertSame($sourceA['handoff_id'], $resultA['result']['handoff_id']);
+            $this->assertSame($sourceB['handoff_id'], $resultB['result']['handoff_id']);
+            $this->assertScenarioCounts(2, 2, 2, 2);
+            $this->assertSame('DELIVERED', $this->handoffStatus($sourceA['handoff_id']));
+            $this->assertSame('DELIVERED', $this->handoffStatus($sourceB['handoff_id']));
         } finally {
             $coordinator->terminateAll();
         }
     }
 
-    public function test_scenarios_b_c_d_e_f_h_i_and_j_are_durable_and_fail_closed(): void
+    public function test_scenario_h_cross_property_handoff_is_non_disclosing_and_mutates_nothing(): void
     {
-        $this->onConcurrencyConnection(function () {
-            app(CurrentPropertyService::class)->setPropertyId($this->property->id);
-            $delivery = app(FrontDeskCheckoutHousekeepingHandoffDeliveryService::class);
-            $service = app(HousekeepingCheckoutTurnoverIntakeService::class);
+        $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
 
-            $roomB = $this->p11Room($this->property);
-            $sourceB = $this->p11CheckoutSource($this->property, $roomB);
-            $claimB = $delivery->claimAvailable($this->property->id, $sourceB['handoff']->id, 60);
-            $firstB = $service->consumeClaimed($this->property->id, $sourceB['handoff']->id, $claimB['claim_token']);
-            $delivery->markDelivered($this->property->id, $sourceB['handoff']->id, $claimB['claim_token']);
-            $replayB = $service->consumeClaimed($this->property->id, $sourceB['handoff']->id, $claimB['claim_token']);
-            $this->assertSame($firstB->intakeId, $replayB->intakeId, 'Scenario B intake replay ID mismatch.');
-            $this->assertSame($firstB->cleaningTaskId, $replayB->cleaningTaskId, 'Scenario B task replay ID mismatch.');
-            $this->assertSame($firstB->readinessTransitionId, $replayB->readinessTransitionId, 'Scenario B transition replay ID mismatch.');
-            $this->assertTrue($replayB->replayed);
-
-            $roomC = $this->p11Room($this->property);
-            $sourceC = $this->p11CheckoutSource($this->property, $roomC);
-            $claimC = $delivery->claimAvailable($this->property->id, $sourceC['handoff']->id, 1);
-            $firstC = $service->consumeClaimed($this->property->id, $sourceC['handoff']->id, $claimC['claim_token']);
-            $this->waitForClaimExpiry($sourceC['handoff']->id);
-            $reclaimC = $delivery->claimAvailable($this->property->id, $sourceC['handoff']->id, 60);
-            $this->assertSame($sourceC['handoff']->id, $reclaimC['handoff_id'], 'Scenario C must reclaim the expired handoff.');
-            $replayC = $service->consumeClaimed($this->property->id, $sourceC['handoff']->id, $reclaimC['claim_token']);
-            $delivery->markDelivered($this->property->id, $sourceC['handoff']->id, $reclaimC['claim_token']);
-            $this->assertSame($firstC->intakeId, $replayC->intakeId, 'Scenario C intake replay ID mismatch.');
-            $this->assertTrue($replayC->replayed);
-            $this->assertSame('DELIVERED', $this->handoffStatus($sourceC['handoff']->id));
-
-            $roomD = $this->p11Room($this->property);
-            $sourceD = $this->p11CheckoutSource($this->property, $roomD);
-            $claimD = $delivery->claimAvailable($this->property->id, $sourceD['handoff']->id, 1);
-            $this->waitForClaimExpiry($sourceD['handoff']->id);
-            $this->expectDomain(fn () => $delivery->markDelivered($this->property->id, $sourceD['handoff']->id, $claimD['claim_token']), 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
-            $this->expectDomain(fn () => $delivery->markFailed($this->property->id, $sourceD['handoff']->id, $claimD['claim_token'], 'HK_P11_INTERNAL_RETRYABLE_FAILURE', now()->addMinutes(5)), 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_EXPIRED_CLAIM');
-            $this->assertNoOutcomeForHandoff($sourceD['handoff']->id);
-
-            // Cleanup D so its expired claim doesn't get picked up by consumeNextAvailable in Scenario J
-            $cleanupClaimD = $delivery->claimAvailable($this->property->id, $sourceD['handoff']->id, 60);
-            $service->consumeClaimed($this->property->id, $sourceD['handoff']->id, $cleanupClaimD['claim_token']);
-            $delivery->markDelivered($this->property->id, $sourceD['handoff']->id, $cleanupClaimD['claim_token']);
-
-            $roomE = $this->p11Room($this->property);
-            $sourceE = $this->p11CheckoutSource($this->property, $roomE);
-            $claimE1 = $delivery->claimAvailable($this->property->id, $sourceE['handoff']->id, 1);
-            $this->waitForClaimExpiry($sourceE['handoff']->id);
-            $claimE2 = $delivery->claimAvailable($this->property->id, $sourceE['handoff']->id, 60);
-            $this->assertSame($sourceE['handoff']->id, $claimE2['handoff_id'], 'Scenario E must reclaim the stale-token handoff.');
-            $this->expectDomain(fn () => $delivery->markDelivered($this->property->id, $sourceE['handoff']->id, $claimE1['claim_token']), 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_CLAIM_TOKEN');
-            $this->expectDomain(fn () => $delivery->markFailed($this->property->id, $sourceE['handoff']->id, $claimE1['claim_token'], 'HK_P11_INTERNAL_RETRYABLE_FAILURE', now()->addMinutes(5)), 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_INVALID_CLAIM_TOKEN');
-            $resultE = $service->consumeClaimed($this->property->id, $sourceE['handoff']->id, $claimE2['claim_token']);
-            $delivery->markDelivered($this->property->id, $sourceE['handoff']->id, $claimE2['claim_token']);
-            $this->assertSame($roomE, $resultE->roomId);
-
-            $roomF = $this->p11Room($this->property, [
-                'readiness_state' => 'blocked',
-                'cleanliness_status' => 'dirty',
-            ]);
-            $sourceF = $this->p11CheckoutSource($this->property, $roomF);
-            $beforeF = $this->outcomeCounts();
-            $claimF = $delivery->claimAvailable($this->property->id, $sourceF['handoff']->id, 60);
-            $this->expectDomain(function () use ($service, $delivery, $sourceF, $claimF) {
-                try {
-                    $service->consumeClaimed($this->property->id, $sourceF['handoff']->id, $claimF['claim_token']);
-                } catch (DomainException $exception) {
-                    $delivery->markFailed(
-                        $this->property->id,
-                        $sourceF['handoff']->id,
-                        $claimF['claim_token'],
-                        $exception->getMessage(),
-                        $this->databaseRetryAt(),
-                    );
-
-                    throw $exception;
-                }
-            }, HousekeepingCheckoutTurnoverIntakeService::ERROR_ROOM_LIFECYCLE_CONFLICT);
-            $afterF = $this->outcomeCounts();
-            $this->assertSame($beforeF, $afterF);
-            $failedF = DB::table('front_desk_checkout_housekeeping_handoffs')->where('id', $sourceF['handoff']->id)->first();
-            $this->assertSame('FAILED', $failedF->delivery_status);
-            $this->assertSame(HousekeepingCheckoutTurnoverIntakeService::ERROR_ROOM_LIFECYCLE_CONFLICT, $failedF->last_error_code);
-
-            $this->assertCrossPropertyAccessFailsClosed($service, $delivery);
-            $this->assertMalformedSourcesFailClosed($service, $delivery);
-            $this->assertDeliveryReplayNeverRerunsCheckout($service);
-
-            // Scenario J: Post-commit crash simulation
-            $roomJ = $this->p11Room($this->property);
-            $sourceJ = $this->p11CheckoutSource($this->property, $roomJ);
-
-            $service->setPostCommitTestingHookForTesting(function () {
-                throw new \RuntimeException('Simulated post-commit crash');
-            });
-
-            $beforeJ = $this->outcomeCounts();
-
-            try {
-                $service->consumeNextAvailable($this->property->id, 1);
-                $this->fail('Scenario J should have crashed before markDelivered.');
-            } catch (\RuntimeException $e) {
-                if ($e->getMessage() !== 'Simulated post-commit crash') {
-                    throw $e; // Re-throw if it's PHPUnit's assertion failure
-                }
-                $this->assertSame('Simulated post-commit crash', $e->getMessage());
-            }
-
-            $service->setPostCommitTestingHookForTesting(null);
-
-            $afterJ = $this->outcomeCounts();
-            $this->assertSame($beforeJ['intakes'] + 1, $afterJ['intakes'], 'Scenario J must commit exactly 1 intake.');
-            $this->assertSame($beforeJ['tasks'] + 1, $afterJ['tasks'], 'Scenario J must commit exactly 1 task.');
-            $this->assertSame($beforeJ['transitions'] + 1, $afterJ['transitions'], 'Scenario J must commit exactly 1 transition.');
-
-            $this->assertSame('CLAIMED', $this->handoffStatus($sourceJ['handoff']->id), 'Scenario J handoff must remain CLAIMED after simulated crash.');
-            $this->assertRoomState($roomJ, 'waiting_cleaning', 'dirty');
-
-            // Phase C replay logic: The consumer catches up by replaying Phase B and then proceeding to Phase C
-            // We simulate claim expiration so consumeNextAvailable can pick it up.
-            $this->waitForClaimExpiry($sourceJ['handoff']->id);
-
-            // Now consumeNextAvailable will pick it up again!
-            $resultJ = $service->consumeNextAvailable($this->property->id, 60);
-
-            $this->assertNotNull($resultJ);
-            $this->assertTrue($resultJ->replayed, 'Scenario J replay must indicate it was replayed.');
-            $this->assertFalse($resultJ->deliveryConfirmationPending, 'Scenario J replay via consumeNextAvailable successfully delivers.');
-
-            $this->assertSame('DELIVERED', $this->handoffStatus($sourceJ['handoff']->id), 'Scenario J handoff must become DELIVERED after explicit recovery.');
-
-            $finalJ = $this->outcomeCounts();
-            $this->assertSame($afterJ['intakes'], $finalJ['intakes'], 'Scenario J must not create duplicate facts upon recovery.');
-        });
-    }
-
-    private function assertCrossPropertyAccessFailsClosed(HousekeepingCheckoutTurnoverIntakeService $service, FrontDeskCheckoutHousekeepingHandoffDeliveryService $delivery): void
-    {
-        app(CurrentPropertyService::class)->setPropertyId($this->otherProperty->id);
-        $room = $this->p11Room($this->otherProperty);
-        $source = $this->p11CheckoutSource($this->otherProperty, $room);
-        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
-
-        $before = $this->outcomeCounts();
-        $this->expectDomain(fn () => $delivery->claimAvailable($this->property->id, $source['handoff']->id, 60), 'FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE');
-        $this->expectDomain(fn () => $service->consumeClaimed($this->otherProperty->id, $source['handoff']->id, 'not-a-token'), HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT);
-        $this->assertSame($before, $this->outcomeCounts());
-    }
-
-    private function assertMalformedSourcesFailClosed(HousekeepingCheckoutTurnoverIntakeService $service, FrontDeskCheckoutHousekeepingHandoffDeliveryService $delivery): void
-    {
-        foreach ([
-            'checkout_execution_id' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
-            'reservation_id' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
-            'property_business_date_id' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
-            'source_hash' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
-            'stay_room_mismatch' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
-            'stay_status' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
-            'inactive_room' => HousekeepingCheckoutTurnoverIntakeService::ERROR_ROOM_UNAVAILABLE,
-            'room_property' => HousekeepingCheckoutTurnoverIntakeService::ERROR_ROOM_UNAVAILABLE,
-        ] as $mutation => $expectedError) {
-            $room = $this->p11Room($this->property);
-            $source = $this->p11CheckoutSource($this->property, $room);
-            $claim = $delivery->claimAvailable($this->property->id, $source['handoff']->id, 60);
+        try {
+            $sourceB = $this->createTurnoverSource($this->otherProperty);
             $before = $this->outcomeCounts();
-
-            match ($mutation) {
-                'checkout_execution_id' => $this->withoutUserTriggers(['front_desk_checkout_executions'], fn () => DB::table('front_desk_checkout_executions')->where('id', $source['execution']->id)->update(['front_desk_stay_id' => $this->bareAlternateStay()['stay_id']])),
-                'reservation_id' => $this->withoutUserTriggers(['front_desk_checkout_executions'], fn () => DB::table('front_desk_checkout_executions')->where('id', $source['execution']->id)->update(['reservation_id' => $this->bareAlternateStay()['reservation_id']])),
-                'property_business_date_id' => $this->withoutUserTriggers(['front_desk_checkout_executions'], fn () => DB::table('front_desk_checkout_executions')->where('id', $source['execution']->id)->update(['business_date' => today()->addDay()])),
-                'source_hash' => $this->withoutUserTriggers(['front_desk_checkout_executions'], fn () => DB::table('front_desk_checkout_executions')->where('id', $source['execution']->id)->update(['source_hash' => str_repeat('a', 64)])),
-                'stay_room_mismatch' => DB::table('front_desk_stays')->where('id', $source['stay']->id)->update(['current_room_id' => null]),
-                'stay_status' => DB::table('front_desk_stays')->where('id', $source['stay']->id)->update(['status' => 'IN_HOUSE']),
-                'inactive_room' => DB::table('rooms')->where('id', $room)->update(['is_active' => false]),
-                'room_property' => DB::table('rooms')->where('id', $room)->update(['property_id' => $this->otherProperty->id]),
-            };
-
-            try {
-                $service->consumeClaimed($this->property->id, $source['handoff']->id, $claim['claim_token']);
-                $this->fail("Mutation {$mutation} expected DomainException {$expectedError}");
-            } catch (DomainException $exception) {
-                $this->assertSame($expectedError, $exception->getMessage(), "Mutation {$mutation} must fail closed.");
-            }
-            $this->assertSame($before, $this->outcomeCounts(), "Mutation {$mutation} must fail without Housekeeping outcome.");
+            $worker = $coordinator->spawn('claim_available', [
+                'property_id' => $this->property->id,
+                'handoff_id' => $sourceB['handoff_id'],
+                'lease_seconds' => 60,
+            ], $this->workerEnv());
+            $result = $this->assertWorkerResult($coordinator->wait($worker), 0, 'domain_error');
+            $this->assertSame('FD_C2_CHECKOUT_HOUSEKEEPING_HANDOFF_UNAVAILABLE', $result['domain_error']);
+            $this->assertSame($before, $this->outcomeCounts());
+            $this->assertSame('PENDING', $this->handoffStatus($sourceB['handoff_id']));
+            $this->assertSame(0, (int) $this->cx()->table('front_desk_checkout_housekeeping_handoffs')->where('id', $sourceB['handoff_id'])->value('attempts'));
+        } finally {
+            $coordinator->terminateAll();
         }
     }
 
-    private function assertDeliveryReplayNeverRerunsCheckout(HousekeepingCheckoutTurnoverIntakeService $service): void
+    public function test_scenario_i_malformed_sources_use_separate_workers_and_safe_markers(): void
     {
-        $before = [
-            'confirmation_consumptions' => DB::table('checkout_sensitive_confirmation_consumptions')->count(),
-            'checkout_executions' => DB::table('front_desk_checkout_executions')->count(),
-            'checkout_handoffs' => DB::table('front_desk_checkout_housekeeping_handoffs')->count(),
+        $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
+
+        try {
+            foreach ($this->malformedSourceCases() as $case => $definition) {
+                $source = $this->createTurnoverSource($this->property, $definition['room_overrides'] ?? [], $definition['source_overrides'] ?? []);
+                $before = $this->outcomeCounts();
+
+                if (($definition['guarded_by_predecessor'] ?? false) === true) {
+                    $this->retireHandoffWithoutHousekeeping($source['handoff_id']);
+                    $this->assertPredecessorMutationGuard($source, $definition['mutate']);
+                    $expectedOutcome = 'no_available';
+                    $expectedError = null;
+                } else {
+                    ($definition['mutate'])($source);
+                    $expectedOutcome = 'domain_error';
+                    $expectedError = $definition['expected_error'];
+                }
+
+                $worker = $coordinator->spawn('consume_next', [
+                    'property_id' => $this->property->id,
+                    'lease_seconds' => 60,
+                ], $this->workerEnv());
+                $result = $this->assertWorkerResult($coordinator->wait($worker), 0, $expectedOutcome);
+                if ($expectedError !== null) {
+                    $this->assertSame($expectedError, $result['domain_error'], "Scenario I case {$case} returned the wrong marker.");
+                }
+                $this->assertSame($before, $this->outcomeCounts(), "Scenario I case {$case} created Housekeeping facts.");
+            }
+        } finally {
+            $coordinator->terminateAll();
+        }
+    }
+
+    public function test_scenario_j_replay_worker_has_exact_five_source_zero_delta_and_no_checkout_rerun(): void
+    {
+        $coordinator = new P11CheckoutTurnoverConcurrencyCoordinator();
+
+        try {
+            $source = $this->createTurnoverSource();
+            $token = $coordinator->tempFile('p11_secret_j_');
+            $env = $this->workerEnv();
+
+            $firstWorker = $coordinator->spawn('consume_next_store_secret', [
+                'property_id' => $this->property->id,
+                'lease_seconds' => 60,
+                'token_path' => $token,
+                'guard_checkout_execution' => true,
+            ], $env);
+            $first = $this->assertWorkerResult($coordinator->wait($firstWorker), 0, 'consumed');
+            $beforeSources = $this->checkoutSourceCounts();
+            $beforePackage11 = $this->outcomeCounts();
+
+            $replayWorker = $coordinator->spawn('consume_claimed_from_secret', [
+                'property_id' => $this->property->id,
+                'token_path' => $token,
+                'mark_delivered' => true,
+                'guard_checkout_execution' => true,
+            ], $env);
+            $replay = $this->assertWorkerResult($coordinator->wait($replayWorker), 0, 'consumed');
+            $this->assertTrue($replay['result']['replayed']);
+            $this->assertSame($source['handoff_id'], $replay['result']['handoff_id']);
+            $this->assertSame($first['result']['intake_id'], $replay['result']['intake_id']);
+            $this->assertSame($first['result']['cleaning_task_id'], $replay['result']['cleaning_task_id']);
+            $this->assertSame($first['result']['readiness_transition_id'], $replay['result']['readiness_transition_id']);
+            $this->assertSame($beforeSources, $this->checkoutSourceCounts());
+            $this->assertSame($beforePackage11, $this->outcomeCounts());
+            $this->assertScenarioCounts(1, 1, 1, 1);
+
+            $coordinator->deleteFile($token);
+            $this->assertFileDoesNotExist($token);
+        } finally {
+            $coordinator->terminateAll();
+        }
+    }
+
+    private function createTurnoverSource($property = null, array $roomOverrides = [], array $sourceOverrides = []): array
+    {
+        return $this->onConcurrencyConnection(function () use ($property, $roomOverrides, $sourceOverrides): array {
+            $property ??= $this->property;
+            app(CurrentPropertyService::class)->setPropertyId($property->id);
+            $roomId = $this->p11Room($property, $roomOverrides);
+            $source = $this->p11CheckoutSource($property, $roomId, $sourceOverrides);
+
+            return [
+                'property_id' => $property->id,
+                'room_id' => $roomId,
+                'handoff_id' => $source['handoff']->id,
+                'execution_id' => $source['execution']->id,
+                'stay_id' => $source['stay']->id,
+                'reservation_id' => $source['reservation']->id,
+                'business_date_id' => $source['businessDate']->id,
+            ];
+        });
+    }
+
+    private function malformedSourceCases(): array
+    {
+        return [
+            'execution mismatch' => [
+                'guarded_by_predecessor' => true,
+                'mutate' => fn (array $source) => $this->cx()->table('front_desk_checkout_executions')->where('id', $source['execution_id'])->update(['front_desk_stay_id' => $this->bareAlternateStay()['stay_id']]),
+            ],
+            'reservation mismatch' => [
+                'guarded_by_predecessor' => true,
+                'mutate' => fn (array $source) => $this->cx()->table('front_desk_checkout_executions')->where('id', $source['execution_id'])->update(['reservation_id' => $this->bareAlternateStay()['reservation_id']]),
+            ],
+            'Business Date mismatch' => [
+                'guarded_by_predecessor' => true,
+                'mutate' => fn (array $source) => $this->cx()->table('front_desk_checkout_executions')->where('id', $source['execution_id'])->update(['business_date' => today()->addDay()]),
+            ],
+            'source hash mismatch' => [
+                'guarded_by_predecessor' => true,
+                'mutate' => fn (array $source) => $this->cx()->table('front_desk_checkout_housekeeping_handoffs')->where('id', $source['handoff_id'])->update(['source_hash' => str_repeat('a', 64)]),
+            ],
+            'stay not CHECKED_OUT' => [
+                'source_overrides' => ['stay_status' => 'IN_HOUSE'],
+                'mutate' => fn (array $source) => null,
+                'expected_error' => HousekeepingCheckoutTurnoverIntakeService::ERROR_SOURCE_CONFLICT,
+            ],
+            'missing authoritative room' => [
+                'guarded_by_predecessor' => true,
+                'mutate' => fn (array $source) => $this->cx()->table('front_desk_stays')->where('id', $source['stay_id'])->update(['current_room_id' => (string) Str::ulid()]),
+            ],
+            'inactive room' => [
+                'mutate' => fn (array $source) => $this->cx()->table('rooms')->where('id', $source['room_id'])->update(['is_active' => false]),
+                'expected_error' => HousekeepingCheckoutTurnoverIntakeService::ERROR_ROOM_UNAVAILABLE,
+            ],
+            'wrong-Property room' => [
+                'mutate' => fn (array $source) => $this->cx()->table('rooms')->where('id', $source['room_id'])->update(['property_id' => $this->otherProperty->id]),
+                'expected_error' => HousekeepingCheckoutTurnoverIntakeService::ERROR_ROOM_UNAVAILABLE,
+            ],
         ];
+    }
 
-        $delivery = app(FrontDeskCheckoutHousekeepingHandoffDeliveryService::class);
-        $room = $this->p11Room($this->property);
-        $source = $this->p11CheckoutSource($this->property, $room);
-        $claim = $delivery->claimAvailable($this->property->id, $source['handoff']->id, 60);
-        $result = $service->consumeClaimed($this->property->id, $source['handoff']->id, $claim['claim_token']);
-        $delivery->markDelivered($this->property->id, $source['handoff']->id, $claim['claim_token']);
-        $replay = $service->consumeClaimed($this->property->id, $source['handoff']->id, $claim['claim_token']);
+    private function assertWorkerResult(array $worker, int $expectedExit, ?string $expectedOutcome = null): array
+    {
+        $this->assertSame($expectedExit, $worker['exit']);
+        $this->assertSame('', $worker['stderr']);
+        $data = $worker['data'];
+        $this->assertGreaterThan(0, (int) $data['php_pid']);
+        $this->assertGreaterThan(0, (int) $data['postgres_backend_pid']);
+        $this->assertArrayHasKey('completed_at', $data);
+        $this->assertArrayNotHasKey('claim', $data);
+        $this->assertArrayNotHasKey('claim_token', $data);
+        $this->assertArrayNotHasKey('claim_token_hash', $data);
+        $this->assertArrayNotHasKey('source_hash', $data);
+        $this->assertArrayNotHasKey('exception_class', $data);
+        $this->assertArrayNotHasKey('database_message', $data);
 
-        $after = [
-            'confirmation_consumptions' => DB::table('checkout_sensitive_confirmation_consumptions')->count(),
-            'checkout_executions' => DB::table('front_desk_checkout_executions')->count(),
-            'checkout_handoffs' => DB::table('front_desk_checkout_housekeeping_handoffs')->count(),
-        ];
+        if ($expectedOutcome !== null) {
+            $this->assertSame($expectedOutcome, $data['outcome']);
+        }
 
-        $this->assertTrue($replay->replayed);
-        $this->assertSame($before['confirmation_consumptions'], $after['confirmation_consumptions']);
-        $this->assertSame($before['checkout_executions'] + 1, $after['checkout_executions']);
-        $this->assertSame($before['checkout_handoffs'] + 1, $after['checkout_handoffs']);
+        return $data;
+    }
+
+    private function retireHandoffWithoutHousekeeping(string $handoffId): void
+    {
+        $this->onConcurrencyConnection(function () use ($handoffId): void {
+            app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+            $delivery = app(FrontDeskCheckoutHousekeepingHandoffDeliveryService::class);
+            $claim = $delivery->claimAvailable($this->property->id, $handoffId, 60);
+            $delivery->markDelivered($this->property->id, $handoffId, $claim['claim_token']);
+        });
+    }
+
+    private function assertPredecessorMutationGuard(array $source, callable $mutation): void
+    {
+        try {
+            $this->onConcurrencyConnection(fn () => $mutation($source));
+            $this->fail('Predecessor guard should prevent malformed source construction.');
+        } catch (QueryException|DomainException) {
+            $this->assertTrue(true);
+        }
     }
 
     private function bareAlternateStay(): array
@@ -347,7 +546,7 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
         $reservationId = (string) Str::ulid();
         $stayId = (string) Str::ulid();
 
-        DB::table('guests')->insert([
+        $this->cx()->table('guests')->insert([
             'id' => $guestId,
             'property_id' => $this->property->id,
             'guest_code' => 'P11ALT-' . Str::upper(Str::random(5)),
@@ -356,7 +555,7 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
             'created_at' => now(),
             'updated_at' => now(),
         ]);
-        DB::table('reservations')->insert([
+        $this->cx()->table('reservations')->insert([
             'id' => $reservationId,
             'property_id' => $this->property->id,
             'primary_guest_id' => $guestId,
@@ -370,7 +569,7 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
             'created_at' => now(),
             'updated_at' => now(),
         ]);
-        DB::table('front_desk_stays')->insert([
+        $this->cx()->table('front_desk_stays')->insert([
             'id' => $stayId,
             'property_id' => $this->property->id,
             'reservation_id' => $reservationId,
@@ -400,6 +599,11 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
         }
     }
 
+    private function cx()
+    {
+        return DB::connection('pgsql_concurrency');
+    }
+
     private function workerEnv(): array
     {
         return [
@@ -413,7 +617,7 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
     {
         $deadline = microtime(true) + 10;
         while (microtime(true) < $deadline) {
-            $expired = DB::table('front_desk_checkout_housekeeping_handoffs')
+            $expired = $this->cx()->table('front_desk_checkout_housekeeping_handoffs')
                 ->where('id', $handoffId)
                 ->whereRaw("claim_expires_at <= (clock_timestamp() AT TIME ZONE 'UTC')")
                 ->exists();
@@ -428,68 +632,60 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
         $this->fail("Claim did not expire for handoff {$handoffId}");
     }
 
-    private function expectDomain(callable $callback, string $expectedMessage): void
+    private function assertDatabaseTimestampInFuture(string $timestamp): void
     {
-        try {
-            $callback();
-            $this->fail("Expected DomainException {$expectedMessage}");
-        } catch (DomainException $exception) {
-            $this->assertSame($expectedMessage, $exception->getMessage());
-        }
-    }
-
-    private function databaseRetryAt(): \DateTimeImmutable
-    {
-        $row = DB::selectOne("SELECT clock_timestamp() AT TIME ZONE 'UTC' + interval '5 minutes' AS retry_at");
-
-        return new \DateTimeImmutable((string) $row->retry_at, new \DateTimeZone('UTC'));
-    }
-
-    /**
-     * @param list<string> $tables
-     */
-    private function withoutUserTriggers(array $tables, callable $callback): mixed
-    {
-        foreach ($tables as $table) {
-            DB::statement("ALTER TABLE {$table} DISABLE TRIGGER USER");
-        }
-
-        try {
-            return $callback();
-        } finally {
-            foreach (array_reverse($tables) as $table) {
-                DB::statement("ALTER TABLE {$table} ENABLE TRIGGER USER");
-            }
-        }
+        $row = $this->cx()->selectOne(
+            "SELECT ?::timestamp(0) > (clock_timestamp() AT TIME ZONE 'UTC')::timestamp(0) AS future",
+            [$timestamp],
+        );
+        $this->assertTrue((bool) $row->future);
     }
 
     private function assertNoOutcomeForHandoff(string $handoffId): void
     {
-        $this->assertSame(0, DB::table('housekeeping_checkout_turnover_intakes')->where('front_desk_checkout_housekeeping_handoff_id', $handoffId)->count());
-        $this->assertSame(0, DB::table('housekeeping_room_readiness_transitions')->where('source_id', $handoffId)->where('transition_type', 'CHECKOUT_TURNOVER_INTAKE')->count());
+        $this->assertSame(0, $this->cx()->table('housekeeping_checkout_turnover_intakes')->where('front_desk_checkout_housekeeping_handoff_id', $handoffId)->count());
+        $this->assertSame(0, $this->cx()->table('housekeeping_room_readiness_transitions')->where('source_id', $handoffId)->where('transition_type', 'CHECKOUT_TURNOVER_INTAKE')->count());
     }
 
     private function assertScenarioCounts(int $intakes, int $tasks, int $transitions, int $audits): void
     {
-        $this->assertSame($intakes, DB::connection('pgsql_concurrency')->table('housekeeping_checkout_turnover_intakes')->count());
-        $this->assertSame($tasks, DB::connection('pgsql_concurrency')->table('cleaning_tasks')->where('task_type', 'checkout_cleaning')->count());
-        $this->assertSame($transitions, DB::connection('pgsql_concurrency')->table('housekeeping_room_readiness_transitions')->where('transition_type', 'CHECKOUT_TURNOVER_INTAKE')->count());
-        $this->assertSame($audits, DB::connection('pgsql_concurrency')->table('audit_logs')->where('event', 'housekeeping_checkout_turnover_intake_committed')->count());
+        $this->assertSame($intakes, $this->cx()->table('housekeeping_checkout_turnover_intakes')->count());
+        $this->assertSame($tasks, $this->cx()->table('cleaning_tasks')->where('task_type', 'checkout_cleaning')->count());
+        $this->assertSame($transitions, $this->cx()->table('housekeeping_room_readiness_transitions')->where('transition_type', 'CHECKOUT_TURNOVER_INTAKE')->count());
+        $this->assertSame($audits, $this->cx()->table('audit_logs')->where('event', 'housekeeping_checkout_turnover_intake_committed')->count());
     }
 
     private function outcomeCounts(): array
     {
         return [
-            'intakes' => DB::table('housekeeping_checkout_turnover_intakes')->count(),
-            'tasks' => DB::table('cleaning_tasks')->where('task_type', 'checkout_cleaning')->count(),
-            'transitions' => DB::table('housekeeping_room_readiness_transitions')->where('transition_type', 'CHECKOUT_TURNOVER_INTAKE')->count(),
-            'audits' => DB::table('audit_logs')->where('event', 'housekeeping_checkout_turnover_intake_committed')->count(),
+            'intakes' => $this->cx()->table('housekeeping_checkout_turnover_intakes')->count(),
+            'tasks' => $this->cx()->table('cleaning_tasks')->where('task_type', 'checkout_cleaning')->count(),
+            'transitions' => $this->cx()->table('housekeeping_room_readiness_transitions')->where('transition_type', 'CHECKOUT_TURNOVER_INTAKE')->count(),
+            'audits' => $this->cx()->table('audit_logs')->where('event', 'housekeeping_checkout_turnover_intake_committed')->count(),
         ];
+    }
+
+    private function checkoutSourceCounts(): array
+    {
+        return [
+            'sensitive_confirmation_consumptions' => $this->cx()->table('checkout_sensitive_confirmation_consumptions')->count(),
+            'front_desk_checkout_executions' => $this->cx()->table('front_desk_checkout_executions')->count(),
+            'terminal_front_desk_stays' => $this->cx()->table('front_desk_stays')->where('status', 'CHECKED_OUT')->count(),
+            'front_desk_checkout_housekeeping_handoffs' => $this->cx()->table('front_desk_checkout_housekeeping_handoffs')->count(),
+            'front_desk_checkout_completed_audits' => $this->cx()->table('audit_logs')->where('event', 'front_desk_checkout_completed')->count(),
+        ];
+    }
+
+    private function intakeForHandoff(string $handoffId): object
+    {
+        return $this->cx()->table('housekeeping_checkout_turnover_intakes')
+            ->where('front_desk_checkout_housekeeping_handoff_id', $handoffId)
+            ->first();
     }
 
     private function handoffStatus(string $handoffId): string
     {
-        return (string) DB::connection('pgsql_concurrency')
+        return (string) $this->cx()
             ->table('front_desk_checkout_housekeeping_handoffs')
             ->where('id', $handoffId)
             ->value('delivery_status');
@@ -497,7 +693,7 @@ class HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest extends Pos
 
     private function assertRoomState(string $roomId, string $readiness, string $cleanliness): void
     {
-        $room = DB::connection('pgsql_concurrency')->table('rooms')->where('id', $roomId)->first();
+        $room = $this->cx()->table('rooms')->where('id', $roomId)->first();
         $this->assertSame($readiness, $room->readiness_state);
         $this->assertSame($cleanliness, $room->cleanliness_status);
     }
