@@ -40,24 +40,44 @@ class RegressionBaselineManifestTest extends PostgresTestCase
 
     public function test_manifest_and_registry_do_not_contain_utf8_mojibake_markers(): void
     {
-        $markers = array_map(
-            static fn (string $hex): string => hex2bin($hex),
-            [
-                'c383c2a2',
-                'c383c692',
-                'c3afc2bfc2bd',
-            ],
-        );
+        $markers = [
+            'latin capital a with tilde plus cent sign marker' => json_decode('"\\u00c3\\u00a2"', false, 512, JSON_THROW_ON_ERROR),
+            'latin capital a with tilde plus f-hook marker' => json_decode('"\\u00c3\\u0192"', false, 512, JSON_THROW_ON_ERROR),
+            'replacement character' => json_decode('"\\ufffd"', false, 512, JSON_THROW_ON_ERROR),
+            'latin small i-diaeresis replacement-byte marker' => json_decode('"\\u00ef\\u00bf\\u00bd"', false, 512, JSON_THROW_ON_ERROR),
+            'double-encoded em dash marker' => json_decode('"\\u00c3\\u00a2\\u00e2\\u201a\\u00ac\\u00e2\\u20ac\\u009d"', false, 512, JSON_THROW_ON_ERROR),
+            'double-encoded right-arrow marker' => json_decode('"\\u00c3\\u00a2\\u00e2\\u20ac\\u00a0\\u00e2\\u20ac\\u2122"', false, 512, JSON_THROW_ON_ERROR),
+            'mojibake em dash marker' => json_decode('"\\u00e2\\u20ac\\u201d"', false, 512, JSON_THROW_ON_ERROR),
+            'mojibake right-arrow marker' => json_decode('"\\u00e2\\u2020\\u2019"', false, 512, JSON_THROW_ON_ERROR),
+        ];
 
         foreach ([
             $this->manifestPath,
             base_path('docs/validation/IVORQ-Regression-Baseline-Registry.md'),
         ] as $path) {
             $content = file_get_contents($path);
-            foreach ($markers as $marker) {
-                $this->assertStringNotContainsString($marker, $content, "{$path} contains UTF-8 mojibake marker.");
+            $this->assertIsString($content, "{$path} must be readable.");
+            $this->assertSame(1, preg_match('//u', $content), "{$path} must contain valid UTF-8.");
+
+            foreach ($markers as $label => $marker) {
+                $this->assertStringNotContainsString($marker, $content, "{$path} contains UTF-8 mojibake marker: {$label}.");
             }
         }
+
+        $emDash = json_decode('"\\u2014"', false, 512, JSON_THROW_ON_ERROR);
+        $rightArrow = json_decode('"\\u2192"', false, 512, JSON_THROW_ON_ERROR);
+        $manifestContent = file_get_contents($this->manifestPath);
+
+        $this->assertStringContainsString("Registry {$emDash} exact test-class manifests", $manifestContent);
+        $this->assertStringContainsString("Deposit {$rightArrow} Folio {$rightArrow} Application {$rightArrow} Reversal", $manifestContent);
+
+        $inventoryCandidate = $this->findBaseline('inventory-avco-sensitive-baseline-v2-candidate');
+        $this->assertNotNull($inventoryCandidate, 'inventory-avco-sensitive-baseline-v2-candidate must exist.');
+        $this->assertStringContainsString("candidate {$emDash} replaces", $inventoryCandidate->description ?? '');
+
+        $bankingCandidate = $this->findBaseline('banking-master-baseline-v2-candidate');
+        $this->assertNotNull($bankingCandidate, 'banking-master-baseline-v2-candidate must exist.');
+        $this->assertStringContainsString("candidate {$emDash} replaces", $bankingCandidate->description ?? '');
     }
 
     public function test_manifest_has_required_top_level_fields(): void

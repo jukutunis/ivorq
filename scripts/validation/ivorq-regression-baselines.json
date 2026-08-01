@@ -2,7 +2,7 @@
   "$schema": "ivorq-regression-baselines-v1",
   "version": "1.0",
   "created": "2026-07-09",
-  "description": "IVORQ Regression Baseline Registry â€” exact test-class manifests, no broad filters",
+  "description": "IVORQ Regression Baseline Registry — exact test-class manifests, no broad filters",
   "baselines": [
     {
       "id": "frontdesk-operational-baseline",
@@ -177,7 +177,7 @@
     },
     {
       "id": "guest-deposit-refund-ar-transfer-baseline",
-      "description": "GLF-C PostgreSQL tests covering source-proven CASH guest deposits, partial/full/split application, immutable application reversal and unused-deposit void, Payment/Deposit-bounded cash refunds, PMS Guest Ledger AR-transfer requests, Accounting/AR accept/reject/reverse decisions, typed source-linked Folio effects, canonical Deposit/AR totals, database partial unique source indexes on folio_items (deposit_application, deposit_reversal, ar_decision), source-uniqueness SQLSTATE 23505/P0001 proof, duplicate-source-effect worker concurrency proof, full confirmation-failure matrix (deposit void, deposit reversal, cash refund, AR accept, AR reject, AR reverse), 12 cross-property non-disclosure sub-cases, accepted lock order (Deposit â†’ Folio â†’ Application â†’ Reversal), thirteen real worker concurrency races, and disposable migration UP/DOWN/REAPPLY plus ambiguous legacy Deposit blocking. All 5 exact classes pass cleanly as one batch.",
+      "description": "GLF-C PostgreSQL tests covering source-proven CASH guest deposits, partial/full/split application, immutable application reversal and unused-deposit void, Payment/Deposit-bounded cash refunds, PMS Guest Ledger AR-transfer requests, Accounting/AR accept/reject/reverse decisions, typed source-linked Folio effects, canonical Deposit/AR totals, database partial unique source indexes on folio_items (deposit_application, deposit_reversal, ar_decision), source-uniqueness SQLSTATE 23505/P0001 proof, duplicate-source-effect worker concurrency proof, full confirmation-failure matrix (deposit void, deposit reversal, cash refund, AR accept, AR reject, AR reverse), 12 cross-property non-disclosure sub-cases, accepted lock order (Deposit → Folio → Application → Reversal), thirteen real worker concurrency races, and disposable migration UP/DOWN/REAPPLY plus ambiguous legacy Deposit blocking. All 5 exact classes pass cleanly as one batch.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -404,7 +404,7 @@
     },
     {
       "id": "inventory-avco-sensitive-baseline-v2-candidate",
-      "description": "Inventory / AVCO / Sensitive baseline v2 candidate â€” replaces legacy 247/927 undiscoverable baseline. Covers Inventory operational tests, CostControl AVCO valuation tests, and Sensitive Action Confirmation governance. InventoryReversalWorkspaceTest is excluded (tracked separately as inherited debt). WARNING: Batch execution of all 51 classes produces RefreshDatabase conflicts (217+ errors from cross-class seed state interference). Must use execution_mode: individual or split into domain sub-groups. Sensitive/Foundation subgroup (3 classes: SensitiveActionConfirmationTest, FinanceApprovalConfirmationTest, FinanceFinalizationConfirmationTest) passes cleanly at 58 tests / 436 assertions.",
+      "description": "Inventory / AVCO / Sensitive baseline v2 candidate — replaces legacy 247/927 undiscoverable baseline. Covers Inventory operational tests, CostControl AVCO valuation tests, and Sensitive Action Confirmation governance. InventoryReversalWorkspaceTest is excluded (tracked separately as inherited debt). WARNING: Batch execution of all 51 classes produces RefreshDatabase conflicts (217+ errors from cross-class seed state interference). Must use execution_mode: individual or split into domain sub-groups. Sensitive/Foundation subgroup (3 classes: SensitiveActionConfirmationTest, FinanceApprovalConfirmationTest, FinanceFinalizationConfirmationTest) passes cleanly at 58 tests / 436 assertions.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
@@ -559,7 +559,7 @@
     },
     {
       "id": "banking-master-baseline-v2-candidate",
-      "description": "Banking master baseline v2 candidate â€” replaces legacy 194 undiscoverable baseline. Includes core Banking operational tests only (9 classes). Banking migration tests are excluded. ConfirmedBankPaymentLifecycleTest is excluded due to business-date setup gap (documented in DEBT-BANKING-CONFIRMED-PAYMENT-LIFECYCLE-BUSINESS-DATE). Verified at 84 total tests when including ConfirmedBankPaymentLifecycleTest (1 error from business-date gap); clean at 83/0/0 when excluding it.",
+      "description": "Banking master baseline v2 candidate — replaces legacy 194 undiscoverable baseline. Includes core Banking operational tests only (9 classes). Banking migration tests are excluded. ConfirmedBankPaymentLifecycleTest is excluded due to business-date setup gap (documented in DEBT-BANKING-CONFIRMED-PAYMENT-LIFECYCLE-BUSINESS-DATE). Verified at 84 total tests when including ConfirmedBankPaymentLifecycleTest (1 error from business-date gap); clean at 83/0/0 when excluding it.",
       "type": "phpunit",
       "configuration": "phpunit.pg.xml",
       "selection_policy": "exact-test-classes",
