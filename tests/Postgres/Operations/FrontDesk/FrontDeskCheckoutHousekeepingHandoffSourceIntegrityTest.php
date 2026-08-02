@@ -353,13 +353,13 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
 
     // ── Contract Version remains 1.13 ─────────────────────────────────────
 
-    public function test_contract_version_remains_1_15(): void
+    public function test_contract_version_remains_1_17(): void
     {
         $contractPath = base_path('.agents/contracts/IVORQ-Package-Execution-Contract.md');
         $this->assertFileExists($contractPath);
 
         $source = file_get_contents($contractPath);
-        $this->assertStringContainsString('Version: 1.15', $source, 'Contract Version must remain 1.15.');
+        $this->assertStringContainsString('Version: 1.17', $source, 'Contract Version must remain 1.17.');
     }
 
     // ── Package 8 / 9 remain locked ──────────────────────────────────────
