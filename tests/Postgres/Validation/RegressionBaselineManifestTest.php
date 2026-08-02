@@ -271,7 +271,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_package_11_final_recovery_measurement(): void
+    public function test_frontdesk_operational_baseline_matches_package_13_remeasurement(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
@@ -296,12 +296,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ], $lastTwelve);
 
         $this->assertEquals(729, $baseline->expected->tests ?? null);
-        $this->assertEquals(5591, $baseline->expected->assertions ?? null);
+        $this->assertEquals(5615, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'fc8d89104df4c8af3ec5d47073f2fa2abbd884db',
+            '2dcfc3a6f3bd8dff70ce7cb729f7d1d43b47579a',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -310,9 +310,18 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'Provenance SHA must be a full 40-character hex string.'
         );
         $this->assertEquals(
-            'sprint-package-11-housekeeping-checkout-turnover-intake',
+            'sprint-package-13-housekeeping-cleaning-inspection-readiness-integration',
             $baseline->provenance->branch ?? null
         );
+
+        $this->assertStringContainsString('Package 13 remeasured the unchanged exact 68-class Front Desk baseline at 729 tests / 5615 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 13 retained the exact 68-class Front Desk selection', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No Front Desk production file, route, UI, test class, scheduler, external integration, or ownership boundary was added', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('increased from 5,591 to 5,615', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString("Package 13's bounded Housekeeping cleaning/inspection/readiness integration", $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 13 added no Front Desk accepted debt', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Inventory Reversal inherited debt remained unchanged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Prior Package 12, Package 11, and Package 9 provenance history remains retained', $baseline->provenance->note ?? '');
 
         // ── FD-C1 predecessor assertions (restored from canonical) ──────────
         $this->assertStringContainsString('FD-C1', $baseline->description ?? '');
