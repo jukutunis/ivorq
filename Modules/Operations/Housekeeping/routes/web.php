@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Operations\Housekeeping\Http\Controllers\CleaningChecklistController;
 use Modules\Operations\Housekeeping\Http\Controllers\CleaningTaskController;
 use Modules\Operations\Housekeeping\Http\Controllers\HousekeepingDashboardController;
+use Modules\Operations\Housekeeping\Http\Controllers\HousekeepingCheckoutTurnoverWorkspaceController;
 use Modules\Operations\Housekeeping\Http\Controllers\RoomController;
 use Modules\Operations\Housekeeping\Http\Controllers\RoomInspectionController;
 use Modules\Operations\Housekeeping\Http\Controllers\TaskAssignmentController;
@@ -16,6 +17,9 @@ Route::middleware(['web', 'auth'])
         // ── Dashboard ────────────────────────────────────────────────────
         Route::get('housekeeping', [HousekeepingDashboardController::class, 'index'])
             ->name('housekeeping.dashboard');
+
+        Route::get('housekeeping/checkout-turnovers', [HousekeepingCheckoutTurnoverWorkspaceController::class, 'index'])
+            ->name('housekeeping.checkout-turnovers.index');
 
         // ── Rooms ─────────────────────────────────────────────────────────
         Route::resource('rooms', RoomController::class);
