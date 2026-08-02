@@ -3,27 +3,35 @@
 namespace Modules\Operations\Housekeeping\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
 use Inertia\Response;
 use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
+use Modules\Operations\Housekeeping\Enums\InspectionStatusEnum;
 use Modules\Operations\Housekeeping\Enums\InspectionTypeEnum;
 use Modules\Operations\Housekeeping\Http\Requests\FailInspectionRequest;
 use Modules\Operations\Housekeeping\Http\Requests\PassInspectionRequest;
+use Modules\Operations\Housekeeping\Http\Requests\ConfirmInspectionPassRequest;
+use Modules\Operations\Housekeeping\Http\Requests\ConductInspectionRequest;
 use Modules\Operations\Housekeeping\Http\Requests\StoreRoomInspectionRequest;
 use Modules\Operations\Housekeeping\Http\Requests\UpdateRoomInspectionRequest;
 use Modules\Operations\Housekeeping\Http\Resources\RoomInspectionResource;
 use Modules\Operations\Housekeeping\Models\RoomInspection;
 use Modules\Operations\Housekeeping\Repositories\InspectionRepository;
 use Modules\Operations\Housekeeping\Services\InspectionService;
+use Modules\Operations\Housekeeping\Services\HousekeepingCleaningInspectionReadinessLifecycleService;
 use Shared\Services\CurrentPropertyService;
+use Symfony\Component\HttpKernel\Exception\HttpException;
+use Throwable;
 
 class RoomInspectionController extends Controller
 {
     public function __construct(
         private InspectionService    $inspectionService,
         private InspectionRepository $inspectionRepository,
+        private HousekeepingCleaningInspectionReadinessLifecycleService $lifecycle,
     ) {}
 
     public function index(): Response
@@ -123,12 +131,25 @@ class RoomInspectionController extends Controller
 
         $this->authorize('view', $model);
 
+        $passContext = null;
+        if (
+            $model->status === InspectionStatusEnum::InProgress
+            && $request->user()->can('conduct', $model)
+        ) {
+            try {
+                $passContext = $this->lifecycle->inspectionPassContext($request->user(), $model->id);
+            } catch (DomainException|HttpException) {
+                $passContext = null;
+            }
+        }
+
         return Inertia::render('Operations/Housekeeping/Inspections/Show', [
             'inspection' => new RoomInspectionResource($model),
             'severities' => array_map(
                 fn(InspectionSeverityEnum $s) => ['value' => $s->value, 'label' => $s->label()],
                 InspectionSeverityEnum::cases()
             ),
+            'pass_context' => $passContext,
         ]);
     }
 
@@ -222,7 +243,7 @@ class RoomInspectionController extends Controller
             ->with('success', 'Inspection deleted successfully.');
     }
 
-    public function conduct(\Illuminate\Http\Request $request, string $inspection)
+    public function conduct(ConductInspectionRequest $request, string $inspection)
     {
         $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
         setPermissionsTeamId($resolvedPropertyId);
@@ -239,7 +260,15 @@ class RoomInspectionController extends Controller
 
         $this->authorize('conduct', $model);
 
-        $this->inspectionService->conduct($inspection);
+        try {
+            $this->inspectionService->conduct($inspection);
+        } catch (DomainException $exception) {
+            return $this->boundedLifecycleResponse($request, $exception->getMessage(), 422, $inspection);
+        } catch (HttpException $exception) {
+            return $this->boundedLifecycleResponse($request, $exception->getMessage(), $exception->getStatusCode(), $inspection);
+        } catch (Throwable) {
+            return $this->boundedLifecycleResponse($request, 'HOUSEKEEPING_LIFECYCLE_ACTION_FAILED', 500, $inspection);
+        }
 
         if ($request->wantsJson() || $request->ajax()) {
             return response()->json([
@@ -275,7 +304,20 @@ class RoomInspectionController extends Controller
             ? InspectionSeverityEnum::from($data['inspection_severity'])
             : null;
 
-        $updated = $this->inspectionService->pass($inspection, $data['remarks'] ?? null, $severity, auth()->id());
+        try {
+            $updated = $this->lifecycle->passInspection(
+                $request->user(),
+                $inspection,
+                $data['release_reason'],
+                $severity,
+            );
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        } catch (HttpException $exception) {
+            return response()->json(['message' => $exception->getMessage()], $exception->getStatusCode());
+        } catch (Throwable) {
+            return response()->json(['message' => 'HOUSEKEEPING_LIFECYCLE_ACTION_FAILED'], 500);
+        }
 
         return response()->json([
             'message'     => 'Inspection passed.',
@@ -305,11 +347,62 @@ class RoomInspectionController extends Controller
             ? InspectionSeverityEnum::from($data['inspection_severity'])
             : null;
 
-        $updated = $this->inspectionService->fail($inspection, $data['remarks'] ?? null, $severity, auth()->id());
+        try {
+            $updated = $this->lifecycle->failInspection(
+                $request->user(),
+                $inspection,
+                $data['remarks'],
+                $severity,
+            );
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        } catch (HttpException $exception) {
+            return response()->json(['message' => $exception->getMessage()], $exception->getStatusCode());
+        } catch (Throwable) {
+            return response()->json(['message' => 'HOUSEKEEPING_LIFECYCLE_ACTION_FAILED'], 500);
+        }
 
         return response()->json([
             'message'     => 'Inspection failed.',
             'inspection'  => new RoomInspectionResource($updated->fresh(['room', 'task'])),
         ]);
+    }
+
+    public function confirmPass(ConfirmInspectionPassRequest $request, string $inspection): JsonResponse
+    {
+        $data = $request->validated();
+
+        try {
+            $context = $this->lifecycle->confirmInspectionPass(
+                $request->user(),
+                $inspection,
+                $data['release_reason'],
+                $data['password'],
+            );
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        } catch (HttpException $exception) {
+            return response()->json(['message' => $exception->getMessage()], $exception->getStatusCode());
+        } catch (Throwable) {
+            return response()->json(['message' => 'HOUSEKEEPING_CONFIRMATION_FAILED'], 500);
+        }
+
+        return response()->json([
+            'message' => 'Room release confirmation recorded.',
+            'release_context' => $context,
+        ]);
+    }
+
+    private function boundedLifecycleResponse(
+        \Illuminate\Http\Request $request,
+        string $message,
+        int $status,
+        string $inspection,
+    ) {
+        if ($request->wantsJson() || $request->ajax()) {
+            return response()->json(['message' => $message], $status);
+        }
+
+        return redirect()->route('operations.inspections.show', $inspection)->with('error', $message);
     }
 }

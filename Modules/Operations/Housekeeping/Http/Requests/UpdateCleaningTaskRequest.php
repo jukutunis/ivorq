@@ -31,13 +31,18 @@ class UpdateCleaningTaskRequest extends FormRequest
             'task_type'                  => ['sometimes', Rule::enum(TaskTypeEnum::class)],
             'priority'                   => ['nullable', 'integer', 'min:1', 'max:5'],
             'estimated_duration_minutes' => ['nullable', 'integer', 'min:1'],
-            'room_id'                    => ['nullable', 'string', Rule::exists('rooms', 'id')->where('property_id', $propertyId)->whereNull('deleted_at')],
+            'room_id'                    => ['prohibited'],
             'zone_id'                    => ['nullable', 'string', Rule::exists('zones', 'id')->where('property_id', $propertyId)->whereNull('deleted_at')],
             'due_date'                   => ['nullable', 'date'],
             'status'                     => ['prohibited'],
             'completed_by'               => ['prohibited'],
             'completed_at'               => ['prohibited'],
             'started_at'                 => ['prohibited'],
+            'verified_at'                => ['prohibited'],
+            'property_id'                => ['prohibited'],
+            'company_id'                 => ['prohibited'],
+            'rework_source_inspection_id' => ['prohibited'],
+            'source_cleaning_task_id'    => ['prohibited'],
         ];
     }
 }

@@ -1,0 +1,253 @@
+<?php
+
+namespace Tests\Postgres\Operations\Housekeeping;
+
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use Modules\Foundation\Property\Models\Company;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\User\Models\User;
+use PDO;
+use Tests\PostgresTestCase;
+
+class HousekeepingCleaningInspectionReadinessMigrationProofTest extends PostgresTestCase
+{
+    private const PREFIX = 'ivorq_testing_hk_p13_migration_';
+    private const MIGRATION = 'Modules/Operations/Housekeeping/database/migrations/2026_08_02_000001_integrate_housekeeping_cleaning_inspection_readiness.php';
+
+    public function test_disposable_postgresql_up_valid_sql_rejection_matrix_down_and_reapply(): void
+    {
+        $originalDatabase = config('database.connections.pgsql.database');
+        $database = self::PREFIX . strtolower((string) Str::ulid());
+        $admin = $this->adminPdo();
+        $this->assertStringStartsWith(self::PREFIX, $database);
+        $this->assertNotSame($originalDatabase, $database);
+
+        $admin->exec('CREATE DATABASE ' . $this->quoteIdentifier($database));
+
+        try {
+            $this->switchDatabase($database);
+            Artisan::call('migrate', ['--force' => true]);
+            $this->assertPackageObjectsExist();
+
+            $graph = $this->sourceGraph();
+            $this->insertValidReworkTaskRaw($graph);
+            $this->updateValidVerificationRaw($graph);
+            $this->assertSame(1, DB::table('cleaning_tasks')->where('rework_source_inspection_id', $graph['failed_inspection'])->count());
+            $this->assertNotNull(DB::table('cleaning_tasks')->where('id', $graph['passed_task'])->value('verified_at'));
+
+            $this->assertMalformedRawSqlMatrix($graph);
+
+            $migration = require base_path(self::MIGRATION);
+            $migration->down();
+            $this->assertFalse(Schema::hasColumn('cleaning_tasks', 'rework_source_inspection_id'));
+            $this->assertSame(0, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_room_inspections_lifecycle_guard_trigger'));
+
+            $migration->up();
+            $this->assertPackageObjectsExist();
+
+            $reapply = $this->sourceGraph('R');
+            $this->insertValidReworkTaskRaw($reapply);
+            $this->assertSame(1, DB::table('cleaning_tasks')->where('rework_source_inspection_id', $reapply['failed_inspection'])->count());
+        } finally {
+            $this->switchDatabase($originalDatabase);
+            $this->terminateConnections($admin, $database);
+            $admin->exec('DROP DATABASE IF EXISTS ' . $this->quoteIdentifier($database));
+            $this->assertSame(0, $this->databaseCount($admin, $database));
+        }
+    }
+
+    /** @return array<string, string> */
+    private function sourceGraph(string $suffix = ''): array
+    {
+        $company = Company::create([
+            'name' => 'P13 Migration Company ' . $suffix,
+            'slug' => 'p13-migration-' . strtolower(Str::random(8)),
+            'is_active' => true,
+        ]);
+        $property = Property::create([
+            'company_id' => $company->id,
+            'name' => 'P13 Property ' . $suffix,
+            'slug' => 'p13-property-' . strtolower(Str::random(8)),
+            'code' => 'P13' . strtoupper(Str::random(5)),
+            'timezone' => 'UTC',
+            'currency' => 'USD',
+            'is_active' => true,
+        ]);
+        $otherProperty = Property::create([
+            'company_id' => $company->id,
+            'name' => 'P13 Other Property ' . $suffix,
+            'slug' => 'p13-other-' . strtolower(Str::random(8)),
+            'code' => 'O13' . strtoupper(Str::random(5)),
+            'timezone' => 'UTC',
+            'currency' => 'USD',
+            'is_active' => true,
+        ]);
+        $actor = User::create([
+            'name' => 'P13 Migration Actor',
+            'email' => 'p13-' . strtolower(Str::random(8)) . '@example.test',
+            'password' => bcrypt('password'),
+            'is_active' => true,
+        ]);
+
+        $room = (string) Str::ulid();
+        $otherRoom = (string) Str::ulid();
+        DB::table('rooms')->insert([
+            ['id' => $room, 'property_id' => $property->id, 'room_number' => 'M13' . Str::random(3), 'room_type' => 'standard', 'cleanliness_status' => 'clean', 'readiness_state' => 'waiting_inspection', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
+            ['id' => $otherRoom, 'property_id' => $otherProperty->id, 'room_number' => 'X13' . Str::random(3), 'room_type' => 'standard', 'cleanliness_status' => 'dirty', 'readiness_state' => 'waiting_cleaning', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        $failedTask = (string) Str::ulid();
+        $passedTask = (string) Str::ulid();
+        DB::table('cleaning_tasks')->insert([
+            ['id' => $failedTask, 'property_id' => $property->id, 'room_id' => $room, 'task_type' => 'checkout_cleaning', 'status' => 'completed', 'priority' => 'normal', 'credits' => 1, 'completed_at' => now(), 'completed_by' => $actor->id, 'notes' => 'Completed source', 'created_at' => now(), 'updated_at' => now()],
+            ['id' => $passedTask, 'property_id' => $property->id, 'room_id' => $room, 'task_type' => 'checkout_cleaning', 'status' => 'completed', 'priority' => 'normal', 'credits' => 1, 'completed_at' => now(), 'completed_by' => $actor->id, 'notes' => 'Passed source', 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        $failedInspection = (string) Str::ulid();
+        $passedInspection = (string) Str::ulid();
+        DB::table('room_inspections')->insert([
+            ['id' => $failedInspection, 'property_id' => $property->id, 'room_id' => $room, 'cleaning_task_id' => $failedTask, 'inspection_type' => 'post_cleaning', 'status' => 'failed', 'is_passed' => false, 'supervisor_id' => $actor->id, 'inspected_at' => now(), 'remarks' => 'Failed source', 'created_at' => now(), 'updated_at' => now()],
+            ['id' => $passedInspection, 'property_id' => $property->id, 'room_id' => $room, 'cleaning_task_id' => $passedTask, 'inspection_type' => 'post_cleaning', 'status' => 'passed', 'is_passed' => true, 'supervisor_id' => $actor->id, 'inspected_at' => now(), 'remarks' => 'Passed source', 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        return [
+            'property' => $property->id,
+            'other_property' => $otherProperty->id,
+            'room' => $room,
+            'other_room' => $otherRoom,
+            'actor' => $actor->id,
+            'failed_task' => $failedTask,
+            'passed_task' => $passedTask,
+            'failed_inspection' => $failedInspection,
+            'passed_inspection' => $passedInspection,
+        ];
+    }
+
+    /** @param array<string, string> $graph */
+    private function insertValidReworkTaskRaw(array $graph): void
+    {
+        DB::insert(<<<'SQL'
+            INSERT INTO cleaning_tasks
+                (id, property_id, room_id, task_code, title, task_type, status, priority, credits, rework_source_inspection_id, source_cleaning_task_id, created_by, created_at, updated_at)
+            VALUES
+                (?, ?, ?, ?, ?, 'checkout_cleaning', 'pending', 'normal', 1, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        SQL, [
+            (string) Str::ulid(),
+            $graph['property'],
+            $graph['room'],
+            'REWORK-' . Str::random(6),
+            'Valid raw re-cleaning task',
+            $graph['failed_inspection'],
+            $graph['failed_task'],
+            $graph['actor'],
+        ]);
+    }
+
+    /** @param array<string, string> $graph */
+    private function updateValidVerificationRaw(array $graph): void
+    {
+        DB::update('UPDATE cleaning_tasks SET verified_at = CURRENT_TIMESTAMP WHERE id = ?', [$graph['passed_task']]);
+    }
+
+    /** @param array<string, string> $graph */
+    private function assertMalformedRawSqlMatrix(array $graph): void
+    {
+        $cases = [
+            'duplicate post-cleaning Inspection' => fn () => DB::insert(
+                "INSERT INTO room_inspections (id, property_id, room_id, cleaning_task_id, inspection_type, status, is_passed, created_at, updated_at) VALUES (?, ?, ?, ?, 'post_cleaning', 'pending', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                [(string) Str::ulid(), $graph['property'], $graph['room'], $graph['failed_task']]
+            ),
+            'duplicate rework source' => fn () => $this->insertValidReworkTaskRaw($graph),
+            'cross-property Cleaning Task Room' => fn () => DB::insert(
+                "INSERT INTO cleaning_tasks (id, property_id, room_id, task_type, status, priority, credits, created_at, updated_at) VALUES (?, ?, ?, 'checkout_cleaning', 'pending', 'normal', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                [(string) Str::ulid(), $graph['property'], $graph['other_room']]
+            ),
+            'cross-property Inspection Task' => fn () => DB::insert(
+                "INSERT INTO room_inspections (id, property_id, room_id, cleaning_task_id, inspection_type, status, is_passed, created_at, updated_at) VALUES (?, ?, ?, ?, 'routine', 'pending', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                [(string) Str::ulid(), $graph['other_property'], $graph['other_room'], $graph['failed_task']]
+            ),
+            'rework without source task' => fn () => DB::insert(
+                "INSERT INTO cleaning_tasks (id, property_id, room_id, task_type, status, priority, credits, rework_source_inspection_id, created_at, updated_at) VALUES (?, ?, ?, 'checkout_cleaning', 'pending', 'normal', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                [(string) Str::ulid(), $graph['property'], $graph['room'], $graph['passed_inspection']]
+            ),
+            'invalid readiness transition type' => fn () => DB::insert(
+                "INSERT INTO housekeeping_room_readiness_transitions (id, property_id, room_id, from_status, to_status, transition_type, occurred_at, created_by, idempotency_key, source_hash, created_at) VALUES (?, ?, ?, 'waiting_inspection', 'ready_for_sale', 'BYPASS_READY', CURRENT_TIMESTAMP, ?, ?, ?, CURRENT_TIMESTAMP)",
+                [(string) Str::ulid(), $graph['property'], $graph['room'], $graph['actor'], 'bad-' . Str::random(5), str_repeat('a', 64)]
+            ),
+            'terminal Inspection update' => fn () => DB::update("UPDATE room_inspections SET remarks = 'overwrite' WHERE id = ?", [$graph['failed_inspection']]),
+            'terminal Inspection delete' => fn () => DB::delete('DELETE FROM room_inspections WHERE id = ?', [$graph['failed_inspection']]),
+            'completed Task rewrite' => fn () => DB::update("UPDATE cleaning_tasks SET notes = 'overwrite' WHERE id = ?", [$graph['failed_task']]),
+            'completed Task delete' => fn () => DB::delete('DELETE FROM cleaning_tasks WHERE id = ?', [$graph['failed_task']]),
+        ];
+
+        foreach ($cases as $label => $operation) {
+            try {
+                $operation();
+                $this->fail("Malformed raw SQL case was accepted: {$label}");
+            } catch (QueryException $exception) {
+                $this->assertNotSame('', $exception->getMessage(), $label);
+            }
+        }
+    }
+
+    private function assertPackageObjectsExist(): void
+    {
+        $this->assertTrue(Schema::hasColumn('cleaning_tasks', 'rework_source_inspection_id'));
+        $this->assertTrue(Schema::hasColumn('cleaning_tasks', 'source_cleaning_task_id'));
+        $this->assertSame(1, $this->namedObjectCount('pg_indexes', 'indexname', 'hk_room_inspections_post_cleaning_task_unique'));
+        $this->assertSame(1, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_room_inspections_lifecycle_guard_trigger'));
+        $this->assertSame(1, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_cleaning_tasks_lifecycle_guard_trigger'));
+    }
+
+    private function namedObjectCount(string $catalog, string $column, string $name): int
+    {
+        return (int) DB::selectOne("SELECT COUNT(*) AS aggregate FROM {$catalog} WHERE {$column} = ?", [$name])->aggregate;
+    }
+
+    private function switchDatabase(string $database): void
+    {
+        DB::disconnect('pgsql');
+        config(['database.connections.pgsql.database' => $database]);
+        DB::purge('pgsql');
+        DB::reconnect('pgsql');
+    }
+
+    private function adminPdo(): PDO
+    {
+        $pgsql = config('database.connections.pgsql');
+
+        return new PDO(
+            sprintf('pgsql:host=%s;port=%s;dbname=postgres', $pgsql['host'], $pgsql['port']),
+            $pgsql['username'],
+            $pgsql['password'],
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION],
+        );
+    }
+
+    private function terminateConnections(PDO $admin, string $database): void
+    {
+        $statement = $admin->prepare('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ? AND pid <> pg_backend_pid()');
+        $statement->execute([$database]);
+    }
+
+    private function databaseCount(PDO $admin, string $database): int
+    {
+        $statement = $admin->prepare('SELECT COUNT(*) FROM pg_database WHERE datname = ?');
+        $statement->execute([$database]);
+
+        return (int) $statement->fetchColumn();
+    }
+
+    private function quoteIdentifier(string $identifier): string
+    {
+        if (! str_starts_with($identifier, self::PREFIX) || ! preg_match('/^[a-z0-9_]+$/', $identifier)) {
+            throw new \RuntimeException('Disposable database name rejected.');
+        }
+
+        return '"' . $identifier . '"';
+    }
+}

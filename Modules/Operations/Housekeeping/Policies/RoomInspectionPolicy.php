@@ -31,6 +31,12 @@ class RoomInspectionPolicy
     public function update(User $user, RoomInspection $inspection): bool
     {
         $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+        if (in_array($inspection->status, [
+            \Modules\Operations\Housekeeping\Enums\InspectionStatusEnum::Passed,
+            \Modules\Operations\Housekeeping\Enums\InspectionStatusEnum::Failed,
+        ], true)) {
+            return false;
+        }
         return $user->hasPermissionTo('housekeeping.inspection.create')
             && ($user->isSuperAdmin() || ($propertyId === $inspection->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
@@ -38,6 +44,18 @@ class RoomInspectionPolicy
     public function delete(User $user, RoomInspection $inspection): bool
     {
         $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+        $type = $inspection->inspection_type instanceof \BackedEnum
+            ? $inspection->inspection_type->value
+            : (string) $inspection->inspection_type;
+        if (
+            in_array($inspection->status, [
+                \Modules\Operations\Housekeeping\Enums\InspectionStatusEnum::Passed,
+                \Modules\Operations\Housekeeping\Enums\InspectionStatusEnum::Failed,
+            ], true)
+            || $type === 'post_cleaning'
+        ) {
+            return false;
+        }
         return $user->hasPermissionTo('housekeeping.inspection.create')
             && ($user->isSuperAdmin() || ($propertyId === $inspection->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }

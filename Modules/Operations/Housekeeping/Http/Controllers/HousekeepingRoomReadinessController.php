@@ -31,19 +31,15 @@ class HousekeepingRoomReadinessController extends Controller
     public function startCleaning(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $validated = $this->validateExact($request, [
                 'room_id' => ['required', 'string', 'max:26'],
                 'idempotency_key' => ['required', 'string', 'max:120'],
-                'source_type' => ['nullable', 'string', 'max:100'],
-                'source_id' => ['nullable', 'string', 'max:26'],
             ]);
 
             $transition = $this->transitionService->startCleaning(
                 $request->user(),
                 $validated['room_id'],
                 $validated['idempotency_key'],
-                $validated['source_type'] ?? null,
-                $validated['source_id'] ?? null,
             );
 
             return response()->json([
@@ -68,12 +64,10 @@ class HousekeepingRoomReadinessController extends Controller
     public function submitInspection(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $validated = $this->validateExact($request, [
                 'room_id' => ['required', 'string', 'max:26'],
                 'idempotency_key' => ['required', 'string', 'max:120'],
                 'reason' => ['nullable', 'string', 'max:255'],
-                'source_type' => ['nullable', 'string', 'max:100'],
-                'source_id' => ['nullable', 'string', 'max:26'],
             ]);
 
             $transition = $this->transitionService->submitInspection(
@@ -81,8 +75,6 @@ class HousekeepingRoomReadinessController extends Controller
                 $validated['room_id'],
                 $validated['idempotency_key'],
                 $validated['reason'] ?? null,
-                $validated['source_type'] ?? null,
-                $validated['source_id'] ?? null,
             );
 
             return response()->json([
@@ -107,12 +99,10 @@ class HousekeepingRoomReadinessController extends Controller
     public function releaseReady(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $validated = $this->validateExact($request, [
                 'room_id' => ['required', 'string', 'max:26'],
                 'release_reason' => ['required', 'string', 'max:255'],
                 'idempotency_context' => ['required', 'string', 'max:120'],
-                'source_type' => ['nullable', 'string', 'max:100'],
-                'source_id' => ['nullable', 'string', 'max:26'],
             ]);
 
             $transition = $this->transitionService->releaseReady(
@@ -120,8 +110,6 @@ class HousekeepingRoomReadinessController extends Controller
                 $validated['room_id'],
                 $validated['release_reason'],
                 $validated['idempotency_context'],
-                $validated['source_type'] ?? null,
-                $validated['source_id'] ?? null,
             );
 
             return response()->json([
@@ -138,5 +126,23 @@ class HousekeepingRoomReadinessController extends Controller
         } catch (HttpException $e) {
             return response()->json(['message' => $e->getMessage()], $e->getStatusCode());
         }
+    }
+
+    /**
+     * @param array<string, mixed> $rules
+     * @return array<string, mixed>
+     */
+    private function validateExact(Request $request, array $rules): array
+    {
+        $unknown = array_diff(array_keys($request->all()), array_keys($rules), ['_token', '_method']);
+        if ($unknown !== []) {
+            throw \Illuminate\Validation\ValidationException::withMessages(
+                collect($unknown)->mapWithKeys(
+                    fn (string $field) => [$field => 'This lifecycle authority parameter is not accepted.']
+                )->all()
+            );
+        }
+
+        return $request->validate($rules);
     }
 }
