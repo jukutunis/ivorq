@@ -10,6 +10,7 @@ use Modules\Operations\Housekeeping\Enums\RoomCleanlinessStatusEnum;
 use Modules\Operations\Housekeeping\Enums\TaskStatusEnum;
 use Modules\Operations\Housekeeping\Enums\TaskTypeEnum;
 use Modules\Operations\Housekeeping\Models\CleaningTask;
+use Modules\Operations\Housekeeping\Models\Room;
 use Modules\Operations\Housekeeping\Services\RoomService;
 use Modules\Operations\Housekeeping\Services\CleaningTaskService;
 use Shared\Services\CurrentPropertyService;
@@ -22,6 +23,17 @@ class CleaningTaskModuleTest extends TestCase
 
     private function makeTask(array $property, string $code = 'TSK-M01', array $extra = []): CleaningTask
     {
+        if (! array_key_exists('room_id', $extra)) {
+            $room = Room::create([
+                'property_id' => $property['id'],
+                'room_number' => 'T' . substr($code, -4),
+                'room_type' => 'standard',
+                'cleanliness_status' => 'dirty',
+                'readiness_state' => 'waiting_cleaning',
+            ]);
+            $extra['room_id'] = $room->id;
+        }
+
         return app(CleaningTaskService::class)->create(array_merge([
             'property_id' => $property['id'],
             'task_code'   => $code,
@@ -128,6 +140,7 @@ class CleaningTaskModuleTest extends TestCase
             'room_number' => 'CP1',
             'room_type'   => 'standard',
         ]);
+        $room->update(['readiness_state' => 'waiting_cleaning']);
         $task = $this->makeTask($property->toArray(), 'TSK-CP1', ['room_id' => $room->id]);
 
         $assignment = $service->assign($task->id, [
@@ -218,6 +231,7 @@ class CleaningTaskModuleTest extends TestCase
             'room_number' => 'CB1',
             'room_type'   => 'standard',
         ]);
+        $room->update(['readiness_state' => 'waiting_cleaning']);
         $task = $this->makeTask($property->toArray(), 'TSK-CB1', ['room_id' => $room->id]);
 
         $assignment = $service->assign($task->id, [

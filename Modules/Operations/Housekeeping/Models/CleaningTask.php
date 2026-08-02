@@ -41,6 +41,8 @@ class CleaningTask extends Model
         'sla_breached',
         'notes',
         'created_by',
+        'rework_source_inspection_id',
+        'source_cleaning_task_id',
     ];
 
     protected $casts = [
@@ -83,5 +85,62 @@ class CleaningTask extends Model
     public function inspections()
     {
         return $this->hasMany(RoomInspection::class);
+    }
+
+    public function reworkSourceInspection()
+    {
+        return $this->belongsTo(RoomInspection::class, 'rework_source_inspection_id');
+    }
+
+    public function sourceCleaningTask()
+    {
+        return $this->belongsTo(self::class, 'source_cleaning_task_id');
+    }
+
+    protected static function booted(): void
+    {
+        static::updating(function (CleaningTask $task): void {
+            $originalStatus = (string) $task->getRawOriginal('status');
+            $completedEvidence = $originalStatus === 'completed' || $task->getRawOriginal('completed_at') !== null;
+            $protected = [
+                'property_id', 'room_id', 'status', 'completed_at', 'completed_by',
+                'notes', 'rework_source_inspection_id', 'source_cleaning_task_id', 'deleted_at',
+            ];
+
+            if ($completedEvidence && collect($protected)->contains(fn (string $field) => $task->isDirty($field))) {
+                throw new \DomainException('Completed Cleaning Task lifecycle evidence is immutable.');
+            }
+
+            if ($task->isDirty('verified_at')) {
+                if (
+                    $originalStatus !== 'completed'
+                    || $task->getRawOriginal('verified_at') !== null
+                    || $task->verified_at === null
+                    || ! RoomInspection::withoutGlobalScopes()
+                        ->where('cleaning_task_id', $task->id)
+                        ->where('property_id', $task->property_id)
+                        ->where('room_id', $task->room_id)
+                        ->where('status', 'passed')
+                        ->exists()
+                ) {
+                    throw new \DomainException('Cleaning Task verification may only be recorded by a committed inspection pass.');
+                }
+            }
+
+            if (
+                $task->getRawOriginal('rework_source_inspection_id') !== null
+                && collect(['property_id', 'room_id', 'rework_source_inspection_id', 'source_cleaning_task_id'])
+                    ->contains(fn (string $field) => $task->isDirty($field))
+            ) {
+                throw new \DomainException('Re-cleaning source evidence is immutable.');
+            }
+        });
+
+        static::deleting(function (CleaningTask $task): void {
+            $status = $task->status instanceof \BackedEnum ? $task->status->value : (string) $task->status;
+            if ($status === 'completed' || $task->rework_source_inspection_id !== null) {
+                throw new \DomainException('Committed Cleaning Task lifecycle evidence cannot be deleted.');
+            }
+        });
     }
 }

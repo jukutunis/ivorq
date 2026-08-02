@@ -5,9 +5,13 @@ namespace Modules\Operations\Housekeeping\Services;
 use Modules\Operations\Housekeeping\Models\CleaningTask;
 use Modules\Operations\Housekeeping\Models\TaskAssignment;
 use Modules\Operations\Housekeeping\Models\Room;
+use Modules\Foundation\User\Models\User;
 
 class CleaningTaskService
 {
+    public function __construct(
+        private readonly HousekeepingCleaningInspectionReadinessLifecycleService $lifecycle,
+    ) {}
 
     public function generateDepartureTask(Room $room): CleaningTask
     {
@@ -90,85 +94,26 @@ class CleaningTaskService
         });
     }
 
-    public function changeStatus(string $taskId, $status, $userId = null, ?string $notes = null): CleaningTask
+    public function changeStatus(string $taskId, $status, User|string|null $actorReference = null, ?string $notes = null): CleaningTask
     {
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($taskId, $status, $userId, $notes) {
-            $task = CleaningTask::findOrFail($taskId);
+        $target = $status instanceof \Modules\Operations\Housekeeping\Enums\TaskStatusEnum
+            ? $status
+            : \Modules\Operations\Housekeeping\Enums\TaskStatusEnum::tryFrom((string) $status);
+        if (! $target) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'status' => 'Invalid status transition',
+            ]);
+        }
 
-            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
-            if ($task->property_id !== $currentPropertyId) {
-                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
-            }
+        $actor = $actorReference instanceof User ? $actorReference : auth()->user();
+        if (! $actor instanceof User) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED');
+        }
+        if (is_string($actorReference) && $actorReference !== $actor->id) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED');
+        }
 
-            $targetEnum = $status instanceof \UnitEnum ? $status : \Modules\Operations\Housekeeping\Enums\TaskStatusEnum::tryFrom($status);
-            $currentEnum = $task->status instanceof \UnitEnum ? $task->status : \Modules\Operations\Housekeeping\Enums\TaskStatusEnum::tryFrom($task->status);
-
-            if ($targetEnum && $currentEnum && !$currentEnum->canTransitionTo($targetEnum)) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
-                    'status' => 'Invalid status transition'
-                ]);
-            }
-
-            $statusString = $targetEnum ? $targetEnum->value : $status;
-
-            if ($statusString === 'in_progress' || $statusString === 'completed') {
-                if (!$userId) {
-                    throw new \Exception("User ID is required to update status to {$statusString}.");
-                }
-                $hasAssignment = TaskAssignment::where('cleaning_task_id', $task->id)
-                    ->where('user_id', $userId)
-                    ->where('status', 'active')
-                    ->exists();
-                if (!$hasAssignment) {
-                    throw new \Exception("Only the active assigned room attendant can start or complete this task.");
-                }
-            }
-
-            if ($statusString === 'completed') {
-                if (empty($notes) || trim($notes) === '') {
-                    throw new \Exception("Completion note is required to complete this task.");
-                }
-            }
-
-            $updates = ['status' => $statusString];
-            if ($statusString === 'in_progress') {
-                $updates['started_at'] = now();
-            } elseif ($statusString === 'completed') {
-                $updates['completed_at'] = now();
-                $updates['completed_by'] = $userId;
-                $updates['notes'] = $notes;
-            }
-            $task->update($updates);
-
-            if ($statusString === 'in_progress') {
-                event(new \Modules\Operations\Housekeeping\Events\CleaningTaskStarted($task));
-            } elseif ($statusString === 'completed') {
-                // Transition room cleanliness status to clean (Awaiting Inspection)
-                $roomService = app(\Modules\Operations\Housekeeping\Services\RoomService::class);
-                $room = $roomService->changeCleanlinessStatus(
-                    $task->room_id,
-                    \Modules\Operations\Housekeeping\Enums\RoomCleanlinessStatusEnum::Clean,
-                    'Cleaning completed by attendant'
-                );
-
-                $room->readiness_state = 'waiting_inspection';
-                $room->save();
-
-                event(new \Modules\Operations\Housekeeping\Events\CleaningTaskCompleted($task));
-
-                \Modules\Operations\Housekeeping\Models\RoomInspection::create([
-                    'property_id' => $task->property_id,
-                    'room_id' => $task->room_id,
-                    'cleaning_task_id' => $task->id,
-                    'status' => 'pending',
-                    'inspection_type' => 'post_cleaning',
-                ]);
-            } elseif ($statusString === 'cancelled') {
-                event(new \Modules\Operations\Housekeeping\Events\CleaningTaskCancelled($task, null));
-            }
-
-            return $task;
-        });
+        return $this->lifecycle->changeCleaningTaskStatus($actor, $taskId, $target, $notes);
     }
 
 }

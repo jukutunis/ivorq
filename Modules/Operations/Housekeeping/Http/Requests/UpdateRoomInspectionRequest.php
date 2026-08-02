@@ -20,11 +20,18 @@ class UpdateRoomInspectionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'inspector_id'        => ['nullable', 'string', Rule::exists('users', 'id')->whereNull('deleted_at')],
-            'inspection_type'     => ['sometimes', Rule::enum(InspectionTypeEnum::class)],
-            'inspection_severity' => ['nullable', Rule::enum(InspectionSeverityEnum::class)],
+            'inspector_id'        => ['prohibited'],
+            'supervisor_id'       => ['prohibited'],
+            'inspection_type'     => ['prohibited'],
+            'inspection_severity' => ['prohibited'],
             'remarks'             => ['nullable', 'string'],
             'status'              => ['prohibited'],
+            'is_passed'           => ['prohibited'],
+            'inspected_at'        => ['prohibited'],
+            'cleaning_task_id'    => ['prohibited'],
+            'room_id'             => ['prohibited'],
+            'property_id'         => ['prohibited'],
+            'company_id'          => ['prohibited'],
         ];
     }
 }

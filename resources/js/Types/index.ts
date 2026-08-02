@@ -207,6 +207,13 @@ export interface RoomInspection {
     inspector?: { id: string; name: string } | null;
 }
 
+export interface InspectionPassContext {
+    room_number: string;
+    inspection_status: string;
+    target_readiness: string;
+    cleaning_task_code: string;
+}
+
 export interface CleaningChecklist {
     id: string;
     property_id: string;

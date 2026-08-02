@@ -3,13 +3,10 @@
 namespace Modules\Operations\Housekeeping\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
-use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
 use Modules\Operations\Housekeeping\Models\RoomInspection;
-use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessTransitionService;
 use Shared\Services\CurrentPropertyService;
 
-class PassInspectionRequest extends FormRequest
+class ConductInspectionRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -20,23 +17,18 @@ class PassInspectionRequest extends FormRequest
             ->where('property_id', $propertyId)
             ->first();
 
-        return $inspection
-            && $this->user()->can('conduct', $inspection)
-            && $this->user()->can(HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION);
+        return $inspection && $this->user()->can('conduct', $inspection);
     }
 
     public function rules(): array
     {
-        return [
-            'release_reason' => ['required', 'string', 'max:1000'],
-            'inspection_severity' => ['nullable', Rule::enum(InspectionSeverityEnum::class)],
-        ];
+        return [];
     }
 
     public function withValidator($validator): void
     {
         $validator->after(function ($validator): void {
-            foreach (array_diff(array_keys($this->all()), ['release_reason', 'inspection_severity', '_token', '_method']) as $field) {
+            foreach (array_diff(array_keys($this->all()), ['_token', '_method']) as $field) {
                 $validator->errors()->add($field, 'This lifecycle authority parameter is not accepted.');
             }
         });

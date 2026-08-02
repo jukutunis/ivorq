@@ -63,4 +63,38 @@ class RoomInspection extends Model
     {
         return $this->hasMany(InspectionPhoto::class);
     }
+
+    public function reCleaningTask()
+    {
+        return $this->hasOne(CleaningTask::class, 'rework_source_inspection_id');
+    }
+
+    protected static function booted(): void
+    {
+        static::updating(function (RoomInspection $inspection): void {
+            $originalStatus = (string) $inspection->getRawOriginal('status');
+            if (in_array($originalStatus, ['passed', 'failed'], true)) {
+                throw new \DomainException('Terminal Room Inspection evidence is immutable.');
+            }
+
+            $originalType = (string) $inspection->getRawOriginal('inspection_type');
+            if (
+                $originalType === 'post_cleaning'
+                && collect(['property_id', 'room_id', 'cleaning_task_id', 'inspection_type'])
+                    ->contains(fn (string $field) => $inspection->isDirty($field))
+            ) {
+                throw new \DomainException('Post-cleaning Room Inspection source evidence is immutable.');
+            }
+        });
+
+        static::deleting(function (RoomInspection $inspection): void {
+            $status = $inspection->status instanceof \BackedEnum ? $inspection->status->value : (string) $inspection->status;
+            $type = $inspection->inspection_type instanceof \BackedEnum
+                ? $inspection->inspection_type->value
+                : (string) $inspection->inspection_type;
+            if (in_array($status, ['passed', 'failed'], true) || $type === 'post_cleaning') {
+                throw new \DomainException('Committed Room Inspection evidence cannot be deleted.');
+            }
+        });
+    }
 }

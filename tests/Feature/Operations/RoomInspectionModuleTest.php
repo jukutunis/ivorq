@@ -10,9 +10,11 @@ use Modules\Operations\Housekeeping\Enums\InspectionTypeEnum;
 use Modules\Operations\Housekeeping\Enums\RoomCleanlinessStatusEnum;
 use Modules\Operations\Housekeeping\Models\Room;
 use Modules\Operations\Housekeeping\Models\RoomInspection;
+use Modules\Operations\Housekeeping\Models\CleaningTask;
 use Modules\Operations\Housekeeping\Repositories\InspectionRepository;
 use Modules\Operations\Housekeeping\Services\InspectionService;
 use Modules\Operations\Housekeeping\Services\RoomService;
+use Modules\Operations\Housekeeping\Services\HousekeepingCleaningInspectionReadinessLifecycleService;
 use Shared\Services\CurrentPropertyService;
 use Tests\Feature\Operations\Concerns\CreatesOperationsData;
 use Tests\TestCase;
@@ -30,7 +32,50 @@ class RoomInspectionModuleTest extends TestCase
             'room_number'        => (string) (100 + ++self::$roomSeq),
             'room_type'          => 'standard',
             'cleanliness_status' => $cleanliness,
+            'readiness_state' => $cleanliness === 'clean' ? 'waiting_inspection' : 'waiting_cleaning',
         ]);
+    }
+
+    private function makeLifecycleInspection(
+        string $propertyId,
+        string $actorId,
+        Room $room,
+        ?string $confirmationReason = null,
+    ): RoomInspection {
+        $room->update([
+            'cleanliness_status' => 'clean',
+            'readiness_state' => 'waiting_inspection',
+        ]);
+        $task = CleaningTask::create([
+            'property_id' => $propertyId,
+            'room_id' => $room->id,
+            'task_code' => 'IT-' . (++self::$roomSeq),
+            'title' => 'Inspection source task',
+            'task_type' => 'checkout_cleaning',
+            'status' => 'completed',
+            'priority' => 'normal',
+            'completed_at' => now(),
+            'completed_by' => $actorId,
+            'notes' => 'Completed source task.',
+        ]);
+        $inspection = RoomInspection::create([
+            'property_id' => $propertyId,
+            'room_id' => $room->id,
+            'cleaning_task_id' => $task->id,
+            'inspection_type' => InspectionTypeEnum::PostCleaning->value,
+            'status' => 'pending',
+        ]);
+        $inspection = app(InspectionService::class)->conduct($inspection->id);
+        if ($confirmationReason !== null) {
+            app(HousekeepingCleaningInspectionReadinessLifecycleService::class)->confirmInspectionPass(
+                auth()->user(),
+                $inspection->id,
+                $confirmationReason,
+                'password',
+            );
+        }
+
+        return $inspection;
     }
 
     // ── Create ────────────────────────────────────────────────────────────────
@@ -72,19 +117,11 @@ class RoomInspectionModuleTest extends TestCase
         app(CurrentPropertyService::class)->setId($property->id);
 
         $room    = $this->makeRoom($property->id);
-        $service = app(InspectionService::class);
-
-        $inspection = $service->create([
-            'property_id'     => $property->id,
-            'room_id'         => $room->id,
-            'inspection_type' => InspectionTypeEnum::PostCleaning->value,
-        ]);
-
-        $conducted = $service->conduct($inspection->id);
+        $conducted = $this->makeLifecycleInspection($property->id, $admin->id, $room);
 
         $this->assertSame(InspectionStatusEnum::InProgress, $conducted->status);
         $this->assertDatabaseHas('room_inspections', [
-            'id'     => $inspection->id,
+            'id'     => $conducted->id,
             'status' => 'in_progress',
         ]);
     }
@@ -108,11 +145,7 @@ class RoomInspectionModuleTest extends TestCase
         // Manually set cleanliness via direct update to bypass observer
         $room->update(['cleanliness_status' => 'clean']);
 
-        $inspection = $inspectionService->create([
-            'property_id'     => $property->id,
-            'room_id'         => $room->id,
-            'inspection_type' => InspectionTypeEnum::PostCleaning->value,
-        ]);
+        $inspection = $this->makeLifecycleInspection($property->id, $admin->id, $room, 'All clear');
 
         $passed = $inspectionService->pass($inspection->id, 'All clear');
 
@@ -136,11 +169,7 @@ class RoomInspectionModuleTest extends TestCase
         $room->update(['cleanliness_status' => 'clean']);
 
         $service    = app(InspectionService::class);
-        $inspection = $service->create([
-            'property_id'     => $property->id,
-            'room_id'         => $room->id,
-            'inspection_type' => InspectionTypeEnum::PostCleaning->value,
-        ]);
+        $inspection = $this->makeLifecycleInspection($property->id, $admin->id, $room);
 
         $failed = $service->fail($inspection->id, 'Bathroom not clean', InspectionSeverityEnum::Major);
 
@@ -166,13 +195,9 @@ class RoomInspectionModuleTest extends TestCase
         $room = $roomService->create(['property_id' => $property->id, 'room_number' => 'M501', 'room_type' => 'standard']);
         $roomService->changeCleanlinessStatus($room->id, RoomCleanlinessStatusEnum::Clean);
 
-        $inspection = $inspectionService->create([
-            'property_id'     => $property->id,
-            'room_id'         => $room->id,
-            'inspection_type' => InspectionTypeEnum::PostCleaning->value,
-        ]);
+        $inspection = $this->makeLifecycleInspection($property->id, $admin->id, $room, 'All quality standards satisfied');
 
-        $inspectionService->pass($inspection->id);
+        $inspectionService->pass($inspection->id, 'All quality standards satisfied');
 
         $room->refresh();
         $this->assertSame(RoomCleanlinessStatusEnum::Inspected, $room->cleanliness_status);
@@ -195,11 +220,7 @@ class RoomInspectionModuleTest extends TestCase
         $room = $roomService->create(['property_id' => $property->id, 'room_number' => 'M502', 'room_type' => 'standard']);
         $roomService->changeCleanlinessStatus($room->id, RoomCleanlinessStatusEnum::Clean);
 
-        $inspection = $inspectionService->create([
-            'property_id'     => $property->id,
-            'room_id'         => $room->id,
-            'inspection_type' => InspectionTypeEnum::PostCleaning->value,
-        ]);
+        $inspection = $this->makeLifecycleInspection($property->id, $admin->id, $room);
 
         $inspectionService->fail($inspection->id, 'Failed quality check', InspectionSeverityEnum::Critical);
 

@@ -50,10 +50,14 @@ class HousekeepingRoomReadinessTransitionService
 
             $existingIdempotent = $this->existingIdempotent($propertyId, $idempotencyKey);
             if ($existingIdempotent) {
-                if (
-                    $existingIdempotent->room_id === $room->id
-                    && $existingIdempotent->transition_type === HousekeepingRoomReadinessTransitionTypeEnum::StartCleaning
-                ) {
+                if ($this->isExactReplay(
+                    $existingIdempotent,
+                    $room->id,
+                    HousekeepingRoomReadinessTransitionTypeEnum::StartCleaning,
+                    null,
+                    $sourceType,
+                    $sourceId,
+                )) {
                     return $existingIdempotent;
                 }
                 throw new DomainException('Idempotency key was already used for a different Housekeeping readiness transition outcome.');
@@ -123,10 +127,14 @@ class HousekeepingRoomReadinessTransitionService
 
             $existingIdempotent = $this->existingIdempotent($propertyId, $idempotencyKey);
             if ($existingIdempotent) {
-                if (
-                    $existingIdempotent->room_id === $room->id
-                    && $existingIdempotent->transition_type === HousekeepingRoomReadinessTransitionTypeEnum::SubmitInspection
-                ) {
+                if ($this->isExactReplay(
+                    $existingIdempotent,
+                    $room->id,
+                    HousekeepingRoomReadinessTransitionTypeEnum::SubmitInspection,
+                    $reason,
+                    $sourceType,
+                    $sourceId,
+                )) {
                     return $existingIdempotent;
                 }
                 throw new DomainException('Idempotency key was already used for a different Housekeeping readiness transition outcome.');
@@ -183,7 +191,8 @@ class HousekeepingRoomReadinessTransitionService
         string $releaseReason,
         string $idempotencyContext,
         ?string $sourceType = null,
-        ?string $sourceId = null
+        ?string $sourceId = null,
+        ?string $sourceCleaningTaskId = null,
     ): HousekeepingRoomReadinessTransition {
         if (! $actor->can(self::RELEASE_READY_PERMISSION)) {
             throw new HttpException(403, 'Housekeeping room readiness release-ready permission is required.');
@@ -192,20 +201,41 @@ class HousekeepingRoomReadinessTransitionService
         $propertyId = $this->activePropertyId();
         $this->assertActiveProperty($propertyId);
 
-        return DB::transaction(function () use ($actor, $propertyId, $roomId, $releaseReason, $idempotencyContext, $sourceType, $sourceId) {
+        return DB::transaction(function () use ($actor, $propertyId, $roomId, $releaseReason, $idempotencyContext, $sourceType, $sourceId, $sourceCleaningTaskId) {
             $room = $this->lockRoom($propertyId, $roomId);
+
+            $existingIdempotent = $this->existingIdempotent($propertyId, $idempotencyContext);
+            if ($existingIdempotent) {
+                if ($this->isExactReplay(
+                    $existingIdempotent,
+                    $room->id,
+                    HousekeepingRoomReadinessTransitionTypeEnum::ReleaseReady,
+                    $releaseReason,
+                    $sourceType,
+                    $sourceId,
+                )) {
+                    return $existingIdempotent;
+                }
+
+                throw new DomainException('Idempotency key was already used for a different Housekeeping readiness transition outcome.');
+            }
 
             $currentReadiness = (string) ($room->readiness_state ?? 'unknown');
             if ($currentReadiness !== self::WAITING_INSPECTION_STATE) {
                 throw new DomainException("Room readiness state \"{$currentReadiness}\" is not eligible for release-ready transition.");
             }
 
-            $targetReadiness = 'ready_for_sale';
-            if ($room->is_vip) {
-                $targetReadiness = 'ready_for_vip';
-            }
+            $targetReadiness = $this->targetReadinessFor($room);
 
-            $hash = $this->releaseEvidenceHash($room, $currentReadiness, $targetReadiness, $releaseReason, $idempotencyContext);
+            $hash = $this->releaseEvidenceHash(
+                $room,
+                $currentReadiness,
+                $targetReadiness,
+                $releaseReason,
+                $idempotencyContext,
+                $sourceId,
+                $sourceCleaningTaskId,
+            );
             $metadata = $this->confirmationService->confirmationMetadataFor(
                 $actor,
                 self::RELEASE_INTENT,
@@ -243,7 +273,14 @@ class HousekeepingRoomReadinessTransitionService
                 'readiness_state' => $targetReadiness,
             ]);
 
-            $this->confirmationService->invalidate($actor, self::RELEASE_INTENT, session('active_company_id'), $propertyId);
+            DB::afterCommit(function () use ($actor, $propertyId): void {
+                $this->confirmationService->invalidate(
+                    $actor,
+                    self::RELEASE_INTENT,
+                    session('active_company_id'),
+                    $propertyId,
+                );
+            });
 
             $this->audit('housekeeping_room_readiness_release_ready', $actor, $transition, [
                 'property_id' => $propertyId,
@@ -260,12 +297,100 @@ class HousekeepingRoomReadinessTransitionService
         });
     }
 
+    public function inspectionFailed(
+        User $actor,
+        string $roomId,
+        string $failureReason,
+        string $idempotencyKey,
+        ?string $sourceType = null,
+        ?string $sourceId = null,
+    ): HousekeepingRoomReadinessTransition {
+        if (! $actor->can(self::CLEAN_PERMISSION)) {
+            throw new HttpException(403, 'Housekeeping room readiness clean permission is required.');
+        }
+
+        $propertyId = $this->activePropertyId();
+        $this->assertActiveProperty($propertyId);
+
+        return DB::transaction(function () use ($actor, $propertyId, $roomId, $failureReason, $idempotencyKey, $sourceType, $sourceId) {
+            $room = $this->lockRoom($propertyId, $roomId);
+
+            $existingIdempotent = $this->existingIdempotent($propertyId, $idempotencyKey);
+            if ($existingIdempotent) {
+                if ($this->isExactReplay(
+                    $existingIdempotent,
+                    $room->id,
+                    HousekeepingRoomReadinessTransitionTypeEnum::InspectionFailed,
+                    $failureReason,
+                    $sourceType,
+                    $sourceId,
+                )) {
+                    return $existingIdempotent;
+                }
+
+                throw new DomainException('Idempotency key was already used for a different Housekeeping readiness transition outcome.');
+            }
+
+            $currentReadiness = (string) ($room->readiness_state ?? 'unknown');
+            if ($currentReadiness !== self::WAITING_INSPECTION_STATE) {
+                throw new DomainException("Room readiness state \"{$currentReadiness}\" is not eligible for inspection-failed transition.");
+            }
+
+            $targetReadiness = 'waiting_cleaning';
+            $sourceHash = $this->transitionSourceHash(
+                $propertyId,
+                $room->id,
+                $currentReadiness,
+                $targetReadiness,
+                HousekeepingRoomReadinessTransitionTypeEnum::InspectionFailed,
+                $failureReason,
+                $sourceType,
+                $sourceId,
+                $idempotencyKey,
+            );
+
+            $transition = HousekeepingRoomReadinessTransition::create([
+                'property_id' => $propertyId,
+                'room_id' => $room->id,
+                'from_status' => $currentReadiness,
+                'to_status' => $targetReadiness,
+                'transition_type' => HousekeepingRoomReadinessTransitionTypeEnum::InspectionFailed,
+                'reason' => $failureReason,
+                'source_type' => $sourceType,
+                'source_id' => $sourceId,
+                'occurred_at' => now(),
+                'created_by' => $actor->id,
+                'idempotency_key' => $idempotencyKey,
+                'source_hash' => $sourceHash,
+            ]);
+
+            $room->update([
+                'cleanliness_status' => RoomCleanlinessStatusEnum::Dirty,
+                'readiness_state' => $targetReadiness,
+            ]);
+
+            $this->audit('housekeeping_room_readiness_inspection_failed', $actor, $transition, [
+                'property_id' => $propertyId,
+                'room_id' => $room->id,
+                'from_status' => $currentReadiness,
+                'to_status' => $targetReadiness,
+                'transition_type' => HousekeepingRoomReadinessTransitionTypeEnum::InspectionFailed->value,
+                'idempotency_key' => $idempotencyKey,
+                'source_hash' => $sourceHash,
+            ]);
+
+            return $transition->fresh();
+        });
+    }
+
     public function releaseEvidenceHash(
         Room $room,
         string $currentReadiness,
         string $targetReadiness,
         string $releaseReason,
-        string $idempotencyContext
+        string $idempotencyContext,
+        ?string $inspectionId = null,
+        ?string $cleaningTaskId = null,
     ): string {
         $payload = [
             'property_id' => $room->property_id,
@@ -277,11 +402,18 @@ class HousekeepingRoomReadinessTransitionService
                 : (string) $room->cleanliness_status,
             'release_reason' => $releaseReason,
             'idempotency_context' => $idempotencyContext,
+            'inspection_id' => $inspectionId,
+            'cleaning_task_id' => $cleaningTaskId,
         ];
 
         ksort($payload);
 
         return hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
+    }
+
+    public function targetReadinessFor(Room $room): string
+    {
+        return $room->is_vip ? 'ready_for_vip' : 'ready_for_sale';
     }
 
     private function transitionSourceHash(
@@ -356,6 +488,21 @@ class HousekeepingRoomReadinessTransitionService
             ->where('idempotency_key', $idempotencyKey)
             ->lockForUpdate()
             ->first();
+    }
+
+    private function isExactReplay(
+        HousekeepingRoomReadinessTransition $transition,
+        string $roomId,
+        HousekeepingRoomReadinessTransitionTypeEnum $type,
+        ?string $reason,
+        ?string $sourceType,
+        ?string $sourceId,
+    ): bool {
+        return $transition->room_id === $roomId
+            && $transition->transition_type === $type
+            && $transition->reason === $reason
+            && $transition->source_type === $sourceType
+            && $transition->source_id === $sourceId;
     }
 
     /**

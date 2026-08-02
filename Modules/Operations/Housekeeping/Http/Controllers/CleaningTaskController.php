@@ -18,6 +18,9 @@ use Modules\Operations\Housekeeping\Models\CleaningTask;
 use Modules\Operations\Housekeeping\Services\CleaningTaskService;
 use Modules\Operations\Housekeeping\Repositories\CleaningTaskRepository;
 use Shared\Services\CurrentPropertyService;
+use DomainException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
+use Throwable;
 
 class CleaningTaskController extends Controller
 {
@@ -239,7 +242,15 @@ class CleaningTaskController extends Controller
         $status  = TaskStatusEnum::from($data['status']);
         $remarks = $data['remarks'] ?? null;
 
-        $updated = $this->taskService->changeStatus($task, $status, auth()->id(), $remarks);
+        try {
+            $updated = $this->taskService->changeStatus($task, $status, $request->user(), $remarks);
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        } catch (HttpException $exception) {
+            return response()->json(['message' => $exception->getMessage()], $exception->getStatusCode());
+        } catch (Throwable) {
+            return response()->json(['message' => 'HOUSEKEEPING_LIFECYCLE_ACTION_FAILED'], 500);
+        }
 
         return response()->json([
             'message' => "Task status changed to {$status->label()}.",

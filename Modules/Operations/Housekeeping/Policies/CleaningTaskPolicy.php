@@ -31,6 +31,9 @@ class CleaningTaskPolicy
     public function update(User $user, CleaningTask $task): bool
     {
         $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+        if ($task->status === \Modules\Operations\Housekeeping\Enums\TaskStatusEnum::Completed) {
+            return false;
+        }
         return $user->hasPermissionTo('housekeeping.task.edit')
             && ($user->isSuperAdmin() || ($propertyId === $task->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }
@@ -38,6 +41,9 @@ class CleaningTaskPolicy
     public function delete(User $user, CleaningTask $task): bool
     {
         $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
+        if ($task->status === \Modules\Operations\Housekeeping\Enums\TaskStatusEnum::Completed) {
+            return false;
+        }
         return $user->hasPermissionTo('housekeeping.task.delete')
             && ($user->isSuperAdmin() || ($propertyId === $task->property_id && $user->properties()->where('properties.id', $propertyId)->exists()));
     }

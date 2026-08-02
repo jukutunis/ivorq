@@ -14,7 +14,7 @@ class RoomInspectionResource extends JsonResource
             'property_id'      => $this->property_id,
             'room_id'          => $this->room_id,
             'cleaning_task_id' => $this->cleaning_task_id,
-            'inspector_id'     => $this->inspector_id,
+            'inspector_id'     => $this->supervisor_id,
             'inspection_type'  => [
                 'value' => $this->inspection_type->value,
                 'label' => $this->inspection_type->label(),

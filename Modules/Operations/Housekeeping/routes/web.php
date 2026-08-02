@@ -60,6 +60,9 @@ Route::middleware(['web', 'auth'])
         Route::post('inspections/{inspection}/pass', [RoomInspectionController::class, 'pass'])
             ->name('inspections.pass');
 
+        Route::post('inspections/{inspection}/pass-confirmation', [RoomInspectionController::class, 'confirmPass'])
+            ->name('inspections.pass-confirmation');
+
         Route::post('inspections/{inspection}/fail', [RoomInspectionController::class, 'fail'])
             ->name('inspections.fail');
 

@@ -3,10 +3,8 @@
 namespace Modules\Operations\Housekeeping\Services;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Modules\Foundation\User\Models\User;
 use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
-use Modules\Operations\Housekeeping\Enums\InspectionStatusEnum;
-use Modules\Operations\Housekeeping\Enums\RoomCleanlinessStatusEnum;
-use Modules\Operations\Housekeeping\Events\InspectionCompleted;
 use Modules\Operations\Housekeeping\Models\RoomInspection;
 use Modules\Operations\Housekeeping\Repositories\InspectionRepository;
 
@@ -14,7 +12,7 @@ class InspectionService
 {
     public function __construct(
         private InspectionRepository $inspectionRepository,
-        private RoomService          $roomService,
+        private HousekeepingCleaningInspectionReadinessLifecycleService $lifecycle,
     ) {}
 
     public function paginate(int $perPage = 15): LengthAwarePaginator
@@ -32,121 +30,49 @@ class InspectionService
         return $this->inspectionRepository->create($data);
     }
 
-    /**
-     * Begin conducting an inspection — transitions status to in_progress.
-     */
-    public function conduct(string $id): RoomInspection
+    public function conduct(string $id, User|string|null $actorReference = null): RoomInspection
     {
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($id) {
-            $inspection = $this->inspectionRepository->find($id);
-            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
-            if ($inspection->property_id !== $currentPropertyId) {
-                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
-            }
-
-            return $this->inspectionRepository->update($id, [
-                'status' => InspectionStatusEnum::InProgress->value,
-            ]);
-        });
+        return $this->lifecycle->conductInspection($this->actor($actorReference), $id);
     }
 
-    /**
-     * Mark an inspection as passed.
-     *
-     * Sets status to passed, records inspected_at, and optionally sets severity.
-     * Transitions room cleanliness to inspected via RoomService.
-     * Fires InspectionCompleted.
-     */
     public function pass(
-        string                  $id,
-        ?string                 $remarks  = null,
+        string $id,
+        ?string $remarks = null,
         ?InspectionSeverityEnum $severity = null,
-        ?string                 $supervisorId = null
+        User|string|null $actorReference = null,
     ): RoomInspection {
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($id, $remarks, $severity, $supervisorId) {
-            $inspection = $this->inspectionRepository->find($id);
-
-            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
-            if ($inspection->property_id !== $currentPropertyId) {
-                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
-            }
-
-            $updated = $this->inspectionRepository->update($id, [
-                'status'              => InspectionStatusEnum::Passed->value,
-                'inspected_at'        => now(),
-                'remarks'             => $remarks,
-                'is_passed'           => true,
-                'inspection_severity' => $severity?->value,
-                'supervisor_id'       => $supervisorId ?? auth()->id(),
-            ]);
-
-            $room = $this->roomService->changeCleanlinessStatus(
-                $inspection->room_id,
-                RoomCleanlinessStatusEnum::Inspected,
-                'Inspection passed',
-            );
-
-            $room->readiness_state = 'ready_for_sale';
-            $room->save();
-
-            if ($inspection->cleaning_task_id) {
-                $task = \Modules\Operations\Housekeeping\Models\CleaningTask::find($inspection->cleaning_task_id);
-                if ($task) {
-                    $task->update([
-                        'verified_at' => now(),
-                    ]);
-                }
-            }
-
-            event(new InspectionCompleted($updated));
-
-            return $updated;
-        });
+        return $this->lifecycle->passInspection(
+            $this->actor($actorReference),
+            $id,
+            (string) $remarks,
+            $severity,
+        );
     }
 
-    /**
-     * Mark an inspection as failed.
-     *
-     * Sets status to failed, records inspected_at, and optionally sets severity.
-     * Transitions room cleanliness back to dirty via RoomService — the room
-     * must be recleaned before another inspection attempt.
-     * Fires InspectionCompleted.
-     */
     public function fail(
-        string                  $id,
-        ?string                 $remarks  = null,
+        string $id,
+        ?string $remarks = null,
         ?InspectionSeverityEnum $severity = null,
-        ?string                 $supervisorId = null
+        User|string|null $actorReference = null,
     ): RoomInspection {
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($id, $remarks, $severity, $supervisorId) {
-            $inspection = $this->inspectionRepository->find($id);
+        return $this->lifecycle->failInspection(
+            $this->actor($actorReference),
+            $id,
+            (string) $remarks,
+            $severity,
+        );
+    }
 
-            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
-            if ($inspection->property_id !== $currentPropertyId) {
-                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
-            }
+    private function actor(User|string|null $actorReference = null): User
+    {
+        $actor = $actorReference instanceof User ? $actorReference : auth()->user();
+        if (! $actor instanceof User) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED');
+        }
+        if (is_string($actorReference) && $actorReference !== $actor->id) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED');
+        }
 
-            $updated = $this->inspectionRepository->update($id, [
-                'status'              => InspectionStatusEnum::Failed->value,
-                'inspected_at'        => now(),
-                'remarks'             => $remarks,
-                'is_passed'           => false,
-                'inspection_severity' => $severity?->value,
-                'supervisor_id'       => $supervisorId ?? auth()->id(),
-            ]);
-
-            $room = $this->roomService->changeCleanlinessStatus(
-                $inspection->room_id,
-                RoomCleanlinessStatusEnum::Dirty,
-                'Inspection failed — room requires recleaning',
-            );
-
-            $room->readiness_state = 'waiting_cleaning';
-            $room->save();
-
-            event(new InspectionCompleted($updated));
-
-            return $updated;
-        });
+        return $actor;
     }
 }
