@@ -368,12 +368,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringNotContainsString('No CURRENT_TIMESTAMP database-clock checks in trigger', $baseline->provenance->note ?? '');
     }
 
-    public function test_housekeeping_room_readiness_baseline_includes_package_12_turnover_workspace(): void
+    public function test_housekeeping_room_readiness_baseline_includes_package_13_cleaning_inspection_integration(): void
     {
         $baseline = $this->findBaseline('housekeeping-room-readiness-baseline');
         $this->assertNotNull($baseline, 'housekeeping-room-readiness-baseline must exist.');
         $this->assertEquals('active', $baseline->status ?? null);
-        $this->assertCount(14, $baseline->classes, 'Housekeeping baseline must have exactly 14 classes after Package 12.');
+        $this->assertCount(18, $baseline->classes, 'Housekeeping baseline must have exactly 18 classes after Package 13.');
 
         $this->assertSame([
             'HousekeepingCheckoutTurnoverIntakeFoundationTest',
@@ -383,15 +383,30 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest',
             'HousekeepingCheckoutTurnoverWorkspaceTest',
             'HousekeepingCheckoutTurnoverWorkspaceSourceIntegrityTest',
-        ], array_slice($baseline->classes, -7));
+        ], array_slice($baseline->classes, -11, 7));
 
-        $this->assertEquals(116, $baseline->expected->tests ?? null);
-        $this->assertEquals(1902, $baseline->expected->assertions ?? null);
+        $this->assertSame([
+            'HousekeepingCleaningInspectionReadinessIntegrationTest',
+            'HousekeepingCleaningInspectionReadinessSourceIntegrityTest',
+            'HousekeepingCleaningInspectionReadinessIsolatedConcurrencyProofTest',
+            'HousekeepingCleaningInspectionReadinessMigrationProofTest',
+        ], array_slice($baseline->classes, -4));
+
+        $this->assertEquals(139, $baseline->expected->tests ?? null);
+        $this->assertEquals(2166, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('938d70aaab85b8f127b5444ca5fc928a28d43052', $baseline->provenance->sha ?? null);
-        $this->assertEquals('sprint-package-12-housekeeping-turnover-operational-workspace', $baseline->provenance->branch ?? null);
+        $this->assertEquals('2dcfc3a6f3bd8dff70ce7cb729f7d1d43b47579a', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-package-13-housekeeping-cleaning-inspection-readiness-integration', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('18 exact classes / 139 tests / 2166 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 13 exact classes passed 23 tests / 264 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('current Package 11 focused batch passed 37 tests / 1402 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('canonical Cleaning Task and Room Inspection readiness orchestration boundary', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('sensitive release confirmation bound to exact evidence', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('pass-versus-fail', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('The frontend production build passed', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 12 provenance history retained', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('14 exact classes / 116 tests / 1902 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 12 exact classes passed 16 tests / 279 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('read-only checkout-turnover workspace', $baseline->provenance->note ?? '');
