@@ -401,15 +401,18 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'HousekeepingCleaningInspectionReadinessMigrationProofTest',
         ], array_slice($baseline->classes, -4));
 
-        $this->assertEquals(139, $baseline->expected->tests ?? null);
-        $this->assertEquals(2166, $baseline->expected->assertions ?? null);
+        $this->assertEquals(147, $baseline->expected->tests ?? null);
+        $this->assertEquals(2236, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('2dcfc3a6f3bd8dff70ce7cb729f7d1d43b47579a', $baseline->provenance->sha ?? null);
+        $this->assertEquals('bd4cf795d0a1221a714a0d45629f692ae66392c1', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-package-13-housekeeping-cleaning-inspection-readiness-integration', $baseline->provenance->branch ?? null);
-        $this->assertStringContainsString('18 exact classes / 139 tests / 2166 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Package 13 exact classes passed 23 tests / 264 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('18 exact classes / 147 tests / 2236 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 13 exact classes passed 31 tests / 334 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('resource-policy and readiness-permission rechecks', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('database-bound re-cleaning source graphs with 12 malformed-source cases', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('in-memory ambiguous-response recovery without credential persistence', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('current Package 11 focused batch passed 37 tests / 1402 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('canonical Cleaning Task and Room Inspection readiness orchestration boundary', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('sensitive release confirmation bound to exact evidence', $baseline->provenance->note ?? '');
