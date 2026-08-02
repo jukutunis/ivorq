@@ -91,6 +91,9 @@ export default function HousekeepingDashboard({ stats, todays_tasks, failed_insp
                     <Link href="/operations/checklists" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
                         Checklists
                     </Link>
+                    <Link href="/operations/housekeeping/checkout-turnovers" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
+                        Checkout Turnover
+                    </Link>
                 </div>
             </div>
 

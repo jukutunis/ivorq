@@ -296,7 +296,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ], $lastTwelve);
 
         $this->assertEquals(729, $baseline->expected->tests ?? null);
-        $this->assertEquals(5569, $baseline->expected->assertions ?? null);
+        $this->assertEquals(5591, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
@@ -368,12 +368,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringNotContainsString('No CURRENT_TIMESTAMP database-clock checks in trigger', $baseline->provenance->note ?? '');
     }
 
-    public function test_housekeeping_room_readiness_baseline_includes_package_11_turnover_intake(): void
+    public function test_housekeeping_room_readiness_baseline_includes_package_12_turnover_workspace(): void
     {
         $baseline = $this->findBaseline('housekeeping-room-readiness-baseline');
         $this->assertNotNull($baseline, 'housekeeping-room-readiness-baseline must exist.');
         $this->assertEquals('active', $baseline->status ?? null);
-        $this->assertCount(12, $baseline->classes, 'Housekeeping baseline must have exactly 12 classes after Package 11.');
+        $this->assertCount(14, $baseline->classes, 'Housekeeping baseline must have exactly 14 classes after Package 12.');
 
         $this->assertSame([
             'HousekeepingCheckoutTurnoverIntakeFoundationTest',
@@ -381,16 +381,34 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'HousekeepingCheckoutTurnoverIntakeSourceIntegrityTest',
             'HousekeepingCheckoutTurnoverConsumerCommandTest',
             'HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest',
-        ], array_slice($baseline->classes, -5));
+            'HousekeepingCheckoutTurnoverWorkspaceTest',
+            'HousekeepingCheckoutTurnoverWorkspaceSourceIntegrityTest',
+        ], array_slice($baseline->classes, -7));
 
-        $this->assertEquals(100, $baseline->expected->tests ?? null);
-        $this->assertEquals(1620, $baseline->expected->assertions ?? null);
+        $this->assertEquals(116, $baseline->expected->tests ?? null);
+        $this->assertEquals(1902, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('388d243c536964ce73ade3d3f30994070135cef2', $baseline->provenance->sha ?? null);
-        $this->assertEquals('sprint-package-11-housekeeping-checkout-turnover-intake', $baseline->provenance->branch ?? null);
-        $this->assertStringContainsString('12 exact classes / 100 tests / 1620 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertEquals('938d70aaab85b8f127b5444ca5fc928a28d43052', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-package-12-housekeeping-turnover-operational-workspace', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('14 exact classes / 116 tests / 1902 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 12 exact classes passed 16 tests / 279 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('read-only checkout-turnover workspace', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('deterministic operational states', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('current-Property isolation', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('PostgreSQL wall-clock timing', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('zero mutation GET proof', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('PII and secret-field exclusion', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 11 runtime is unchanged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no migration', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no ADR', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no scheduler', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no external integration', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('no new accepted debt', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Inventory Reversal inherited debt is unchanged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 11 provenance history retained', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('388d243c536964ce73ade3d3f30994070135cef2', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 11 focused batch passed 37 tests / 1399 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('UP/DOWN/REAPPLY', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('24 malformed direct-SQL cases', $baseline->provenance->note ?? '');
@@ -813,7 +831,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'NightAuditCheckoutConcurrencyProofTest',
         ], $baseline->classes);
         $this->assertEquals(20, $baseline->expected->tests ?? null);
-        $this->assertEquals(914, $baseline->expected->assertions ?? null);
+        $this->assertEquals(918, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
