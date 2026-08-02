@@ -35,6 +35,15 @@ export default function InspectionShow({ inspection, severities, pass_context }:
     const [password, setPassword] = useState('');
     const [processing, setProcessing] = useState(false);
     const [error, setError] = useState('');
+    const [confirmedRelease, setConfirmedRelease] = useState<{ reason: string; evidenceKey: string } | null>(null);
+    const evidenceKey = pass_context ? JSON.stringify({
+        room_number: pass_context.room_number,
+        inspection_status: pass_context.inspection_status,
+        target_readiness: pass_context.target_readiness,
+        cleaning_task_code: pass_context.cleaning_task_code,
+    }) : '';
+    const confirmationMatches = confirmedRelease?.reason === releaseReason.trim()
+        && confirmedRelease.evidenceKey === evidenceKey;
 
     const conduct = () => {
         if (window.confirm('Start this inspection?')) {
@@ -54,20 +63,50 @@ export default function InspectionShow({ inspection, severities, pass_context }:
             .finally(() => setProcessing(false));
     };
 
-    const passInspection = () => {
+    const passInspection = async () => {
         setProcessing(true);
         setError('');
-        axios.post(`/operations/inspections/${inspection.id}/pass-confirmation`, {
-            release_reason: releaseReason,
-            password,
-        })
-            .then(() => axios.post(`/operations/inspections/${inspection.id}/pass`, {
-                release_reason: releaseReason,
+        const reason = releaseReason.trim();
+        let executionWasConfirmed = confirmationMatches;
+
+        try {
+            if (!confirmationMatches) {
+                await axios.post(`/operations/inspections/${inspection.id}/pass-confirmation`, {
+                    release_reason: reason,
+                    password,
+                });
+                setConfirmedRelease({ reason, evidenceKey });
+                setPassword('');
+                executionWasConfirmed = true;
+            }
+
+            await axios.post(`/operations/inspections/${inspection.id}/pass`, {
+                release_reason: reason,
                 inspection_severity: severity || undefined,
-            }))
-            .then(() => router.reload())
-            .catch((requestError) => setError(requestError?.response?.data?.message ?? 'The Room release could not be completed.'))
-            .finally(() => setProcessing(false));
+            });
+            router.reload();
+        } catch (requestError: any) {
+            const responseMessage = requestError?.response?.data?.message;
+            const confirmationIsStale = /confirmation|expired|stale|evidence|mismatch|conflict/i.test(responseMessage ?? '');
+
+            if (executionWasConfirmed && !requestError?.response) {
+                setError('The response was interrupted after confirmation. The Room may already be released; retry to recover the committed result without entering the password again.');
+            } else {
+                if (executionWasConfirmed && confirmationIsStale) {
+                    setConfirmedRelease(null);
+                }
+                setError(responseMessage ?? 'The Room release could not be completed.');
+            }
+        } finally {
+            setProcessing(false);
+        }
+    };
+
+    const closePassModal = () => {
+        setAction(null);
+        setPassword('');
+        setConfirmedRelease(null);
+        setError('');
     };
 
     return (
@@ -166,18 +205,27 @@ export default function InspectionShow({ inspection, severities, pass_context }:
                             </dl>
                             <div>
                                 <label htmlFor="release-reason" className="block text-sm font-medium text-gray-700">Release reason</label>
-                                <textarea id="release-reason" value={releaseReason} onChange={(event) => setReleaseReason(event.target.value)} rows={3} autoFocus className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+                                <textarea id="release-reason" value={releaseReason} onChange={(event) => {
+                                    setReleaseReason(event.target.value);
+                                    if (confirmedRelease?.reason !== event.target.value.trim()) {
+                                        setConfirmedRelease(null);
+                                    }
+                                }} rows={3} autoFocus className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" />
                             </div>
-                            <div>
-                                <label htmlFor="release-password" className="block text-sm font-medium text-gray-700">Current password</label>
-                                <input id="release-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" />
-                            </div>
+                            {confirmationMatches ? (
+                                <p className="rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">Confirmation is retained in memory for an exact recovery retry.</p>
+                            ) : (
+                                <div>
+                                    <label htmlFor="release-password" className="block text-sm font-medium text-gray-700">Current password</label>
+                                    <input id="release-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+                                </div>
+                            )}
                             {error && <p role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
                         </div>
                         <div className="flex justify-end gap-3 border-t border-gray-200 px-6 py-4">
-                            <button onClick={() => { setAction(null); setPassword(''); setError(''); }} className="rounded bg-gray-100 px-4 py-2 text-sm text-gray-700">Cancel</button>
-                            <button onClick={passInspection} disabled={processing || releaseReason.trim() === '' || password === ''} className="rounded bg-green-700 px-4 py-2 text-sm text-white disabled:opacity-50">
-                                {processing ? 'Releasing Room...' : 'Confirm and Release Room'}
+                            <button onClick={closePassModal} className="rounded bg-gray-100 px-4 py-2 text-sm text-gray-700">Cancel</button>
+                            <button onClick={passInspection} disabled={processing || releaseReason.trim() === '' || (!confirmationMatches && password === '')} className="rounded bg-green-700 px-4 py-2 text-sm text-white disabled:opacity-50">
+                                {processing ? 'Releasing Room...' : confirmationMatches ? 'Retry Room Release' : 'Confirm and Release Room'}
                             </button>
                         </div>
                     </div>

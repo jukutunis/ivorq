@@ -261,7 +261,7 @@ class RoomInspectionController extends Controller
         $this->authorize('conduct', $model);
 
         try {
-            $this->inspectionService->conduct($inspection);
+            $this->inspectionService->conduct($inspection, $request->user());
         } catch (DomainException $exception) {
             return $this->boundedLifecycleResponse($request, $exception->getMessage(), 422, $inspection);
         } catch (HttpException $exception) {

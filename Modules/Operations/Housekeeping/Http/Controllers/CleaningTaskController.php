@@ -243,7 +243,7 @@ class CleaningTaskController extends Controller
         $remarks = $data['remarks'] ?? null;
 
         try {
-            $updated = $this->taskService->changeStatus($task, $status, auth()->id(), $remarks);
+            $updated = $this->taskService->changeStatus($task, $status, $request->user(), $remarks);
         } catch (DomainException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
         } catch (HttpException $exception) {

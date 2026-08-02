@@ -34,6 +34,7 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
             $this->assertPackageObjectsExist();
 
             $graph = $this->sourceGraph();
+            $this->assertMalformedSourceBindingMatrix($graph);
             $this->insertValidReworkTaskRaw($graph);
             $this->updateValidVerificationRaw($graph);
             $this->assertSame(1, DB::table('cleaning_tasks')->where('rework_source_inspection_id', $graph['failed_inspection'])->count());
@@ -94,9 +95,11 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
         ]);
 
         $room = (string) Str::ulid();
+        $samePropertyOtherRoom = (string) Str::ulid();
         $otherRoom = (string) Str::ulid();
         DB::table('rooms')->insert([
             ['id' => $room, 'property_id' => $property->id, 'room_number' => 'M13' . Str::random(3), 'room_type' => 'standard', 'cleanliness_status' => 'clean', 'readiness_state' => 'waiting_inspection', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
+            ['id' => $samePropertyOtherRoom, 'property_id' => $property->id, 'room_number' => 'S13' . Str::random(3), 'room_type' => 'standard', 'cleanliness_status' => 'dirty', 'readiness_state' => 'waiting_cleaning', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
             ['id' => $otherRoom, 'property_id' => $otherProperty->id, 'room_number' => 'X13' . Str::random(3), 'room_type' => 'standard', 'cleanliness_status' => 'dirty', 'readiness_state' => 'waiting_cleaning', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
         ]);
 
@@ -118,6 +121,7 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
             'property' => $property->id,
             'other_property' => $otherProperty->id,
             'room' => $room,
+            'same_property_other_room' => $samePropertyOtherRoom,
             'other_room' => $otherRoom,
             'actor' => $actor->id,
             'failed_task' => $failedTask,
@@ -194,6 +198,94 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
         }
     }
 
+    /** @param array<string, string> $graph */
+    private function assertMalformedSourceBindingMatrix(array $graph): void
+    {
+        $mismatched = $this->insertSourcePair($graph, 'failed');
+        $differentTask = $this->insertSourcePair($graph, 'failed');
+        $passed = $this->insertSourcePair($graph, 'passed');
+        $pending = $this->insertSourcePair($graph, 'pending');
+        $inProgress = $this->insertSourcePair($graph, 'in_progress');
+        $routine = $this->insertSourcePair($graph, 'failed', 'routine');
+        $wrongRoom = $this->insertSourcePair($graph, 'failed', 'post_cleaning', 'completed', 'checkout_cleaning', 'same_property_other_room');
+        $wrongProperty = $this->insertSourcePair($graph, 'failed', 'post_cleaning', 'completed', 'checkout_cleaning', 'other_room');
+        $incompleteTask = $this->insertSourcePair($graph, 'failed', 'post_cleaning', 'in_progress');
+        $nonCheckoutTask = $this->insertSourcePair($graph, 'failed', 'post_cleaning', 'completed', 'turndown');
+
+        $cases = [
+            'missing source task' => fn () => $this->insertReworkRaw($graph, $passed['inspection'], null),
+            'mismatched source task' => fn () => $this->insertReworkRaw($graph, $mismatched['inspection'], $differentTask['task']),
+            'passed Inspection source' => fn () => $this->insertReworkRaw($graph, $passed['inspection'], $passed['task']),
+            'pending Inspection source' => fn () => $this->insertReworkRaw($graph, $pending['inspection'], $pending['task']),
+            'in-progress Inspection source' => fn () => $this->insertReworkRaw($graph, $inProgress['inspection'], $inProgress['task']),
+            'routine Inspection source' => fn () => $this->insertReworkRaw($graph, $routine['inspection'], $routine['task']),
+            'wrong Room source' => fn () => $this->insertReworkRaw($graph, $wrongRoom['inspection'], $wrongRoom['task']),
+            'wrong Property source' => fn () => $this->insertReworkRaw($graph, $wrongProperty['inspection'], $wrongProperty['task']),
+            'source Task not completed' => fn () => $this->insertReworkRaw($graph, $incompleteTask['inspection'], $incompleteTask['task']),
+            'source Task not checkout cleaning' => fn () => $this->insertReworkRaw($graph, $nonCheckoutTask['inspection'], $nonCheckoutTask['task']),
+            'initial rework status not pending' => fn () => $this->insertReworkRaw($graph, $mismatched['inspection'], $mismatched['task'], 'assigned'),
+            'self-referencing source Task' => function () use ($graph): void {
+                $id = (string) Str::ulid();
+                DB::insert(
+                    "INSERT INTO cleaning_tasks (id, property_id, room_id, task_type, status, priority, credits, source_cleaning_task_id, created_at, updated_at) VALUES (?, ?, ?, 'checkout_cleaning', 'pending', 'normal', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    [$id, $graph['property'], $graph['room'], $id],
+                );
+            },
+        ];
+
+        foreach ($cases as $label => $operation) {
+            try {
+                $operation();
+                $this->fail("Malformed source-binding case was accepted: {$label}");
+            } catch (QueryException $exception) {
+                $this->assertNotSame('', $exception->getMessage(), $label);
+            }
+        }
+    }
+
+    /**
+     * @param array<string, string> $graph
+     * @return array{task: string, inspection: string}
+     */
+    private function insertSourcePair(
+        array $graph,
+        string $inspectionStatus,
+        string $inspectionType = 'post_cleaning',
+        string $taskStatus = 'completed',
+        string $taskType = 'checkout_cleaning',
+        string $roomKey = 'room',
+    ): array {
+        $task = (string) Str::ulid();
+        $inspection = (string) Str::ulid();
+        $property = $roomKey === 'other_room' ? $graph['other_property'] : $graph['property'];
+        $room = $graph[$roomKey];
+
+        DB::table('cleaning_tasks')->insert([
+            'id' => $task, 'property_id' => $property, 'room_id' => $room, 'task_type' => $taskType,
+            'status' => $taskStatus, 'priority' => 'normal', 'credits' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('room_inspections')->insert([
+            'id' => $inspection, 'property_id' => $property, 'room_id' => $room, 'cleaning_task_id' => $task,
+            'inspection_type' => $inspectionType, 'status' => $inspectionStatus,
+            'is_passed' => $inspectionStatus === 'passed', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        return ['task' => $task, 'inspection' => $inspection];
+    }
+
+    /** @param array<string, string> $graph */
+    private function insertReworkRaw(
+        array $graph,
+        string $inspectionId,
+        ?string $sourceTaskId,
+        string $status = 'pending',
+    ): void {
+        DB::insert(
+            'INSERT INTO cleaning_tasks (id, property_id, room_id, task_type, status, priority, credits, rework_source_inspection_id, source_cleaning_task_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+            [(string) Str::ulid(), $graph['property'], $graph['room'], 'checkout_cleaning', $status, 'normal', 1, $inspectionId, $sourceTaskId, $graph['actor']],
+        );
+    }
+
     private function assertPackageObjectsExist(): void
     {
         $this->assertTrue(Schema::hasColumn('cleaning_tasks', 'rework_source_inspection_id'));
@@ -201,6 +293,7 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
         $this->assertSame(1, $this->namedObjectCount('pg_indexes', 'indexname', 'hk_room_inspections_post_cleaning_task_unique'));
         $this->assertSame(1, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_room_inspections_lifecycle_guard_trigger'));
         $this->assertSame(1, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_cleaning_tasks_lifecycle_guard_trigger'));
+        $this->assertSame(1, $this->namedObjectCount('pg_constraint', 'conname', 'hk_cleaning_tasks_source_not_self_check'));
     }
 
     private function namedObjectCount(string $catalog, string $column, string $name): int

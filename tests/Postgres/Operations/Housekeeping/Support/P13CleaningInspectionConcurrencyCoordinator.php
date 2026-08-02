@@ -103,6 +103,10 @@ try {
 
     $stage = 'fixture_permission_records';
     foreach ([
+        'housekeeping.task.edit',
+        'housekeeping.task.start',
+        'housekeeping.task.complete',
+        'housekeeping.inspection.conduct',
         HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
         HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION,
         HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION,
@@ -112,15 +116,22 @@ try {
     $stage = 'fixture_permission_grants';
     setPermissionsTeamId($propertyA->id);
     $attendant->givePermissionTo([
+        'housekeeping.task.edit',
+        'housekeeping.task.start',
+        'housekeeping.task.complete',
         HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
         HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION,
     ]);
     $inspector->givePermissionTo([
+        'housekeeping.inspection.conduct',
         HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
         HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION,
     ]);
     setPermissionsTeamId($propertyB->id);
     $attendantB->givePermissionTo([
+        'housekeeping.task.edit',
+        'housekeeping.task.start',
+        'housekeeping.task.complete',
         HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
         HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION,
     ]);

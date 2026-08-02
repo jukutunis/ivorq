@@ -30,19 +30,19 @@ class InspectionService
         return $this->inspectionRepository->create($data);
     }
 
-    public function conduct(string $id): RoomInspection
+    public function conduct(string $id, User|string|null $actorReference = null): RoomInspection
     {
-        return $this->lifecycle->conductInspection($this->actor(), $id);
+        return $this->lifecycle->conductInspection($this->actor($actorReference), $id);
     }
 
     public function pass(
         string $id,
         ?string $remarks = null,
         ?InspectionSeverityEnum $severity = null,
-        ?string $supervisorId = null,
+        User|string|null $actorReference = null,
     ): RoomInspection {
         return $this->lifecycle->passInspection(
-            $this->actor($supervisorId),
+            $this->actor($actorReference),
             $id,
             (string) $remarks,
             $severity,
@@ -53,21 +53,24 @@ class InspectionService
         string $id,
         ?string $remarks = null,
         ?InspectionSeverityEnum $severity = null,
-        ?string $supervisorId = null,
+        User|string|null $actorReference = null,
     ): RoomInspection {
         return $this->lifecycle->failInspection(
-            $this->actor($supervisorId),
+            $this->actor($actorReference),
             $id,
             (string) $remarks,
             $severity,
         );
     }
 
-    private function actor(?string $userId = null): User
+    private function actor(User|string|null $actorReference = null): User
     {
-        $actor = $userId ? User::withoutGlobalScopes()->find($userId) : auth()->user();
+        $actor = $actorReference instanceof User ? $actorReference : auth()->user();
         if (! $actor instanceof User) {
-            throw new \DomainException('An authenticated Housekeeping actor is required.');
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED');
+        }
+        if (is_string($actorReference) && $actorReference !== $actor->id) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED');
         }
 
         return $actor;

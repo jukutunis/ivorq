@@ -118,6 +118,39 @@ class HousekeepingCleaningInspectionReadinessSourceIntegrityTest extends TestCas
         }
     }
 
+    public function test_canonical_service_rechecks_policy_and_permission_and_compatibility_paths_cannot_impersonate(): void
+    {
+        $lifecycle = file_get_contents($this->path('Modules/Operations/Housekeeping/Services/HousekeepingCleaningInspectionReadinessLifecycleService.php'));
+        $taskService = file_get_contents($this->path('Modules/Operations/Housekeeping/Services/CleaningTaskService.php'));
+        $inspectionService = file_get_contents($this->path('Modules/Operations/Housekeeping/Services/InspectionService.php'));
+        $taskController = file_get_contents($this->path('Modules/Operations/Housekeeping/Http/Controllers/CleaningTaskController.php'));
+
+        $this->assertGreaterThanOrEqual(2, substr_count($lifecycle, '$this->authorizeTask('));
+        $this->assertGreaterThanOrEqual(2, substr_count($lifecycle, '$this->authorizeInspection('));
+        $this->assertStringContainsString("can('changeStatus', \$task)", $lifecycle);
+        $this->assertStringContainsString("can('conduct', \$inspection)", $lifecycle);
+        $this->assertStringContainsString('HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED', $lifecycle);
+        $this->assertStringNotContainsString('User::withoutGlobalScopes()->find', $taskService . $inspectionService);
+        $this->assertStringContainsString('is_string($actorReference)', $taskService);
+        $this->assertStringContainsString('is_string($actorReference)', $inspectionService);
+        $this->assertStringContainsString('$request->user()', $taskController);
+    }
+
+    public function test_release_ui_retains_only_exact_in_memory_confirmation_for_ambiguous_retry(): void
+    {
+        $ui = file_get_contents($this->path('resources/js/Pages/Operations/Housekeeping/Inspections/Show.tsx'));
+
+        $this->assertStringContainsString('confirmedRelease', $ui);
+        $this->assertStringContainsString('evidenceKey', $ui);
+        $this->assertStringContainsString('executionWasConfirmed && !requestError?.response', $ui);
+        $this->assertStringContainsString("confirmation|expired|stale|evidence|mismatch|conflict", $ui);
+        $this->assertStringContainsString('Retry Room Release', $ui);
+        $this->assertStringContainsString("setPassword('')", $ui);
+        $this->assertStringNotContainsString('localStorage', $ui);
+        $this->assertStringNotContainsString('sessionStorage', $ui);
+        $this->assertStringNotContainsString('document.cookie', $ui);
+    }
+
     private function path(string $relative): string
     {
         return dirname(__DIR__, 4) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relative);

@@ -7,7 +7,9 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\User\Models\User;
 use Modules\Operations\Housekeeping\Enums\HousekeepingRoomReadinessTransitionTypeEnum;
+use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
 use Modules\Operations\Housekeeping\Enums\InspectionStatusEnum;
 use Modules\Operations\Housekeeping\Enums\TaskStatusEnum;
 use Modules\Operations\Housekeeping\Events\CleaningTaskCompleted;
@@ -18,6 +20,8 @@ use Modules\Operations\Housekeeping\Models\RoomInspection;
 use Modules\Operations\Housekeeping\Models\TaskAssignment;
 use Modules\Operations\Housekeeping\Services\HousekeepingCleaningInspectionReadinessLifecycleService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessTransitionService;
+use Modules\Operations\Housekeeping\Services\CleaningTaskService;
+use Modules\Operations\Housekeeping\Services\InspectionService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\Postgres\Operations\Housekeeping\Concerns\CreatesHousekeepingRoomReadinessData;
 use Tests\PostgresTestCase;
@@ -313,6 +317,180 @@ class HousekeepingCleaningInspectionReadinessIntegrationTest extends PostgresTes
         foreach (['guest_name', 'guest_email', 'password', 'token', 'confirmation_hash', 'source_hash', 'sqlstate', 'exception', 'stack trace'] as $forbidden) {
             $this->assertStringNotContainsString($forbidden, $serialized);
         }
+    }
+
+    public function test_readiness_permission_without_resource_policy_is_uniformly_denied_before_any_mutation(): void
+    {
+        $readinessOnly = $this->hkUser('Readiness Only', 'p13-readiness-only@example.test');
+        $this->hkAttachProperty($readinessOnly, $this->property);
+        $readinessOnly->givePermissionTo([
+            HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
+            HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION,
+            HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION,
+        ]);
+
+        [, $assigned] = $this->assignedCheckoutTask('P13-AUTH-1');
+        $cancelTask = CleaningTask::create([
+            'property_id' => $this->property->id, 'room_id' => $assigned->room_id,
+            'task_type' => 'checkout_cleaning', 'status' => 'pending', 'priority' => 'normal',
+        ]);
+        $routine = CleaningTask::create([
+            'property_id' => $this->property->id, 'room_id' => $assigned->room_id,
+            'task_type' => 'stayover_cleaning', 'status' => 'pending', 'priority' => 'normal',
+        ]);
+        [, , $inspection] = $this->inProgressInspection('P13-AUTH-2');
+        $before = $this->lifecycleCounts();
+
+        $operations = [
+            fn () => $this->lifecycle()->changeCleaningTaskStatus($readinessOnly, $assigned->id, TaskStatusEnum::InProgress),
+            fn () => $this->lifecycle()->changeCleaningTaskStatus($readinessOnly, $cancelTask->id, TaskStatusEnum::Cancelled),
+            fn () => $this->lifecycle()->changeCleaningTaskStatus($readinessOnly, $routine->id, TaskStatusEnum::Cancelled),
+            fn () => $this->lifecycle()->inspectionPassContext($readinessOnly, $inspection->id),
+            fn () => $this->lifecycle()->confirmInspectionPass($readinessOnly, $inspection->id, 'Unauthorized release.', 'password'),
+            fn () => $this->lifecycle()->passInspection($readinessOnly, $inspection->id, 'Unauthorized release.'),
+            fn () => $this->lifecycle()->failInspection($readinessOnly, $inspection->id, 'Unauthorized failure.'),
+        ];
+
+        foreach ($operations as $operation) {
+            try {
+                $operation();
+                $this->fail('Expected canonical authorization denial.');
+            } catch (HttpException $exception) {
+                $this->assertSame(403, $exception->getStatusCode());
+                $this->assertSame('HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED', $exception->getMessage());
+            }
+        }
+        $this->assertSame($before, $this->lifecycleCounts());
+    }
+
+    public function test_resource_policy_without_required_readiness_permission_cannot_start_or_complete(): void
+    {
+        $policyOnly = $this->hkUser('Policy Only', 'p13-policy-only@example.test');
+        $this->hkAttachProperty($policyOnly, $this->property);
+        $policyOnly->givePermissionTo(['housekeeping.task.edit', 'housekeeping.task.start', 'housekeeping.task.complete']);
+
+        [, $assigned] = $this->assignedCheckoutTask('P13-AUTH-3');
+        TaskAssignment::where('cleaning_task_id', $assigned->id)->update(['user_id' => $policyOnly->id]);
+        [$room, $inProgress] = $this->startedCheckoutTask('P13-AUTH-4');
+        TaskAssignment::where('cleaning_task_id', $inProgress->id)->update(['user_id' => $policyOnly->id]);
+        $before = $this->lifecycleCounts();
+
+        foreach ([
+            fn () => $this->lifecycle()->changeCleaningTaskStatus($policyOnly, $assigned->id, TaskStatusEnum::InProgress),
+            fn () => $this->lifecycle()->changeCleaningTaskStatus($policyOnly, $inProgress->id, TaskStatusEnum::Completed, 'Unauthorized completion.'),
+        ] as $operation) {
+            try {
+                $operation();
+                $this->fail('Expected readiness permission denial.');
+            } catch (HttpException $exception) {
+                $this->assertSame('HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED', $exception->getMessage());
+            }
+        }
+
+        $this->assertSame($before, $this->lifecycleCounts());
+        $this->assertSame('cleaning', $room->fresh()->readiness_state);
+    }
+
+    public function test_unknown_and_cross_property_identifiers_have_the_same_non_disclosing_denial(): void
+    {
+        $otherRoom = $this->hkDirtyRoom($this->otherProperty, 'P13-AUTH-X');
+        $otherTask = CleaningTask::withoutGlobalScopes()->create([
+            'property_id' => $this->otherProperty->id, 'room_id' => $otherRoom,
+            'task_type' => 'checkout_cleaning', 'status' => 'pending', 'priority' => 'normal',
+        ]);
+        $messages = [];
+
+        foreach ([$otherTask->id, '01HZZZZZZZZZZZZZZZZZZZZZZZ'] as $id) {
+            try {
+                $this->lifecycle()->changeCleaningTaskStatus($this->housekeepingActor, $id, TaskStatusEnum::Cancelled);
+                $this->fail('Expected identifier denial.');
+            } catch (HttpException $exception) {
+                $this->assertSame(403, $exception->getStatusCode());
+                $messages[] = $exception->getMessage();
+            }
+        }
+
+        $this->assertSame(['HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED', 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED'], $messages);
+        $this->assertSame(TaskStatusEnum::Pending, $otherTask->fresh()->status);
+    }
+
+    public function test_compatibility_actor_id_cannot_impersonate_another_authenticated_user(): void
+    {
+        [, $task] = $this->assignedCheckoutTask('P13-AUTH-5');
+        [, , $inspection] = $this->inProgressInspection('P13-AUTH-6');
+        $before = $this->lifecycleCounts();
+
+        $this->actingAs($this->housekeepingActor);
+        try {
+            app(CleaningTaskService::class)->changeStatus($task->id, TaskStatusEnum::InProgress, $this->housekeepingInspector->id);
+            $this->fail('Expected Cleaning Task impersonation denial.');
+        } catch (HttpException $exception) {
+            $this->assertSame('HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED', $exception->getMessage());
+        }
+
+        $this->actingAs($this->housekeepingInspector);
+        try {
+            app(InspectionService::class)->fail($inspection->id, 'Impersonation attempt.', null, $this->housekeepingActor->id);
+            $this->fail('Expected Inspection impersonation denial.');
+        } catch (HttpException $exception) {
+            $this->assertSame('HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED', $exception->getMessage());
+        }
+
+        $this->assertSame($before, $this->lifecycleCounts());
+    }
+
+    public function test_terminal_replay_requires_exact_severity_and_creates_zero_new_facts_on_conflict(): void
+    {
+        [, , $passedInspection] = $this->inProgressInspection('P13-REPLAY-1');
+        $passReason = 'Exact severity pass replay.';
+        $this->lifecycle()->confirmInspectionPass($this->housekeepingInspector, $passedInspection->id, $passReason, 'password');
+        $this->lifecycle()->passInspection($this->housekeepingInspector, $passedInspection->id, $passReason, InspectionSeverityEnum::Minor);
+        $passBefore = $this->lifecycleCounts();
+
+        try {
+            $this->lifecycle()->passInspection($this->housekeepingInspector, $passedInspection->id, $passReason, null);
+            $this->fail('Expected conflicting pass severity replay.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('replay conflicts', $exception->getMessage());
+        }
+        $this->assertSame($passBefore, $this->lifecycleCounts());
+
+        [, , $failedInspection] = $this->inProgressInspection('P13-REPLAY-2');
+        $failReason = 'Exact severity failure replay.';
+        $this->lifecycle()->failInspection($this->housekeepingInspector, $failedInspection->id, $failReason, InspectionSeverityEnum::Major);
+        $failBefore = $this->lifecycleCounts();
+
+        try {
+            $this->lifecycle()->failInspection($this->housekeepingInspector, $failedInspection->id, $failReason, null);
+            $this->fail('Expected conflicting failure severity replay.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('replay conflicts', $exception->getMessage());
+        }
+        $this->assertSame($failBefore, $this->lifecycleCounts());
+    }
+
+    public function test_http_pass_replay_recovers_committed_result_without_new_confirmation_or_facts(): void
+    {
+        [, , $inspection] = $this->inProgressInspection('P13-HTTP-REPLAY');
+        $reason = 'Recover committed release response.';
+        $headers = ['X-Property-ID' => $this->property->id];
+
+        $this->actingAs($this->housekeepingInspector)
+            ->postJson('/operations/inspections/' . $inspection->id . '/pass-confirmation', [
+                'release_reason' => $reason,
+                'password' => 'password',
+            ], $headers)
+            ->assertOk();
+        $this->postJson('/operations/inspections/' . $inspection->id . '/pass', ['release_reason' => $reason], $headers)->assertOk();
+        $before = $this->lifecycleCounts();
+        $confirmationBefore = session('sensitive_action_confirmation');
+
+        $this->postJson('/operations/inspections/' . $inspection->id . '/pass', ['release_reason' => $reason], $headers)
+            ->assertOk()
+            ->assertJsonPath('inspection.id', $inspection->id);
+
+        $this->assertSame($before, $this->lifecycleCounts());
+        $this->assertSame($confirmationBefore, session('sensitive_action_confirmation'));
     }
 
     /** @return array{0: Room, 1: CleaningTask} */

@@ -30,7 +30,8 @@ return new class extends Migration
         DB::statement('ALTER TABLE cleaning_tasks ADD CONSTRAINT hk_cleaning_tasks_source_task_property_fk FOREIGN KEY (source_cleaning_task_id, property_id) REFERENCES cleaning_tasks (id, property_id) ON DELETE RESTRICT');
 
         DB::statement("CREATE UNIQUE INDEX hk_room_inspections_post_cleaning_task_unique ON room_inspections (cleaning_task_id) WHERE cleaning_task_id IS NOT NULL AND inspection_type = 'post_cleaning'");
-        DB::statement("ALTER TABLE cleaning_tasks ADD CONSTRAINT hk_cleaning_tasks_rework_source_check CHECK (rework_source_inspection_id IS NULL OR (source_cleaning_task_id IS NOT NULL AND task_type = 'checkout_cleaning'))");
+        DB::statement("ALTER TABLE cleaning_tasks ADD CONSTRAINT hk_cleaning_tasks_rework_source_check CHECK ((rework_source_inspection_id IS NULL AND source_cleaning_task_id IS NULL) OR (rework_source_inspection_id IS NOT NULL AND source_cleaning_task_id IS NOT NULL AND task_type = 'checkout_cleaning'))");
+        DB::statement('ALTER TABLE cleaning_tasks ADD CONSTRAINT hk_cleaning_tasks_source_not_self_check CHECK (source_cleaning_task_id IS NULL OR source_cleaning_task_id <> id)');
         DB::statement("ALTER TABLE housekeeping_room_readiness_transitions ADD CONSTRAINT hk_readiness_transition_type_check CHECK (transition_type IN ('START_CLEANING', 'SUBMIT_INSPECTION', 'RELEASE_READY', 'INSPECTION_FAILED', 'CHECKOUT_TURNOVER_INTAKE'))");
 
         DB::statement(<<<'SQL'
@@ -80,6 +81,42 @@ return new class extends Migration
                     RETURN OLD;
                 END IF;
 
+                IF NEW.rework_source_inspection_id IS NOT NULL THEN
+                    IF NEW.source_cleaning_task_id IS NULL
+                       OR NEW.source_cleaning_task_id = NEW.id
+                       OR (TG_OP = 'INSERT' AND NEW.status <> 'pending') THEN
+                        RAISE EXCEPTION 'Re-cleaning task source evidence is invalid.';
+                    END IF;
+
+                    PERFORM 1
+                    FROM room_inspections ri
+                    JOIN cleaning_tasks source_task
+                      ON source_task.id = ri.cleaning_task_id
+                     AND source_task.property_id = ri.property_id
+                     AND source_task.room_id = ri.room_id
+                    WHERE ri.id = NEW.rework_source_inspection_id
+                      AND ri.property_id = NEW.property_id
+                      AND ri.room_id = NEW.room_id
+                      AND ri.cleaning_task_id = NEW.source_cleaning_task_id
+                      AND ri.inspection_type = 'post_cleaning'
+                      AND ri.status = 'failed'
+                      AND ri.deleted_at IS NULL
+                      AND source_task.id = NEW.source_cleaning_task_id
+                      AND source_task.property_id = NEW.property_id
+                      AND source_task.room_id = NEW.room_id
+                      AND source_task.task_type = 'checkout_cleaning'
+                      AND source_task.status = 'completed'
+                      AND source_task.deleted_at IS NULL;
+
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION 'Re-cleaning task must bind to the exact failed post-cleaning Inspection and completed checkout-cleaning source Task.';
+                    END IF;
+                END IF;
+
+                IF TG_OP = 'INSERT' THEN
+                    RETURN NEW;
+                END IF;
+
                 IF OLD.status = 'completed' AND (
                     NEW.property_id IS DISTINCT FROM OLD.property_id
                     OR NEW.room_id IS DISTINCT FROM OLD.room_id
@@ -126,7 +163,7 @@ return new class extends Migration
 
         DB::statement(<<<'SQL'
             CREATE TRIGGER hk_cleaning_tasks_lifecycle_guard_trigger
-            BEFORE UPDATE OR DELETE ON cleaning_tasks
+            BEFORE INSERT OR UPDATE OR DELETE ON cleaning_tasks
             FOR EACH ROW EXECUTE FUNCTION hk_cleaning_tasks_lifecycle_guard()
         SQL);
     }
@@ -140,6 +177,7 @@ return new class extends Migration
             DB::statement('DROP FUNCTION IF EXISTS hk_room_inspections_lifecycle_guard()');
 
             DB::statement('ALTER TABLE housekeeping_room_readiness_transitions DROP CONSTRAINT IF EXISTS hk_readiness_transition_type_check');
+            DB::statement('ALTER TABLE cleaning_tasks DROP CONSTRAINT IF EXISTS hk_cleaning_tasks_source_not_self_check');
             DB::statement('ALTER TABLE cleaning_tasks DROP CONSTRAINT IF EXISTS hk_cleaning_tasks_rework_source_check');
             DB::statement('DROP INDEX IF EXISTS hk_room_inspections_post_cleaning_task_unique');
 

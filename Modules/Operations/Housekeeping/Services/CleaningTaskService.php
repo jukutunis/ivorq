@@ -94,7 +94,7 @@ class CleaningTaskService
         });
     }
 
-    public function changeStatus(string $taskId, $status, $userId = null, ?string $notes = null): CleaningTask
+    public function changeStatus(string $taskId, $status, User|string|null $actorReference = null, ?string $notes = null): CleaningTask
     {
         $target = $status instanceof \Modules\Operations\Housekeeping\Enums\TaskStatusEnum
             ? $status
@@ -105,16 +105,12 @@ class CleaningTaskService
             ]);
         }
 
-        $task = CleaningTask::withoutGlobalScopes()->find($taskId);
-        if (! $task || ($task->status !== $target && ! $task->status->canTransitionTo($target))) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
-                'status' => 'Invalid status transition',
-            ]);
-        }
-
-        $actor = $userId ? User::withoutGlobalScopes()->find($userId) : auth()->user();
+        $actor = $actorReference instanceof User ? $actorReference : auth()->user();
         if (! $actor instanceof User) {
-            throw new \DomainException('An authenticated Housekeeping actor is required.');
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED');
+        }
+        if (is_string($actorReference) && $actorReference !== $actor->id) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED');
         }
 
         return $this->lifecycle->changeCleaningTaskStatus($actor, $taskId, $target, $notes);

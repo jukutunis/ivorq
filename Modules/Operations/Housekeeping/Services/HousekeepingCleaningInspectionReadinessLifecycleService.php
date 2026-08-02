@@ -10,6 +10,7 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
 use Modules\Operations\Housekeeping\Enums\InspectionStatusEnum;
+use Modules\Operations\Housekeeping\Enums\HousekeepingRoomReadinessTransitionTypeEnum;
 use Modules\Operations\Housekeeping\Enums\TaskStatusEnum;
 use Modules\Operations\Housekeeping\Events\CleaningTaskCancelled;
 use Modules\Operations\Housekeeping\Events\CleaningTaskCompleted;
@@ -37,6 +38,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
     private const TASK_COMPLETE_KEY = 'hk-task-complete:';
     private const INSPECTION_FAIL_KEY = 'hk-inspection-fail:';
     private const INSPECTION_PASS_KEY = 'hk-inspection-pass:';
+    private const AUTHORIZATION_DENIED = 'HOUSEKEEPING_LIFECYCLE_NOT_AUTHORIZED';
 
     public function __construct(
         private readonly HousekeepingRoomReadinessTransitionService $readiness,
@@ -52,6 +54,11 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
     ): CleaningTask {
         $propertyId = $this->activePropertyId();
         $preview = $this->scopedTask($propertyId, $taskId);
+        $this->authorizeTask($actor, $preview, match ($target) {
+            TaskStatusEnum::InProgress => HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
+            TaskStatusEnum::Completed => HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION,
+            default => null,
+        });
         $taskType = $preview->task_type instanceof \BackedEnum
             ? $preview->task_type->value
             : (string) $preview->task_type;
@@ -63,7 +70,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         return match ($target) {
             TaskStatusEnum::InProgress => $this->startCheckoutCleaning($actor, $propertyId, $preview),
             TaskStatusEnum::Completed => $this->completeCheckoutCleaning($actor, $propertyId, $preview, $notes),
-            TaskStatusEnum::Cancelled => $this->cancelCheckoutCleaning($propertyId, $preview),
+            TaskStatusEnum::Cancelled => $this->cancelCheckoutCleaning($actor, $propertyId, $preview),
             default => throw new DomainException('This Cleaning Task lifecycle change must use its canonical operational action.'),
         };
     }
@@ -72,10 +79,12 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
     {
         $propertyId = $this->activePropertyId();
         $preview = $this->scopedInspection($propertyId, $inspectionId);
+        $this->authorizeInspection($actor, $preview);
 
         return DB::transaction(function () use ($actor, $propertyId, $preview, $inspectionId) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
             $inspection = $this->lockInspection($propertyId, $inspectionId);
+            $this->authorizeInspection($actor, $inspection);
             $task = $this->lockInspectionTask($propertyId, $inspection, $room);
             $this->assertInspectionSource($inspection, $task, $room, $propertyId);
 
@@ -105,12 +114,9 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
      */
     public function inspectionPassContext(User $actor, string $inspectionId): array
     {
-        if (! $actor->can(HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION)) {
-            throw new HttpException(403, 'Housekeeping room readiness release-ready permission is required.');
-        }
-
         $propertyId = $this->activePropertyId();
         $inspection = $this->scopedInspection($propertyId, $inspectionId);
+        $this->authorizeInspection($actor, $inspection, HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION);
         $room = Room::withoutGlobalScopes()
             ->whereKey($inspection->room_id)
             ->where('property_id', $propertyId)
@@ -147,17 +153,15 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         string $releaseReason,
         string $password,
     ): array {
-        if (! $actor->can(HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION)) {
-            throw new HttpException(403, 'Housekeeping room readiness release-ready permission is required.');
-        }
-
-        $releaseReason = $this->requiredText($releaseReason, 'A release reason is required.');
         $propertyId = $this->activePropertyId();
         $preview = $this->scopedInspection($propertyId, $inspectionId);
+        $this->authorizeInspection($actor, $preview, HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION);
+        $releaseReason = $this->requiredText($releaseReason, 'A release reason is required.');
 
         return DB::transaction(function () use ($actor, $propertyId, $preview, $inspectionId, $releaseReason, $password) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
             $inspection = $this->lockInspection($propertyId, $inspectionId);
+            $this->authorizeInspection($actor, $inspection, HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION);
             $task = $this->lockInspectionTask($propertyId, $inspection, $room);
             $this->assertInspectionSource($inspection, $task, $room, $propertyId);
 
@@ -206,16 +210,15 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         string $releaseReason,
         ?InspectionSeverityEnum $severity = null,
     ): RoomInspection {
-        if (! $actor->can(HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION)) {
-            throw new HttpException(403, 'Housekeeping room readiness release-ready permission is required.');
-        }
-        $releaseReason = $this->requiredText($releaseReason, 'A release reason is required.');
         $propertyId = $this->activePropertyId();
         $preview = $this->scopedInspection($propertyId, $inspectionId);
+        $this->authorizeInspection($actor, $preview, HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION);
+        $releaseReason = $this->requiredText($releaseReason, 'A release reason is required.');
 
         return DB::transaction(function () use ($actor, $propertyId, $preview, $inspectionId, $releaseReason, $severity) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
             $inspection = $this->lockInspection($propertyId, $inspectionId);
+            $this->authorizeInspection($actor, $inspection, HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION);
             $task = $this->lockInspectionTask($propertyId, $inspection, $room);
             $this->assertInspectionSource($inspection, $task, $room, $propertyId);
 
@@ -228,6 +231,8 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
                     $actor,
                     $context,
                     $releaseReason,
+                    $severity,
+                    $room,
                 );
 
                 return $inspection->fresh();
@@ -272,22 +277,21 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         string $failureReason,
         ?InspectionSeverityEnum $severity = null,
     ): RoomInspection {
-        if (! $actor->can(HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION)) {
-            throw new HttpException(403, 'Housekeeping room readiness clean permission is required.');
-        }
-        $failureReason = $this->requiredText($failureReason, 'A failure reason is required.');
         $propertyId = $this->activePropertyId();
         $preview = $this->scopedInspection($propertyId, $inspectionId);
+        $this->authorizeInspection($actor, $preview, HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION);
+        $failureReason = $this->requiredText($failureReason, 'A failure reason is required.');
 
         return DB::transaction(function () use ($actor, $propertyId, $preview, $inspectionId, $failureReason, $severity) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
             $inspection = $this->lockInspection($propertyId, $inspectionId);
+            $this->authorizeInspection($actor, $inspection, HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION);
             $task = $this->lockInspectionTask($propertyId, $inspection, $room);
             $this->assertInspectionSource($inspection, $task, $room, $propertyId);
 
             $context = self::INSPECTION_FAIL_KEY . $inspection->id;
             if ($inspection->status === InspectionStatusEnum::Failed) {
-                $this->assertCommittedFailureReplay($propertyId, $inspection, $task, $actor, $context, $failureReason);
+                $this->assertCommittedFailureReplay($propertyId, $inspection, $task, $actor, $context, $failureReason, $severity, $room);
 
                 return $inspection->fresh();
             }
@@ -344,6 +348,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         return DB::transaction(function () use ($actor, $propertyId, $preview) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
             $task = $this->lockTask($propertyId, $preview->id);
+            $this->authorizeTask($actor, $task, HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION);
             $this->assertTaskRoom($task, $room, $propertyId);
             $key = self::TASK_START_KEY . $task->id;
 
@@ -390,6 +395,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         return DB::transaction(function () use ($actor, $propertyId, $preview, $notes) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
             $task = $this->lockTask($propertyId, $preview->id);
+            $this->authorizeTask($actor, $task, HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION);
             $this->assertTaskRoom($task, $room, $propertyId);
             $key = self::TASK_COMPLETE_KEY . $task->id;
 
@@ -450,11 +456,12 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         });
     }
 
-    private function cancelCheckoutCleaning(string $propertyId, CleaningTask $preview): CleaningTask
+    private function cancelCheckoutCleaning(User $actor, string $propertyId, CleaningTask $preview): CleaningTask
     {
-        return DB::transaction(function () use ($propertyId, $preview) {
+        return DB::transaction(function () use ($actor, $propertyId, $preview) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
             $task = $this->lockTask($propertyId, $preview->id);
+            $this->authorizeTask($actor, $task);
             $this->assertTaskRoom($task, $room, $propertyId);
 
             if (! in_array($task->status, [TaskStatusEnum::Pending, TaskStatusEnum::Assigned], true)) {
@@ -477,6 +484,11 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
     ): CleaningTask {
         return DB::transaction(function () use ($actor, $propertyId, $preview, $target, $notes) {
             $task = $this->lockTask($propertyId, $preview->id);
+            $this->authorizeTask($actor, $task, match ($target) {
+                TaskStatusEnum::InProgress => HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
+                TaskStatusEnum::Completed => HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION,
+                default => null,
+            });
             if (! $task->status->canTransitionTo($target)) {
                 throw new DomainException('Invalid Cleaning Task status transition.');
             }
@@ -520,6 +532,8 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
             throw new AuthorizationException('Active property is required.');
         }
 
+        setPermissionsTeamId($propertyId);
+
         return $propertyId;
     }
 
@@ -530,7 +544,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
             ->where('property_id', $propertyId)
             ->first();
         if (! $task) {
-            throw new DomainException('Cleaning Task is unavailable in the active property.');
+            $this->deny();
         }
 
         return $task;
@@ -543,7 +557,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
             ->where('property_id', $propertyId)
             ->first();
         if (! $inspection) {
-            throw new DomainException('Room Inspection is unavailable in the active property.');
+            $this->deny();
         }
 
         return $inspection;
@@ -558,7 +572,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
             ->lockForUpdate()
             ->first();
         if (! $room) {
-            throw new DomainException('Room source evidence is unavailable in the active property.');
+            $this->deny();
         }
 
         return $room;
@@ -572,7 +586,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
             ->lockForUpdate()
             ->first();
         if (! $task) {
-            throw new DomainException('Cleaning Task source evidence is unavailable in the active property.');
+            $this->deny();
         }
 
         return $task;
@@ -586,7 +600,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
             ->lockForUpdate()
             ->first();
         if (! $inspection) {
-            throw new DomainException('Room Inspection source evidence is unavailable in the active property.');
+            $this->deny();
         }
 
         return $inspection;
@@ -672,6 +686,8 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         User $actor,
         string $context,
         string $reason,
+        ?InspectionSeverityEnum $severity,
+        Room $room,
     ): void {
         $transition = HousekeepingRoomReadinessTransition::withoutGlobalScopes()
             ->where('property_id', $propertyId)
@@ -680,11 +696,21 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
             ->first();
         if (
             ! $transition
+            || $inspection->status !== InspectionStatusEnum::Passed
+            || $inspection->is_passed !== true
+            || $inspection->remarks !== $reason
+            || $this->enumValue($inspection->inspection_severity) !== $this->enumValue($severity)
+            || $inspection->inspected_at === null
+            || $transition->transition_type !== HousekeepingRoomReadinessTransitionTypeEnum::ReleaseReady
             || $transition->source_type !== RoomInspection::class
             || $transition->source_id !== $inspection->id
             || $transition->reason !== $reason
             || $transition->created_by !== $actor->id
             || $task->verified_at === null
+            || $transition->room_id !== $room->id
+            || $transition->to_status !== $this->readiness->targetReadinessFor($room)
+            || $room->readiness_state !== $transition->to_status
+            || $this->enumValue($room->cleanliness_status) !== 'inspected'
         ) {
             throw new DomainException('Inspection pass replay conflicts with committed evidence.');
         }
@@ -697,25 +723,42 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         User $actor,
         string $context,
         string $reason,
+        ?InspectionSeverityEnum $severity,
+        Room $room,
     ): void {
         $transition = HousekeepingRoomReadinessTransition::withoutGlobalScopes()
             ->where('property_id', $propertyId)
             ->where('idempotency_key', $context)
             ->lockForUpdate()
             ->first();
-        $rework = CleaningTask::withoutGlobalScopes()
+        $reworks = CleaningTask::withoutGlobalScopes()
             ->where('property_id', $propertyId)
             ->where('rework_source_inspection_id', $inspection->id)
             ->lockForUpdate()
-            ->first();
+            ->get();
+        $rework = $reworks->first();
         if (
             ! $transition
             || ! $rework
+            || $reworks->count() !== 1
+            || $inspection->status !== InspectionStatusEnum::Failed
+            || $inspection->is_passed !== false
+            || $inspection->remarks !== $reason
+            || $this->enumValue($inspection->inspection_severity) !== $this->enumValue($severity)
+            || $inspection->inspected_at === null
+            || $transition->transition_type !== HousekeepingRoomReadinessTransitionTypeEnum::InspectionFailed
             || $transition->source_type !== RoomInspection::class
             || $transition->source_id !== $inspection->id
             || $transition->reason !== $reason
             || $transition->created_by !== $actor->id
             || $rework->source_cleaning_task_id !== $task->id
+            || $rework->property_id !== $propertyId
+            || $rework->room_id !== $room->id
+            || $this->enumValue($rework->task_type) !== 'checkout_cleaning'
+            || $transition->room_id !== $room->id
+            || $transition->to_status !== 'waiting_cleaning'
+            || $room->readiness_state !== 'waiting_cleaning'
+            || $this->enumValue($room->cleanliness_status) !== 'dirty'
         ) {
             throw new DomainException('Inspection failure replay conflicts with committed evidence.');
         }
@@ -729,5 +772,33 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         }
 
         return $value;
+    }
+
+    private function authorizeTask(User $actor, CleaningTask $task, ?string $readinessPermission = null): void
+    {
+        if (! $actor->can('changeStatus', $task) || ($readinessPermission !== null && ! $actor->can($readinessPermission))) {
+            $this->deny();
+        }
+    }
+
+    private function authorizeInspection(User $actor, RoomInspection $inspection, ?string $readinessPermission = null): void
+    {
+        if (! $actor->can('conduct', $inspection) || ($readinessPermission !== null && ! $actor->can($readinessPermission))) {
+            $this->deny();
+        }
+    }
+
+    private function enumValue(mixed $value): ?string
+    {
+        if ($value instanceof \BackedEnum) {
+            return (string) $value->value;
+        }
+
+        return $value === null ? null : (string) $value;
+    }
+
+    private function deny(): never
+    {
+        throw new HttpException(403, self::AUTHORIZATION_DENIED);
     }
 }
