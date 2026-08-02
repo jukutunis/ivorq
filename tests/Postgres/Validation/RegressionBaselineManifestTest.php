@@ -296,7 +296,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ], $lastTwelve);
 
         $this->assertEquals(729, $baseline->expected->tests ?? null);
-        $this->assertEquals(5569, $baseline->expected->assertions ?? null);
+        $this->assertEquals(5591, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
@@ -831,7 +831,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'NightAuditCheckoutConcurrencyProofTest',
         ], $baseline->classes);
         $this->assertEquals(20, $baseline->expected->tests ?? null);
-        $this->assertEquals(914, $baseline->expected->assertions ?? null);
+        $this->assertEquals(918, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);

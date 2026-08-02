@@ -83,7 +83,7 @@
       ],
       "expected": {
         "tests": 729,
-        "assertions": 5569,
+        "assertions": 5591,
         "failures": 0,
         "errors": 0
       },
@@ -336,7 +336,7 @@
       ],
       "expected": {
         "tests": 20,
-        "assertions": 914,
+        "assertions": 918,
         "failures": 0,
         "errors": 0
       },
