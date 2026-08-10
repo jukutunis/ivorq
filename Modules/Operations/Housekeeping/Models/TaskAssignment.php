@@ -13,6 +13,7 @@ class TaskAssignment extends Model
 
     protected $fillable = [
         'cleaning_task_id',
+        'property_id',
         'attendant_id',
         'user_id',
         'department_id',
@@ -20,12 +21,22 @@ class TaskAssignment extends Model
         'assigned_at',
         'accepted_at',
         'completed_at',
+        'assigned_by',
+        'assignment_action',
+        'idempotency_key',
+        'source_hash',
+        'evidence_version',
+        'previous_assignment_id',
+        'closed_at',
+        'closed_by',
+        'closure_reason',
     ];
 
     protected $casts = [
         'assigned_at' => 'datetime',
         'accepted_at' => 'datetime',
         'completed_at' => 'datetime', // From legacy DB fix
+        'closed_at' => 'datetime',
         'status' => \Modules\Operations\Housekeeping\Enums\AssignmentStatusEnum::class,
     ];
 
@@ -47,5 +58,45 @@ class TaskAssignment extends Model
     public function assignedBy()
     {
         return $this->belongsTo(\Modules\Foundation\User\Models\User::class, 'assigned_by');
+    }
+
+    public function previousAssignment()
+    {
+        return $this->belongsTo(self::class, 'previous_assignment_id');
+    }
+
+    public function closedBy()
+    {
+        return $this->belongsTo(\Modules\Foundation\User\Models\User::class, 'closed_by');
+    }
+
+    protected static function booted(): void
+    {
+        static::updating(function (TaskAssignment $assignment): void {
+            $originalStatus = (string) $assignment->getRawOriginal('status');
+            if ($originalStatus !== 'active') {
+                throw new \DomainException('Terminal Housekeeping assignment evidence is immutable.');
+            }
+
+            $immutable = [
+                'property_id', 'cleaning_task_id', 'user_id', 'attendant_id', 'department_id',
+                'assigned_by', 'assigned_at', 'assignment_action', 'idempotency_key', 'source_hash',
+                'evidence_version', 'previous_assignment_id', 'accepted_at', 'deleted_at',
+            ];
+            if (collect($immutable)->contains(fn (string $field) => $assignment->isDirty($field))) {
+                throw new \DomainException('Housekeeping assignment source evidence is immutable.');
+            }
+
+            $newStatus = $assignment->status instanceof \BackedEnum
+                ? $assignment->status->value
+                : (string) $assignment->status;
+            if (! in_array($newStatus, ['completed', 'cancelled'], true)) {
+                throw new \DomainException('Housekeeping assignment closure is invalid.');
+            }
+        });
+
+        static::deleting(function (): never {
+            throw new \DomainException('Housekeeping assignment evidence cannot be deleted.');
+        });
     }
 }

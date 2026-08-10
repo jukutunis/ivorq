@@ -1,7 +1,8 @@
 import StatusBadge, { BadgeStatus } from '@/Components/Ivorq/primitives/StatusBadge';
 import AppLayout from '@/Layouts/AppLayout';
 import { Head, Link, router } from '@inertiajs/react';
-import { FormEvent, ReactNode, useState } from 'react';
+import axios from 'axios';
+import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 
 type OperationalState =
     | 'review_required'
@@ -42,6 +43,7 @@ interface Turnover {
     cleaning_task_code: string | null;
     task_status: string | null;
     task_priority: string | null;
+    task_started_at: string | null;
     readiness_transition_id: string | null;
     readiness_transition_type: string | null;
     readiness_state: string | null;
@@ -57,6 +59,60 @@ interface Turnover {
     terminal_stay_evidence: boolean;
     last_event_age_seconds: number;
     links: TurnoverLinks;
+    active_assignment?: ActiveAssignment | null;
+    assignment_history_summary?: AssignmentHistorySummary;
+    assignment_actions?: AssignmentActions;
+    eligible_attendants?: EligibleAttendant[];
+    attendant_workload?: AttendantWorkload[];
+}
+
+interface ActiveAssignment {
+    assignment_id: string;
+    user_id: string;
+    user_name: string | null;
+    department_id: string | null;
+    department_name: string | null;
+    assignment_status: string;
+    previous_assignment_id: string | null;
+    assigned_at: string | null;
+}
+
+interface AssignmentHistorySummary {
+    total: number;
+    reassigned: number;
+    completed: number;
+    cancelled: number;
+}
+
+interface AssignmentActions {
+    can_assign: boolean;
+    can_reassign: boolean;
+    assignment_blockers: string[];
+}
+
+interface EligibleAttendant {
+    user_id: string;
+    display_name: string;
+    department_id: string;
+    department_name: string;
+}
+
+interface AttendantWorkload extends EligibleAttendant {
+    active_assignment_count: number;
+    assigned_not_started_count: number;
+    in_progress_count: number;
+    rush_assignment_count: number;
+    active_credits: number;
+    oldest_active_assignment_at: string | null;
+}
+
+interface AssignmentReceipt {
+    assignment_id: string;
+    assignment_action: 'initial' | 'reassignment';
+    user_name: string;
+    department_name: string;
+    assigned_at: string | null;
+    replayed: boolean;
 }
 
 interface PaginationLink {
@@ -178,6 +234,93 @@ export default function CheckoutTurnoverWorkspace({
     options,
 }: Props) {
     const [search, setSearch] = useState(filters.search ?? '');
+    const [drawerAction, setDrawerAction] = useState<'assign' | 'reassign' | null>(null);
+    const [selectedUserId, setSelectedUserId] = useState('');
+    const [idempotencyKey, setIdempotencyKey] = useState('');
+    const [assignmentSubmitting, setAssignmentSubmitting] = useState(false);
+    const [assignmentError, setAssignmentError] = useState<string | null>(null);
+    const [assignmentReceipt, setAssignmentReceipt] = useState<AssignmentReceipt | null>(null);
+    const attendantSelectRef = useRef<HTMLSelectElement>(null);
+
+    useEffect(() => {
+        if (drawerAction) attendantSelectRef.current?.focus();
+    }, [drawerAction]);
+
+    useEffect(() => {
+        if (!drawerAction) return;
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && !assignmentSubmitting) closeAssignmentDrawer();
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return () => window.removeEventListener('keydown', closeOnEscape);
+    });
+
+    function freshIdempotencyKey(): string {
+        return window.crypto.randomUUID();
+    }
+
+    function openAssignmentDrawer(action: 'assign' | 'reassign') {
+        setDrawerAction(action);
+        setSelectedUserId('');
+        setIdempotencyKey(freshIdempotencyKey());
+        setAssignmentError(null);
+        setAssignmentReceipt(null);
+    }
+
+    function closeAssignmentDrawer() {
+        if (assignmentSubmitting) return;
+        setDrawerAction(null);
+        setSelectedUserId('');
+        setIdempotencyKey('');
+        setAssignmentError(null);
+    }
+
+    function changeAttendant(userId: string) {
+        setSelectedUserId(userId);
+        setIdempotencyKey(freshIdempotencyKey());
+        setAssignmentError(null);
+    }
+
+    async function submitAssignment(event: FormEvent) {
+        event.preventDefault();
+        if (!selected_turnover?.cleaning_task_id || !drawerAction) return;
+        const attendant = selected_turnover.eligible_attendants?.find((item) => item.user_id === selectedUserId);
+        if (!attendant) {
+            setAssignmentError('Select an eligible attendant.');
+            return;
+        }
+        setAssignmentSubmitting(true);
+        setAssignmentError(null);
+        try {
+            const response = await axios.post<AssignmentReceipt>(
+                `/operations/cleaning-tasks/${selected_turnover.cleaning_task_id}/assign`,
+                {
+                    user_id: attendant.user_id,
+                    department_id: attendant.department_id,
+                    idempotency_key: idempotencyKey,
+                    expected_active_assignment_id: drawerAction === 'reassign'
+                        ? selected_turnover.active_assignment?.assignment_id ?? null
+                        : null,
+                },
+                { headers: { Accept: 'application/json' } },
+            );
+            setAssignmentReceipt(response.data);
+            setDrawerAction(null);
+            setSelectedUserId('');
+            setIdempotencyKey('');
+            router.reload({ only: ['turnovers', 'selected_turnover', 'kpis'] });
+        } catch (error) {
+            if (axios.isAxiosError(error) && !error.response) {
+                setAssignmentError('The server outcome was not confirmed. Retry to safely recover the same result.');
+            } else {
+                setAssignmentError('The assignment could not be committed. Refresh the turnover evidence before trying again.');
+            }
+        } finally {
+            setAssignmentSubmitting(false);
+        }
+    }
+
+    const selectedWorkload = selected_turnover?.attendant_workload?.find((item) => item.user_id === selectedUserId);
 
     function navigate(patch: Partial<Filters> & { page?: number | undefined }) {
         const merged: Record<string, string | number | null | undefined> = {
@@ -497,6 +640,45 @@ export default function CheckoutTurnoverWorkspace({
                                     <DetailField label="Cleanliness">{humanize(selected_turnover.cleanliness_before)} → {humanize(selected_turnover.cleanliness_after ?? selected_turnover.cleanliness_state)}</DetailField>
                                 </dl>
 
+                                <h3 className="pt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Attendant assignment</h3>
+                                {assignmentReceipt && (
+                                    <div role="status" className="mt-3 rounded border border-green-200 bg-green-50 px-3 py-3 text-xs text-green-950">
+                                        <div className="font-semibold">{assignmentReceipt.replayed ? 'Committed result recovered' : 'Assignment committed'}</div>
+                                        <div className="mt-1">{assignmentReceipt.assignment_action === 'initial' ? 'Assignment' : 'Reassignment'} {assignmentReceipt.assignment_id}</div>
+                                        <div>{assignmentReceipt.user_name} · {assignmentReceipt.department_name} · {formatDateTime(assignmentReceipt.assigned_at)}</div>
+                                    </div>
+                                )}
+                                <dl>
+                                    <DetailField label="Current attendant">{selected_turnover.active_assignment?.user_name ?? 'Not assigned'}</DetailField>
+                                    <DetailField label="Department">{selected_turnover.active_assignment?.department_name ?? '—'}</DetailField>
+                                    <DetailField label="Assigned">{formatDateTime(selected_turnover.active_assignment?.assigned_at ?? null)}</DetailField>
+                                    <DetailField label="Task state">{humanize(selected_turnover.task_status)}</DetailField>
+                                    <DetailField label="History">
+                                        {selected_turnover.assignment_history_summary
+                                            ? `${selected_turnover.assignment_history_summary.total} total · ${selected_turnover.assignment_history_summary.reassigned} reassigned`
+                                            : '—'}
+                                    </DetailField>
+                                </dl>
+
+                                {(selected_turnover.assignment_actions?.can_assign || selected_turnover.assignment_actions?.can_reassign) ? (
+                                    <div className="mt-3">
+                                        {selected_turnover.assignment_actions.can_assign && (
+                                            <button type="button" onClick={() => openAssignmentDrawer('assign')} className="min-h-10 w-full rounded bg-blue-600 px-3 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                                                Assign attendant
+                                            </button>
+                                        )}
+                                        {selected_turnover.assignment_actions.can_reassign && (
+                                            <button type="button" onClick={() => openAssignmentDrawer('reassign')} className="min-h-10 w-full rounded border border-blue-600 bg-white px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                                                Reassign attendant
+                                            </button>
+                                        )}
+                                    </div>
+                                ) : selected_turnover.assignment_actions?.assignment_blockers?.length ? (
+                                    <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                                        {selected_turnover.assignment_actions.assignment_blockers.map(humanize).join(' · ')}
+                                    </div>
+                                ) : null}
+
                                 {(selected_turnover.links.room || selected_turnover.links.cleaning_task || selected_turnover.links.room_readiness) && (
                                     <div>
                                         <h3 className="pt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Contextual navigation</h3>
@@ -512,6 +694,76 @@ export default function CheckoutTurnoverWorkspace({
                     )}
                 </aside>
             </div>
+
+            {drawerAction && selected_turnover && (
+                <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/40" onMouseDown={(event) => {
+                    if (event.target === event.currentTarget) closeAssignmentDrawer();
+                }}>
+                    <section role="dialog" aria-modal="true" aria-labelledby="assignment-drawer-title" className="flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
+                        <header className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+                            <div>
+                                <h2 id="assignment-drawer-title" className="text-lg font-semibold text-gray-900">
+                                    {drawerAction === 'assign' ? 'Assign attendant' : 'Reassign attendant'}
+                                </h2>
+                                <p className="mt-1 text-sm text-gray-500">Room {selected_turnover.room_number ?? 'Unknown'} · {selected_turnover.cleaning_task_code ?? 'Cleaning task'}</p>
+                            </div>
+                            <button type="button" onClick={closeAssignmentDrawer} disabled={assignmentSubmitting} aria-label="Close assignment drawer" className="min-h-10 min-w-10 rounded text-xl text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">×</button>
+                        </header>
+
+                        <form onSubmit={submitAssignment} className="flex min-h-0 flex-1 flex-col">
+                            <div className="flex-1 overflow-y-auto px-5 py-5">
+                                <div className="rounded border border-blue-100 bg-blue-50 px-3 py-3 text-sm text-blue-950">
+                                    The selected attendant and Department will be revalidated against the current Property before commit.
+                                </div>
+
+                                {drawerAction === 'reassign' && (
+                                    <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
+                                        Current attendant: {selected_turnover.active_assignment?.user_name ?? 'Unknown'}. The prior assignment will be closed as cancelled with a server-owned reassignment reason and retained as immutable history.
+                                    </div>
+                                )}
+
+                                <label className="mt-5 block">
+                                    <span className="text-sm font-semibold text-gray-800">Attendant</span>
+                                    <select ref={attendantSelectRef} value={selectedUserId} onChange={(event) => changeAttendant(event.target.value)} disabled={assignmentSubmitting} required className="mt-1 min-h-11 w-full rounded border border-gray-300 px-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100">
+                                        <option value="">Select an eligible attendant</option>
+                                        {(selected_turnover.eligible_attendants ?? []).map((attendant) => (
+                                            <option key={attendant.user_id} value={attendant.user_id}>{attendant.display_name} · {attendant.department_name}</option>
+                                        ))}
+                                    </select>
+                                </label>
+
+                                <div className="mt-4 rounded border border-gray-200 bg-gray-50 px-3 py-3">
+                                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Authoritative Department</div>
+                                    <div className="mt-1 text-sm font-medium text-gray-900">{selectedWorkload?.department_name ?? 'Select an attendant'}</div>
+                                </div>
+
+                                {selectedWorkload && (
+                                    <div className="mt-4 rounded border border-gray-200 px-3 py-3">
+                                        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Current workload</h3>
+                                        <dl className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                                            <div><dt className="text-gray-500">Active</dt><dd className="font-semibold text-gray-900">{selectedWorkload.active_assignment_count}</dd></div>
+                                            <div><dt className="text-gray-500">Credits</dt><dd className="font-semibold text-gray-900">{selectedWorkload.active_credits}</dd></div>
+                                            <div><dt className="text-gray-500">Not started</dt><dd className="font-semibold text-gray-900">{selectedWorkload.assigned_not_started_count}</dd></div>
+                                            <div><dt className="text-gray-500">In progress</dt><dd className="font-semibold text-gray-900">{selectedWorkload.in_progress_count}</dd></div>
+                                            <div><dt className="text-gray-500">Rush</dt><dd className="font-semibold text-gray-900">{selectedWorkload.rush_assignment_count}</dd></div>
+                                            <div><dt className="text-gray-500">Oldest active</dt><dd className="font-semibold text-gray-900">{formatDateTime(selectedWorkload.oldest_active_assignment_at)}</dd></div>
+                                        </dl>
+                                    </div>
+                                )}
+
+                                {assignmentError && <div role="alert" className="mt-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{assignmentError}</div>}
+                            </div>
+
+                            <footer className="flex gap-3 border-t border-gray-200 px-5 py-4">
+                                <button type="button" onClick={closeAssignmentDrawer} disabled={assignmentSubmitting} className="min-h-11 flex-1 rounded border border-gray-300 px-4 text-sm font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">Cancel</button>
+                                <button type="submit" disabled={assignmentSubmitting || !selectedUserId} className="min-h-11 flex-1 rounded bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">
+                                    {assignmentSubmitting ? 'Committing…' : drawerAction === 'assign' ? 'Commit assignment' : 'Commit reassignment'}
+                                </button>
+                            </footer>
+                        </form>
+                    </section>
+                </div>
+            )}
         </AppLayout>
     );
 }

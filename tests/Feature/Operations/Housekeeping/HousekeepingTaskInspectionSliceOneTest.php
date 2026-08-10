@@ -3,6 +3,7 @@
 namespace Tests\Feature\Operations\Housekeeping;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 use Modules\Operations\Housekeeping\Models\Room;
 use Modules\Operations\Housekeeping\Models\CleaningTask;
@@ -14,6 +15,10 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\Department\Models\Department;
 use Shared\Services\CurrentPropertyService;
 use Inertia\Testing\AssertableInertia as Assert;
+use Modules\Operations\Housekeeping\Services\HousekeepingCleaningInspectionReadinessLifecycleService;
+use Modules\Operations\Housekeeping\Services\HousekeepingTaskDispatchAssignmentService;
+use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessTransitionService;
+use Modules\Foundation\Authorization\Models\Permission;
 
 
 
@@ -46,6 +51,14 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
         $company2 = $this->createCompany();
         $this->otherProperty = $this->createProperty($company2, ['code' => 'OTH']);
 
+        foreach ([
+            HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
+            HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION,
+            HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION,
+        ] as $permission) {
+            Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
+        }
+
         $this->supervisor = $this->createUser($this->property, 'property-admin');
         $this->supervisor->givePermissionTo([
             'housekeeping.task.view',
@@ -59,6 +72,8 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             'housekeeping.inspection.approve',
             'housekeeping.room.view',
             'housekeeping.room.cleanliness',
+            HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
+            HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION,
         ]);
 
         $this->attendant = $this->createUser($this->property, 'staff');
@@ -67,6 +82,8 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             'housekeeping.task.start',
             'housekeeping.task.complete',
             'housekeeping.room.view',
+            HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
+            HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION,
         ]);
 
         $this->otherAttendant = $this->createUser($this->property, 'staff');
@@ -75,10 +92,15 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             'housekeeping.task.start',
             'housekeeping.task.complete',
             'housekeeping.room.view',
+            HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION,
+            HousekeepingRoomReadinessTransitionService::SUBMIT_INSPECTION_PERMISSION,
         ]);
 
         $this->department = $this->createDepartment($this->property);
         $this->otherDepartment = $this->createDepartment($this->otherProperty);
+        $this->supervisor->update(['department_id' => $this->department->id]);
+        $this->attendant->update(['department_id' => $this->department->id]);
+        $this->otherAttendant->update(['department_id' => $this->department->id]);
 
         // Rooms
         $this->room = Room::create([
@@ -139,9 +161,11 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             ->postJson("/operations/cleaning-tasks/{$task->id}/assign", [
                 'user_id' => $this->attendant->id,
                 'department_id' => $this->department->id,
+                'idempotency_key' => 'slice-assign-' . Str::uuid(),
+                'expected_active_assignment_id' => null,
             ], ['X-Property-ID' => $this->property->id]);
 
-        $response->assertStatus(200);
+        $response->assertStatus(201);
         $this->assertEquals(TaskStatusEnum::Assigned, $task->fresh()->status);
         $this->assertDatabaseHas('housekeeping_task_assignments', [
             'cleaning_task_id' => $task->id,
@@ -161,14 +185,7 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             'task_type' => 'checkout_cleaning',
         ]);
 
-        TaskAssignment::create([
-            'cleaning_task_id' => $task->id,
-            'user_id' => $this->attendant->id,
-            'department_id' => $this->department->id,
-            'assigned_at' => now(),
-            'status' => 'active',
-        ]);
-        $task->update(['status' => 'assigned']);
+        $this->assignTask($task, $this->attendant);
 
         $response = $this->actingAs($this->attendant)
             ->postJson("/operations/cleaning-tasks/{$task->id}/status", [
@@ -191,14 +208,7 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             'task_type' => 'checkout_cleaning',
         ]);
 
-        TaskAssignment::create([
-            'cleaning_task_id' => $task->id,
-            'user_id' => $this->attendant->id,
-            'department_id' => $this->department->id,
-            'assigned_at' => now(),
-            'status' => 'active',
-        ]);
-        $task->update(['status' => 'assigned']);
+        $this->assignTask($task, $this->attendant);
 
         // Other attendant tries to start
         $response = $this->actingAs($this->otherAttendant)
@@ -206,14 +216,15 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
                 'status' => 'in_progress',
             ], ['X-Property-ID' => $this->property->id]);
 
-        $response->assertStatus(500); // throws Exception: "Only the active assigned room attendant..."
+        $response->assertStatus(422);
         $this->assertEquals(TaskStatusEnum::Assigned, $task->fresh()->status);
 
         // Put task to in_progress to test complete attempt
-        $task->update([
-            'status' => 'in_progress',
-            'started_at' => now(),
-        ]);
+        app(HousekeepingCleaningInspectionReadinessLifecycleService::class)->changeCleaningTaskStatus(
+            $this->attendant,
+            $task->id,
+            TaskStatusEnum::InProgress,
+        );
 
         // Other attendant tries to complete
         $response = $this->actingAs($this->otherAttendant)
@@ -222,7 +233,7 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
                 'remarks' => 'Done',
             ], ['X-Property-ID' => $this->property->id]);
 
-        $response->assertStatus(500);
+        $response->assertStatus(422);
         $this->assertEquals(TaskStatusEnum::InProgress, $task->fresh()->status);
     }
 
@@ -233,18 +244,16 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             'room_id' => $this->room->id,
             'task_code' => 'HK-005',
             'title' => 'Departure Clean',
-            'status' => 'in_progress',
+            'status' => 'pending',
             'task_type' => 'checkout_cleaning',
-            'started_at' => now(),
         ]);
 
-        TaskAssignment::create([
-            'cleaning_task_id' => $task->id,
-            'user_id' => $this->attendant->id,
-            'department_id' => $this->department->id,
-            'assigned_at' => now(),
-            'status' => 'active',
-        ]);
+        $this->assignTask($task, $this->attendant);
+        app(HousekeepingCleaningInspectionReadinessLifecycleService::class)->changeCleaningTaskStatus(
+            $this->attendant,
+            $task->id,
+            TaskStatusEnum::InProgress,
+        );
 
         $response = $this->actingAs($this->attendant)
             ->postJson("/operations/cleaning-tasks/{$task->id}/status", [
@@ -280,18 +289,16 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             'room_id' => $this->room->id,
             'task_code' => 'HK-006',
             'title' => 'Departure Clean',
-            'status' => 'in_progress',
+            'status' => 'pending',
             'task_type' => 'checkout_cleaning',
-            'started_at' => now(),
         ]);
 
-        TaskAssignment::create([
-            'cleaning_task_id' => $task->id,
-            'user_id' => $this->attendant->id,
-            'department_id' => $this->department->id,
-            'assigned_at' => now(),
-            'status' => 'active',
-        ]);
+        $this->assignTask($task, $this->attendant);
+        app(HousekeepingCleaningInspectionReadinessLifecycleService::class)->changeCleaningTaskStatus(
+            $this->attendant,
+            $task->id,
+            TaskStatusEnum::InProgress,
+        );
 
         $response = $this->actingAs($this->attendant)
             ->postJson("/operations/cleaning-tasks/{$task->id}/status", [
@@ -299,7 +306,7 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
                 'remarks' => ' ', // empty note
             ], ['X-Property-ID' => $this->property->id]);
 
-        $response->assertStatus(500); // fails
+        $response->assertStatus(422);
         $this->assertEquals(TaskStatusEnum::InProgress, $task->fresh()->status);
     }
 
@@ -328,9 +335,17 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             'readiness_state' => 'waiting_inspection',
         ]);
 
+        $this->actingAs($this->supervisor)
+            ->postJson("/operations/inspections/{$inspection->id}/conduct", [], ['X-Property-ID' => $this->property->id])
+            ->assertOk();
+        $this->postJson("/operations/inspections/{$inspection->id}/pass-confirmation", [
+            'release_reason' => 'Excellent work.',
+            'password' => 'password',
+        ], ['X-Property-ID' => $this->property->id])->assertOk();
+
         $response = $this->actingAs($this->supervisor)
             ->postJson("/operations/inspections/{$inspection->id}/pass", [
-                'remarks' => 'Excellent work.',
+                'release_reason' => 'Excellent work.',
                 'inspection_severity' => 'minor',
             ], ['X-Property-ID' => $this->property->id]);
 
@@ -377,6 +392,10 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             'cleanliness_status' => 'clean',
             'readiness_state' => 'waiting_inspection',
         ]);
+
+        $this->actingAs($this->supervisor)
+            ->postJson("/operations/inspections/{$inspection->id}/conduct", [], ['X-Property-ID' => $this->property->id])
+            ->assertOk();
 
         $response = $this->actingAs($this->supervisor)
             ->postJson("/operations/inspections/{$inspection->id}/fail", [
@@ -430,18 +449,14 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             ->postJson("/operations/cleaning-tasks/{$task->id}/assign", [
                 'user_id' => $this->attendant->id,
                 'department_id' => $this->department->id,
+                'idempotency_key' => 'slice-cross-' . Str::uuid(),
+                'expected_active_assignment_id' => null,
             ], ['X-Property-ID' => $this->property->id]); // Try to assign otherProperty's task with property header
 
         $response->assertStatus(403); // Property context mismatch in controller/policy
 
         // 3. Cross-property status transition attempt
         $task->update(['status' => 'assigned']);
-        TaskAssignment::create([
-            'cleaning_task_id' => $task->id,
-            'user_id' => $this->attendant->id,
-            'department_id' => $this->department->id,
-            'status' => 'active',
-        ]);
 
         // Attempting transition using supervisor or attendant of property, but targeting otherProperty in header
         $response = $this->actingAs($this->supervisor)
@@ -486,7 +501,7 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
                 'remarks' => 'Sneaky bypass attempt',
             ], ['X-Property-ID' => $this->property->id]);
 
-        $response->assertStatus(422); // ValidationException: Invalid status transition
+        $response->assertStatus(422);
         $this->assertEquals(TaskStatusEnum::Pending, $task->fresh()->status);
     }
 
@@ -530,5 +545,17 @@ class HousekeepingTaskInspectionSliceOneTest extends TestCase
             ->has('rooms', 1)
             ->where('rooms.0.id', $this->room->id)
         );
+    }
+
+    private function assignTask(CleaningTask $task, User $attendant): TaskAssignment
+    {
+        return app(HousekeepingTaskDispatchAssignmentService::class)->assignOrReassign(
+            $this->supervisor,
+            $task->id,
+            $attendant->id,
+            $this->department->id,
+            'slice-fixture-' . Str::uuid(),
+            null,
+        )->assignment;
     }
 }

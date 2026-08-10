@@ -37,18 +37,8 @@ Route::middleware(['web', 'auth'])
         Route::post('cleaning-tasks/{task}/status', [CleaningTaskController::class, 'changeStatus'])
             ->name('cleaning-tasks.status');
 
-        Route::post('cleaning-tasks/{task}/assign', [CleaningTaskController::class, 'assign'])
+        Route::post('cleaning-tasks/{task}/assign', [TaskAssignmentController::class, 'assign'])
             ->name('cleaning-tasks.assign');
-
-        // ── Task Assignments (nested under task) ──────────────────────────
-        Route::prefix('cleaning-tasks/{task}/assignments')
-            ->name('cleaning-tasks.assignments.')
-            ->group(function () {
-                Route::post('/{assignment}/complete', [TaskAssignmentController::class, 'complete'])
-                    ->name('complete');
-                Route::post('/{assignment}/cancel', [TaskAssignmentController::class, 'cancel'])
-                    ->name('cancel');
-            });
 
         // ── Room Inspections ──────────────────────────────────────────────
         Route::resource('inspections', RoomInspectionController::class)

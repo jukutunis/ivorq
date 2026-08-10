@@ -26,24 +26,6 @@ class TaskAssignmentRepository
         return $assignment;
     }
 
-    public function create(array $data): TaskAssignment
-    {
-        return TaskAssignment::create($data)->fresh();
-    }
-
-    public function update(string $id, array $data): TaskAssignment
-    {
-        $assignment = $this->find($id);
-        $assignment->update($data);
-
-        return $assignment->fresh();
-    }
-
-    public function delete(string $id): bool
-    {
-        return $this->find($id)->delete();
-    }
-
     public function activeForTask(string $taskId): Collection
     {
         return TaskAssignment::where('cleaning_task_id', $taskId)

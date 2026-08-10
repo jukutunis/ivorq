@@ -6,7 +6,9 @@ use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Str;
 use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Department\Models\Department;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Housekeeping\Enums\HousekeepingRoomReadinessTransitionTypeEnum;
 use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
@@ -31,10 +33,19 @@ class HousekeepingCleaningInspectionReadinessIntegrationTest extends PostgresTes
     use RefreshDatabase;
     use CreatesHousekeepingRoomReadinessData;
 
+    private Department $assignmentDepartment;
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->setUpHousekeepingRoomReadinessFixture();
+        $this->assignmentDepartment = Department::create([
+            'property_id' => $this->property->id,
+            'name' => 'Package 13 Housekeeping',
+            'code' => 'P13' . Str::upper(Str::random(5)),
+            'is_active' => true,
+        ]);
+        $this->housekeepingActor->update(['department_id' => $this->assignmentDepartment->id]);
 
         foreach ([
             'housekeeping.task.view',
@@ -369,10 +380,10 @@ class HousekeepingCleaningInspectionReadinessIntegrationTest extends PostgresTes
         $this->hkAttachProperty($policyOnly, $this->property);
         $policyOnly->givePermissionTo(['housekeeping.task.edit', 'housekeeping.task.start', 'housekeeping.task.complete']);
 
-        [, $assigned] = $this->assignedCheckoutTask('P13-AUTH-3');
-        TaskAssignment::where('cleaning_task_id', $assigned->id)->update(['user_id' => $policyOnly->id]);
-        [$room, $inProgress] = $this->startedCheckoutTask('P13-AUTH-4');
-        TaskAssignment::where('cleaning_task_id', $inProgress->id)->update(['user_id' => $policyOnly->id]);
+        [, $assigned] = $this->assignedCheckoutTask('P13-AUTH-3', $policyOnly);
+        [$room, $inProgress] = $this->assignedCheckoutTask('P13-AUTH-4', $policyOnly);
+        $inProgress->update(['status' => TaskStatusEnum::InProgress, 'started_at' => now()]);
+        DB::table('rooms')->where('id', $room->id)->update(['readiness_state' => 'cleaning']);
         $before = $this->lifecycleCounts();
 
         foreach ([
@@ -494,8 +505,10 @@ class HousekeepingCleaningInspectionReadinessIntegrationTest extends PostgresTes
     }
 
     /** @return array{0: Room, 1: CleaningTask} */
-    private function assignedCheckoutTask(string $roomNumber): array
+    private function assignedCheckoutTask(string $roomNumber, ?User $assignee = null): array
     {
+        $assignee ??= $this->housekeepingActor;
+        $assignee->update(['department_id' => $this->assignmentDepartment->id]);
         $room = Room::findOrFail($this->hkDirtyRoom($this->property, $roomNumber));
         $task = CleaningTask::create([
             'property_id' => $this->property->id,
@@ -507,20 +520,29 @@ class HousekeepingCleaningInspectionReadinessIntegrationTest extends PostgresTes
             'priority' => 'normal',
         ]);
         TaskAssignment::create([
+            'property_id' => $this->property->id,
             'cleaning_task_id' => $task->id,
-            'user_id' => $this->housekeepingActor->id,
+            'user_id' => $assignee->id,
+            'attendant_id' => $assignee->id,
+            'department_id' => $this->assignmentDepartment->id,
             'status' => 'active',
             'assigned_at' => now(),
+            'assigned_by' => $assignee->id,
+            'assignment_action' => 'initial',
+            'idempotency_key' => 'p13-fixture-' . Str::uuid(),
+            'source_hash' => hash('sha256', 'p13-fixture-' . $task->id . '-' . $assignee->id),
+            'evidence_version' => 'housekeeping-assignment-v1',
         ]);
 
         return [$room, $task];
     }
 
     /** @return array{0: Room, 1: CleaningTask} */
-    private function startedCheckoutTask(string $roomNumber): array
+    private function startedCheckoutTask(string $roomNumber, ?User $assignee = null): array
     {
-        [$room, $task] = $this->assignedCheckoutTask($roomNumber);
-        $this->lifecycle()->changeCleaningTaskStatus($this->housekeepingActor, $task->id, TaskStatusEnum::InProgress);
+        $assignee ??= $this->housekeepingActor;
+        [$room, $task] = $this->assignedCheckoutTask($roomNumber, $assignee);
+        $this->lifecycle()->changeCleaningTaskStatus($assignee, $task->id, TaskStatusEnum::InProgress);
 
         return [$room->fresh(), $task->fresh()];
     }

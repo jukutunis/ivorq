@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Department\Models\Department;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
@@ -95,6 +96,11 @@ try {
     $attendant = User::create(['name' => 'P13 Attendant', 'email' => 'p13-attendant-' . Str::lower(Str::random(6)) . '@example.test', 'password' => Hash::make('password'), 'is_active' => true]);
     $attendantB = User::create(['name' => 'P13 Attendant B', 'email' => 'p13-attendant-b-' . Str::lower(Str::random(6)) . '@example.test', 'password' => Hash::make('password'), 'is_active' => true]);
     $inspector = User::create(['name' => 'P13 Inspector', 'email' => 'p13-inspector-' . Str::lower(Str::random(6)) . '@example.test', 'password' => Hash::make('password'), 'is_active' => true]);
+    $departmentA = Department::create(['property_id' => $propertyA->id, 'name' => 'P13 Housekeeping A', 'code' => 'P13A' . Str::upper(Str::random(4)), 'is_active' => true]);
+    $departmentB = Department::create(['property_id' => $propertyB->id, 'name' => 'P13 Housekeeping B', 'code' => 'P13B' . Str::upper(Str::random(4)), 'is_active' => true]);
+    $attendant->update(['department_id' => $departmentA->id]);
+    $inspector->update(['department_id' => $departmentA->id]);
+    $attendantB->update(['department_id' => $departmentB->id]);
     $stage = 'fixture_memberships';
     foreach ([$attendant, $inspector] as $user) {
         $user->properties()->attach($propertyA->id, ['is_default' => true, 'status' => 'active', 'joined_at' => now()]);
@@ -143,8 +149,10 @@ try {
         $taskId = (string) Str::ulid();
         $roomReadiness = $state === 'assigned' ? 'waiting_cleaning' : 'cleaning';
         DB::table('rooms')->insert(['id' => $roomId, 'property_id' => $property->id, 'room_number' => 'C' . Str::upper(Str::random(5)), 'room_type' => 'standard', 'cleanliness_status' => 'dirty', 'readiness_state' => $roomReadiness, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
-        DB::table('cleaning_tasks')->insert(['id' => $taskId, 'property_id' => $property->id, 'room_id' => $roomId, 'task_code' => 'C-' . Str::upper(Str::random(6)), 'task_type' => 'checkout_cleaning', 'status' => $state, 'priority' => 'normal', 'credits' => 1, 'started_at' => $state === 'in_progress' ? now() : null, 'created_at' => now(), 'updated_at' => now()]);
-        DB::table('housekeeping_task_assignments')->insert(['id' => (string) Str::ulid(), 'cleaning_task_id' => $taskId, 'user_id' => $actor->id, 'status' => 'active', 'assigned_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+        DB::transaction(function () use ($property, $actor, $state, $roomId, $taskId): void {
+            DB::table('cleaning_tasks')->insert(['id' => $taskId, 'property_id' => $property->id, 'room_id' => $roomId, 'task_code' => 'C-' . Str::upper(Str::random(6)), 'task_type' => 'checkout_cleaning', 'status' => $state, 'priority' => 'normal', 'credits' => 1, 'started_at' => $state === 'in_progress' ? now() : null, 'created_at' => now(), 'updated_at' => now()]);
+            DB::table('housekeeping_task_assignments')->insert(['id' => (string) Str::ulid(), 'property_id' => $property->id, 'cleaning_task_id' => $taskId, 'user_id' => $actor->id, 'attendant_id' => $actor->id, 'department_id' => $actor->department_id, 'status' => 'active', 'assigned_at' => now(), 'assigned_by' => $actor->id, 'assignment_action' => 'initial', 'idempotency_key' => 'p13-concurrency-' . Str::uuid(), 'source_hash' => hash('sha256', 'p13-concurrency-' . $taskId), 'evidence_version' => 'housekeeping-assignment-v1', 'created_at' => now(), 'updated_at' => now()]);
+        });
 
         return ['company_id' => $property->company_id, 'property_id' => $property->id, 'actor_id' => $actor->id, 'room_id' => $roomId, 'task_id' => $taskId];
     };
