@@ -53,15 +53,19 @@ class HousekeepingControlledDispatchAssignmentIsolatedConcurrencyProofTest exten
         $this->assertEqualsCanonicalizing(['REASSIGNED', 'CONTROLLED_REJECTION'], [$d['worker_a']['outcome'], $d['worker_b']['outcome']]);
 
         $e = $result['scenarios']['start_vs_reassign'];
+        $outcomes = [$e['worker_a']['outcome'], $e['worker_b']['outcome']];
+        $winnerByTaskStatus = [
+            'in_progress' => 'STARTED',
+            'assigned' => 'REASSIGNED',
+        ];
+
         $this->assertSame(1, $e['active_count']);
-        if ($e['task_status'] === 'in_progress') {
-            $this->assertContains('STARTED', [$e['worker_a']['outcome'], $e['worker_b']['outcome']]);
-            $this->assertContains('CONTROLLED_REJECTION', [$e['worker_a']['outcome'], $e['worker_b']['outcome']]);
-        } else {
-            $this->assertSame('assigned', $e['task_status']);
-            $this->assertContains('REASSIGNED', [$e['worker_a']['outcome'], $e['worker_b']['outcome']]);
-            $this->assertContains('CONTROLLED_REJECTION', [$e['worker_a']['outcome'], $e['worker_b']['outcome']]);
-        }
+        $this->assertNotNull($e['active_user_id']);
+        $this->assertArrayHasKey($e['task_status'], $winnerByTaskStatus);
+        $this->assertEqualsCanonicalizing(
+            [$winnerByTaskStatus[$e['task_status']], 'CONTROLLED_REJECTION'],
+            $outcomes
+        );
 
         $f = $result['scenarios']['response_loss'];
         $this->assertSame(1, $f['active_count']);
