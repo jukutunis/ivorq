@@ -2,14 +2,19 @@
 
 namespace Tests\Feature\Operations\Concerns;
 
+use Illuminate\Support\Str;
 use Modules\Foundation\Department\Models\Department;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Housekeeping\Models\CleaningTask;
+use Modules\Operations\Housekeeping\Models\TaskAssignment;
+use Modules\Operations\Housekeeping\Services\HousekeepingTaskDispatchAssignmentService;
 use Modules\Operations\Zoning\Enums\ZoneAssignmentStatusEnum;
 use Modules\Operations\Zoning\Enums\ZoneStatusEnum;
 use Modules\Operations\Zoning\Models\Zone;
 use Modules\Operations\Zoning\Models\ZoneAssignment;
 use Modules\Operations\Zoning\Models\ZoneTemplate;
+use Modules\Foundation\Authorization\Models\Permission;
 use Tests\Feature\Foundation\Concerns\CreatesFoundationData;
 
 trait CreatesOperationsData
@@ -73,5 +78,30 @@ trait CreatesOperationsData
     protected function createManager(Property $property, array $overrides = []): User
     {
         return $this->createUser($property, 'general-manager', $overrides);
+    }
+
+    protected function dispatchHousekeepingTask(
+        CleaningTask $task,
+        User $actor,
+        Department $department,
+        ?User $attendant = null,
+    ): TaskAssignment {
+        $attendant ??= $actor;
+        setPermissionsTeamId($task->property_id);
+        Permission::firstOrCreate([
+            'name' => 'housekeeping.task.assign',
+            'guard_name' => 'web',
+        ]);
+        $actor->givePermissionTo('housekeeping.task.assign');
+        $attendant->update(['department_id' => $department->id]);
+
+        return app(HousekeepingTaskDispatchAssignmentService::class)->assignOrReassign(
+            $actor,
+            $task->id,
+            $attendant->id,
+            $department->id,
+            'feature-test-' . Str::uuid(),
+            null,
+        )->assignment;
     }
 }

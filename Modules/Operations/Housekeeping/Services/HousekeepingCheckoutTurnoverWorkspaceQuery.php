@@ -6,6 +6,9 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\Housekeeping\Models\CleaningTask;
+use Spatie\Permission\Exceptions\PermissionDoesNotExist;
 
 class HousekeepingCheckoutTurnoverWorkspaceQuery
 {
@@ -13,12 +16,14 @@ class HousekeepingCheckoutTurnoverWorkspaceQuery
 
     private const REVIEW_MARKER = 'HK_CHECKOUT_TURNOVER_EVIDENCE_REVIEW_REQUIRED';
 
+    public function __construct(private readonly HousekeepingAttendantWorkloadQuery $workload) {}
+
     /**
      * @param array<string, mixed> $filters
      * @param array{room: bool, cleaning_task: bool, room_readiness: bool} $navigation
      * @return array<string, mixed>
      */
-    public function forProperty(string $propertyId, array $filters, array $navigation): array
+    public function forProperty(string $propertyId, array $filters, array $navigation, ?User $actor = null): array
     {
         $rows = DB::query()->fromSub($this->classifiedRows($propertyId), 'turnovers');
 
@@ -74,7 +79,9 @@ class HousekeepingCheckoutTurnoverWorkspaceQuery
                 ->where('handoff_id', $filters['selected'])
                 ->first();
 
-            $selected = $selectedRow === null ? null : $this->safeRow($selectedRow, $navigation);
+            $selected = $selectedRow === null
+                ? null
+                : $this->assignmentDetail($propertyId, $this->safeRow($selectedRow, $navigation), $actor);
         }
 
         return [
@@ -161,6 +168,7 @@ class HousekeepingCheckoutTurnoverWorkspaceQuery
                 'task.task_code as cleaning_task_code',
                 'task.status as task_status',
                 'task.priority as task_priority',
+                'task.started_at as task_started_at',
                 'transition.id as readiness_transition_id',
                 'transition.transition_type as readiness_transition_type',
                 'room.readiness_state',
@@ -306,6 +314,7 @@ class HousekeepingCheckoutTurnoverWorkspaceQuery
             'cleaning_task_code' => $this->nullableString($row->cleaning_task_code),
             'task_status' => $this->nullableString($row->task_status),
             'task_priority' => $this->nullableString($row->task_priority),
+            'task_started_at' => $this->timestamp($row->task_started_at),
             'readiness_transition_id' => $this->nullableString($row->readiness_transition_id),
             'readiness_transition_type' => $this->nullableString($row->readiness_transition_type),
             'readiness_state' => $this->nullableString($row->readiness_state),
@@ -347,6 +356,171 @@ class HousekeepingCheckoutTurnoverWorkspaceQuery
         }
 
         return CarbonImmutable::parse((string) $value, 'UTC')->utc()->toISOString();
+    }
+
+    /**
+     * @param array<string, mixed> $turnover
+     * @return array<string, mixed>
+     */
+    private function assignmentDetail(string $propertyId, array $turnover, ?User $actor): array
+    {
+        $turnover['active_assignment'] = null;
+        $turnover['assignment_history_summary'] = [
+            'total' => 0,
+            'reassigned' => 0,
+            'completed' => 0,
+            'cancelled' => 0,
+        ];
+        $turnover['assignment_actions'] = [
+            'can_assign' => false,
+            'can_reassign' => false,
+            'assignment_blockers' => [],
+        ];
+        $turnover['eligible_attendants'] = [];
+        $turnover['attendant_workload'] = [];
+
+        if ($turnover['cleaning_task_id'] === null) {
+            $turnover['assignment_actions']['assignment_blockers'] = ['TASK_NOT_AVAILABLE'];
+
+            return $turnover;
+        }
+
+        $task = CleaningTask::withoutGlobalScopes()
+            ->whereKey($turnover['cleaning_task_id'])
+            ->where('property_id', $propertyId)
+            ->whereNull('deleted_at')
+            ->first();
+        if (! $task) {
+            $turnover['assignment_actions']['assignment_blockers'] = ['TASK_NOT_AVAILABLE'];
+
+            return $turnover;
+        }
+
+        $assignments = DB::table('housekeeping_task_assignments as assignment')
+            ->leftJoin('property_user as assignment_membership', function (JoinClause $join): void {
+                $join->on('assignment_membership.user_id', '=', 'assignment.user_id')
+                    ->on('assignment_membership.property_id', '=', 'assignment.property_id')
+                    ->where('assignment_membership.status', '=', 'active');
+            })
+            ->leftJoin('users as users', function (JoinClause $join): void {
+                $join->on('users.id', '=', 'assignment_membership.user_id')
+                    ->on('users.department_id', '=', 'assignment.department_id')
+                    ->where('users.is_active', '=', true)
+                    ->whereNull('users.deleted_at');
+            })
+            ->leftJoin('departments as department', function (JoinClause $join): void {
+                $join->on('department.id', '=', 'assignment.department_id')
+                    ->on('department.property_id', '=', 'assignment.property_id')
+                    ->where('department.is_active', '=', true)
+                    ->whereNull('department.deleted_at');
+            })
+            ->where('assignment.property_id', $propertyId)
+            ->where('assignment.cleaning_task_id', $task->id)
+            ->whereNull('assignment.deleted_at')
+            ->orderByDesc('assignment.assigned_at')
+            ->orderByDesc('assignment.id')
+            ->get([
+                'assignment.id',
+                'assignment.user_id',
+                'assignment_membership.user_id as eligible_user_id',
+                'users.name as user_name',
+                'assignment.department_id',
+                'department.name as department_name',
+                'assignment.status',
+                'assignment.assigned_at',
+                'assignment.previous_assignment_id',
+                'assignment.closed_at',
+                'assignment.closure_reason',
+            ]);
+        $active = $assignments->where('status', 'active');
+        $activeEvidenceValid = $active->count() === 1
+            && $active->first()->eligible_user_id !== null
+            && $active->first()->department_name !== null;
+        if ($activeEvidenceValid) {
+            $row = $active->first();
+            $turnover['active_assignment'] = [
+                'assignment_id' => (string) $row->id,
+                'user_id' => (string) $row->user_id,
+                'user_name' => $this->nullableString($row->user_name),
+                'department_id' => $this->nullableString($row->department_id),
+                'department_name' => $this->nullableString($row->department_name),
+                'assignment_status' => (string) $row->status,
+                'previous_assignment_id' => $this->nullableString($row->previous_assignment_id),
+                'assigned_at' => $this->timestamp($row->assigned_at),
+            ];
+        }
+        $turnover['assignment_history_summary'] = [
+            'total' => $assignments->count(),
+            'reassigned' => $assignments
+                ->where('status', 'cancelled')
+                ->where('closure_reason', 'reassigned')
+                ->count(),
+            'completed' => $assignments->where('status', 'completed')->count(),
+            'cancelled' => $assignments->where('status', 'cancelled')->count(),
+        ];
+
+        $authorized = $actor !== null
+            && $this->hasAssignmentPermission($actor)
+            && $actor->can('assign', $task)
+            && ($actor->isSuperAdmin() || DB::table('property_user')
+                ->where('property_id', $propertyId)
+                ->where('user_id', $actor->id)
+                ->where('status', 'active')
+                ->exists());
+        if (! $authorized) {
+            $turnover['assignment_actions']['assignment_blockers'] = ['ASSIGNMENT_PERMISSION_REQUIRED'];
+
+            return $turnover;
+        }
+        if ($active->isNotEmpty() && ! $activeEvidenceValid) {
+            $turnover['assignment_actions']['assignment_blockers'] = ['ASSIGNMENT_EVIDENCE_REVIEW_REQUIRED'];
+
+            return $turnover;
+        }
+        if ($turnover['operational_state'] === 'review_required') {
+            $turnover['assignment_actions']['assignment_blockers'] = ['EVIDENCE_REVIEW_REQUIRED'];
+
+            return $turnover;
+        }
+
+        $status = $task->status instanceof \BackedEnum ? $task->status->value : (string) $task->status;
+        $blockers = [];
+        if ($status === 'pending' && $active->isEmpty()) {
+            $turnover['assignment_actions']['can_assign'] = true;
+        } elseif ($status === 'assigned' && $task->started_at === null && $active->count() === 1) {
+            $turnover['assignment_actions']['can_reassign'] = true;
+        } elseif (in_array($status, ['completed', 'cancelled'], true)) {
+            $blockers[] = 'TASK_TERMINAL';
+        } elseif ($task->started_at !== null || $status === 'in_progress') {
+            $blockers[] = 'TASK_ALREADY_STARTED';
+        } elseif ($status === 'assigned' && $active->count() !== 1) {
+            $blockers[] = 'ACTIVE_ASSIGNMENT_MISSING';
+        } else {
+            $blockers[] = 'TASK_NOT_PENDING';
+        }
+        $turnover['assignment_actions']['assignment_blockers'] = $blockers;
+
+        if ($turnover['assignment_actions']['can_assign'] || $turnover['assignment_actions']['can_reassign']) {
+            $workload = $this->workload->forProperty($propertyId);
+            $turnover['attendant_workload'] = $workload;
+            $turnover['eligible_attendants'] = array_map(static fn (array $row): array => [
+                'user_id' => $row['user_id'],
+                'display_name' => $row['display_name'],
+                'department_id' => $row['department_id'],
+                'department_name' => $row['department_name'],
+            ], $workload);
+        }
+
+        return $turnover;
+    }
+
+    private function hasAssignmentPermission(User $actor): bool
+    {
+        try {
+            return $actor->hasPermissionTo(HousekeepingTaskDispatchAssignmentService::ASSIGN_PERMISSION);
+        } catch (PermissionDoesNotExist) {
+            return false;
+        }
     }
 
 }

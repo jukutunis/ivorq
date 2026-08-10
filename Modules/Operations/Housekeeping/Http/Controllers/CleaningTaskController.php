@@ -11,7 +11,6 @@ use Modules\Operations\Housekeeping\Enums\TaskStatusEnum;
 use Modules\Operations\Housekeeping\Enums\TaskTypeEnum;
 use Modules\Operations\Housekeeping\Http\Requests\ChangeCleaningTaskStatusRequest;
 use Modules\Operations\Housekeeping\Http\Requests\StoreCleaningTaskRequest;
-use Modules\Operations\Housekeeping\Http\Requests\StoreTaskAssignmentRequest;
 use Modules\Operations\Housekeeping\Http\Requests\UpdateCleaningTaskRequest;
 use Modules\Operations\Housekeeping\Http\Resources\CleaningTaskResource;
 use Modules\Operations\Housekeeping\Models\CleaningTask;
@@ -258,40 +257,4 @@ class CleaningTaskController extends Controller
         ]);
     }
 
-    public function assign(StoreTaskAssignmentRequest $request, string $task)
-    {
-        $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
-        setPermissionsTeamId($resolvedPropertyId);
-
-        $requestPropertyId = $request->header('X-Property-ID');
-        if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
-        }
-
-        if ($request->has('property_id') && $request->input('property_id') !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
-        }
-
-        $model = $this->taskRepository->find($task);
-        if ($model->property_id !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
-        }
-
-        $this->authorize('assign', $model);
-
-        $this->taskService->assign($task, array_merge($request->validated(), [
-            'assigned_by' => auth()->id(),
-        ]));
-
-        if ($request->wantsJson() || $request->ajax()) {
-            return response()->json([
-                'success' => true,
-                'message' => 'Task assigned successfully.',
-                'task' => new CleaningTaskResource($model->fresh(['room', 'assignments.user']))
-            ]);
-        }
-
-        return redirect()->route('operations.cleaning-tasks.show', $task)
-            ->with('success', 'Task assigned successfully.');
-    }
 }

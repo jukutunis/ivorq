@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Modules\Foundation\Department\Models\Department;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
@@ -17,6 +18,7 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
 {
     private const PREFIX = 'ivorq_testing_hk_p13_migration_';
     private const MIGRATION = 'Modules/Operations/Housekeeping/database/migrations/2026_08_02_000001_integrate_housekeeping_cleaning_inspection_readiness.php';
+    private const SUCCESSOR_MIGRATION = 'Modules/Operations/Housekeeping/database/migrations/2026_08_03_000001_control_housekeeping_task_assignments.php';
 
     public function test_disposable_postgresql_up_valid_sql_rejection_matrix_down_and_reapply(): void
     {
@@ -43,11 +45,14 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
             $this->assertMalformedRawSqlMatrix($graph);
 
             $migration = require base_path(self::MIGRATION);
+            $successor = require base_path(self::SUCCESSOR_MIGRATION);
+            $successor->down();
             $migration->down();
             $this->assertFalse(Schema::hasColumn('cleaning_tasks', 'rework_source_inspection_id'));
             $this->assertSame(0, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_room_inspections_lifecycle_guard_trigger'));
 
             $migration->up();
+            $successor->up();
             $this->assertPackageObjectsExist();
 
             $reapply = $this->sourceGraph('R');
@@ -93,6 +98,22 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
             'password' => bcrypt('password'),
             'is_active' => true,
         ]);
+        $department = Department::create([
+            'property_id' => $property->id,
+            'name' => 'P13 Migration Housekeeping',
+            'code' => 'P13' . Str::upper(Str::random(5)),
+            'is_active' => true,
+        ]);
+        $actor->update(['department_id' => $department->id]);
+        DB::table('property_user')->insert([
+            'property_id' => $property->id,
+            'user_id' => $actor->id,
+            'is_default' => true,
+            'status' => 'active',
+            'joined_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         $room = (string) Str::ulid();
         $samePropertyOtherRoom = (string) Str::ulid();
@@ -124,6 +145,7 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
             'same_property_other_room' => $samePropertyOtherRoom,
             'other_room' => $otherRoom,
             'actor' => $actor->id,
+            'department' => $department->id,
             'failed_task' => $failedTask,
             'passed_task' => $passedTask,
             'failed_inspection' => $failedInspection,
@@ -260,15 +282,36 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
         $property = $roomKey === 'other_room' ? $graph['other_property'] : $graph['property'];
         $room = $graph[$roomKey];
 
-        DB::table('cleaning_tasks')->insert([
-            'id' => $task, 'property_id' => $property, 'room_id' => $room, 'task_type' => $taskType,
-            'status' => $taskStatus, 'priority' => 'normal', 'credits' => 1, 'created_at' => now(), 'updated_at' => now(),
-        ]);
-        DB::table('room_inspections')->insert([
-            'id' => $inspection, 'property_id' => $property, 'room_id' => $room, 'cleaning_task_id' => $task,
-            'inspection_type' => $inspectionType, 'status' => $inspectionStatus,
-            'is_passed' => $inspectionStatus === 'passed', 'created_at' => now(), 'updated_at' => now(),
-        ]);
+        DB::transaction(function () use ($graph, $task, $inspection, $property, $room, $taskType, $taskStatus, $inspectionType, $inspectionStatus): void {
+            DB::table('cleaning_tasks')->insert([
+                'id' => $task, 'property_id' => $property, 'room_id' => $room, 'task_type' => $taskType,
+                'status' => $taskStatus, 'priority' => 'normal', 'credits' => 1, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            if (in_array($taskStatus, ['assigned', 'in_progress'], true)) {
+                DB::table('housekeeping_task_assignments')->insert([
+                    'id' => (string) Str::ulid(),
+                    'property_id' => $property,
+                    'cleaning_task_id' => $task,
+                    'user_id' => $graph['actor'],
+                    'attendant_id' => $graph['actor'],
+                    'department_id' => $graph['department'],
+                    'status' => 'active',
+                    'assigned_at' => now(),
+                    'assigned_by' => $graph['actor'],
+                    'assignment_action' => 'initial',
+                    'idempotency_key' => 'p13-migration-' . Str::uuid(),
+                    'source_hash' => hash('sha256', 'p13-migration-' . $task),
+                    'evidence_version' => 'housekeeping-assignment-v1',
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+            DB::table('room_inspections')->insert([
+                'id' => $inspection, 'property_id' => $property, 'room_id' => $room, 'cleaning_task_id' => $task,
+                'inspection_type' => $inspectionType, 'status' => $inspectionStatus,
+                'is_passed' => $inspectionStatus === 'passed', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        });
 
         return ['task' => $task, 'inspection' => $inspection];
     }

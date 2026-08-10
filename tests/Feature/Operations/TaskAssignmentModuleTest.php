@@ -5,10 +5,11 @@ namespace Tests\Feature\Operations;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Gate;
 use Modules\Operations\Housekeeping\Enums\AssignmentStatusEnum;
+use Modules\Operations\Housekeeping\Enums\TaskStatusEnum;
 use Modules\Operations\Housekeeping\Models\CleaningTask;
+use Modules\Operations\Housekeeping\Models\Room;
 use Modules\Operations\Housekeeping\Models\TaskAssignment;
 use Modules\Operations\Housekeeping\Services\CleaningTaskService;
-use Modules\Operations\Housekeeping\Services\TaskAssignmentService;
 use Shared\Services\CurrentPropertyService;
 use Tests\Feature\Operations\Concerns\CreatesOperationsData;
 use Tests\TestCase;
@@ -19,8 +20,17 @@ class TaskAssignmentModuleTest extends TestCase
 
     private function makeTask(string $propertyId, string $code): CleaningTask
     {
+        $room = Room::create([
+            'property_id' => $propertyId,
+            'room_number' => $code,
+            'room_type' => 'standard',
+            'cleanliness_status' => 'dirty',
+            'readiness_state' => 'waiting_cleaning',
+        ]);
+
         return CleaningTask::create([
             'property_id' => $propertyId,
+            'room_id' => $room->id,
             'task_code'   => $code,
             'title'       => "Task {$code}",
             'task_type'   => 'checkout_cleaning',
@@ -42,10 +52,7 @@ class TaskAssignmentModuleTest extends TestCase
         app(CurrentPropertyService::class)->setId($property->id);
 
         $task       = $this->makeTask($property->id, 'ASN-01');
-        $assignment = app(CleaningTaskService::class)->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
 
         $this->assertInstanceOf(TaskAssignment::class, $assignment);
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
@@ -71,12 +78,11 @@ class TaskAssignmentModuleTest extends TestCase
         app(CurrentPropertyService::class)->setId($property->id);
 
         $task       = $this->makeTask($property->id, 'ASN-02');
-        $assignment = app(CleaningTaskService::class)->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
-
-        $completed = app(TaskAssignmentService::class)->complete($assignment->id);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
+        $service = app(CleaningTaskService::class);
+        $service->changeStatus($task->id, TaskStatusEnum::InProgress, $admin->id);
+        $service->changeStatus($task->id, TaskStatusEnum::Completed, $admin->id, 'Assignment lifecycle completion test.');
+        $completed = $assignment->fresh();
 
         $this->assertSame(AssignmentStatusEnum::Completed, $completed->status);
         $this->assertNotNull($completed->completed_at);
@@ -99,12 +105,9 @@ class TaskAssignmentModuleTest extends TestCase
         app(CurrentPropertyService::class)->setId($property->id);
 
         $task       = $this->makeTask($property->id, 'ASN-03');
-        $assignment = app(CleaningTaskService::class)->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
-
-        $cancelled = app(TaskAssignmentService::class)->cancel($assignment->id);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
+        app(CleaningTaskService::class)->changeStatus($task->id, TaskStatusEnum::Cancelled, $admin->id);
+        $cancelled = $assignment->fresh();
 
         $this->assertSame(AssignmentStatusEnum::Cancelled, $cancelled->status);
         $this->assertDatabaseHas('housekeeping_task_assignments', [
@@ -120,6 +123,7 @@ class TaskAssignmentModuleTest extends TestCase
         $company   = $this->createCompany();
         $propertyA = $this->createProperty($company);
         $propertyB = $this->createProperty($company, ['code' => 'PB30']);
+        $adminA    = $this->createPropertyAdmin($propertyA);
         $adminB    = $this->createPropertyAdmin($propertyB);
         $deptA     = $this->createDepartment($propertyA);
 
@@ -127,16 +131,7 @@ class TaskAssignmentModuleTest extends TestCase
         app(CurrentPropertyService::class)->setId($propertyA->id);
 
         $task = $this->makeTask($propertyA->id, 'ASN-XP');
-        $task->update(['status' => 'assigned']);
-
-        $assignment = TaskAssignment::create([
-            'property_id'      => $propertyA->id,
-            'cleaning_task_id' => $task->id,
-            'user_id'          => $adminB->id,
-            'department_id'    => $deptA->id,
-            'assigned_at'      => now(),
-            'status'           => 'active',
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $adminA, $deptA);
 
         $this->actingAs($adminB);
         app(CurrentPropertyService::class)->setId($propertyB->id);

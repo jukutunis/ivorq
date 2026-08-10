@@ -28,7 +28,7 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
  * Canonical Package 13 orchestration boundary.
  *
  * Lock order for every integrated lifecycle mutation is:
- * Room -> CleaningTask -> RoomInspection -> TaskAssignment.
+ * Room -> CleaningTask -> active TaskAssignment -> RoomInspection.
  * The Room aggregate is always acquired first, matching the readiness transition
  * authority, and every operation revalidates all source relationships under lock.
  */
@@ -44,6 +44,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         private readonly HousekeepingRoomReadinessTransitionService $readiness,
         private readonly SensitiveActionConfirmationService $confirmation,
         private readonly CurrentPropertyService $currentProperty,
+        private readonly HousekeepingTaskDispatchAssignmentService $assignmentDispatch,
     ) {}
 
     public function changeCleaningTaskStatus(
@@ -400,6 +401,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
             $key = self::TASK_COMPLETE_KEY . $task->id;
 
             if ($task->status === TaskStatusEnum::Completed) {
+                $this->assignmentDispatch->assertCompletedReplay($actor, $task);
                 $transition = $this->readiness->submitInspection(
                     $actor,
                     $room->id,
@@ -435,6 +437,8 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
                 $task->id,
             );
 
+            $this->assignmentDispatch->completeForLifecycle($actor, $task);
+
             $task->update([
                 'status' => TaskStatusEnum::Completed,
                 'completed_at' => now(),
@@ -468,6 +472,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
                 throw new DomainException('An active or completed checkout-cleaning task cannot be cancelled through the generic status action.');
             }
 
+            $this->assignmentDispatch->cancelForLifecycle($actor, $task);
             $task->update(['status' => TaskStatusEnum::Cancelled]);
             event(new CleaningTaskCancelled($task->fresh(), null));
 
@@ -493,8 +498,12 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
                 throw new DomainException('Invalid Cleaning Task status transition.');
             }
 
-            if (in_array($target, [TaskStatusEnum::InProgress, TaskStatusEnum::Completed], true)) {
+            if ($target === TaskStatusEnum::InProgress) {
                 $this->lockActiveAssignment($task, $actor);
+            } elseif ($target === TaskStatusEnum::Completed) {
+                $this->assignmentDispatch->completeForLifecycle($actor, $task);
+            } elseif ($target === TaskStatusEnum::Cancelled) {
+                $this->assignmentDispatch->cancelForLifecycle($actor, $task);
             }
 
             $updates = ['status' => $target];

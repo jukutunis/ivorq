@@ -8,7 +8,6 @@ use Modules\Operations\Housekeeping\Models\CleaningChecklist;
 use Modules\Operations\Housekeeping\Models\CleaningTask;
 use Modules\Operations\Housekeeping\Models\Room;
 use Modules\Operations\Housekeeping\Models\RoomInspection;
-use Modules\Operations\Housekeeping\Models\TaskAssignment;
 use Shared\Services\CurrentPropertyService;
 use Tests\Feature\Operations\Concerns\CreatesOperationsData;
 use Tests\TestCase;
@@ -287,28 +286,24 @@ class HousekeepingPolicyTest extends TestCase
         $company    = $this->createCompany();
         $propertyA  = $this->createProperty($company);
         $propertyB  = $this->createProperty($company, ['code' => 'PB04']);
+        $adminA     = $this->createPropertyAdmin($propertyA);
         $adminB     = $this->createPropertyAdmin($propertyB);
         $department = $this->createDepartment($propertyA);
 
         $this->seedPermissionsAndRoles();
 
         app(CurrentPropertyService::class)->setId($propertyA->id);
+        $room = $this->makeRoom($propertyA->toArray());
         $task = CleaningTask::create([
             'property_id' => $propertyA->id,
+            'room_id'     => $room->id,
             'task_code'   => 'TSK-APol',
             'title'       => 'Policy Task',
             'task_type'   => 'custom',
-            'status'      => 'assigned',
+            'status'      => 'pending',
             'priority'    => 3,
         ]);
-        $assignment = TaskAssignment::create([
-            'property_id'      => $propertyA->id,
-            'cleaning_task_id' => $task->id,
-            'user_id'          => $adminB->id,
-            'department_id'    => $department->id,
-            'assigned_at'      => now(),
-            'status'           => 'active',
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $adminA, $department);
 
         $this->actingAs($adminB);
         app(CurrentPropertyService::class)->setId($propertyB->id);

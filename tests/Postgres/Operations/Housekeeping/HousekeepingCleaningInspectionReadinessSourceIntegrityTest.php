@@ -67,7 +67,7 @@ class HousekeepingCleaningInspectionReadinessSourceIntegrityTest extends TestCas
         foreach (['Http::', 'Guzzle', 'dispatch(', 'ShouldQueue', 'Schedule::', 'FrontDesk', 'GeneralCashier', 'NightAudit', 'PMS\\Models'] as $forbidden) {
             $this->assertStringNotContainsString($forbidden, $source);
         }
-        $this->assertStringContainsString('Room -> CleaningTask -> RoomInspection -> TaskAssignment', $source);
+        $this->assertStringContainsString('Room -> CleaningTask -> active TaskAssignment -> RoomInspection', $source);
         $this->assertStringContainsString('CurrentPropertyService', $source);
         $this->assertStringContainsString("where('property_id', \$propertyId)", $source);
     }

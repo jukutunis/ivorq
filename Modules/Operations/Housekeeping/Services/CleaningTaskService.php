@@ -3,7 +3,6 @@
 namespace Modules\Operations\Housekeeping\Services;
 
 use Modules\Operations\Housekeeping\Models\CleaningTask;
-use Modules\Operations\Housekeeping\Models\TaskAssignment;
 use Modules\Operations\Housekeeping\Models\Room;
 use Modules\Foundation\User\Models\User;
 
@@ -55,45 +54,6 @@ class CleaningTaskService
         $task = CleaningTask::create($data);
         return $task;
     }
-
-
-
-    public function assign(string $taskId, array $data): TaskAssignment
-    {
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($taskId, $data) {
-            $task = CleaningTask::findOrFail($taskId);
-
-            $currentPropertyId = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
-            if ($task->property_id !== $currentPropertyId) {
-                throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
-            }
-
-            if ($data['user_id'] ?? null) {
-                $attendant = \Modules\Foundation\User\Models\User::findOrFail($data['user_id']);
-                if (!$attendant->properties()->where('properties.id', $task->property_id)->exists()) {
-                    throw new \Exception("Attendant must belong to the same property context.");
-                }
-            }
-
-            $task->update(['status' => 'assigned']);
-
-            TaskAssignment::where('cleaning_task_id', $task->id)
-                ->where('status', 'active')
-                ->update(['status' => 'reassigned']);
-
-            $assignment = TaskAssignment::create([
-                'cleaning_task_id' => $taskId,
-                'user_id' => $data['user_id'] ?? null,
-                'department_id' => $data['department_id'] ?? null,
-                'assigned_at' => now(),
-                'status' => 'active',
-            ]);
-
-            event(new \Modules\Operations\Housekeeping\Events\CleaningTaskAssigned($task, $assignment));
-            return $assignment;
-        });
-    }
-
     public function changeStatus(string $taskId, $status, User|string|null $actorReference = null, ?string $notes = null): CleaningTask
     {
         $target = $status instanceof \Modules\Operations\Housekeeping\Enums\TaskStatusEnum

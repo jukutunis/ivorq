@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Operations;
 
+use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
 use Modules\Operations\Housekeeping\Enums\AssignmentStatusEnum;
@@ -260,19 +261,23 @@ class HousekeepingServiceTest extends TestCase
         app(CurrentPropertyService::class)->setId($property->id);
 
         $service = app(CleaningTaskService::class);
+        $room = app(RoomService::class)->create([
+            'property_id' => $property->id,
+            'room_number' => '602',
+            'room_type' => 'standard',
+        ]);
+        $room->update(['readiness_state' => 'waiting_cleaning']);
 
         $task = $service->create([
             'property_id' => $property->id,
+            'room_id' => $room->id,
             'task_code'   => 'TSK-002',
             'title'       => 'Deep Clean',
             'task_type'   => TaskTypeEnum::DeepCleaning->value,
             'priority'    => 2,
         ]);
 
-        $assignment = $service->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
 
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
 
@@ -311,10 +316,7 @@ class HousekeepingServiceTest extends TestCase
             'priority'    => 3,
         ]);
 
-        $assignment = $service->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
 
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
 
@@ -362,7 +364,7 @@ class HousekeepingServiceTest extends TestCase
         ]);
 
         // pending → in_progress skips assigned step — prohibited
-        $this->expectException(ValidationException::class);
+        $this->expectException(DomainException::class);
         $service->changeStatus($task->id, TaskStatusEnum::InProgress);
     }
 
@@ -379,19 +381,23 @@ class HousekeepingServiceTest extends TestCase
         app(CurrentPropertyService::class)->setId($property->id);
 
         $service = app(CleaningTaskService::class);
+        $room = app(RoomService::class)->create([
+            'property_id' => $property->id,
+            'room_number' => '605',
+            'room_type' => 'standard',
+        ]);
+        $room->update(['readiness_state' => 'waiting_cleaning']);
 
         $task = $service->create([
             'property_id' => $property->id,
+            'room_id' => $room->id,
             'task_code'   => 'TSK-005',
             'title'       => 'Assign Test',
             'task_type'   => TaskTypeEnum::CheckoutCleaning->value,
             'priority'    => 3,
         ]);
 
-        $assignment = $service->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
 
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
         $this->assertDatabaseHas('housekeeping_task_assignments', [
@@ -479,13 +485,26 @@ class HousekeepingServiceTest extends TestCase
         $this->actingAs($admin);
         app(CurrentPropertyService::class)->setId($property->id);
 
-        $taskService       = app(CleaningTaskService::class);
-        $assignmentService = app(TaskAssignmentService::class);
+        $taskService = app(CleaningTaskService::class);
+        $room = app(RoomService::class)->create([
+            'property_id' => $property->id,
+            'room_number' => 'ASN-001',
+            'room_type' => 'standard',
+        ]);
+        $room->update(['readiness_state' => 'waiting_cleaning']);
+        $task = $taskService->create([
+            'property_id' => $property->id,
+            'room_id' => $room->id,
+            'task_code' => 'ASN-001',
+            'title' => 'Test',
+            'task_type' => TaskTypeEnum::CheckoutCleaning->value,
+            'priority' => 3,
+        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
 
-        $task       = $taskService->create(['property_id' => $property->id, 'task_code' => 'ASN-001', 'title' => 'Test', 'task_type' => 'custom', 'priority' => 3]);
-        $assignment = $taskService->assign($task->id, ['user_id' => $admin->id, 'department_id' => $department->id]);
-
-        $completed = $assignmentService->complete($assignment->id);
+        $taskService->changeStatus($task->id, TaskStatusEnum::InProgress, $admin->id);
+        $taskService->changeStatus($task->id, TaskStatusEnum::Completed, $admin->id, 'Lifecycle closure test.');
+        $completed = $assignment->fresh();
         $this->assertSame(AssignmentStatusEnum::Completed, $completed->status);
         $this->assertNotNull($completed->completed_at);
     }

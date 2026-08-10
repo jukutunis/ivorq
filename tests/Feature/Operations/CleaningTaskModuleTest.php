@@ -4,7 +4,7 @@ namespace Tests\Feature\Operations;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Validation\ValidationException;
+use DomainException;
 use Modules\Operations\Housekeeping\Enums\AssignmentStatusEnum;
 use Modules\Operations\Housekeeping\Enums\RoomCleanlinessStatusEnum;
 use Modules\Operations\Housekeeping\Enums\TaskStatusEnum;
@@ -79,10 +79,7 @@ class CleaningTaskModuleTest extends TestCase
         $service = app(CleaningTaskService::class);
         $task    = $this->makeTask($property->toArray(), 'TSK-A01');
 
-        $assignment = $service->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
 
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
         $this->assertDatabaseHas('housekeeping_task_assignments', [
@@ -109,10 +106,7 @@ class CleaningTaskModuleTest extends TestCase
         $service = app(CleaningTaskService::class);
         $task    = $this->makeTask($property->toArray(), 'TSK-S01');
 
-        $assignment = $service->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
 
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
 
@@ -143,10 +137,7 @@ class CleaningTaskModuleTest extends TestCase
         $room->update(['readiness_state' => 'waiting_cleaning']);
         $task = $this->makeTask($property->toArray(), 'TSK-CP1', ['room_id' => $room->id]);
 
-        $assignment = $service->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
 
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
 
@@ -209,7 +200,7 @@ class CleaningTaskModuleTest extends TestCase
         $task    = $this->makeTask($property->toArray(), 'TSK-IV1');
 
         // pending → completed skips required steps
-        $this->expectException(ValidationException::class);
+        $this->expectException(DomainException::class);
         $service->changeStatus($task->id, TaskStatusEnum::Completed);
     }
 
@@ -234,10 +225,7 @@ class CleaningTaskModuleTest extends TestCase
         $room->update(['readiness_state' => 'waiting_cleaning']);
         $task = $this->makeTask($property->toArray(), 'TSK-CB1', ['room_id' => $room->id]);
 
-        $assignment = $service->assign($task->id, [
-            'user_id'       => $admin->id,
-            'department_id' => $department->id,
-        ]);
+        $assignment = $this->dispatchHousekeepingTask($task, $admin, $department);
 
         $this->assertSame(AssignmentStatusEnum::Active, $assignment->status);
 

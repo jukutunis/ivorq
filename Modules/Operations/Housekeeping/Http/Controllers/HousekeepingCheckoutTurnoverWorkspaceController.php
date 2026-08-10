@@ -53,6 +53,7 @@ class HousekeepingCheckoutTurnoverWorkspaceController extends Controller
                     HousekeepingRoomReadinessProjectionService::HOUSEKEEPING_VIEW_PERMISSION
                 ),
             ],
+            $request->user(),
         );
 
         if (($filters['selected'] ?? null) !== null && $projection['selected_turnover'] === null) {
