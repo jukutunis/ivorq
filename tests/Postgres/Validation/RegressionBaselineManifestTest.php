@@ -377,12 +377,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringNotContainsString('No CURRENT_TIMESTAMP database-clock checks in trigger', $baseline->provenance->note ?? '');
     }
 
-    public function test_housekeeping_room_readiness_baseline_includes_package_13_cleaning_inspection_integration(): void
+    public function test_housekeeping_room_readiness_baseline_includes_package_15_controlled_dispatch_assignment(): void
     {
         $baseline = $this->findBaseline('housekeeping-room-readiness-baseline');
         $this->assertNotNull($baseline, 'housekeeping-room-readiness-baseline must exist.');
         $this->assertEquals('active', $baseline->status ?? null);
-        $this->assertCount(18, $baseline->classes, 'Housekeeping baseline must have exactly 18 classes after Package 13.');
+        $this->assertCount(22, $baseline->classes, 'Housekeeping baseline must have exactly 22 classes after Package 15.');
 
         $this->assertSame([
             'HousekeepingCheckoutTurnoverIntakeFoundationTest',
@@ -392,22 +392,39 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest',
             'HousekeepingCheckoutTurnoverWorkspaceTest',
             'HousekeepingCheckoutTurnoverWorkspaceSourceIntegrityTest',
-        ], array_slice($baseline->classes, -11, 7));
+        ], array_slice($baseline->classes, -15, 7));
 
         $this->assertSame([
             'HousekeepingCleaningInspectionReadinessIntegrationTest',
             'HousekeepingCleaningInspectionReadinessSourceIntegrityTest',
             'HousekeepingCleaningInspectionReadinessIsolatedConcurrencyProofTest',
             'HousekeepingCleaningInspectionReadinessMigrationProofTest',
+        ], array_slice($baseline->classes, -8, 4));
+
+        $this->assertSame([
+            'HousekeepingControlledDispatchAssignmentTest',
+            'HousekeepingControlledDispatchAssignmentSourceIntegrityTest',
+            'HousekeepingControlledDispatchAssignmentMigrationProofTest',
+            'HousekeepingControlledDispatchAssignmentIsolatedConcurrencyProofTest',
         ], array_slice($baseline->classes, -4));
 
-        $this->assertEquals(147, $baseline->expected->tests ?? null);
-        $this->assertEquals(2236, $baseline->expected->assertions ?? null);
+        $this->assertEquals(164, $baseline->expected->tests ?? null);
+        $this->assertEquals(2733, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('bd4cf795d0a1221a714a0d45629f692ae66392c1', $baseline->provenance->sha ?? null);
-        $this->assertEquals('sprint-package-13-housekeeping-cleaning-inspection-readiness-integration', $baseline->provenance->branch ?? null);
+        $this->assertEquals('a50657e7c6472336939bcbaea5a21060b1a6fcc7', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-package-15-housekeeping-controlled-dispatch-assignment', $baseline->provenance->branch ?? null);
+        $this->assertStringContainsString('22 exact classes / 164 tests / 2733 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 15 exact classes passed 17 tests / 497 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('controlled initial assignment and controlled pre-start reassignment', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('exactly-one-active database enforcement', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('immutable assignment history', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('deterministic Property-scoped idempotency', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('current Property / attendant / Department validation', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('bounded Package 12 dispatch/workload projection', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 11/12/13 preserved', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 13 provenance history retained', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('18 exact classes / 147 tests / 2236 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 13 exact classes passed 31 tests / 334 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('resource-policy and readiness-permission rechecks', $baseline->provenance->note ?? '');
