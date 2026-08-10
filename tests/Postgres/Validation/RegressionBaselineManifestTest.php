@@ -296,7 +296,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ], $lastTwelve);
 
         $this->assertEquals(729, $baseline->expected->tests ?? null);
-        $this->assertEquals(5639, $baseline->expected->assertions ?? null);
+        $this->assertEquals(5615, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
@@ -314,17 +314,19 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             $baseline->provenance->branch ?? null
         );
 
-        $this->assertStringContainsString('Package 14 raised the approved package execution contract to Version 1.18', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('two inherited Front Desk source-integrity guards remained pinned to Version 1.17', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('correction changed only those source-integrity guards', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('exact Front Desk selection remains 68 classes', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('729 tests / 5639 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('+24 assertion increase from 5,615 to 5,639', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('successful execution continuing past the previously stale failing contract-version assertions', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('No Front Desk production source, route, UI, scheduler, external integration, or domain ownership changed', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Package 15 is not part of this measurement', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('No new Front Desk accepted debt', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Inventory Reversal inherited debt unchanged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Contract Version 1.18 is canonical and approved', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Two Front Desk source-integrity tests retained stale Version 1.17 guards', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Source commit b6dcdcee6c46c67252e658a16c114007e14b4e99 corrected only those guards to Version 1.18', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('valid isolated Front Desk measurement is 729 tests / 5615 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('exact selection remains 68 classes', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No Front Desk production source changed', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No Front Desk route, UI, ownership, scheduler, or integration changed', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No Front Desk accepted debt was added', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Inventory Reversal inherited debt remains unchanged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('prior 5639 assertion measurement was rejected', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('vendor junction resolving another worktree', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('rejected 5639 measurement is not canonical evidence', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 15 is excluded from this prerequisite measurement', $baseline->provenance->note ?? '');
 
         // Historical Package 13 / Package 11 / Package 9 provenance remains guarded.
         $this->assertStringContainsString('Package 13 remeasured the unchanged exact 68-class Front Desk baseline at 729 tests / 5615 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
