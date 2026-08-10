@@ -271,7 +271,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_contract_1_18_correction(): void
+    public function test_frontdesk_operational_baseline_matches_package_15_cross_baseline_remeasurement(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
@@ -296,12 +296,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ], $lastTwelve);
 
         $this->assertEquals(729, $baseline->expected->tests ?? null);
-        $this->assertEquals(5615, $baseline->expected->assertions ?? null);
+        $this->assertEquals(5639, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'b6dcdcee6c46c67252e658a16c114007e14b4e99',
+            '5e81983ab8443e5903349426c4835c356ba495fe',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -310,10 +310,16 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'Provenance SHA must be a full 40-character hex string.'
         );
         $this->assertEquals(
-            'fix-package-14-frontdesk-contract-1-18-regression',
+            'sprint-package-15-housekeeping-controlled-dispatch-assignment',
             $baseline->provenance->branch ?? null
         );
 
+        $this->assertStringContainsString('Package 15 re-anchor 5e81983ab8443e5903349426c4835c356ba495fe retains the canonical Contract Version 1.18 correction from PR #48', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('canonical isolated predecessor measurement of 729 tests / 5615 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest::test_no_housekeeping_checkout_handoff_or_outbox_exists', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('five eligible Housekeeping source files and removes one', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('net four-file expansion produces exactly 4 x 6 = 24 additional meaningful negative assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('post-Package-15 Front Desk measurement is 729 tests / 5639 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Contract Version 1.18 is canonical and approved', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Two Front Desk source-integrity tests retained stale Version 1.17 guards', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Source commit b6dcdcee6c46c67252e658a16c114007e14b4e99 corrected only those guards to Version 1.18', $baseline->provenance->note ?? '');

@@ -62,7 +62,7 @@ All baselines in this registry use `selection_policy: "exact-test-classes"`. The
 
 | ID | Status | Description |
 |----|--------|-------------|
-| `frontdesk-operational-baseline` | `active` | Front Desk operational tests through Package 9 checkout execution completion foundation, Package 11 FD-C2 assertion sync, and Contract 1.18 source-integrity synchronization - 68 classes, 729 tests / 5615 assertions |
+| `frontdesk-operational-baseline` | `active` | Front Desk operational tests through Package 9 checkout execution completion foundation, Package 11 FD-C2 assertion sync, Contract 1.18 source-integrity synchronization, and Package 15 deterministic Housekeeping source-scan cross-baseline remeasurement - 68 classes, 729 tests / 5639 assertions |
 | `housekeeping-room-readiness-baseline` | `active` | Housekeeping room readiness (HK-B1), Package 11 durable checkout-turnover intake, Package 12 read-only turnover workspace, Package 13 canonical Cleaning Task/Room Inspection readiness, and Package 15 controlled initial assignment/pre-start reassignment with database integrity, deterministic idempotency, immutable history, current-Property eligibility, audit evidence, and real-worker concurrency proof - 22 classes, 164 tests / 2733 assertions |
 | `engineering-availability-baseline` | `active` | Engineering room availability tests (ENG-A1) |
 | `inventory-avco-sensitive-baseline-v2-candidate` | `candidate` | Inventory / AVCO / Sensitive baseline v2 (replaces legacy 247/927) |
