@@ -187,9 +187,15 @@ Rules:
 
 The actor recorded as the completed cleaner in `CleaningTask.completed_by` must not claim or decide the same post-cleaning Inspection. One server-resolved non-cleaner claimant must own the `in_progress` Inspection and its pass/fail decision. Passing still requires `housekeeping.room-readiness.release-ready` and Sensitive Action Confirmation; failing still requires `housekeeping.room-readiness.clean`.
 
-Status: **PACKAGE_17_MAKER_CHECKER_RUNTIME_AUTHORIZED_NOT_IMPLEMENTED**
+Historical status: **DEFERRED_MAKER_CHECKER_POLICY**
 
-Contract Version 1.19 resolves the policy direction at the identity level without inventing a new global role model. The existing current-Property User identity and permissions are sufficient inputs, but runtime enforcement, durable claim evidence, and concurrency proof remain absent until Package 17 is independently implemented, reviewed, and merged. Package 16 changes governance records only and must not claim that segregation already exists.
+Current Package 16 determination:
+
+- **PACKAGE_17_INSPECTION_SEGREGATION_BOUNDARY_FROZEN**
+- **NOT_YET_RUNTIME_ENFORCED**
+- **PACKAGE_17_RUNTIME_LOCKED_PENDING_PACKAGE_16_MERGE**
+
+`DEFERRED_MAKER_CHECKER_POLICY` is retained as historical evidence. Contract Version 1.19 resolves only the future identity-level policy direction without inventing a new global role model: when Package 17 is implemented, the cleaner recorded in `CleaningTask.completed_by` must not claim or decide the same post-cleaning Inspection, and one claimed non-cleaner inspector must own its pass/fail decision. The existing current-Property User identity and permissions are sufficient future inputs, but runtime enforcement, durable claim evidence, and concurrency proof do not exist yet. Contract Version 1.19 does not itself authorize Package 17 runtime. Package 17 remains locked until Package 16 is independently reviewed, explicitly Owner-authorized, and merged into canonical; Package 17 then requires its own branch, Draft PR, independent review, Owner authorization, and merge. Package 16 changes governance records only and must not claim that segregation already exists.
 
 ### Sensitive Confirmation Policy
 
