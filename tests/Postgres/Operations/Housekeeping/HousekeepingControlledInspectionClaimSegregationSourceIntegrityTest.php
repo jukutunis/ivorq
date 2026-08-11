@@ -80,7 +80,8 @@ class HousekeepingControlledInspectionClaimSegregationSourceIntegrityTest extend
             'hk_p17_inspection_claim_guard_trigger',
             'HK_P17_INSPECTION_CLAIM_CLEANER_PROHIBITED',
             'HK_P17_INSPECTION_CLAIM_IMMUTABLE',
-            'PACKAGE_17_LEGACY_CLAIM_EVIDENCE_REVIEW_REQUIRED',
+            'HK_P17_INSPECTION_LEGACY_ADOPTION_PROHIBITED',
+            'HK_P17_INSPECTION_CLAIM_INITIAL_STATUS_INVALID',
             'housekeeping_task_assignments',
             'property_user',
         ] as $marker) {
@@ -104,6 +105,16 @@ class HousekeepingControlledInspectionClaimSegregationSourceIntegrityTest extend
         $this->assertStringNotContainsString('class InspectionAssignment', $newRuntime);
         $this->assertStringNotContainsString('claimed_by', $newRuntime);
         $this->assertStringNotContainsString('inspector_user_id', $newRuntime);
+        $this->assertStringNotContainsString('Package 18', $newRuntime);
+
+        $contract = $this->source('.agents/contracts/IVORQ-Package-Execution-Contract.md');
+        $this->assertStringContainsString('Version: 1.19', $contract);
+        $this->assertDirectoryExists(base_path('docs/architecture/adr'));
+        foreach (glob(base_path('docs/architecture/adr/ADR-*.md')) ?: [] as $adr) {
+            if (preg_match('/^ADR-(\d+)-/', basename($adr), $matches) === 1) {
+                $this->assertLessThanOrEqual(89, (int) $matches[1], 'Package 17 must not introduce a new ADR.');
+            }
+        }
     }
 
     /** @return array<string, string> */

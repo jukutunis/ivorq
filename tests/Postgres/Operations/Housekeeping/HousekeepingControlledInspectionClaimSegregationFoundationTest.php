@@ -13,6 +13,7 @@ use Modules\Operations\Housekeeping\Models\CleaningTask;
 use Modules\Operations\Housekeeping\Models\Room;
 use Modules\Operations\Housekeeping\Models\RoomInspection;
 use Modules\Operations\Housekeeping\Models\TaskAssignment;
+use Modules\Operations\Housekeeping\Services\HousekeepingCleaningInspectionReadinessLifecycleService;
 use Modules\Operations\Housekeeping\Services\HousekeepingInspectionClaimService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessTransitionService;
 use Shared\Services\CurrentPropertyService;
@@ -73,6 +74,100 @@ class HousekeepingControlledInspectionClaimSegregationFoundationTest extends Pos
         $this->assertSame(1, DB::table('audit_logs')->where('event', 'housekeeping_inspection_claimed')->where('auditable_id', $inspection->id)->count());
         $this->assertArrayNotHasKey('claim_source_hash', $replay->toArray());
         $this->assertArrayNotHasKey('claim_idempotency_key', $replay->toArray());
+    }
+
+    public function test_historical_terminal_lifecycle_preserves_legacy_evidence_and_enforces_maker_checker(): void
+    {
+        [, , $compatible] = $this->pendingInspection('P17-F-LEGACY-OK');
+        DB::table('room_inspections')->where('id', $compatible->id)->update([
+            'status' => 'in_progress',
+            'supervisor_id' => $this->housekeepingInspector->id,
+            'updated_at' => now(),
+        ]);
+
+        $failed = $this->lifecycle()->failInspection(
+            $this->housekeepingInspector,
+            $compatible->id,
+            'Historical non-cleaner supervisor records required re-cleaning.',
+        );
+
+        $this->assertSame(InspectionStatusEnum::Failed, $failed->status);
+        $this->assertSame($this->housekeepingInspector->id, $failed->supervisor_id);
+        foreach (['claimed_at', 'claim_idempotency_key', 'claim_source_hash', 'claim_evidence_version'] as $field) {
+            $this->assertNull($failed->getAttribute($field), "Historical terminal lifecycle must not fabricate {$field}.");
+        }
+
+        [, $cleanerTask, $prohibited] = $this->pendingInspection('P17-F-LEGACY-CLEANER');
+        DB::table('room_inspections')->where('id', $prohibited->id)->update([
+            'status' => 'in_progress',
+            'supervisor_id' => $cleanerTask->completed_by,
+            'updated_at' => now(),
+        ]);
+        $this->housekeepingActor->givePermissionTo(HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION);
+
+        try {
+            $this->lifecycle()->failInspection(
+                $this->housekeepingActor,
+                $prohibited->id,
+                'Historical cleaner must not decide the terminal outcome.',
+            );
+            $this->fail('Expected historical maker-checker rejection.');
+        } catch (DomainException $exception) {
+            $this->assertSame(HousekeepingInspectionClaimService::CLEANER_PROHIBITED, $exception->getMessage());
+            $this->assertSame(InspectionStatusEnum::InProgress, $prohibited->fresh()->status);
+            $this->assertNull($prohibited->fresh()->claim_evidence_version);
+        }
+    }
+
+    public function test_exact_claim_replay_remains_stable_after_terminal_failure(): void
+    {
+        [, , $inspection] = $this->pendingInspection('P17-F-TERM-REPLAY');
+        $key = 'p17-terminal-replay-' . Str::uuid();
+        $this->claims()->claim($this->housekeepingInspector, $inspection->id, $key);
+        $failed = $this->lifecycle()->failInspection(
+            $this->housekeepingInspector,
+            $inspection->id,
+            'Claimant records a source-bound terminal failure.',
+        );
+        $identityFields = [
+            'supervisor_id',
+            'claimed_at',
+            'claim_idempotency_key',
+            'claim_source_hash',
+            'claim_evidence_version',
+        ];
+        $identity = collect($identityFields)
+            ->mapWithKeys(fn (string $field) => [$field => $failed->getRawOriginal($field)])
+            ->all();
+
+        $replay = $this->claims()->claim($this->housekeepingInspector, $inspection->id, $key);
+
+        $this->assertTrue($replay->replayed);
+        $this->assertSame(InspectionStatusEnum::Failed, $replay->inspection->status);
+        $this->assertSame(
+            $identity,
+            collect($identityFields)
+                ->mapWithKeys(fn (string $field) => [$field => $replay->inspection->getRawOriginal($field)])
+                ->all(),
+        );
+        $this->assertSame(1, DB::table('audit_logs')->where('event', 'housekeeping_inspection_claimed')->where('auditable_id', $inspection->id)->count());
+
+        $otherInspector = $this->hkUser('P17 Terminal Replay Other', 'p17-terminal-replay-other@example.test');
+        $this->hkAttachProperty($otherInspector, $this->property);
+        $otherInspector->givePermissionTo(HousekeepingInspectionClaimService::CLAIM_PERMISSION);
+        foreach ([
+            fn () => $this->claims()->claim($this->housekeepingInspector, $inspection->id, 'p17-terminal-conflict-' . Str::uuid()),
+            fn () => $this->claims()->claim($otherInspector, $inspection->id, $key),
+        ] as $operation) {
+            try {
+                $operation();
+                $this->fail('Expected terminal claim replay conflict.');
+            } catch (DomainException $exception) {
+                $this->assertSame(HousekeepingInspectionClaimService::IDEMPOTENCY_CONFLICT, $exception->getMessage());
+                $this->assertSame(InspectionStatusEnum::Failed, $inspection->fresh()->status);
+                $this->assertSame(1, DB::table('audit_logs')->where('event', 'housekeeping_inspection_claimed')->where('auditable_id', $inspection->id)->count());
+            }
+        }
     }
 
     public function test_completed_cleaner_cannot_claim_own_task_and_creates_zero_claim_facts(): void
@@ -285,6 +380,11 @@ class HousekeepingControlledInspectionClaimSegregationFoundationTest extends Pos
     private function claims(): HousekeepingInspectionClaimService
     {
         return app(HousekeepingInspectionClaimService::class);
+    }
+
+    private function lifecycle(): HousekeepingCleaningInspectionReadinessLifecycleService
+    {
+        return app(HousekeepingCleaningInspectionReadinessLifecycleService::class);
     }
 
     /** @return array<string, int> */

@@ -74,6 +74,13 @@ class HousekeepingInspectionClaimService
         $this->authorize($actor, $inspection, $propertyId);
         $this->assertCompletedAssignmentEvidence($task, $completedAssignments);
 
+        if ($task->completed_by === null) {
+            throw new DomainException(self::SOURCE_CONFLICT);
+        }
+        if ($actor->id === $task->completed_by) {
+            throw new DomainException(self::CLEANER_PROHIBITED);
+        }
+
         // Historical Package 13 rows can predate durable Package 17 evidence.
         // They never become Package 17 claims: retain only their recorded
         // supervisor replay boundary and never fabricate claim evidence.
@@ -100,14 +107,8 @@ class HousekeepingInspectionClaimService
         ) {
             throw new DomainException(self::OWNERSHIP_REQUIRED);
         }
-        if ($task->completed_by === null) {
-            throw new DomainException(self::SOURCE_CONFLICT);
-        }
         if ($actor->id !== $inspection->supervisor_id) {
             throw new DomainException(self::OWNERSHIP_REQUIRED);
-        }
-        if ($actor->id === $task->completed_by) {
-            throw new DomainException(self::CLEANER_PROHIBITED);
         }
 
         $expectedHash = $this->sourceHash(
@@ -240,7 +241,11 @@ class HousekeepingInspectionClaimService
             || $existing->claim_evidence_version !== self::EVIDENCE_VERSION
             || $existing->claimed_at === null
             || ! hash_equals((string) $existing->claim_source_hash, $sourceHash)
-            || $existing->status !== InspectionStatusEnum::InProgress
+            || ! in_array($existing->status, [
+                InspectionStatusEnum::InProgress,
+                InspectionStatusEnum::Passed,
+                InspectionStatusEnum::Failed,
+            ], true)
         ) {
             throw new DomainException(self::IDEMPOTENCY_CONFLICT);
         }

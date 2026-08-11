@@ -20,24 +20,8 @@ return new class extends Migration
             return;
         }
 
-        DB::unprepared(<<<'SQL'
-            DO $$
-            BEGIN
-                IF EXISTS (
-                    SELECT 1
-                    FROM room_inspections
-                    WHERE inspection_type = 'post_cleaning'
-                      AND status <> 'pending'
-                      AND deleted_at IS NULL
-                ) THEN
-                    RAISE EXCEPTION 'PACKAGE_17_LEGACY_CLAIM_EVIDENCE_REVIEW_REQUIRED';
-                END IF;
-            END;
-            $$
-        SQL);
-
-        // Pending historical rows remain unclaimed. Package 17 never fabricates
-        // a key, hash, timestamp, or claimant for historical evidence.
+        // Historical Package 13 rows remain unclaimed. Package 17 never
+        // fabricates a key, hash, timestamp, version, or claimant for them.
         DB::statement(<<<'SQL'
             ALTER TABLE room_inspections
             ADD CONSTRAINT hk_p17_inspection_claim_evidence_check CHECK (
@@ -151,7 +135,9 @@ return new class extends Migration
                     RAISE EXCEPTION 'HK_P17_INSPECTION_CLAIM_INCOHERENT';
                 END IF;
 
-                IF OLD.claim_evidence_version IS NULL AND (
+                IF OLD.claim_evidence_version IS NULL
+                   AND NEW.claim_evidence_version = 1
+                   AND (
                     OLD.status <> 'pending'
                     OR OLD.supervisor_id IS NOT NULL
                     OR OLD.claimed_at IS NOT NULL
@@ -159,6 +145,12 @@ return new class extends Migration
                     OR OLD.claim_source_hash IS NOT NULL
                 ) THEN
                     RAISE EXCEPTION 'HK_P17_INSPECTION_LEGACY_ADOPTION_PROHIBITED';
+                END IF;
+
+                IF OLD.claim_evidence_version IS NULL
+                   AND NEW.claim_evidence_version = 1
+                   AND NEW.status <> 'in_progress' THEN
+                    RAISE EXCEPTION 'HK_P17_INSPECTION_CLAIM_INITIAL_STATUS_INVALID';
                 END IF;
 
                 SELECT task.* INTO source_task

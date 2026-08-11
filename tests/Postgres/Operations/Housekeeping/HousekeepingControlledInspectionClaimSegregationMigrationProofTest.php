@@ -19,7 +19,7 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
     private const PREFIX = 'ivorq_testing_hk_p17_migration_';
     private const MIGRATION = 'Modules/Operations/Housekeeping/database/migrations/2026_08_11_000001_control_housekeeping_inspection_claims.php';
 
-    public function test_disposable_postgresql_up_down_reapply_legacy_preflight_and_raw_integrity(): void
+    public function test_disposable_postgresql_up_down_reapply_legacy_compatibility_and_raw_integrity(): void
     {
         $originalDatabase = config('database.connections.pgsql.database');
         $database = self::PREFIX . strtolower((string) Str::ulid());
@@ -33,8 +33,35 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
             $migration->down();
 
             $graph = $this->graph();
+            $historical = [
+                'in_progress' => $this->additionalHistoricalInspection($graph, 'P17-M-LEGACY-IP', 'in_progress'),
+                'passed' => $this->additionalHistoricalInspection($graph, 'P17-M-LEGACY-PASS', 'passed'),
+                'failed' => $this->additionalHistoricalInspection($graph, 'P17-M-LEGACY-FAIL', 'failed'),
+            ];
+            $historicalSnapshots = collect($historical)
+                ->map(fn (array $source) => $this->historicalSnapshot($source['inspection']))
+                ->all();
+
             $migration->up();
             $this->assertPackageObjectsExist();
+            foreach ($historical as $status => $source) {
+                $this->assertSame($historicalSnapshots[$status], $this->historicalSnapshot($source['inspection']));
+                $this->assertClaimEvidenceNull($source['inspection']);
+            }
+
+            $legacyInProgress = $historical['in_progress'];
+            $legacyAdoptionHash = DB::scalar(
+                'SELECT hk_p17_inspection_claim_source_hash(?, ?, ?, ?, ?, ?, ?)',
+                [1, $graph['property'], $legacyInProgress['inspection'], $legacyInProgress['room'], $legacyInProgress['task'], $graph['cleaner'], $graph['claimant']],
+            );
+            $this->assertRejectedWithMarker(fn () => DB::table('room_inspections')->where('id', $legacyInProgress['inspection'])->update([
+                'claimed_at' => now(),
+                'claim_idempotency_key' => 'p17-legacy-adoption',
+                'claim_source_hash' => $legacyAdoptionHash,
+                'claim_evidence_version' => 1,
+            ]), 'historical in-progress adoption', 'HK_P17_INSPECTION_LEGACY_ADOPTION_PROHIBITED');
+            $this->assertSame($historicalSnapshots['in_progress'], $this->historicalSnapshot($legacyInProgress['inspection']));
+            $this->assertClaimEvidenceNull($legacyInProgress['inspection']);
 
             $hash = DB::scalar(
                 'SELECT hk_p17_inspection_claim_source_hash(?, ?, ?, ?, ?, ?, ?)',
@@ -50,6 +77,24 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
                 'updated_at' => now(),
             ]);
             $this->assertSame(1, DB::table('room_inspections')->where('id', $graph['inspection'])->value('claim_evidence_version'));
+
+            foreach (['passed', 'failed'] as $invalidInitialStatus) {
+                $source = $this->additionalPendingInspection($graph, 'P17-M-INITIAL-' . strtoupper($invalidInitialStatus));
+                $invalidHash = DB::scalar(
+                    'SELECT hk_p17_inspection_claim_source_hash(?, ?, ?, ?, ?, ?, ?)',
+                    [1, $graph['property'], $source['inspection'], $source['room'], $source['task'], $graph['cleaner'], $graph['claimant']],
+                );
+                $this->assertRejectedWithMarker(fn () => DB::table('room_inspections')->where('id', $source['inspection'])->update([
+                    'status' => $invalidInitialStatus,
+                    'supervisor_id' => $graph['claimant'],
+                    'claimed_at' => now(),
+                    'claim_idempotency_key' => 'p17-initial-' . $invalidInitialStatus,
+                    'claim_source_hash' => $invalidHash,
+                    'claim_evidence_version' => 1,
+                ]), "pending to {$invalidInitialStatus} initial claim", 'HK_P17_INSPECTION_CLAIM_INITIAL_STATUS_INVALID');
+                $this->assertSame('pending', DB::table('room_inspections')->where('id', $source['inspection'])->value('status'));
+                $this->assertClaimEvidenceNull($source['inspection']);
+            }
 
             foreach ([
                 'claimant mutation' => fn () => DB::table('room_inspections')->where('id', $graph['inspection'])->update(['supervisor_id' => $graph['cleaner']]),
@@ -98,21 +143,15 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
             $this->assertFalse(Schema::hasColumn('room_inspections', 'claim_source_hash'));
             $this->assertSame(0, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_p17_inspection_claim_guard_trigger'));
 
-            DB::table('room_inspections')->where('id', $graph['inspection'])->update(['status' => 'in_progress']);
-            try {
-                DB::transaction(fn () => $migration->up());
-                $this->fail('Expected legacy non-pending preflight rejection.');
-            } catch (QueryException $exception) {
-                $this->assertStringContainsString('PACKAGE_17_LEGACY_CLAIM_EVIDENCE_REVIEW_REQUIRED', $exception->getMessage());
-            }
-            $this->assertFalse(Schema::hasColumn('room_inspections', 'claim_source_hash'));
-
-            DB::table('room_inspections')->where('id', $graph['inspection'])->update([
-                'status' => 'pending',
-                'supervisor_id' => null,
-            ]);
             $migration->up();
             $this->assertPackageObjectsExist();
+            foreach ($historical as $status => $source) {
+                $this->assertSame($historicalSnapshots[$status], $this->historicalSnapshot($source['inspection']));
+                $this->assertClaimEvidenceNull($source['inspection']);
+            }
+            $this->assertSame('in_progress', DB::table('room_inspections')->where('id', $graph['inspection'])->value('status'));
+            $this->assertSame($graph['claimant'], DB::table('room_inspections')->where('id', $graph['inspection'])->value('supervisor_id'));
+            $this->assertClaimEvidenceNull($graph['inspection']);
         } finally {
             $this->switchDatabase($originalDatabase);
             $this->terminateConnections($admin, $database);
@@ -158,6 +197,51 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
         ];
     }
 
+    /** @return array{room: string, task: string, inspection: string} */
+    private function additionalHistoricalInspection(array $graph, string $key, string $status): array
+    {
+        $source = $this->additionalPendingInspection($graph, $key);
+        DB::table('room_inspections')->where('id', $source['inspection'])->update([
+            'status' => $status,
+            'supervisor_id' => $graph['claimant'],
+            'inspected_at' => in_array($status, ['passed', 'failed'], true) ? now() : null,
+            'remarks' => "Historical Package 13 {$status} evidence",
+            'is_passed' => $status === 'passed',
+            'updated_at' => now(),
+        ]);
+
+        return $source;
+    }
+
+    /** @return array<string, mixed> */
+    private function historicalSnapshot(string $inspectionId): array
+    {
+        return (array) DB::table('room_inspections')->where('id', $inspectionId)->first([
+            'property_id',
+            'room_id',
+            'cleaning_task_id',
+            'status',
+            'supervisor_id',
+            'inspected_at',
+            'remarks',
+            'is_passed',
+        ]);
+    }
+
+    private function assertClaimEvidenceNull(string $inspectionId): void
+    {
+        $row = DB::table('room_inspections')->where('id', $inspectionId)->first([
+            'claimed_at',
+            'claim_idempotency_key',
+            'claim_source_hash',
+            'claim_evidence_version',
+        ]);
+        $this->assertNotNull($row);
+        foreach ((array) $row as $field => $value) {
+            $this->assertNull($value, "Expected {$field} to remain null for {$inspectionId}.");
+        }
+    }
+
     private function pendingInspection(array $graph, string $key): string
     {
         $id = (string) Str::ulid();
@@ -198,6 +282,25 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
         }
         $this->assertNotNull($rejection, "Expected raw PostgreSQL rejection: {$label}");
         $this->assertTrue($rejection instanceof QueryException || $rejection instanceof \PDOException, "Unexpected rejection type for {$label}");
+    }
+
+    /** @param callable(): mixed $operation */
+    private function assertRejectedWithMarker(callable $operation, string $label, string $marker): void
+    {
+        $rejection = null;
+        try {
+            DB::beginTransaction();
+            $operation();
+            DB::commit();
+        } catch (\Throwable $exception) {
+            $rejection = $exception;
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+        }
+        $this->assertNotNull($rejection, "Expected raw PostgreSQL rejection: {$label}");
+        $this->assertTrue($rejection instanceof QueryException || $rejection instanceof \PDOException, "Unexpected rejection type for {$label}");
+        $this->assertStringContainsString($marker, $rejection->getMessage(), "Missing PostgreSQL marker for {$label}.");
     }
 
     private function assertPackageObjectsExist(): void
