@@ -30,8 +30,8 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 | Procurement and vendor commercial controls | Tracked | Architecture ready, implementation pending | ADR-006, ADR-032 |
 | Inventory, GRNI, Cost Ledger, Finance boundary | Active | Foundation ready | ADR-004, ADR-008 through ADR-015 |
 | Tax and multi-jurisdiction architecture | Tracked | Architecture ready, implementation pending | ADR-033 |
-| Night Audit and hospitality business-date foundation | Approved | Architecture activated on 2026-07-16; BD-A1 authoritative Property Business Date runtime, FD-B11 read integration, NA-A1 Night Audit run/active-lock foundation, and FD-B12 read-only Front Desk lock integration are accepted. FD-B13 is accepted and canonical. ADR-089 is Approved and canonical at `1682dec0fb7f654e77888a476b4ec55a1507610b`. NA-A2, GLF-E, GLF-E-S1, GC-A2, FD-C1, FD-C2, Package 8, and Package 9 remain accepted at their recorded canonical identities. Package 11 is accepted and merged through PR #44 at `39b673109109d28e140b67f3835696836401a9e4`; Package 12 is accepted and merged through PR #45 at `0fa4e14f0c791105d31964d9e4ebebd95fda0345`; Package 13 is accepted and merged through PR #46 at `9e21f2e3f40438beb6727d9b6c19af4feb53697a`. Package 14 is the current governance-only synchronization. | ADR-034, ADR-089 |
-| PMS readiness | Partial accepted foundations | PMS Guest Ledger, PMS Cashiering, Front Desk, General Cashier, the accepted checkout package train, and Housekeeping Packages 11 through 13 are accepted per Contract Version 1.18. Checkout execution is server-projected authority, not browser-granted authority. Package 11 owns durable downstream handoff consumption and turnover intake; Package 12 owns a read-only turnover workspace; Package 13 integrates the Cleaning Task and post-cleaning Inspection readiness lifecycle. Package 15 controlled Housekeeping dispatch and assignment requires a separate runtime branch and Draft PR after Package 14 merges. The FD-B13 verdict remains historical pre-Package-9 evidence: `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES`. | ADR-034, ADR-040, ADR-086, ADR-087, ADR-088, ADR-089 |
+| Night Audit and hospitality business-date foundation | Approved | Architecture activated on 2026-07-16; BD-A1 authoritative Property Business Date runtime, FD-B11 read integration, NA-A1 Night Audit run/active-lock foundation, and FD-B12 read-only Front Desk lock integration are accepted. FD-B13 is accepted and canonical. ADR-089 is Approved and canonical at `1682dec0fb7f654e77888a476b4ec55a1507610b`. NA-A2, GLF-E, GLF-E-S1, GC-A2, FD-C1, FD-C2, Package 8, and Package 9 remain accepted at their recorded canonical identities. Package 11 is accepted and merged through PR #44 at `39b673109109d28e140b67f3835696836401a9e4`; Package 12 is accepted and merged through PR #45 at `0fa4e14f0c791105d31964d9e4ebebd95fda0345`; Package 13 is accepted and merged through PR #46 at `9e21f2e3f40438beb6727d9b6c19af4feb53697a`; Package 14 is accepted and merged through PR #47 at `2a88895dd6ab9b14cd94ee7b928636068ecf5d6f`; Package 15 is accepted and merged through PR #49 at `29731a60afc16ab4b50291cc06b00e67011e92f7`. Package 16 is the current governance-only synchronization. | ADR-034, ADR-089 |
+| PMS readiness | Partial accepted foundations | PMS Guest Ledger, PMS Cashiering, Front Desk, General Cashier, the accepted checkout package train, and Housekeeping Packages 11 through 15 are accepted per Contract Version 1.19. Checkout execution is server-projected authority, not browser-granted authority. Package 11 owns durable downstream handoff consumption and turnover intake; Package 12 owns the turnover workspace; Package 13 integrates Cleaning Task and post-cleaning Inspection readiness; Package 15 adds controlled dispatch, assignment, pre-start reassignment, immutable assignment history, and attendant workload projection. Package 17 controlled Housekeeping Inspection claim and cleaner/inspector identity segregation requires a separate runtime branch and Draft PR after Package 16 merges. The FD-B13 verdict remains historical pre-Package-9 evidence: `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES`. | ADR-034, ADR-040, ADR-086, ADR-087, ADR-088, ADR-089 |
 | Guest Ledger, Folio, and hospitality financial subledger boundary | Active | Completed by ADR-088; durable ownership boundary established across PMS Guest Ledger, PMS Cashiering, General Cashier, Accounting, Finance, Front Desk, and Business Date / Night Audit. Implementation remains package-scoped and does not imply checkout execution. | ADR-088 |
 | Cost Control readiness | Planning | Separate Audit / Readiness Workstream | Not included in this ADR update |
 | HRIS readiness | Deferred | Deferred roadmap domain | Requires future PRDs |
@@ -93,7 +93,7 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 
 1. **Inventory Ledger posting governance references**: Treat ADR-035, ADR-036, and ADR-037 as existing Approved architecture decisions, not future ADR candidates. This ADR-034 activation package does not modify or reopen those decisions. (Source-truth synchronization)
 2. **Cost Control Readiness Audit**: Continue the separate Cost Control audit workstream. (Review/Audit)
-3. **PMS Core Module Specifications**: Treat this as historical planning language unless a future package reauthorizes the scope. Current source truth includes the accepted PMS, checkout, and Housekeeping foundations through Package 13 at canonical SHA `9e21f2e3f40438beb6727d9b6c19af4feb53697a`. Package 14 is the current governance synchronization package. Package 15 controlled Housekeeping dispatch and assignment is the proposed next runtime package and remains locked until Package 14 is independently reviewed, Owner-authorized, and merged. PR #22 language is historical. (PRD/Specification -> package-scoped delivery)
+3. **PMS Core Module Specifications**: Treat this as historical planning language unless a future package reauthorizes the scope. Current source truth includes the accepted PMS, checkout, and Housekeeping foundations through Package 15 at canonical SHA `29731a60afc16ab4b50291cc06b00e67011e92f7`. Package 16 is the current governance synchronization package. Package 17 controlled Housekeeping Inspection claim and segregation is the proposed next runtime package and remains locked until Package 16 is independently reviewed, Owner-authorized, and merged. PR #22 language is historical. (PRD/Specification -> package-scoped delivery)
 4. **Integration Specifications**: Draft technical specifications for external data exchange boundaries based on ADR-017 and ADR-031. (PRD/Specification)
 5. **Night Audit Checkpoint Catalog**: Draft the operational checklist and checkpoint specification for the Night Audit process based on ADR-034 only after the controlled Business Date / Night Audit package sequence authorizes that scope. NA-A1 does not authorize a checkpoint catalog. (Specification)
 
@@ -102,12 +102,12 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 **Finance Foundation**: Architecture Ready, Implementation Pending
 **Enterprise Security & Privacy**: Architecture Ready, Implementation Pending
 **Procurement & Tax Governance**: Architecture Ready, Implementation Pending
-**PMS Foundation**: Partial Accepted Foundations through Package 13 at canonical SHA `9e21f2e3f40438beb6727d9b6c19af4feb53697a`; Package 11 accepted through PR #44, Package 12 accepted through PR #45, Package 13 accepted through PR #46; Package 14 governance synchronization current; Package 15 runtime locked
+**PMS Foundation**: Partial Accepted Foundations through Package 15 at canonical SHA `29731a60afc16ab4b50291cc06b00e67011e92f7`; Package 11 accepted through PR #44, Package 12 accepted through PR #45, Package 13 accepted through PR #46, Package 14 accepted through PR #47, Package 15 accepted through PR #49; Package 16 governance synchronization current; Package 17 runtime locked
 **Cost Control**: Separate Audit / Readiness Workstream, Not Included in This ADR Update
 
 ADR-035, ADR-036, and ADR-037 already exist and are Approved. Their controlled Inventory Ledger posting governance decisions are no longer future ADR candidates. Implementation status remains distinct from architecture decision status, and this ADR-034 activation package does not modify or reopen those decisions.
 
-The current ADR portfolio is architecturally sufficient to continue controlled Finance, Security, Privacy, Procurement, Tax, and package-scoped PMS/Business Date work. It is not a claim of full PMS production readiness. The accepted package train is canonical through Package 13 at `9e21f2e3f40438beb6727d9b6c19af4feb53697a`. Package 11, Package 12, and Package 13 are accepted and merged through PRs #44, #45, and #46 respectively. ADR-086 remains Active and governs Housekeeping readiness ownership; ADR-040 governs the dispatch interaction layer. Controlled Housekeeping dispatch and assignment fits within those existing decisions, so no new ADR is required. Package 15 nevertheless requires a separate runtime branch, Draft PR, independent review, and Owner-authorized merge, and remains locked until Package 14 merges.
+The current ADR portfolio is architecturally sufficient to continue controlled Finance, Security, Privacy, Procurement, Tax, and package-scoped PMS/Business Date work. It is not a claim of full PMS production readiness. The accepted package train is canonical through Package 15 at `29731a60afc16ab4b50291cc06b00e67011e92f7`. Package 11 through Package 15 are accepted and merged through PRs #44, #45, #46, #47, and #49 respectively. ADR-086 remains Active and governs Housekeeping readiness, Inspection ownership, and maker-checker direction; ADR-040 governs the interaction layer. Controlled Housekeeping Inspection claim and cleaner/inspector identity segregation fit within those existing decisions, so no new ADR is required. Package 17 nevertheless requires a separate runtime branch, Draft PR, independent review, and Owner-authorized merge, and remains locked until Package 16 merges.
 
 ### FD-C1 Governance Synchronization (2026-07-23)
 
@@ -188,7 +188,7 @@ Contract Version 1.18. Canonical SHA: `9e21f2e3f40438beb6727d9b6c19af4feb53697a`
 - Package 15 remains locked until this Package 14 governance-only package is independently reviewed, Owner-authorized, and merged.
 - Package 14 changes governance records only; it does not authorize or implement Package 15 runtime.
 
-Current verdict:
+Historical Package 14 verdict:
 
 ```text
 PACKAGE_11_ACCEPTED_AND_MERGED
@@ -199,4 +199,33 @@ PACKAGE_15_CONTROLLED_DISPATCH_AND_ASSIGNMENT_REQUIRED
 NO_NEW_ADR_REQUIRED
 ADR_040_AND_ADR_086_REMAIN_GOVERNING
 PACKAGE_15_RUNTIME_REQUIRES_SEPARATE_DRAFT_PR
+```
+
+### Package 16 Post-Package-15 Housekeeping Governance Synchronization (2026-08-11)
+
+Contract Version 1.19. Canonical SHA: `29731a60afc16ab4b50291cc06b00e67011e92f7`.
+
+- Package 14 is accepted and canonical through PR #47 at merge commit `2a88895dd6ab9b14cd94ee7b928636068ecf5d6f`.
+- Package 15 is accepted and canonical through PR #49, feature head `fdf6036d70a85e9c7283f174c205fdef29bcbefe`, merge commit `29731a60afc16ab4b50291cc06b00e67011e92f7`.
+- Package 15 established controlled initial Cleaning Task assignment, pre-start reassignment, exactly one active assignment, immutable assignment history, deterministic Property-scoped idempotency, current-Property target eligibility, audit evidence, attendant workload projection, bounded turnover-workspace integration, PostgreSQL integrity, and real-worker concurrency proof.
+- The accepted Package 15 validation snapshot is 17 tests / 497 assertions for the exact suite; 22 classes / 164 tests / 2,733 assertions for the Housekeeping baseline; 68 classes / 729 tests / 5,639 assertions for the Front Desk baseline; 36 tests / 1,307 assertions for manifest validation; and 14 passed / 0 failed / 0 skipped with 1,306 tests / 11,994 assertions for the complete active registry.
+- Current source records the completed cleaner in `CleaningTask.completed_by` and the acting Inspection conductor in `RoomInspection.supervisor_id`.
+- Current Inspection conduct has no durable claim idempotency identity, source hash, immutable claim timestamp, or claim audit contract.
+- Current Inspection conduct does not reject the completed cleaner, and pass/fail actions do not require the actor to equal the recorded claimant.
+- Contract Version 1.19 resolves the deferred maker-checker policy direction at the identity level: the completed cleaner must not claim or decide the same post-cleaning Inspection, and the recorded non-cleaner claimant must own the terminal decision.
+- ADR-086 remains Active and sufficient for Housekeeping Inspection, room-readiness, and cleaner/inspector segregation ownership. ADR-040 remains sufficient for the future controlled claim interaction. No new ADR is required.
+- Package 17 requires its own runtime branch, Draft PR, focused PostgreSQL integrity and concurrency proof, independent review, and Owner-authorized merge.
+- Package 17 remains locked until this Package 16 governance-only package is independently reviewed, Owner-authorized, and merged.
+- Package 16 changes governance records only; it does not authorize or implement Package 17 runtime.
+
+Current verdict:
+
+```text
+PACKAGE_14_ACCEPTED_AND_MERGED
+PACKAGE_15_ACCEPTED_AND_MERGED
+PACKAGE_16_GOVERNANCE_SYNCHRONIZATION_AUTHORIZED
+PACKAGE_17_CONTROLLED_HOUSEKEEPING_INSPECTION_CLAIM_AND_SEGREGATION_REQUIRED
+NO_NEW_ADR_REQUIRED
+ADR_040_AND_ADR_086_REMAIN_GOVERNING
+PACKAGE_17_RUNTIME_REQUIRES_SEPARATE_DRAFT_PR
 ```
