@@ -7,17 +7,20 @@ use Modules\Foundation\User\Models\User;
 use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
 use Modules\Operations\Housekeeping\Models\RoomInspection;
 use Modules\Operations\Housekeeping\Repositories\InspectionRepository;
+use Modules\Operations\Housekeeping\ValueObjects\HousekeepingInspectionClaimResult;
 
 class InspectionService
 {
     public function __construct(
         private InspectionRepository $inspectionRepository,
         private HousekeepingCleaningInspectionReadinessLifecycleService $lifecycle,
+        private HousekeepingInspectionClaimService $claimService,
     ) {}
 
-    public function paginate(int $perPage = 15): LengthAwarePaginator
+    /** @param array{inspection_type?: string, status?: string} $filters */
+    public function paginate(int $perPage = 15, array $filters = []): LengthAwarePaginator
     {
-        return $this->inspectionRepository->paginate($perPage);
+        return $this->inspectionRepository->paginate($perPage, $filters);
     }
 
     public function find(string $id): RoomInspection
@@ -27,12 +30,33 @@ class InspectionService
 
     public function create(array $data): RoomInspection
     {
+        $type = $data['inspection_type'] ?? null;
+        $type = $type instanceof \BackedEnum ? $type->value : (string) $type;
+        if ($type === 'post_cleaning') {
+            throw new \DomainException('Post-cleaning Inspections are created only by the canonical cleaning-completion lifecycle.');
+        }
+
         return $this->inspectionRepository->create($data);
+    }
+
+    public function claim(
+        string $id,
+        string $idempotencyKey,
+        User|string|null $actorReference = null,
+    ): HousekeepingInspectionClaimResult
+    {
+        return $this->claimService->claim($this->actor($actorReference), $id, $idempotencyKey);
     }
 
     public function conduct(string $id, User|string|null $actorReference = null): RoomInspection
     {
-        return $this->lifecycle->conductInspection($this->actor($actorReference), $id);
+        $actor = $this->actor($actorReference);
+
+        return $this->claimService->claim(
+            $actor,
+            $id,
+            'p17-compat:' . $id . ':' . $actor->id,
+        )->inspection;
     }
 
     public function pass(

@@ -31,6 +31,10 @@ class RoomInspection extends Model
         'inspected_at',
         'notes',
         'results',
+        'claimed_at',
+        'claim_idempotency_key',
+        'claim_source_hash',
+        'claim_evidence_version',
     ];
 
     protected $casts = [
@@ -42,6 +46,8 @@ class RoomInspection extends Model
         'inspection_type' => \Modules\Operations\Housekeeping\Enums\InspectionTypeEnum::class,
         'inspection_severity' => \Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum::class,
         'inspected_at' => 'datetime',
+        'claimed_at' => 'datetime',
+        'claim_evidence_version' => 'integer',
     ];
 
     public function room()
@@ -84,6 +90,17 @@ class RoomInspection extends Model
                     ->contains(fn (string $field) => $inspection->isDirty($field))
             ) {
                 throw new \DomainException('Post-cleaning Room Inspection source evidence is immutable.');
+            }
+
+            if (
+                (int) $inspection->getRawOriginal('claim_evidence_version') === 1
+                && collect([
+                    'property_id', 'room_id', 'cleaning_task_id', 'inspection_type',
+                    'supervisor_id', 'claimed_at', 'claim_idempotency_key',
+                    'claim_source_hash', 'claim_evidence_version', 'deleted_at',
+                ])->contains(fn (string $field) => $inspection->isDirty($field))
+            ) {
+                throw new \DomainException('Committed Room Inspection claim evidence is immutable.');
             }
         });
 

@@ -45,6 +45,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         private readonly SensitiveActionConfirmationService $confirmation,
         private readonly CurrentPropertyService $currentProperty,
         private readonly HousekeepingTaskDispatchAssignmentService $assignmentDispatch,
+        private readonly HousekeepingInspectionClaimService $inspectionClaim,
     ) {}
 
     public function changeCleaningTaskStatus(
@@ -76,38 +77,11 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         };
     }
 
-    public function conductInspection(User $actor, string $inspectionId): RoomInspection
+    public function conductInspection(User $actor, string $inspectionId, ?string $idempotencyKey = null): RoomInspection
     {
-        $propertyId = $this->activePropertyId();
-        $preview = $this->scopedInspection($propertyId, $inspectionId);
-        $this->authorizeInspection($actor, $preview);
+        $idempotencyKey ??= 'p17-compat:' . $inspectionId . ':' . $actor->id;
 
-        return DB::transaction(function () use ($actor, $propertyId, $preview, $inspectionId) {
-            $room = $this->lockRoom($propertyId, (string) $preview->room_id);
-            $inspection = $this->lockInspection($propertyId, $inspectionId);
-            $this->authorizeInspection($actor, $inspection);
-            $task = $this->lockInspectionTask($propertyId, $inspection, $room);
-            $this->assertInspectionSource($inspection, $task, $room, $propertyId);
-
-            if ($inspection->status === InspectionStatusEnum::InProgress) {
-                if ($inspection->supervisor_id !== $actor->id) {
-                    throw new DomainException('Inspection conduct replay conflicts with the recorded supervisor.');
-                }
-
-                return $inspection->fresh();
-            }
-
-            if ($inspection->status !== InspectionStatusEnum::Pending) {
-                throw new DomainException('Only a pending Room Inspection can be conducted.');
-            }
-
-            $inspection->update([
-                'status' => InspectionStatusEnum::InProgress,
-                'supervisor_id' => $actor->id,
-            ]);
-
-            return $inspection->fresh();
-        });
+        return $this->inspectionClaim->claim($actor, $inspectionId, $idempotencyKey)->inspection;
     }
 
     /**
@@ -136,6 +110,13 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         if ($inspection->status !== InspectionStatusEnum::InProgress) {
             throw new DomainException('Only an in-progress Room Inspection can be passed.');
         }
+        $this->inspectionClaim->assertTerminalAuthority(
+            $actor,
+            $propertyId,
+            $inspection,
+            $task,
+            $this->completedAssignments($task),
+        );
 
         return [
             'room_number' => (string) $room->room_number,
@@ -161,10 +142,18 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
 
         return DB::transaction(function () use ($actor, $propertyId, $preview, $inspectionId, $releaseReason, $password) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
+            $task = $this->lockPreviewInspectionTask($propertyId, $preview, $room);
+            $completedAssignments = $this->lockCompletedAssignments($task);
             $inspection = $this->lockInspection($propertyId, $inspectionId);
             $this->authorizeInspection($actor, $inspection, HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION);
-            $task = $this->lockInspectionTask($propertyId, $inspection, $room);
             $this->assertInspectionSource($inspection, $task, $room, $propertyId);
+            $this->inspectionClaim->assertTerminalAuthority(
+                $actor,
+                $propertyId,
+                $inspection,
+                $task,
+                $completedAssignments,
+            );
 
             if ($inspection->status !== InspectionStatusEnum::InProgress) {
                 throw new DomainException('Only an in-progress Room Inspection can be passed.');
@@ -184,7 +173,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
                 $releaseReason,
                 $context,
                 $inspection->id,
-                $task->id,
+                $this->claimBoundTaskEvidence($task, $inspection),
             );
 
             $this->confirmation->confirm(
@@ -218,10 +207,18 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
 
         return DB::transaction(function () use ($actor, $propertyId, $preview, $inspectionId, $releaseReason, $severity) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
+            $task = $this->lockPreviewInspectionTask($propertyId, $preview, $room);
+            $completedAssignments = $this->lockCompletedAssignments($task);
             $inspection = $this->lockInspection($propertyId, $inspectionId);
             $this->authorizeInspection($actor, $inspection, HousekeepingRoomReadinessTransitionService::RELEASE_READY_PERMISSION);
-            $task = $this->lockInspectionTask($propertyId, $inspection, $room);
             $this->assertInspectionSource($inspection, $task, $room, $propertyId);
+            $this->inspectionClaim->assertTerminalAuthority(
+                $actor,
+                $propertyId,
+                $inspection,
+                $task,
+                $completedAssignments,
+            );
 
             $context = self::INSPECTION_PASS_KEY . $inspection->id;
             if ($inspection->status === InspectionStatusEnum::Passed) {
@@ -250,7 +247,7 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
                 $context,
                 RoomInspection::class,
                 $inspection->id,
-                $task->id,
+                $this->claimBoundTaskEvidence($task, $inspection),
             );
 
             $inspection->update([
@@ -285,10 +282,18 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
 
         return DB::transaction(function () use ($actor, $propertyId, $preview, $inspectionId, $failureReason, $severity) {
             $room = $this->lockRoom($propertyId, (string) $preview->room_id);
+            $task = $this->lockPreviewInspectionTask($propertyId, $preview, $room);
+            $completedAssignments = $this->lockCompletedAssignments($task);
             $inspection = $this->lockInspection($propertyId, $inspectionId);
             $this->authorizeInspection($actor, $inspection, HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION);
-            $task = $this->lockInspectionTask($propertyId, $inspection, $room);
             $this->assertInspectionSource($inspection, $task, $room, $propertyId);
+            $this->inspectionClaim->assertTerminalAuthority(
+                $actor,
+                $propertyId,
+                $inspection,
+                $task,
+                $completedAssignments,
+            );
 
             $context = self::INSPECTION_FAIL_KEY . $inspection->id;
             if ($inspection->status === InspectionStatusEnum::Failed) {
@@ -615,18 +620,52 @@ class HousekeepingCleaningInspectionReadinessLifecycleService
         return $inspection;
     }
 
-    private function lockInspectionTask(string $propertyId, RoomInspection $inspection, Room $room): CleaningTask
+    private function lockPreviewInspectionTask(string $propertyId, RoomInspection $preview, Room $room): CleaningTask
     {
-        if (! $inspection->cleaning_task_id) {
+        if (! $preview->cleaning_task_id) {
             throw new DomainException('Room Inspection is not linked to a Cleaning Task.');
         }
 
-        $task = $this->lockTask($propertyId, $inspection->cleaning_task_id);
+        $task = $this->lockTask($propertyId, $preview->cleaning_task_id);
         if ($task->room_id !== $room->id) {
             throw new DomainException('Room Inspection Cleaning Task relationship is inconsistent.');
         }
 
         return $task;
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Collection<int, TaskAssignment> */
+    private function lockCompletedAssignments(CleaningTask $task): \Illuminate\Database\Eloquent\Collection
+    {
+        return TaskAssignment::withoutGlobalScopes()
+            ->where('property_id', $task->property_id)
+            ->where('cleaning_task_id', $task->id)
+            ->where('status', 'completed')
+            ->whereNull('deleted_at')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Collection<int, TaskAssignment> */
+    private function completedAssignments(CleaningTask $task): \Illuminate\Database\Eloquent\Collection
+    {
+        return TaskAssignment::withoutGlobalScopes()
+            ->where('property_id', $task->property_id)
+            ->where('cleaning_task_id', $task->id)
+            ->where('status', 'completed')
+            ->whereNull('deleted_at')
+            ->orderBy('id')
+            ->get();
+    }
+
+    private function claimBoundTaskEvidence(CleaningTask $task, RoomInspection $inspection): string
+    {
+        if ($inspection->claim_evidence_version === HousekeepingInspectionClaimService::EVIDENCE_VERSION) {
+            return $task->id . ':' . $inspection->claim_source_hash;
+        }
+
+        return $task->id;
     }
 
     private function lockActiveAssignment(CleaningTask $task, User $actor): TaskAssignment
