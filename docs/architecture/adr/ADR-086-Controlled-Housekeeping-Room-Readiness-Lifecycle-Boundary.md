@@ -9,7 +9,7 @@
 
 ## Context
 
-The Housekeeping module owns room cleanliness and readiness as the source of truth for operational room state. The original ADR context identified direct consumer reads and scattered transition evidence. The accepted Housekeeping package train now provides a Housekeeping-owned readiness boundary, durable checkout-turnover intake, a read-only turnover workspace, and canonical Cleaning Task and post-cleaning Inspection integration so that Front Desk, Engineering, and Finance consumers respect Housekeeping ownership without mutation.
+The Housekeeping module owns room cleanliness and readiness as the source of truth for operational room state. The original ADR context identified direct consumer reads and scattered transition evidence. The accepted Housekeeping package train now provides a Housekeeping-owned readiness boundary, durable checkout-turnover intake, a read-only turnover workspace, canonical Cleaning Task and post-cleaning Inspection integration, and controlled Cleaning Task dispatch and assignment so that Front Desk, Engineering, and Finance consumers respect Housekeeping ownership without mutation.
 
 ## Decision
 
@@ -185,11 +185,17 @@ Rules:
 
 ### Cleaner / Inspector Segregation Policy
 
-The actor who submits cleaning (`housekeeping.room-readiness.submit-inspection`) should not release the same room as ready (`housekeeping.room-readiness.release-ready`) when the repository has actor identity to enforce cleaner/inspector segregation.
+The actor recorded as the completed cleaner in `CleaningTask.completed_by` must not claim or decide the same post-cleaning Inspection. One server-resolved non-cleaner claimant must own the `in_progress` Inspection and its pass/fail decision. Passing still requires `housekeeping.room-readiness.release-ready` and Sensitive Action Confirmation; failing still requires `housekeeping.room-readiness.clean`.
 
-Status: **DEFERRED_MAKER_CHECKER_POLICY**
+Historical status: **DEFERRED_MAKER_CHECKER_POLICY**
 
-The current role model does not yet enforce distinct cleaner and inspector roles at the permission level. This is recorded as deferred and must not be faked.
+Current Package 16 determination:
+
+- **PACKAGE_17_INSPECTION_SEGREGATION_BOUNDARY_FROZEN**
+- **NOT_YET_RUNTIME_ENFORCED**
+- **PACKAGE_17_RUNTIME_LOCKED_PENDING_PACKAGE_16_MERGE**
+
+`DEFERRED_MAKER_CHECKER_POLICY` is retained as historical evidence. Contract Version 1.19 resolves only the future identity-level policy direction without inventing a new global role model: when Package 17 is implemented, the cleaner recorded in `CleaningTask.completed_by` must not claim or decide the same post-cleaning Inspection, and one claimed non-cleaner inspector must own its pass/fail decision. The existing current-Property User identity and permissions are sufficient future inputs, but runtime enforcement, durable claim evidence, and concurrency proof do not exist yet. Contract Version 1.19 does not itself authorize Package 17 runtime. Package 17 remains locked until Package 16 is independently reviewed, explicitly Owner-authorized, and merged into canonical; Package 17 then requires its own branch, Draft PR, independent review, Owner authorization, and merge. Package 16 changes governance records only and must not claim that segregation already exists.
 
 ### Sensitive Confirmation Policy
 
@@ -345,11 +351,29 @@ Current accepted behavior:
 - terminal evidence, source relationships, uniqueness, and immutability are protected at application and PostgreSQL levels;
 - exact replay and real concurrency behavior are accepted.
 
-## Remaining Dispatch and Assignment Boundary
+## Package 15 Accepted Dispatch and Assignment
 
-The accepted Package 11 through Package 13 lifecycle depends on an assignment before cleaning can start, but the current assignment path is legacy and is not canonical lifecycle evidence. Controlled dispatch, initial assignment, and pre-start reassignment require future Package 15, `PACKAGE_15_CONTROLLED_HOUSEKEEPING_TURNOVER_DISPATCH_AND_ASSIGNMENT`, on its own runtime branch and Draft PR after Package 14 is accepted and merged.
+Package 15 is accepted and merged through PR #49. Accepted feature head: `fdf6036d70a85e9c7283f174c205fdef29bcbefe`. Canonical merge commit: `29731a60afc16ab4b50291cc06b00e67011e92f7`.
 
-Package 15 must preserve Housekeeping ownership, current-Property isolation, server-owned assignment authority, exactly one active assignment, immutable prior assignment history, idempotency, audit evidence, and concurrency safety. It must not silently reassign an `in_progress` task and must not implement cleaner/inspector segregation under the still-deferred maker-checker policy.
+Current accepted behavior:
+
+- one canonical Housekeeping command owns initial assignment and pre-start reassignment;
+- exactly one active assignment is enforced per Cleaning Task;
+- prior assignment history is immutable and cannot be deleted;
+- assignment identity, target attendant, Department, Property, actor, timestamps, and source hash are server-validated and database-protected;
+- deterministic Property-scoped idempotency returns the same outcome or rejects a conflicting replay;
+- an `in_progress` Cleaning Task cannot be silently reassigned;
+- completion closes the active assignment as immutable evidence;
+- bounded workload projection and turnover-workspace dispatch integration remain read-only projections around the canonical assignment command;
+- real PostgreSQL concurrency proof covers assignment races, Property isolation, and zero orphan or mixed assignment state.
+
+## Remaining Inspection Claim and Segregation Boundary
+
+The accepted Package 13 Inspection lifecycle changes a pending post-cleaning Inspection to `in_progress` and records the acting User in `RoomInspection.supervisor_id`, but current conduct has no durable claim idempotency identity or claim audit contract. Current conduct does not reject the cleaner recorded in `CleaningTask.completed_by`, and current pass/fail actions do not require the acting User to equal the recorded claimant.
+
+Controlled Inspection claim and identity-level cleaner/inspector segregation require future Package 17, `PACKAGE_17_CONTROLLED_HOUSEKEEPING_INSPECTION_CLAIM_AND_SEGREGATION`, on its own runtime branch and Draft PR after Package 16 is accepted and merged.
+
+Package 17 must preserve Housekeeping ownership, current-Property isolation, existing Inspection pass/fail outcomes, Package 13 readiness and re-cleaning integrity, Package 15 assignment history, existing permissions, and sensitive confirmation. It may add one durable idempotent claim boundary, exactly one immutable claimant, claimant-owned pass/fail enforcement, and the rule that `CleaningTask.completed_by` cannot claim or decide the same post-cleaning Inspection. Claim release, reassignment, expiry, takeover, emergency override, new role modeling, automated scheduling, and foreign-domain mutation remain unauthorized.
 
 ### Explicit Non-Goals
 

@@ -271,7 +271,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_package_15_cross_baseline_remeasurement(): void
+    public function test_frontdesk_operational_baseline_matches_package_16_contract_1_19_governance_sync(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
@@ -301,7 +301,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '5e81983ab8443e5903349426c4835c356ba495fe',
+            'bd42d6d25a078b60c1a8ba09e949b3f7c532c397',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -310,9 +310,20 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'Provenance SHA must be a full 40-character hex string.'
         );
         $this->assertEquals(
-            'sprint-package-15-housekeeping-controlled-dispatch-assignment',
+            'codex/architecture-package-16-post-package-15-housekeeping-governance-sync',
             $baseline->provenance->branch ?? null
         );
+
+        $this->assertStringContainsString('Contract Version 1.19', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 15 remains accepted and merged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('deterministic Housekeeping source-scan cross-baseline measurement remains 729 tests / 5639 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('historical Package 15 +24 assertion explanation remains preserved', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 16 changes no Front Desk production source and no Housekeeping production source', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Exactly two Front Desk source-integrity Contract guards changed from Version 1.18 to Version 1.19', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('guard changes do not change the exact test count or assertion count', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('valid Package 16 Front Desk measurement remains 729 tests / 5639 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('unchanged exact 68-class selection', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Historical Package 15 provenance and historical PR #48 Contract 1.18 correction provenance are retained', $baseline->provenance->note ?? '');
 
         $this->assertStringContainsString('Package 15 re-anchor 5e81983ab8443e5903349426c4835c356ba495fe retains the canonical Contract Version 1.18 correction from PR #48', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('canonical isolated predecessor measurement of 729 tests / 5615 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
@@ -320,7 +331,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringContainsString('five eligible Housekeeping source files and removes one', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('net four-file expansion produces exactly 4 x 6 = 24 additional meaningful negative assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('post-Package-15 Front Desk measurement is 729 tests / 5639 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('Contract Version 1.18 is canonical and approved', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('At that historical PR #48 point, Contract Version 1.18 was canonical and approved', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Two Front Desk source-integrity tests retained stale Version 1.17 guards', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Source commit b6dcdcee6c46c67252e658a16c114007e14b4e99 corrected only those guards to Version 1.18', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('valid isolated Front Desk measurement is 729 tests / 5615 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
