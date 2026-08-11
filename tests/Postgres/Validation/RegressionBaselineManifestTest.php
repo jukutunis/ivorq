@@ -301,7 +301,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '20112b623d04c50655e8701566c1dbd156e6dc53',
+            '86a3b9e242bbf427353e07131c42f69d983df6e9',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -315,6 +315,8 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
 
         $this->assertStringContainsString('729 tests / 5657 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 17 correction source/harness commit 86a3b9e242bbf427353e07131c42f69d983df6e9', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('original Package 17 source commit 20112b623d04c50655e8701566c1dbd156e6dc53 and metadata commit de3e131c091f02fbb70cabb41006accecb0ce1bd remain retained', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 17 adds no Front Desk runtime, route, UI, ownership, scheduler, or integration', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('exactly three eligible Housekeeping source files', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('HousekeepingInspectionClaimService.php', $baseline->provenance->note ?? '');
@@ -455,16 +457,23 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'HousekeepingControlledInspectionClaimSegregationIsolatedConcurrencyProofTest',
         ], array_slice($baseline->classes, -6));
 
-        $this->assertEquals(189, $baseline->expected->tests ?? null);
-        $this->assertEquals(3139, $baseline->expected->assertions ?? null);
+        $this->assertEquals(191, $baseline->expected->tests ?? null);
+        $this->assertEquals(3408, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('20112b623d04c50655e8701566c1dbd156e6dc53', $baseline->provenance->sha ?? null);
+        $this->assertEquals('86a3b9e242bbf427353e07131c42f69d983df6e9', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-package-17-housekeeping-inspection-claim-segregation', $baseline->provenance->branch ?? null);
-        $this->assertEquals('2026-08-11', $baseline->provenance->measured_at ?? null);
-        $this->assertStringContainsString('28 exact classes / 189 tests / 3139 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
-        $this->assertStringContainsString('six Package 17 exact classes passed 25 tests / 406 assertions', $baseline->provenance->note ?? '');
+        $this->assertEquals('2026-08-12', $baseline->provenance->measured_at ?? null);
+        $this->assertStringContainsString('28 exact classes / 191 tests / 3408 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('six corrected Package 17 exact classes passed 27 tests / 675 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Historical Package 13 in_progress, passed, and failed Inspection rows remain unchanged with NULL Package 17 evidence and cannot be adopted as Package 17 claims', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('new claims require the initial in_progress state, immutable evidence, maker-checker segregation, and exact terminal replay', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('stale test coordinator fixture that assigned the same inspector as completed cleaner and supervisor', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('exact Package 13 isolated concurrency proof passed twice consecutively at 1 test / 93 assertions each', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No assertion was weakened, no Package 13 production code changed, and no Package 18 or other scope was added', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Original Package 17 source commit 20112b623d04c50655e8701566c1dbd156e6dc53 measured 28 exact classes / 189 tests / 3139 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('original metadata commit de3e131c091f02fbb70cabb41006accecb0ce1bd remains retained', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('one Housekeeping-owned canonical post-cleaning Inspection claim writer', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('claimed_at / claim_idempotency_key / claim_source_hash / claim_evidence_version', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('cleaner/inspector maker-checker segregation', $baseline->provenance->note ?? '');
