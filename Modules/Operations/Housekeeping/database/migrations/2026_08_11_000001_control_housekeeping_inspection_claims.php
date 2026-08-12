@@ -97,6 +97,13 @@ return new class extends Migration
                        OR NEW.claim_source_hash IS NOT NULL THEN
                         RAISE EXCEPTION 'HK_P17_INSPECTION_DIRECT_CLAIM_INSERT_PROHIBITED';
                     END IF;
+                    IF NEW.inspection_type = 'post_cleaning'
+                       AND (
+                        NEW.status <> 'pending'
+                        OR NEW.supervisor_id IS NOT NULL
+                    ) THEN
+                        RAISE EXCEPTION 'HK_P17_INSPECTION_LEGACY_STYLE_INSERT_PROHIBITED';
+                    END IF;
                     RETURN NEW;
                 END IF;
 
@@ -120,6 +127,50 @@ return new class extends Migration
                        OR NEW.claim_idempotency_key IS NOT NULL
                        OR NEW.claim_source_hash IS NOT NULL THEN
                         RAISE EXCEPTION 'HK_P17_INSPECTION_CLAIM_INCOHERENT';
+                    END IF;
+
+                    IF OLD.claim_evidence_version IS NULL
+                       AND OLD.inspection_type = 'post_cleaning' THEN
+                        IF OLD.status = 'pending'
+                           AND (
+                            NEW.status <> 'pending'
+                            OR NEW.supervisor_id IS NOT NULL
+                           ) THEN
+                            RAISE EXCEPTION 'HK_P17_INSPECTION_CLAIM_BYPASS_PROHIBITED';
+                        END IF;
+
+                        IF OLD.status = 'in_progress'
+                           AND NEW.supervisor_id IS DISTINCT FROM OLD.supervisor_id THEN
+                            RAISE EXCEPTION 'HK_P17_INSPECTION_LEGACY_SUPERVISOR_IMMUTABLE';
+                        END IF;
+
+                        IF OLD.status = 'in_progress'
+                           AND NEW.status IN ('passed', 'failed') THEN
+                            SELECT task.* INTO source_task
+                            FROM cleaning_tasks task
+                            JOIN rooms room
+                              ON room.id = task.room_id
+                             AND room.property_id = task.property_id
+                            WHERE task.id = NEW.cleaning_task_id
+                              AND task.property_id = NEW.property_id
+                              AND task.room_id = NEW.room_id
+                              AND task.task_type = 'checkout_cleaning'
+                              AND task.status = 'completed'
+                              AND task.completed_by IS NOT NULL
+                              AND task.deleted_at IS NULL
+                              AND room.id = NEW.room_id
+                              AND room.property_id = NEW.property_id
+                              AND room.is_active = true
+                              AND room.deleted_at IS NULL;
+                            IF NOT FOUND THEN
+                                RAISE EXCEPTION 'HK_P17_INSPECTION_CLAIM_SOURCE_CONFLICT';
+                            END IF;
+
+                            IF NEW.supervisor_id IS NULL
+                               OR NEW.supervisor_id = source_task.completed_by THEN
+                                RAISE EXCEPTION 'HK_P17_INSPECTION_LEGACY_TERMINAL_CLEANER_PROHIBITED';
+                            END IF;
+                        END IF;
                     END IF;
                     RETURN NEW;
                 END IF;

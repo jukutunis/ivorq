@@ -82,6 +82,10 @@ class HousekeepingControlledInspectionClaimSegregationSourceIntegrityTest extend
             'HK_P17_INSPECTION_CLAIM_IMMUTABLE',
             'HK_P17_INSPECTION_LEGACY_ADOPTION_PROHIBITED',
             'HK_P17_INSPECTION_CLAIM_INITIAL_STATUS_INVALID',
+            'HK_P17_INSPECTION_LEGACY_STYLE_INSERT_PROHIBITED',
+            'HK_P17_INSPECTION_CLAIM_BYPASS_PROHIBITED',
+            'HK_P17_INSPECTION_LEGACY_SUPERVISOR_IMMUTABLE',
+            'HK_P17_INSPECTION_LEGACY_TERMINAL_CLEANER_PROHIBITED',
             'housekeeping_task_assignments',
             'property_user',
         ] as $marker) {

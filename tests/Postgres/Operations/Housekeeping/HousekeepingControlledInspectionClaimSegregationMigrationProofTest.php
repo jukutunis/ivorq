@@ -37,6 +37,8 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
                 'in_progress' => $this->additionalHistoricalInspection($graph, 'P17-M-LEGACY-IP', 'in_progress'),
                 'passed' => $this->additionalHistoricalInspection($graph, 'P17-M-LEGACY-PASS', 'passed'),
                 'failed' => $this->additionalHistoricalInspection($graph, 'P17-M-LEGACY-FAIL', 'failed'),
+                'cleaner_pass_rejection' => $this->additionalHistoricalInspection($graph, 'P17-M-LC-P', 'in_progress', $graph['cleaner']),
+                'cleaner_fail_rejection' => $this->additionalHistoricalInspection($graph, 'P17-M-LC-F', 'in_progress', $graph['cleaner']),
             ];
             $historicalSnapshots = collect($historical)
                 ->map(fn (array $source) => $this->historicalSnapshot($source['inspection']))
@@ -62,6 +64,53 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
             ]), 'historical in-progress adoption', 'HK_P17_INSPECTION_LEGACY_ADOPTION_PROHIBITED');
             $this->assertSame($historicalSnapshots['in_progress'], $this->historicalSnapshot($legacyInProgress['inspection']));
             $this->assertClaimEvidenceNull($legacyInProgress['inspection']);
+
+            $this->assertRejectedWithMarker(fn () => DB::table('room_inspections')->where('id', $legacyInProgress['inspection'])->update([
+                'supervisor_id' => $graph['cleaner'],
+                'updated_at' => now(),
+            ]), 'historical in-progress supervisor takeover', 'HK_P17_INSPECTION_LEGACY_SUPERVISOR_IMMUTABLE');
+            $this->assertSame($historicalSnapshots['in_progress'], $this->historicalSnapshot($legacyInProgress['inspection']));
+            $this->assertClaimEvidenceNull($legacyInProgress['inspection']);
+
+            DB::table('room_inspections')->where('id', $legacyInProgress['inspection'])->update([
+                'status' => 'passed',
+                'inspected_at' => now(),
+                'remarks' => 'Historical Package 13 compatible non-cleaner terminal evidence',
+                'is_passed' => true,
+                'updated_at' => now(),
+            ]);
+            $this->assertSame('passed', DB::table('room_inspections')->where('id', $legacyInProgress['inspection'])->value('status'));
+            $this->assertSame($graph['claimant'], DB::table('room_inspections')->where('id', $legacyInProgress['inspection'])->value('supervisor_id'));
+            $this->assertClaimEvidenceNull($legacyInProgress['inspection']);
+            $historicalSnapshots['in_progress'] = $this->historicalSnapshot($legacyInProgress['inspection']);
+
+            foreach (['cleaner_pass_rejection' => 'passed', 'cleaner_fail_rejection' => 'failed'] as $historicalKey => $terminalStatus) {
+                $source = $historical[$historicalKey];
+                $this->assertRejectedWithMarker(fn () => DB::table('room_inspections')->where('id', $source['inspection'])->update([
+                    'status' => $terminalStatus,
+                    'inspected_at' => now(),
+                    'remarks' => "Historical cleaner {$terminalStatus} attempt",
+                    'is_passed' => $terminalStatus === 'passed',
+                    'updated_at' => now(),
+                ]), "historical cleaner terminal {$terminalStatus}", 'HK_P17_INSPECTION_LEGACY_TERMINAL_CLEANER_PROHIBITED');
+                $this->assertSame($historicalSnapshots[$historicalKey], $this->historicalSnapshot($source['inspection']));
+                $this->assertClaimEvidenceNull($source['inspection']);
+            }
+
+            foreach (['NC' => $graph['claimant'], 'C' => $graph['cleaner']] as $label => $supervisorId) {
+                $source = $this->additionalPendingInspection($graph, 'P17-M-BYPASS-' . $label);
+                $this->assertRejectedWithMarker(fn () => DB::table('room_inspections')->where('id', $source['inspection'])->update([
+                    'status' => 'in_progress',
+                    'supervisor_id' => $supervisorId,
+                    'updated_at' => now(),
+                ]), "pending no-evidence {$label} claim bypass", 'HK_P17_INSPECTION_CLAIM_BYPASS_PROHIBITED');
+                $this->assertSame('pending', DB::table('room_inspections')->where('id', $source['inspection'])->value('status'));
+                $this->assertNull(DB::table('room_inspections')->where('id', $source['inspection'])->value('supervisor_id'));
+                $this->assertClaimEvidenceNull($source['inspection']);
+            }
+
+            $this->assertLegacyStyleInsertRejected($graph, 'in_progress', $graph['claimant'], 'P17-M-RAW-IP');
+            $this->assertLegacyStyleInsertRejected($graph, 'passed', null, 'P17-M-RAW-PASS');
 
             $hash = DB::scalar(
                 'SELECT hk_p17_inspection_claim_source_hash(?, ?, ?, ?, ?, ?, ?)',
@@ -185,6 +234,17 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
     /** @return array{room: string, task: string, inspection: string} */
     private function additionalPendingInspection(array $graph, string $key): array
     {
+        $source = $this->additionalInspectionSource($graph, $key);
+
+        return [
+            ...$source,
+            'inspection' => $this->pendingInspection(['property' => $graph['property'], 'room' => $source['room'], 'task' => $source['task']], $key),
+        ];
+    }
+
+    /** @return array{room: string, task: string} */
+    private function additionalInspectionSource(array $graph, string $key): array
+    {
         $room = (string) Str::ulid();
         DB::table('rooms')->insert(['id' => $room, 'property_id' => $graph['property'], 'room_number' => $key, 'room_type' => 'deluxe', 'cleanliness_status' => 'clean', 'readiness_state' => 'waiting_inspection', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
         $task = (string) Str::ulid();
@@ -193,17 +253,16 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
         return [
             'room' => $room,
             'task' => $task,
-            'inspection' => $this->pendingInspection(['property' => $graph['property'], 'room' => $room, 'task' => $task], $key),
         ];
     }
 
     /** @return array{room: string, task: string, inspection: string} */
-    private function additionalHistoricalInspection(array $graph, string $key, string $status): array
+    private function additionalHistoricalInspection(array $graph, string $key, string $status, ?string $supervisorId = null): array
     {
         $source = $this->additionalPendingInspection($graph, $key);
         DB::table('room_inspections')->where('id', $source['inspection'])->update([
             'status' => $status,
-            'supervisor_id' => $graph['claimant'],
+            'supervisor_id' => $supervisorId ?? $graph['claimant'],
             'inspected_at' => in_array($status, ['passed', 'failed'], true) ? now() : null,
             'remarks' => "Historical Package 13 {$status} evidence",
             'is_passed' => $status === 'passed',
@@ -211,6 +270,27 @@ class HousekeepingControlledInspectionClaimSegregationMigrationProofTest extends
         ]);
 
         return $source;
+    }
+
+    private function assertLegacyStyleInsertRejected(array $graph, string $status, ?string $supervisorId, string $key): void
+    {
+        $source = $this->additionalInspectionSource($graph, $key);
+        $inspectionId = (string) Str::ulid();
+        $this->assertRejectedWithMarker(fn () => DB::table('room_inspections')->insert([
+            'id' => $inspectionId,
+            'property_id' => $graph['property'],
+            'room_id' => $source['room'],
+            'cleaning_task_id' => $source['task'],
+            'supervisor_id' => $supervisorId,
+            'inspection_type' => 'post_cleaning',
+            'status' => $status,
+            'is_passed' => $status === 'passed',
+            'inspected_at' => $status === 'passed' ? now() : null,
+            'remarks' => $key,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]), "legacy-style post-cleaning {$status} insert", 'HK_P17_INSPECTION_LEGACY_STYLE_INSERT_PROHIBITED');
+        $this->assertSame(0, DB::table('room_inspections')->where('id', $inspectionId)->count());
     }
 
     /** @return array<string, mixed> */
