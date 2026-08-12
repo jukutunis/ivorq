@@ -78,44 +78,44 @@ class HousekeepingControlledInspectionClaimSegregationFoundationTest extends Pos
 
     public function test_historical_terminal_lifecycle_preserves_legacy_evidence_and_enforces_maker_checker(): void
     {
-        [, , $compatible] = $this->pendingInspection('P17-F-LEGACY-OK');
-        DB::table('room_inspections')->where('id', $compatible->id)->update([
-            'status' => 'in_progress',
-            'supervisor_id' => $this->housekeepingInspector->id,
-            'updated_at' => now(),
-        ]);
+        [, $compatibleTask, $compatibleSource] = $this->pendingInspection('P17-F-LEGACY-OK');
+        $compatible = $this->legacyShapedInspection($compatibleSource, $this->housekeepingInspector->id);
 
-        $failed = $this->lifecycle()->failInspection(
+        $this->claims()->assertTerminalAuthority(
             $this->housekeepingInspector,
-            $compatible->id,
-            'Historical non-cleaner supervisor records required re-cleaning.',
+            $this->property->id,
+            $compatible,
+            $compatibleTask,
+            $this->completedAssignments($compatibleTask),
         );
 
-        $this->assertSame(InspectionStatusEnum::Failed, $failed->status);
-        $this->assertSame($this->housekeepingInspector->id, $failed->supervisor_id);
+        $this->assertFalse($compatible->exists);
+        $this->assertSame(InspectionStatusEnum::InProgress, $compatible->status);
+        $this->assertSame($this->housekeepingInspector->id, $compatible->supervisor_id);
+        $this->assertNotSame($compatibleTask->completed_by, $compatible->supervisor_id);
         foreach (['claimed_at', 'claim_idempotency_key', 'claim_source_hash', 'claim_evidence_version'] as $field) {
-            $this->assertNull($failed->getAttribute($field), "Historical terminal lifecycle must not fabricate {$field}.");
+            $this->assertNull($compatible->getAttribute($field), "Historical authority proof must not fabricate {$field}.");
         }
+        $this->assertSame(InspectionStatusEnum::Pending, $compatibleSource->fresh()->status);
+        $this->assertNull($compatibleSource->fresh()->supervisor_id);
 
-        [, $cleanerTask, $prohibited] = $this->pendingInspection('P17-F-LEGACY-CLEANER');
-        DB::table('room_inspections')->where('id', $prohibited->id)->update([
-            'status' => 'in_progress',
-            'supervisor_id' => $cleanerTask->completed_by,
-            'updated_at' => now(),
-        ]);
-        $this->housekeepingActor->givePermissionTo(HousekeepingRoomReadinessTransitionService::CLEAN_PERMISSION);
+        [, $cleanerTask, $prohibitedSource] = $this->pendingInspection('P17-F-LEGACY-CLEANER');
+        $prohibited = $this->legacyShapedInspection($prohibitedSource, (string) $cleanerTask->completed_by);
 
         try {
-            $this->lifecycle()->failInspection(
+            $this->claims()->assertTerminalAuthority(
                 $this->housekeepingActor,
-                $prohibited->id,
-                'Historical cleaner must not decide the terminal outcome.',
+                $this->property->id,
+                $prohibited,
+                $cleanerTask,
+                $this->completedAssignments($cleanerTask),
             );
             $this->fail('Expected historical maker-checker rejection.');
         } catch (DomainException $exception) {
             $this->assertSame(HousekeepingInspectionClaimService::CLEANER_PROHIBITED, $exception->getMessage());
-            $this->assertSame(InspectionStatusEnum::InProgress, $prohibited->fresh()->status);
-            $this->assertNull($prohibited->fresh()->claim_evidence_version);
+            $this->assertFalse($prohibited->exists);
+            $this->assertSame(InspectionStatusEnum::Pending, $prohibitedSource->fresh()->status);
+            $this->assertNull($prohibitedSource->fresh()->supervisor_id);
         }
     }
 
@@ -375,6 +375,34 @@ class HousekeepingControlledInspectionClaimSegregationFoundationTest extends Pos
         ]);
 
         return [$room, $task, $inspection];
+    }
+
+    private function legacyShapedInspection(RoomInspection $source, string $supervisorId): RoomInspection
+    {
+        $legacy = $source->newInstance([], false);
+        $legacy->setRawAttributes([
+            ...$source->getAttributes(),
+            'status' => InspectionStatusEnum::InProgress->value,
+            'supervisor_id' => $supervisorId,
+            'claimed_at' => null,
+            'claim_idempotency_key' => null,
+            'claim_source_hash' => null,
+            'claim_evidence_version' => null,
+        ], true);
+
+        return $legacy;
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Collection<int, TaskAssignment> */
+    private function completedAssignments(CleaningTask $task): \Illuminate\Database\Eloquent\Collection
+    {
+        return TaskAssignment::withoutGlobalScopes()
+            ->where('property_id', $task->property_id)
+            ->where('cleaning_task_id', $task->id)
+            ->where('status', 'completed')
+            ->whereNull('deleted_at')
+            ->orderBy('id')
+            ->get();
     }
 
     private function claims(): HousekeepingInspectionClaimService
