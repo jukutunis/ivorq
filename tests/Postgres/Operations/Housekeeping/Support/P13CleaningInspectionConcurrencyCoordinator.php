@@ -11,7 +11,9 @@ use Modules\Foundation\Department\Models\Department;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Housekeeping\Services\HousekeepingInspectionClaimService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessTransitionService;
+use Shared\Services\CurrentPropertyService;
 
 $configPath = $argv[1] ?? '';
 $config = $configPath !== '' && is_file($configPath)
@@ -162,7 +164,33 @@ try {
         $inspectionId = (string) Str::ulid();
         DB::table('rooms')->insert(['id' => $roomId, 'property_id' => $property->id, 'room_number' => 'I' . Str::upper(Str::random(5)), 'room_type' => 'standard', 'cleanliness_status' => 'clean', 'readiness_state' => 'waiting_inspection', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
         DB::table('cleaning_tasks')->insert(['id' => $taskId, 'property_id' => $property->id, 'room_id' => $roomId, 'task_code' => 'I-' . Str::upper(Str::random(6)), 'task_type' => 'checkout_cleaning', 'status' => 'completed', 'priority' => 'normal', 'credits' => 1, 'started_at' => now()->subHour(), 'completed_at' => now(), 'completed_by' => $cleaner->id, 'notes' => 'Concurrent source', 'created_at' => now(), 'updated_at' => now()]);
-        DB::table('room_inspections')->insert(['id' => $inspectionId, 'property_id' => $property->id, 'room_id' => $roomId, 'cleaning_task_id' => $taskId, 'supervisor_id' => $inspector->id, 'inspection_type' => 'post_cleaning', 'status' => 'in_progress', 'is_passed' => false, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('room_inspections')->insert(['id' => $inspectionId, 'property_id' => $property->id, 'room_id' => $roomId, 'cleaning_task_id' => $taskId, 'inspection_type' => 'post_cleaning', 'status' => 'pending', 'is_passed' => false, 'created_at' => now(), 'updated_at' => now()]);
+
+        session([
+            'current_property_id' => $property->id,
+            'active_property_id' => $property->id,
+            'active_company_id' => $property->company_id,
+        ]);
+        app(CurrentPropertyService::class)->setPropertyId($property->id);
+        setPermissionsTeamId($property->id);
+        $claim = app(HousekeepingInspectionClaimService::class)->claim(
+            $inspector,
+            $inspectionId,
+            'p13-concurrency-claim-' . Str::uuid(),
+        );
+        $claimed = $claim->inspection;
+        $claimedStatus = $claimed->status instanceof BackedEnum ? $claimed->status->value : (string) $claimed->status;
+        if (
+            $claimedStatus !== 'in_progress'
+            || $claimed->supervisor_id !== $inspector->id
+            || $claimed->supervisor_id === $cleaner->id
+            || $claimed->claim_evidence_version !== HousekeepingInspectionClaimService::EVIDENCE_VERSION
+            || $claimed->claimed_at === null
+            || trim((string) $claimed->claim_idempotency_key) === ''
+            || preg_match('/\A[0-9a-f]{64}\z/', (string) $claimed->claim_source_hash) !== 1
+        ) {
+            throw new RuntimeException('P13 canonical inspection claim fixture rejected.');
+        }
 
         return ['company_id' => $property->company_id, 'property_id' => $property->id, 'actor_id' => $inspector->id, 'room_id' => $roomId, 'task_id' => $taskId, 'inspection_id' => $inspectionId];
     };
