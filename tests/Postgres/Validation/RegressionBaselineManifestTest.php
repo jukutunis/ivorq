@@ -301,7 +301,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '86a3b9e242bbf427353e07131c42f69d983df6e9',
+            '98ccdeb9be1b9bc60b2df9cda2d31bbe9aed4a59',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -315,6 +315,8 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
 
         $this->assertStringContainsString('729 tests / 5657 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 17 final predecessor-migration isolation source/test commit 98ccdeb9be1b9bc60b2df9cda2d31bbe9aed4a59', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Package 17 source-scan delta remains exactly 3 x 6 = 18 and 5639 + 18 = 5657', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 17 correction source/harness commit 86a3b9e242bbf427353e07131c42f69d983df6e9', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('original Package 17 source commit 20112b623d04c50655e8701566c1dbd156e6dc53 and metadata commit de3e131c091f02fbb70cabb41006accecb0ce1bd remain retained', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 17 adds no Front Desk runtime, route, UI, ownership, scheduler, or integration', $baseline->provenance->note ?? '');
@@ -458,14 +460,24 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ], array_slice($baseline->classes, -6));
 
         $this->assertEquals(191, $baseline->expected->tests ?? null);
-        $this->assertEquals(3408, $baseline->expected->assertions ?? null);
+        $this->assertEquals(3539, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('86a3b9e242bbf427353e07131c42f69d983df6e9', $baseline->provenance->sha ?? null);
+        $this->assertEquals('98ccdeb9be1b9bc60b2df9cda2d31bbe9aed4a59', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-package-17-housekeeping-inspection-claim-segregation', $baseline->provenance->branch ?? null);
         $this->assertEquals('2026-08-12', $baseline->provenance->measured_at ?? null);
-        $this->assertStringContainsString('28 exact classes / 191 tests / 3408 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('28 exact classes / 191 tests / 3539 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('six Package 17 exact classes passed 27 tests / 770 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('post-deployment no-evidence pending-to-in_progress claim bypass and legacy-style post-cleaning INSERT closed', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('blocks historical supervisor takeover, and enforces historical terminal maker-checker', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('preserving pre-P17 rows without fabricated evidence and leaving v1 claim semantics unchanged', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('Foundation alignment b45bba591e32963c2bbe7e03a82cc9f997a5d6c1 tests application legacy maker-checker with unsaved legacy-shaped models', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('P13 coordinator alignment 55399a7c53dc9c5f099ee4570ec1bc1bb6fd757b creates pending Inspection fixtures and uses the canonical Package 17 claim service', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('P13 migration isolation 98ccdeb9be1b9bc60b2df9cda2d31bbe9aed4a59 temporarily applies the canonical Package 17 down/up methods only inside its disposable predecessor proof', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('historical terminal rows survive successor reapply with NULL claim evidence', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('No Package 13 production source changed, Front Desk remains 729 tests / 5657 assertions', $baseline->provenance->note ?? '');
+        $this->assertStringContainsString('accepted_debt remains empty, and no new accepted debt was added', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('six corrected Package 17 exact classes passed 27 tests / 675 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Historical Package 13 in_progress, passed, and failed Inspection rows remain unchanged with NULL Package 17 evidence and cannot be adopted as Package 17 claims', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('new claims require the initial in_progress state, immutable evidence, maker-checker segregation, and exact terminal replay', $baseline->provenance->note ?? '');
