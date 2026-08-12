@@ -38,6 +38,15 @@ function severityBadge(severity: EnumOption | null) {
     );
 }
 
+function claimLabel(inspection: RoomInspection) {
+    if (inspection.claim.state === 'claimed' || inspection.claim.state === 'legacy_claim') {
+        return inspection.claim.claimant_name ?? 'Claimed inspector';
+    }
+    if (inspection.claim.is_current_actor_cleaner) return 'Own cleaning task';
+    if (inspection.claim.can_claim) return 'Available to claim';
+    return 'Not available';
+}
+
 export default function InspectionIndex({ inspections, inspection_types, statuses }: Props) {
     function applyFilter(field: string, value: string) {
         router.get(
@@ -72,6 +81,23 @@ export default function InspectionIndex({ inspections, inspection_types, statuse
                 </div>
             </div>
 
+            <div className="mb-4 flex flex-wrap gap-3 rounded-lg border border-gray-200 bg-white p-4">
+                <label className="text-sm text-gray-700">
+                    <span className="mr-2 font-medium">Type</span>
+                    <select onChange={(event) => applyFilter('inspection_type', event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm">
+                        <option value="">All types</option>
+                        {inspection_types.map((option) => <option key={String(option.value)} value={String(option.value)}>{option.label}</option>)}
+                    </select>
+                </label>
+                <label className="text-sm text-gray-700">
+                    <span className="mr-2 font-medium">Status</span>
+                    <select onChange={(event) => applyFilter('status', event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm">
+                        <option value="">All statuses</option>
+                        {statuses.map((option) => <option key={String(option.value)} value={String(option.value)}>{option.label}</option>)}
+                    </select>
+                </label>
+            </div>
+
             <div className="bg-white rounded-lg shadow overflow-hidden">
                 {inspections.data.length === 0 ? (
                     <div className="px-6 py-12 text-center text-gray-400 text-sm">
@@ -84,8 +110,9 @@ export default function InspectionIndex({ inspections, inspection_types, statuse
                                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Room</th>
                                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
                                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Cleaner</th>
                                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Severity</th>
-                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Inspector</th>
+                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Claimant</th>
                                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Inspected</th>
                                 <th className="px-6 py-3"></th>
                             </tr>
@@ -97,7 +124,11 @@ export default function InspectionIndex({ inspections, inspection_types, statuse
                                         {insp.room?.room_number ?? <span className="text-gray-400">—</span>}
                                     </td>
                                     <td className="px-6 py-4 text-gray-600">{insp.inspection_type.label}</td>
-                                    <td className="px-6 py-4">{statusBadge(insp.status)}</td>
+                                    <td className="px-6 py-4">
+                                        {statusBadge(insp.status)}
+                                        <div className="mt-1 text-xs text-gray-500">{claimLabel(insp)}</div>
+                                    </td>
+                                    <td className="px-6 py-4 text-gray-600">{insp.task?.completed_by_name ?? 'Unavailable'}</td>
                                     <td className="px-6 py-4">{severityBadge(insp.inspection_severity) ?? <span className="text-gray-400">—</span>}</td>
                                     <td className="px-6 py-4 text-gray-600">
                                         {insp.inspector?.name ?? <span className="text-gray-400">—</span>}

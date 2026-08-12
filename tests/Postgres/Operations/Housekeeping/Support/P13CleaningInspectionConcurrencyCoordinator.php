@@ -11,7 +11,9 @@ use Modules\Foundation\Department\Models\Department;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Housekeeping\Services\HousekeepingInspectionClaimService;
 use Modules\Operations\Housekeeping\Services\HousekeepingRoomReadinessTransitionService;
+use Shared\Services\CurrentPropertyService;
 
 $configPath = $argv[1] ?? '';
 $config = $configPath !== '' && is_file($configPath)
@@ -156,15 +158,41 @@ try {
 
         return ['company_id' => $property->company_id, 'property_id' => $property->id, 'actor_id' => $actor->id, 'room_id' => $roomId, 'task_id' => $taskId];
     };
-    $makeInspection = static function (Property $property, User $actor): array {
+    $makeInspection = static function (Property $property, User $cleaner, User $inspector): array {
         $roomId = (string) Str::ulid();
         $taskId = (string) Str::ulid();
         $inspectionId = (string) Str::ulid();
         DB::table('rooms')->insert(['id' => $roomId, 'property_id' => $property->id, 'room_number' => 'I' . Str::upper(Str::random(5)), 'room_type' => 'standard', 'cleanliness_status' => 'clean', 'readiness_state' => 'waiting_inspection', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
-        DB::table('cleaning_tasks')->insert(['id' => $taskId, 'property_id' => $property->id, 'room_id' => $roomId, 'task_code' => 'I-' . Str::upper(Str::random(6)), 'task_type' => 'checkout_cleaning', 'status' => 'completed', 'priority' => 'normal', 'credits' => 1, 'started_at' => now()->subHour(), 'completed_at' => now(), 'completed_by' => $actor->id, 'notes' => 'Concurrent source', 'created_at' => now(), 'updated_at' => now()]);
-        DB::table('room_inspections')->insert(['id' => $inspectionId, 'property_id' => $property->id, 'room_id' => $roomId, 'cleaning_task_id' => $taskId, 'supervisor_id' => $actor->id, 'inspection_type' => 'post_cleaning', 'status' => 'in_progress', 'is_passed' => false, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('cleaning_tasks')->insert(['id' => $taskId, 'property_id' => $property->id, 'room_id' => $roomId, 'task_code' => 'I-' . Str::upper(Str::random(6)), 'task_type' => 'checkout_cleaning', 'status' => 'completed', 'priority' => 'normal', 'credits' => 1, 'started_at' => now()->subHour(), 'completed_at' => now(), 'completed_by' => $cleaner->id, 'notes' => 'Concurrent source', 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('room_inspections')->insert(['id' => $inspectionId, 'property_id' => $property->id, 'room_id' => $roomId, 'cleaning_task_id' => $taskId, 'inspection_type' => 'post_cleaning', 'status' => 'pending', 'is_passed' => false, 'created_at' => now(), 'updated_at' => now()]);
 
-        return ['company_id' => $property->company_id, 'property_id' => $property->id, 'actor_id' => $actor->id, 'room_id' => $roomId, 'task_id' => $taskId, 'inspection_id' => $inspectionId];
+        session([
+            'current_property_id' => $property->id,
+            'active_property_id' => $property->id,
+            'active_company_id' => $property->company_id,
+        ]);
+        app(CurrentPropertyService::class)->setPropertyId($property->id);
+        setPermissionsTeamId($property->id);
+        $claim = app(HousekeepingInspectionClaimService::class)->claim(
+            $inspector,
+            $inspectionId,
+            'p13-concurrency-claim-' . Str::uuid(),
+        );
+        $claimed = $claim->inspection;
+        $claimedStatus = $claimed->status instanceof BackedEnum ? $claimed->status->value : (string) $claimed->status;
+        if (
+            $claimedStatus !== 'in_progress'
+            || $claimed->supervisor_id !== $inspector->id
+            || $claimed->supervisor_id === $cleaner->id
+            || $claimed->claim_evidence_version !== HousekeepingInspectionClaimService::EVIDENCE_VERSION
+            || $claimed->claimed_at === null
+            || trim((string) $claimed->claim_idempotency_key) === ''
+            || preg_match('/\A[0-9a-f]{64}\z/', (string) $claimed->claim_source_hash) !== 1
+        ) {
+            throw new RuntimeException('P13 canonical inspection claim fixture rejected.');
+        }
+
+        return ['company_id' => $property->company_id, 'property_id' => $property->id, 'actor_id' => $inspector->id, 'room_id' => $roomId, 'task_id' => $taskId, 'inspection_id' => $inspectionId];
     };
 
     $runPair = static function (string $name, string $actionA, string $actionB, array $fixtureA, array $fixtureB, bool $holdA = false) use ($config, $waitFile): array {
@@ -264,14 +292,14 @@ try {
     $result['scenarios']['completion']['inspection_count'] = DB::table('room_inspections')->where('cleaning_task_id', $completion['task_id'])->count();
     $result['scenarios']['completion']['task_status'] = DB::table('cleaning_tasks')->where('id', $completion['task_id'])->value('status');
 
-    $pass = $makeInspection($propertyA, $inspector);
+    $pass = $makeInspection($propertyA, $attendant, $inspector);
     $stage = 'scenario_pass';
     $result['scenarios']['pass'] = $runPair('pass', 'pass', 'pass', $pass, $pass);
     $result['scenarios']['pass']['transition_count'] = DB::table('housekeeping_room_readiness_transitions')->where('source_id', $pass['inspection_id'])->count();
     $result['scenarios']['pass']['inspection_status'] = DB::table('room_inspections')->where('id', $pass['inspection_id'])->value('status');
     $result['scenarios']['pass']['room_readiness'] = DB::table('rooms')->where('id', $pass['room_id'])->value('readiness_state');
 
-    $fail = $makeInspection($propertyA, $inspector);
+    $fail = $makeInspection($propertyA, $attendant, $inspector);
     $stage = 'scenario_fail';
     $result['scenarios']['fail'] = $runPair('fail', 'fail', 'fail', $fail, $fail);
     $result['scenarios']['fail']['transition_count'] = DB::table('housekeeping_room_readiness_transitions')->where('source_id', $fail['inspection_id'])->count();
@@ -279,7 +307,7 @@ try {
     $result['scenarios']['fail']['inspection_status'] = DB::table('room_inspections')->where('id', $fail['inspection_id'])->value('status');
     $result['scenarios']['fail']['room_readiness'] = DB::table('rooms')->where('id', $fail['room_id'])->value('readiness_state');
 
-    $race = $makeInspection($propertyA, $inspector);
+    $race = $makeInspection($propertyA, $attendant, $inspector);
     $stage = 'scenario_pass_fail';
     $result['scenarios']['pass_fail'] = $runPair('pass_fail', 'pass', 'fail', $race, $race);
     $result['scenarios']['pass_fail']['transition_count'] = DB::table('housekeeping_room_readiness_transitions')->where('source_id', $race['inspection_id'])->count();

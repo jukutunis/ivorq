@@ -19,6 +19,7 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
     private const PREFIX = 'ivorq_testing_hk_p13_migration_';
     private const MIGRATION = 'Modules/Operations/Housekeeping/database/migrations/2026_08_02_000001_integrate_housekeeping_cleaning_inspection_readiness.php';
     private const SUCCESSOR_MIGRATION = 'Modules/Operations/Housekeeping/database/migrations/2026_08_03_000001_control_housekeeping_task_assignments.php';
+    private const PACKAGE_17_SUCCESSOR_MIGRATION = 'Modules/Operations/Housekeeping/database/migrations/2026_08_11_000001_control_housekeeping_inspection_claims.php';
 
     public function test_disposable_postgresql_up_valid_sql_rejection_matrix_down_and_reapply(): void
     {
@@ -33,7 +34,10 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
         try {
             $this->switchDatabase($database);
             Artisan::call('migrate', ['--force' => true]);
+            $package17 = require base_path(self::PACKAGE_17_SUCCESSOR_MIGRATION);
+            $package17->down();
             $this->assertPackageObjectsExist();
+            $this->assertPackage17ObjectsAbsent();
 
             $graph = $this->sourceGraph();
             $this->assertMalformedSourceBindingMatrix($graph);
@@ -57,6 +61,12 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
 
             $reapply = $this->sourceGraph('R');
             $this->insertValidReworkTaskRaw($reapply);
+            $this->assertSame(1, DB::table('cleaning_tasks')->where('rework_source_inspection_id', $reapply['failed_inspection'])->count());
+
+            $package17->up();
+            $this->assertPackage17ObjectsExist();
+            $this->assertPackage17HistoricalEvidenceNull($graph);
+            $this->assertPackage17HistoricalEvidenceNull($reapply);
             $this->assertSame(1, DB::table('cleaning_tasks')->where('rework_source_inspection_id', $reapply['failed_inspection'])->count());
         } finally {
             $this->switchDatabase($originalDatabase);
@@ -337,6 +347,45 @@ class HousekeepingCleaningInspectionReadinessMigrationProofTest extends Postgres
         $this->assertSame(1, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_room_inspections_lifecycle_guard_trigger'));
         $this->assertSame(1, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_cleaning_tasks_lifecycle_guard_trigger'));
         $this->assertSame(1, $this->namedObjectCount('pg_constraint', 'conname', 'hk_cleaning_tasks_source_not_self_check'));
+    }
+
+    private function assertPackage17ObjectsAbsent(): void
+    {
+        $this->assertFalse(Schema::hasColumn('room_inspections', 'claim_evidence_version'));
+        $this->assertSame(0, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_p17_inspection_claim_guard_trigger'));
+    }
+
+    private function assertPackage17ObjectsExist(): void
+    {
+        foreach (['claimed_at', 'claim_idempotency_key', 'claim_source_hash', 'claim_evidence_version'] as $column) {
+            $this->assertTrue(Schema::hasColumn('room_inspections', $column));
+        }
+        $this->assertSame(1, $this->namedObjectCount('pg_trigger', 'tgname', 'hk_p17_inspection_claim_guard_trigger'));
+    }
+
+    /** @param array<string, string> $graph */
+    private function assertPackage17HistoricalEvidenceNull(array $graph): void
+    {
+        foreach ([
+            $graph['failed_inspection'] => ['failed', $graph['actor']],
+            $graph['passed_inspection'] => ['passed', $graph['actor']],
+        ] as $inspectionId => [$status, $supervisorId]) {
+            $row = DB::table('room_inspections')->where('id', $inspectionId)->first([
+                'status',
+                'supervisor_id',
+                'claimed_at',
+                'claim_idempotency_key',
+                'claim_source_hash',
+                'claim_evidence_version',
+            ]);
+            $this->assertNotNull($row);
+            $this->assertSame($status, $row->status);
+            $this->assertSame($supervisorId, $row->supervisor_id);
+            $this->assertNull($row->claimed_at);
+            $this->assertNull($row->claim_idempotency_key);
+            $this->assertNull($row->claim_source_hash);
+            $this->assertNull($row->claim_evidence_version);
+        }
     }
 
     private function namedObjectCount(string $catalog, string $column, string $name): int

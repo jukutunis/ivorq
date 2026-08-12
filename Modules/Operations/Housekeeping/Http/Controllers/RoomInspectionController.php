@@ -46,7 +46,7 @@ class RoomInspectionController extends Controller
 
         $this->authorize('viewAny', RoomInspection::class);
 
-        $inspections = $this->inspectionService->paginate();
+        $inspections = $this->inspectionService->paginate(15, request()->only(['inspection_type', 'status']));
 
         return Inertia::render('Operations/Housekeeping/Inspections/Index', [
             'inspections'      => RoomInspectionResource::collection($inspections),
@@ -98,7 +98,6 @@ class RoomInspectionController extends Controller
         $validated = $request->validated();
         $data      = array_merge($validated, [
             'property_id'  => $resolvedPropertyId,
-            'supervisor_id' => auth()->id(),
         ]);
 
         $inspection = $this->inspectionService->create($data);
@@ -144,7 +143,7 @@ class RoomInspectionController extends Controller
         }
 
         return Inertia::render('Operations/Housekeeping/Inspections/Show', [
-            'inspection' => new RoomInspectionResource($model),
+            'inspection' => (new RoomInspectionResource($model))->resolve($request),
             'severities' => array_map(
                 fn(InspectionSeverityEnum $s) => ['value' => $s->value, 'label' => $s->label()],
                 InspectionSeverityEnum::cases()
@@ -253,15 +252,12 @@ class RoomInspectionController extends Controller
             throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
         }
 
-        $model = $this->inspectionService->find($inspection);
-        if ($model->property_id !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
-        }
-
-        $this->authorize('conduct', $model);
-
         try {
-            $this->inspectionService->conduct($inspection, $request->user());
+            $result = $this->inspectionService->claim(
+                $inspection,
+                $request->validated('idempotency_key'),
+                $request->user(),
+            );
         } catch (DomainException $exception) {
             return $this->boundedLifecycleResponse($request, $exception->getMessage(), 422, $inspection);
         } catch (HttpException $exception) {
@@ -273,13 +269,14 @@ class RoomInspectionController extends Controller
         if ($request->wantsJson() || $request->ajax()) {
             return response()->json([
                 'success' => true,
-                'message' => 'Inspection started.',
-                'inspection' => new RoomInspectionResource($model->fresh())
+                'message' => $result->replayed ? 'Committed Inspection claim recovered.' : 'Inspection claimed.',
+                'replayed' => $result->replayed,
+                'inspection' => new RoomInspectionResource($result->inspection->fresh(['room', 'task.completedBy', 'inspector']))
             ]);
         }
 
         return redirect()->route('operations.inspections.show', $inspection)
-            ->with('success', 'Inspection started.');
+            ->with('success', $result->replayed ? 'Committed Inspection claim recovered.' : 'Inspection claimed.');
     }
 
     public function pass(PassInspectionRequest $request, string $inspection): JsonResponse

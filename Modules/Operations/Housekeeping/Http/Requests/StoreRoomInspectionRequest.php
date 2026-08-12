@@ -17,14 +17,23 @@ class StoreRoomInspectionRequest extends FormRequest
 
     public function rules(): array
     {
-        $propertyId = app(CurrentPropertyService::class)->getId();
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
 
         return [
             'room_id'          => ['required', 'string', Rule::exists('rooms', 'id')->where('property_id', $propertyId)->whereNull('deleted_at')],
             'cleaning_task_id' => ['nullable', 'string', Rule::exists('cleaning_tasks', 'id')->where('property_id', $propertyId)->whereNull('deleted_at')],
-            'inspector_id'     => ['nullable', 'string', Rule::exists('users', 'id')->whereNull('deleted_at')],
-            'inspection_type'  => ['required', Rule::enum(InspectionTypeEnum::class)],
+            'inspection_type'  => ['required', Rule::enum(InspectionTypeEnum::class), Rule::notIn(['post_cleaning'])],
             'remarks'          => ['nullable', 'string'],
         ];
+    }
+
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator): void {
+            $accepted = ['room_id', 'cleaning_task_id', 'inspection_type', 'remarks', '_token', '_method'];
+            foreach (array_diff(array_keys($this->all()), $accepted) as $field) {
+                $validator->errors()->add('request', "The {$field} authority parameter is not accepted.");
+            }
+        });
     }
 }

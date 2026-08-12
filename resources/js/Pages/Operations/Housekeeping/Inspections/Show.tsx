@@ -35,6 +35,9 @@ export default function InspectionShow({ inspection, severities, pass_context }:
     const [password, setPassword] = useState('');
     const [processing, setProcessing] = useState(false);
     const [error, setError] = useState('');
+    const [claimOpen, setClaimOpen] = useState(false);
+    const [claimKey, setClaimKey] = useState<string | null>(null);
+    const [claimAmbiguous, setClaimAmbiguous] = useState(false);
     const [confirmedRelease, setConfirmedRelease] = useState<{ reason: string; evidenceKey: string } | null>(null);
     const evidenceKey = pass_context ? JSON.stringify({
         room_number: pass_context.room_number,
@@ -45,9 +48,34 @@ export default function InspectionShow({ inspection, severities, pass_context }:
     const confirmationMatches = confirmedRelease?.reason === releaseReason.trim()
         && confirmedRelease.evidenceKey === evidenceKey;
 
-    const conduct = () => {
-        if (window.confirm('Start this inspection?')) {
-            router.post(`/operations/inspections/${inspection.id}/conduct`, {}, { preserveScroll: true });
+    const openClaim = () => {
+        setClaimKey((current) => current ?? window.crypto.randomUUID());
+        setClaimOpen(true);
+        setError('');
+    };
+
+    const claimInspection = async () => {
+        const idempotencyKey = claimKey ?? window.crypto.randomUUID();
+        setClaimKey(idempotencyKey);
+        setProcessing(true);
+        setError('');
+
+        try {
+            await axios.post(`/operations/inspections/${inspection.id}/conduct`, {
+                idempotency_key: idempotencyKey,
+            });
+            setClaimOpen(false);
+            setClaimAmbiguous(false);
+            router.reload();
+        } catch (requestError: any) {
+            if (!requestError?.response) {
+                setClaimAmbiguous(true);
+                setError('The response was interrupted. Retry with the retained claim command to recover any committed claim.');
+            } else {
+                setError(requestError.response.data?.message ?? 'The Inspection could not be claimed.');
+            }
+        } finally {
+            setProcessing(false);
         }
     };
 
@@ -129,10 +157,11 @@ export default function InspectionShow({ inspection, severities, pass_context }:
 
             <section className="mb-6 rounded-lg bg-white p-6 shadow">
                 <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">Operational evidence</h2>
-                <dl className="grid grid-cols-2 gap-6 md:grid-cols-4">
+                <dl className="grid grid-cols-2 gap-6 md:grid-cols-5">
                     <div><dt className="text-xs text-gray-500">Room</dt><dd className="mt-1 text-sm font-medium text-gray-900">{inspection.room?.room_number ?? 'Unavailable'}</dd></div>
                     <div><dt className="text-xs text-gray-500">Type</dt><dd className="mt-1 text-sm text-gray-700">{inspection.inspection_type.label}</dd></div>
-                    <div><dt className="text-xs text-gray-500">Supervisor</dt><dd className="mt-1 text-sm text-gray-700">{inspection.inspector?.name ?? 'Not started'}</dd></div>
+                    <div><dt className="text-xs text-gray-500">Cleaner</dt><dd className="mt-1 text-sm text-gray-700">{inspection.task?.completed_by_name ?? 'Unavailable'}</dd></div>
+                    <div><dt className="text-xs text-gray-500">Inspector claimant</dt><dd className="mt-1 text-sm text-gray-700">{inspection.claim.claimant_name ?? 'Not claimed'}</dd></div>
                     <div><dt className="text-xs text-gray-500">Cleaning Task</dt><dd className="mt-1 text-sm text-gray-700">{inspection.task?.task_code ?? 'Unavailable'}</dd></div>
                 </dl>
                 {inspection.remarks && <p className="mt-4 border-t border-gray-100 pt-4 text-sm text-gray-700">{inspection.remarks}</p>}
@@ -142,19 +171,27 @@ export default function InspectionShow({ inspection, severities, pass_context }:
                 <section className="mb-6 rounded-lg bg-white p-6 shadow">
                     <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">Actions</h2>
                     {status === 'pending' && (
-                        <button onClick={conduct} className="rounded bg-yellow-600 px-4 py-2 text-sm text-white hover:bg-yellow-700">Start Inspection</button>
+                        inspection.claim.can_claim ? (
+                            <button onClick={openClaim} className="rounded bg-yellow-700 px-4 py-2 text-sm text-white hover:bg-yellow-800">Claim Inspection</button>
+                        ) : (
+                            <p className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                {inspection.claim.is_current_actor_cleaner
+                                    ? 'You completed this Cleaning Task and cannot inspect the same work.'
+                                    : 'This Inspection is not available for you to claim.'}
+                            </p>
+                        )
                     )}
                     {status === 'in_progress' && action === null && (
-                        <div className="flex gap-3">
+                        inspection.claim.can_pass || inspection.claim.can_fail ? <div className="flex gap-3">
                             <button
                                 onClick={() => setAction('pass')}
-                                disabled={!pass_context}
+                                disabled={!inspection.claim.can_pass || !pass_context}
                                 className="rounded bg-green-700 px-4 py-2 text-sm text-white hover:bg-green-800 disabled:opacity-50"
                             >
                                 Pass Inspection
                             </button>
-                            <button onClick={() => setAction('fail')} className="rounded bg-red-700 px-4 py-2 text-sm text-white hover:bg-red-800">Fail Inspection</button>
-                        </div>
+                            {inspection.claim.can_fail && <button onClick={() => setAction('fail')} className="rounded bg-red-700 px-4 py-2 text-sm text-white hover:bg-red-800">Fail Inspection</button>}
+                        </div> : <p className="rounded border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">This Inspection is owned by another inspector. Claim takeover is not available.</p>
                     )}
                     {action === 'fail' && (
                         <div className="max-w-2xl space-y-4 border-t border-gray-100 pt-4">
@@ -180,6 +217,37 @@ export default function InspectionShow({ inspection, severities, pass_context }:
                         </div>
                     )}
                 </section>
+            )}
+
+            {claimOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 p-4" role="dialog" aria-modal="true" aria-labelledby="claim-title">
+                    <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+                        <div className="border-b border-gray-200 px-6 py-4">
+                            <h2 id="claim-title" className="text-lg font-semibold text-gray-900">Claim Post-cleaning Inspection</h2>
+                            <p className="mt-1 text-sm text-gray-600">Review the maker-checker boundary before accepting this controlled action.</p>
+                        </div>
+                        <div className="space-y-4 px-6 py-5 text-sm text-gray-700">
+                            <dl className="grid grid-cols-2 gap-3 rounded bg-gray-50 p-4">
+                                <div><dt className="text-gray-500">Room</dt><dd className="font-medium">{inspection.room?.room_number ?? 'Unavailable'}</dd></div>
+                                <div><dt className="text-gray-500">Cleaning Task</dt><dd className="font-medium">{inspection.task?.task_code ?? 'Unavailable'}</dd></div>
+                                <div className="col-span-2"><dt className="text-gray-500">Completed cleaner</dt><dd className="font-medium">{inspection.task?.completed_by_name ?? 'Unavailable'}</dd></div>
+                            </dl>
+                            <ul className="list-disc space-y-2 pl-5">
+                                <li>You will become the immutable inspector claimant for this Inspection.</li>
+                                <li>The cleaner who completed this task cannot inspect their own work.</li>
+                                <li>Another inspector cannot silently take over after the claim commits.</li>
+                            </ul>
+                            {claimAmbiguous && <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">The same in-memory command will be reused for this recovery retry.</p>}
+                            {error && <p role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700">{error}</p>}
+                        </div>
+                        <div className="flex justify-end gap-3 border-t border-gray-200 px-6 py-4">
+                            <button onClick={() => { setClaimOpen(false); setError(''); }} disabled={processing} className="rounded bg-gray-100 px-4 py-2 text-sm text-gray-700 disabled:opacity-50">Cancel</button>
+                            <button onClick={claimInspection} disabled={processing} className="rounded bg-yellow-700 px-4 py-2 text-sm text-white disabled:opacity-50">
+                                {processing ? 'Claiming Inspection...' : claimAmbiguous ? 'Retry Claim Recovery' : 'Confirm Inspection Claim'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {terminal && (

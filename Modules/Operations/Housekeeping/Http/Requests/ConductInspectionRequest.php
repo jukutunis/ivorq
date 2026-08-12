@@ -22,14 +22,16 @@ class ConductInspectionRequest extends FormRequest
 
     public function rules(): array
     {
-        return [];
+        return [
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:160', 'regex:/\A[A-Za-z0-9][A-Za-z0-9._:-]{7,159}\z/'],
+        ];
     }
 
     public function withValidator($validator): void
     {
         $validator->after(function ($validator): void {
-            foreach (array_diff(array_keys($this->all()), ['_token', '_method']) as $field) {
-                $validator->errors()->add($field, 'This lifecycle authority parameter is not accepted.');
+            foreach (array_diff(array_keys($this->all()), ['idempotency_key', '_token', '_method']) as $field) {
+                $validator->errors()->add('request', "The {$field} authority parameter is not accepted.");
             }
         });
     }

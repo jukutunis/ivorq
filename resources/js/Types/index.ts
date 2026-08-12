@@ -198,13 +198,24 @@ export interface RoomInspection {
     inspection_severity: EnumOption | null;
     remarks: string | null;
     inspected_at: string | null;
+    claimed_at: string | null;
+    claim_evidence_version: number | null;
     created_by: string | null;
     updated_by: string | null;
     created_at: string;
     updated_at: string;
     room?: { id: string; room_number: string; room_name: string | null };
-    task?: { id: string; task_code: string; title: string } | null;
+    task?: { id: string; task_code: string; title: string; completed_by_name: string | null } | null;
     inspector?: { id: string; name: string } | null;
+    claim: {
+        state: 'available' | 'claimed' | 'legacy_claim' | 'unavailable';
+        claimant_name: string | null;
+        is_current_actor_cleaner: boolean;
+        is_owned_by_current_actor: boolean;
+        can_claim: boolean;
+        can_pass: boolean;
+        can_fail: boolean;
+    };
 }
 
 export interface InspectionPassContext {
