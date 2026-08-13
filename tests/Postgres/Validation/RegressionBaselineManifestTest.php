@@ -301,7 +301,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '98ccdeb9be1b9bc60b2df9cda2d31bbe9aed4a59',
+            'df606720148a0a09df12eb111f5ddd79851608ed',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -310,9 +310,21 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'Provenance SHA must be a full 40-character hex string.'
         );
         $this->assertEquals(
-            'sprint-package-17-housekeeping-inspection-claim-segregation',
+            'codex/architecture-package-18-post-package-17-housekeeping-governance-sync',
             $baseline->provenance->branch ?? null
         );
+
+        $this->assertEquals('2026-08-13', $baseline->provenance->measured_at ?? null);
+        $this->assertSame('PACKAGE_17_ACCEPTED_CANONICAL__PACKAGE_18_CURRENT_GOVERNANCE__PACKAGE_19_RUNTIME_LOCKED', $baseline->provenance->governance_status ?? null);
+        $this->assertStringContainsString('Package 18 is governance-only under Contract Version 1.20', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('Package 17 is accepted and canonical through PR #51 at merge 37750626f9e0614d26d628a4707bcb205508ae03', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('Package 18 governance commit 8cc177066dcd0598e740bea9a70ef756353d1442 and Housekeeping Contract-guard alignment commit df606720148a0a09df12eb111f5ddd79851608ed', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('change no Front Desk runtime and no Housekeeping production source', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('no Package 17 runtime or integrity assertion was weakened', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('exact 68-class Front Desk selection remains unchanged at 729 tests / 5657 assertions / 0 failures / 0 errors', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('Package 19 runtime remains locked', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('Inventory Reversal inherited debt remains unchanged', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('No new ADR and no new accepted debt', $baseline->provenance->governance_note ?? '');
 
         $this->assertStringContainsString('729 tests / 5657 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('Package 17 final predecessor-migration isolation source/test commit 98ccdeb9be1b9bc60b2df9cda2d31bbe9aed4a59', $baseline->provenance->note ?? '');
@@ -464,9 +476,19 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('98ccdeb9be1b9bc60b2df9cda2d31bbe9aed4a59', $baseline->provenance->sha ?? null);
-        $this->assertEquals('sprint-package-17-housekeeping-inspection-claim-segregation', $baseline->provenance->branch ?? null);
-        $this->assertEquals('2026-08-12', $baseline->provenance->measured_at ?? null);
+        $this->assertEquals('df606720148a0a09df12eb111f5ddd79851608ed', $baseline->provenance->sha ?? null);
+        $this->assertEquals('codex/architecture-package-18-post-package-17-housekeeping-governance-sync', $baseline->provenance->branch ?? null);
+        $this->assertEquals('2026-08-13', $baseline->provenance->measured_at ?? null);
+        $this->assertSame('PACKAGE_17_ACCEPTED_CANONICAL__PACKAGE_18_CURRENT_GOVERNANCE__PACKAGE_19_RUNTIME_LOCKED', $baseline->provenance->governance_status ?? null);
+        $this->assertStringContainsString('Package 18 governance-only synchronization runs under Contract Version 1.20', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('Package 17 acceptance through PR #51 at canonical merge 37750626f9e0614d26d628a4707bcb205508ae03', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('Package 18 governance commit 8cc177066dcd0598e740bea9a70ef756353d1442 and Housekeeping Contract-guard alignment commit df606720148a0a09df12eb111f5ddd79851608ed', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('without weakening any Package 17 runtime, PostgreSQL, claimant-ownership, maker-checker, Property-scope, no-background-runtime, no-assignment-aggregate, or ADR-ceiling assertion', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('No Housekeeping production source changed', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('accepted Package 17 runtime provenance remains preserved in note', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('exact 28-class Housekeeping baseline remains 191 tests / 3539 assertions / 0 failures / 0 errors', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('Package 19 runtime remains locked', $baseline->provenance->governance_note ?? '');
+        $this->assertStringContainsString('No new ADR and no new accepted debt', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('28 exact classes / 191 tests / 3539 assertions / 0 failures / 0 errors', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('six Package 17 exact classes passed 27 tests / 770 assertions', $baseline->provenance->note ?? '');
         $this->assertStringContainsString('post-deployment no-evidence pending-to-in_progress claim bypass and legacy-style post-cleaning INSERT closed', $baseline->provenance->note ?? '');

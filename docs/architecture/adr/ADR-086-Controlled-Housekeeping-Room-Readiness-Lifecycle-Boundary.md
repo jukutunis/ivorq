@@ -9,7 +9,7 @@
 
 ## Context
 
-The Housekeeping module owns room cleanliness and readiness as the source of truth for operational room state. The original ADR context identified direct consumer reads and scattered transition evidence. The accepted Housekeeping package train now provides a Housekeeping-owned readiness boundary, durable checkout-turnover intake, a read-only turnover workspace, canonical Cleaning Task and post-cleaning Inspection integration, and controlled Cleaning Task dispatch and assignment so that Front Desk, Engineering, and Finance consumers respect Housekeeping ownership without mutation.
+The Housekeeping module owns room cleanliness and readiness as the source of truth for operational room state. The original ADR context identified direct consumer reads and scattered transition evidence. The accepted Housekeeping package train now provides a Housekeeping-owned readiness boundary, durable checkout-turnover intake, a read-only turnover workspace, canonical Cleaning Task and post-cleaning Inspection integration, controlled Cleaning Task dispatch and assignment, and an accepted controlled post-cleaning Inspection claim with cleaner/inspector identity segregation so that Front Desk, Engineering, and Finance consumers respect Housekeeping ownership without mutation.
 
 ## Decision
 
@@ -197,6 +197,18 @@ Current Package 16 determination:
 
 `DEFERRED_MAKER_CHECKER_POLICY` is retained as historical evidence. Contract Version 1.19 resolves only the future identity-level policy direction without inventing a new global role model: when Package 17 is implemented, the cleaner recorded in `CleaningTask.completed_by` must not claim or decide the same post-cleaning Inspection, and one claimed non-cleaner inspector must own its pass/fail decision. The existing current-Property User identity and permissions are sufficient future inputs, but runtime enforcement, durable claim evidence, and concurrency proof do not exist yet. Contract Version 1.19 does not itself authorize Package 17 runtime. Package 17 remains locked until Package 16 is independently reviewed, explicitly Owner-authorized, and merged into canonical; Package 17 then requires its own branch, Draft PR, independent review, Owner authorization, and merge. Package 16 changes governance records only and must not claim that segregation already exists.
 
+The preceding Package 16 markers and paragraph are retained as historical sequencing evidence. They are not the current runtime classification.
+
+Current status under Contract Version 1.20:
+
+- **PACKAGE_17_INSPECTION_CLAIM_AND_SEGREGATION_ACCEPTED**
+- **RUNTIME_ENFORCED**
+- **PACKAGE_18_POST_PACKAGE_17_GOVERNANCE_SYNCHRONIZATION**
+- **PACKAGE_19_INSPECTION_CLAIM_RECOVERY_BOUNDARY_FROZEN**
+- **PACKAGE_19_RUNTIME_LOCKED_PENDING_PACKAGE_18_MERGE**
+
+Package 17 is accepted through PR #51 at canonical merge `37750626f9e0614d26d628a4707bcb205508ae03`, with accepted feature HEAD `0a1e2a1eb9f4882ad05e3966604b8b36fa262fb4`. Runtime now enforces a canonical post-cleaning claim, server-resolved claimant identity in `RoomInspection.supervisor_id`, deterministic Property-scoped idempotency, immutable claim evidence, cleaner/inspector segregation, claimant-owned terminal decisions, PostgreSQL claim-bypass closure, and historical Package 13 compatibility. Package 17 claimant immutability remains canonical. Package 18 is governance-only and does not authorize any claimant mutation or Package 19 runtime.
+
 ### Sensitive Confirmation Policy
 
 RELEASE_READY requires sensitive confirmation via the `housekeeping-room-release-ready` intent.
@@ -367,13 +379,72 @@ Current accepted behavior:
 - bounded workload projection and turnover-workspace dispatch integration remain read-only projections around the canonical assignment command;
 - real PostgreSQL concurrency proof covers assignment races, Property isolation, and zero orphan or mixed assignment state.
 
+## Package 17 Accepted Inspection Claim and Segregation
+
+Package 17 is accepted and merged through PR #51. Accepted feature HEAD: `0a1e2a1eb9f4882ad05e3966604b8b36fa262fb4`. Canonical merge commit: `37750626f9e0614d26d628a4707bcb205508ae03`.
+
+Accepted append-only provenance:
+
+- original source: `20112b623d04c50655e8701566c1dbd156e6dc53`;
+- original metadata: `de3e131c091f02fbb70cabb41006accecb0ce1bd`;
+- legacy/replay correction: `0120b793a1e10f21ae4b6a235e9e75591b792ee4`;
+- Package 13 concurrency fixture alignment: `86a3b9e242bbf427353e07131c42f69d983df6e9`;
+- corrected metadata: `40a6b3959411fd6d4a347e03d617905fc7ad9d5f`;
+- PostgreSQL bypass closure: `3055610ebd714f592fe395926a180743a5e945d1`;
+- Foundation legacy proof alignment: `b45bba591e32963c2bbe7e03a82cc9f997a5d6c1`;
+- Package 13 canonical claim fixture: `55399a7c53dc9c5f099ee4570ec1bc1bb6fd757b`;
+- Package 13 successor migration isolation: `98ccdeb9be1b9bc60b2df9cda2d31bbe9aed4a59`;
+- final metadata/HEAD: `0a1e2a1eb9f4882ad05e3966604b8b36fa262fb4`;
+- canonical merge: `37750626f9e0614d26d628a4707bcb205508ae03`.
+
+Current accepted behavior:
+
+- one canonical Housekeeping service writes an eligible pending post-cleaning Inspection claim;
+- the authenticated, active, current-Property User is re-resolved on the server and recorded as claimant in `RoomInspection.supervisor_id`;
+- `housekeeping.inspection.conduct` remains the ordinary claimant eligibility permission;
+- claim idempotency is deterministic and Property-scoped;
+- `claimed_at`, `claim_idempotency_key`, `claim_source_hash`, and `claim_evidence_version` bind the source graph and claimant;
+- the claimant must differ from `CleaningTask.completed_by`;
+- `supervisor_id` and all Package 17 claim evidence are immutable at application and PostgreSQL levels;
+- only the effective recorded claimant may pass or fail;
+- pass still requires `housekeeping.room-readiness.release-ready` and the `housekeeping-room-release-ready` sensitive confirmation;
+- fail still requires `housekeeping.room-readiness.clean`;
+- PostgreSQL blocks direct claim bypass, historical supervisor takeover, claim deletion, claim evidence rewriting, malformed canonical claims, and maker-checker violation;
+- historical Package 13 rows remain compatible without fabricated Package 17 evidence and retain their historical recorded-supervisor terminal boundary.
+
+Package 17 defines no claim expiry, release, abandonment, reassignment, takeover, emergency recovery, or alternate effective claimant. A Package 17 claimant cannot be silently replaced. If that claimant later becomes objectively ineligible, the `in_progress` Inspection has no current recovery path.
+
 ## Remaining Inspection Claim and Segregation Boundary
 
-The accepted Package 13 Inspection lifecycle changes a pending post-cleaning Inspection to `in_progress` and records the acting User in `RoomInspection.supervisor_id`, but current conduct has no durable claim idempotency identity or claim audit contract. Current conduct does not reject the cleaner recorded in `CleaningTask.completed_by`, and current pass/fail actions do not require the acting User to equal the recorded claimant.
+This section records the historical pre-Package-17 determination made under Contract Version 1.19. The accepted Package 13 Inspection lifecycle changed a pending post-cleaning Inspection to `in_progress` and recorded the acting User in `RoomInspection.supervisor_id`, but then-current conduct had no durable claim idempotency identity or claim audit contract. Then-current conduct did not reject the cleaner recorded in `CleaningTask.completed_by`, and pass/fail actions did not require the acting User to equal the recorded claimant.
 
-Controlled Inspection claim and identity-level cleaner/inspector segregation require future Package 17, `PACKAGE_17_CONTROLLED_HOUSEKEEPING_INSPECTION_CLAIM_AND_SEGREGATION`, on its own runtime branch and Draft PR after Package 16 is accepted and merged.
+That historical boundary required future Package 17, `PACKAGE_17_CONTROLLED_HOUSEKEEPING_INSPECTION_CLAIM_AND_SEGREGATION`, on its own runtime branch and Draft PR after Package 16 was accepted and merged. Package 17 is now accepted through PR #51; the paragraph is retained only as historical evidence.
 
-Package 17 must preserve Housekeeping ownership, current-Property isolation, existing Inspection pass/fail outcomes, Package 13 readiness and re-cleaning integrity, Package 15 assignment history, existing permissions, and sensitive confirmation. It may add one durable idempotent claim boundary, exactly one immutable claimant, claimant-owned pass/fail enforcement, and the rule that `CleaningTask.completed_by` cannot claim or decide the same post-cleaning Inspection. Claim release, reassignment, expiry, takeover, emergency override, new role modeling, automated scheduling, and foreign-domain mutation remain unauthorized.
+Package 17 was required to preserve Housekeeping ownership, current-Property isolation, existing Inspection pass/fail outcomes, Package 13 readiness and re-cleaning integrity, Package 15 assignment history, existing permissions, and sensitive confirmation. It was authorized to add one durable idempotent claim boundary, exactly one immutable claimant, claimant-owned pass/fail enforcement, and the rule that `CleaningTask.completed_by` cannot claim or decide the same post-cleaning Inspection. Package 17 did not authorize claim release, reassignment, expiry, takeover, emergency override, new role modeling, automated scheduling, or foreign-domain mutation.
+
+## Package 19 Controlled Claim Recovery Boundary
+
+Package 18 freezes, but does not implement, `PACKAGE_19_CONTROLLED_HOUSEKEEPING_INSPECTION_CLAIM_RECOVERY_AND_REASSIGNMENT` — Controlled Housekeeping Inspection Claim Recovery and Supervisory Reassignment Foundation.
+
+The future boundary is limited to one controlled supervisory recovery of an `in_progress` canonical Package 17 post-cleaning Inspection when the original claimant is objectively no longer eligible. Source-resolvable ineligibility is limited to inactive/deleted User state, inactive/missing current-Property membership, or loss of `housekeeping.inspection.conduct`. Shift schedules, GPS presence, attendance, leave, HRIS availability, or subjective workload cannot be inferred from current source.
+
+The future intervenor must be authenticated, active, current-Property, have active membership, hold exact permission `housekeeping.inspection.approve`, and complete Sensitive Action Confirmation using the preferred future intent `housekeeping-inspection-claim-reassignment`. The intent is not registered by Package 18. ADR-066 already governs this confirmation primitive, so no new ADR is required.
+
+The replacement claimant must be server-resolved, active in the current Property, hold `housekeeping.inspection.conduct`, differ from `CleaningTask.completed_by`, and differ from the original claimant. The original Package 17 fields `supervisor_id`, `claimed_at`, `claim_idempotency_key`, `claim_source_hash`, and `claim_evidence_version` remain immutable original evidence and must not be overwritten. A separate Housekeeping-owned append-only intervention evidence identity must record mandatory reason, deterministic Property-scoped idempotency, source hash, server timestamp, intervenor, original claimant, and replacement claimant with audit, PostgreSQL integrity, and concurrency-safe one-winner behavior.
+
+Logical effective claimant:
+
+```text
+if no accepted recovery evidence:
+    effective claimant = Package 17 original claimant
+
+if one accepted Package 19 recovery exists:
+    effective claimant = validated replacement claimant
+```
+
+At most one recovery is permitted per original claim. After accepted recovery, only the replacement effective claimant may pass/fail and the original claimant loses terminal authority. Cleaner segregation and the accepted pass/fail permissions remain unchanged; the recovery confirmation does not replace the separate `housekeeping-room-release-ready` confirmation required to pass.
+
+Package 19 runtime remains locked pending Package 18 independent review, explicit Owner authorization, and merge. Package 18 creates no runtime, migration, model, service, controller, request, policy, permission, route, seeder, sensitive intent registration, UI, or test.
 
 ### Explicit Non-Goals
 
