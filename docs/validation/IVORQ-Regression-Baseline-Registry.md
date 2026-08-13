@@ -62,8 +62,18 @@ All baselines in this registry use `selection_policy: "exact-test-classes"`. The
 
 | ID | Status | Description |
 |----|--------|-------------|
-| `frontdesk-operational-baseline` | `active` | Front Desk operational tests through Package 9 checkout execution completion foundation, Package 11 FD-C2 assertion sync, Package 15 deterministic Housekeeping source-scan cross-baseline remeasurement, preserved Contract 1.19 historical provenance, Package 17 deterministic three-file Housekeeping source-scan delta, and Package 18 Contract 1.20 governance/guard synchronization - unchanged 68 classes, 729 tests / 5657 assertions |
-| `housekeeping-room-readiness-baseline` | `active` | Housekeeping room readiness (HK-B1), Package 11 durable checkout-turnover intake, Package 12 read-only turnover workspace, Package 13 canonical Cleaning Task/Room Inspection readiness with current-runtime canonical claim fixtures and disposable successor isolation, Package 15 controlled assignment, corrected Package 17 post-cleaning Inspection claim/segregation with closed PostgreSQL bypasses, historical NULL-evidence compatibility, immutable authority, maker-checker enforcement, terminal replay, audit evidence, recovered predecessor proofs, and Package 18 test-only Contract 1.20 guard alignment - unchanged 28 classes, 191 tests / 3539 assertions |
+| `frontdesk-operational-baseline` | `active` | Front Desk operational tests with preserved Package 17/18 provenance and Package 19 deterministic six-file Housekeeping source-scan delta - unchanged 68 classes, 729 tests / 5693 assertions |
+| `housekeeping-room-readiness-baseline` | `active` | Housekeeping room readiness through Package 17 controlled claim segregation and Package 19 controlled supervisory claim recovery/reassignment - 34 classes, 204 tests / 3692 assertions |
+
+## Package 19 Controlled Inspection Claim Recovery (2026-08-14)
+
+- Contract Version 1.20 remains approved and unchanged; `NO_NEW_ADR_REQUIRED`.
+- Accepted Package 18 canonical predecessor: `a99f4b20489c3259c416297310a7b02f9cb6dacb`.
+- Package 19 source/test provenance: `3f05283dc878c9ec098ba0e27b319451abda36ad` on `sprint-package-19-housekeeping-inspection-claim-recovery-reassignment`.
+- Logical boundary: controlled claim recovery / supervisory reassignment. The Package 17 original claim remains immutable, one append-only recovery is permitted, and `housekeeping-inspection-claim-reassignment` is registered as a sensitive confirmation intent.
+- Six exact Package 19 classes measured 13 tests / 153 assertions. The full exact 34-class Housekeeping batch measured 204 tests / 3,692 assertions / 0 failures / 0 errors.
+- The unchanged exact 68-class Front Desk batch measured 729 tests / 5,693 assertions / 0 failures / 0 errors. Six new eligible Housekeeping production files add six deterministic negative source-scan assertions each, explaining the observed `5,657 + (6 x 6) = 5,693` delta.
+- Inventory Reversal inherited debt remains 8 tests / 72 assertions / 0 failures / exactly 2 documented inherited errors. No new accepted debt.
 
 ## Package 18 Governance Synchronization (2026-08-13)
 
