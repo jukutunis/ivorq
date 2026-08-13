@@ -3,8 +3,9 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Operations\Housekeeping\Http\Controllers\CleaningChecklistController;
 use Modules\Operations\Housekeeping\Http\Controllers\CleaningTaskController;
-use Modules\Operations\Housekeeping\Http\Controllers\HousekeepingDashboardController;
 use Modules\Operations\Housekeeping\Http\Controllers\HousekeepingCheckoutTurnoverWorkspaceController;
+use Modules\Operations\Housekeeping\Http\Controllers\HousekeepingDashboardController;
+use Modules\Operations\Housekeeping\Http\Controllers\HousekeepingRoomReadinessController;
 use Modules\Operations\Housekeeping\Http\Controllers\RoomController;
 use Modules\Operations\Housekeeping\Http\Controllers\RoomInspectionController;
 use Modules\Operations\Housekeeping\Http\Controllers\TaskAssignmentController;
@@ -56,6 +57,12 @@ Route::middleware(['web', 'auth'])
         Route::post('inspections/{inspection}/fail', [RoomInspectionController::class, 'fail'])
             ->name('inspections.fail');
 
+        Route::post('inspections/{inspection}/claim-reassignment-confirmation', [RoomInspectionController::class, 'confirmClaimReassignment'])
+            ->name('inspections.claim-reassignment-confirmation');
+
+        Route::post('inspections/{inspection}/claim-reassignment', [RoomInspectionController::class, 'reassignClaim'])
+            ->name('inspections.claim-reassignment');
+
         // ── Cleaning Checklists ───────────────────────────────────────────
         Route::resource('checklists', CleaningChecklistController::class)
             ->parameters(['checklists' => 'checklist']);
@@ -63,15 +70,15 @@ Route::middleware(['web', 'auth'])
         Route::prefix('checklists/{checklist}/items')
             ->name('checklists.items.')
             ->group(function () {
-                Route::post('/',             [CleaningChecklistController::class, 'addItem'])
+                Route::post('/', [CleaningChecklistController::class, 'addItem'])
                     ->name('store');
-                Route::put('/{item}',        [CleaningChecklistController::class, 'updateItem'])
+                Route::put('/{item}', [CleaningChecklistController::class, 'updateItem'])
                     ->name('update');
-                Route::patch('/{item}',      [CleaningChecklistController::class, 'updateItem'])
+                Route::patch('/{item}', [CleaningChecklistController::class, 'updateItem'])
                     ->name('update.patch');
-                Route::delete('/{item}',     [CleaningChecklistController::class, 'deleteItem'])
+                Route::delete('/{item}', [CleaningChecklistController::class, 'deleteItem'])
                     ->name('destroy');
-                Route::post('/reorder',      [CleaningChecklistController::class, 'reorderItems'])
+                Route::post('/reorder', [CleaningChecklistController::class, 'reorderItems'])
                     ->name('reorder');
             });
 
@@ -79,13 +86,13 @@ Route::middleware(['web', 'auth'])
         Route::prefix('room-readiness')
             ->name('room-readiness.')
             ->group(function () {
-                Route::post('/start-cleaning', [\Modules\Operations\Housekeeping\Http\Controllers\HousekeepingRoomReadinessController::class, 'startCleaning'])
+                Route::post('/start-cleaning', [HousekeepingRoomReadinessController::class, 'startCleaning'])
                     ->name('start-cleaning');
-                Route::post('/submit-inspection', [\Modules\Operations\Housekeeping\Http\Controllers\HousekeepingRoomReadinessController::class, 'submitInspection'])
+                Route::post('/submit-inspection', [HousekeepingRoomReadinessController::class, 'submitInspection'])
                     ->name('submit-inspection');
-                Route::post('/release-ready', [\Modules\Operations\Housekeeping\Http\Controllers\HousekeepingRoomReadinessController::class, 'releaseReady'])
+                Route::post('/release-ready', [HousekeepingRoomReadinessController::class, 'releaseReady'])
                     ->name('release-ready');
-                Route::get('/{room}', [\Modules\Operations\Housekeeping\Http\Controllers\HousekeepingRoomReadinessController::class, 'show'])
+                Route::get('/{room}', [HousekeepingRoomReadinessController::class, 'show'])
                     ->name('show');
             });
     });

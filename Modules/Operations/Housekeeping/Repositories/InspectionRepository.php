@@ -17,7 +17,7 @@ class InspectionRepository
     /** @param array{inspection_type?: string, status?: string} $filters */
     public function paginate(int $perPage = 15, array $filters = []): LengthAwarePaginator
     {
-        $query = RoomInspection::with(['room', 'task.completedBy', 'inspector'])
+        $query = RoomInspection::with(['room', 'task.completedBy', 'inspector', 'claimReassignment.replacementClaimant', 'claimReassignment.intervenor'])
             ->where('property_id', $this->propertyId());
         if (($filters['inspection_type'] ?? '') !== '') {
             $query->where('inspection_type', $filters['inspection_type']);
@@ -33,7 +33,7 @@ class InspectionRepository
 
     public function find(string $id): RoomInspection
     {
-        $inspection = RoomInspection::with(['room', 'task.completedBy', 'inspector', 'photos'])
+        $inspection = RoomInspection::with(['room', 'task.completedBy', 'inspector', 'photos', 'claimReassignment.originalClaimant', 'claimReassignment.replacementClaimant', 'claimReassignment.intervenor'])
             ->where('property_id', $this->propertyId())
             ->find($id);
 

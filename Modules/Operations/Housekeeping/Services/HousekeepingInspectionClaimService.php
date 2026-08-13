@@ -29,15 +29,25 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 class HousekeepingInspectionClaimService
 {
     public const CLAIM_PERMISSION = 'housekeeping.inspection.conduct';
+
     public const EVIDENCE_VERSION = 1;
+
     public const NOT_AUTHORIZED = 'HK_INSPECTION_CLAIM_NOT_AUTHORIZED';
+
     public const NOT_ELIGIBLE = 'HK_INSPECTION_CLAIM_NOT_ELIGIBLE';
+
     public const CLEANER_PROHIBITED = 'HK_INSPECTION_CLAIM_CLEANER_PROHIBITED';
+
     public const IDEMPOTENCY_CONFLICT = 'HK_INSPECTION_CLAIM_IDEMPOTENCY_CONFLICT';
+
     public const SOURCE_CONFLICT = 'HK_INSPECTION_CLAIM_SOURCE_CONFLICT';
+
     public const OWNERSHIP_REQUIRED = 'HK_INSPECTION_CLAIM_OWNERSHIP_REQUIRED';
 
-    public function __construct(private readonly CurrentPropertyService $currentProperty) {}
+    public function __construct(
+        private readonly CurrentPropertyService $currentProperty,
+        private readonly HousekeepingInspectionClaimRecoveryService $claimRecovery,
+    ) {}
 
     public function claim(User $actor, string $inspectionId, string $idempotencyKey): HousekeepingInspectionClaimResult
     {
@@ -62,7 +72,7 @@ class HousekeepingInspectionClaimService
     }
 
     /**
-     * @param Collection<int, TaskAssignment> $completedAssignments
+     * @param  Collection<int, TaskAssignment>  $completedAssignments
      */
     public function assertTerminalAuthority(
         User $actor,
@@ -107,10 +117,6 @@ class HousekeepingInspectionClaimService
         ) {
             throw new DomainException(self::OWNERSHIP_REQUIRED);
         }
-        if ($actor->id !== $inspection->supervisor_id) {
-            throw new DomainException(self::OWNERSHIP_REQUIRED);
-        }
-
         $expectedHash = $this->sourceHash(
             self::EVIDENCE_VERSION,
             $propertyId,
@@ -122,6 +128,9 @@ class HousekeepingInspectionClaimService
         );
         if (! hash_equals($expectedHash, (string) $inspection->claim_source_hash)) {
             throw new DomainException(self::SOURCE_CONFLICT);
+        }
+        if ($actor->id !== $this->claimRecovery->effectiveClaimantId($propertyId, $inspection)) {
+            throw new DomainException(self::OWNERSHIP_REQUIRED);
         }
     }
 
