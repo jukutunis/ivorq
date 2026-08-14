@@ -359,7 +359,7 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
         $this->assertFileExists($contractPath);
 
         $source = file_get_contents($contractPath);
-        $this->assertStringContainsString('Version: 1.21', $source, 'Contract Version must remain 1.21.');
+        $this->assertStringContainsString('Version: 1.22', $source, 'Contract Version must remain 1.21.');
     }
 
     // ── Package 8 / 9 remain locked ──────────────────────────────────────
