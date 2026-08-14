@@ -199,15 +199,16 @@ Current Package 16 determination:
 
 The preceding Package 16 markers and paragraph are retained as historical sequencing evidence. They are not the current runtime classification.
 
-Current status under Contract Version 1.20:
+Current status under Contract Version 1.21:
 
 - **PACKAGE_17_INSPECTION_CLAIM_AND_SEGREGATION_ACCEPTED**
+- **PACKAGE_19_INSPECTION_CLAIM_RECOVERY_AND_REASSIGNMENT_ACCEPTED**
 - **RUNTIME_ENFORCED**
-- **PACKAGE_18_POST_PACKAGE_17_GOVERNANCE_SYNCHRONIZATION**
-- **PACKAGE_19_INSPECTION_CLAIM_RECOVERY_BOUNDARY_FROZEN**
-- **PACKAGE_19_RUNTIME_LOCKED_PENDING_PACKAGE_18_MERGE**
+- **PACKAGE_20_POST_PACKAGE_19_HOUSEKEEPING_FINAL_GOVERNANCE_CLOSURE**
+- **HOUSEKEEPING_TURNOVER_READINESS_PACKAGE_TRAIN_CLOSURE_PENDING_PACKAGE_20_MERGE**
+- **NO_PACKAGE_21_ACTIVATED**
 
-Package 17 is accepted through PR #51 at canonical merge `37750626f9e0614d26d628a4707bcb205508ae03`, with accepted feature HEAD `0a1e2a1eb9f4882ad05e3966604b8b36fa262fb4`. Runtime now enforces a canonical post-cleaning claim, server-resolved claimant identity in `RoomInspection.supervisor_id`, deterministic Property-scoped idempotency, immutable claim evidence, cleaner/inspector segregation, claimant-owned terminal decisions, PostgreSQL claim-bypass closure, and historical Package 13 compatibility. Package 17 claimant immutability remains canonical. Package 18 is governance-only and does not authorize any claimant mutation or Package 19 runtime.
+Package 17 is accepted through PR #51 at canonical merge `37750626f9e0614d26d628a4707bcb205508ae03`, with accepted feature HEAD `0a1e2a1eb9f4882ad05e3966604b8b36fa262fb4`. Runtime enforces a canonical post-cleaning claim, server-resolved claimant identity in `RoomInspection.supervisor_id`, deterministic Property-scoped idempotency, immutable claim evidence, cleaner/inspector segregation, claimant-owned terminal decisions, PostgreSQL claim-bypass closure, and historical Package 13 compatibility. Package 17 claimant immutability remains canonical. Package 19 is accepted through PR #53 at canonical merge `086deefca673af57776fcaa14e06494c2f16ab4d`, with accepted feature HEAD `9bd18634e603ee7e545798dd7ddf913407e2a685`. Package 19 adds separate append-only controlled recovery/reassignment evidence and effective replacement claimant semantics without mutating the original Package 17 claim. Package 20 is governance-only and adds no runtime.
 
 ### Sensitive Confirmation Policy
 
@@ -422,7 +423,7 @@ That historical boundary required future Package 17, `PACKAGE_17_CONTROLLED_HOUS
 
 Package 17 was required to preserve Housekeeping ownership, current-Property isolation, existing Inspection pass/fail outcomes, Package 13 readiness and re-cleaning integrity, Package 15 assignment history, existing permissions, and sensitive confirmation. It was authorized to add one durable idempotent claim boundary, exactly one immutable claimant, claimant-owned pass/fail enforcement, and the rule that `CleaningTask.completed_by` cannot claim or decide the same post-cleaning Inspection. Package 17 did not authorize claim release, reassignment, expiry, takeover, emergency override, new role modeling, automated scheduling, or foreign-domain mutation.
 
-## Package 19 Controlled Claim Recovery Boundary
+## Historical Package 19 Controlled Claim Recovery Boundary
 
 Package 18 freezes, but does not implement, `PACKAGE_19_CONTROLLED_HOUSEKEEPING_INSPECTION_CLAIM_RECOVERY_AND_REASSIGNMENT` — Controlled Housekeeping Inspection Claim Recovery and Supervisory Reassignment Foundation.
 
@@ -444,7 +445,36 @@ if one accepted Package 19 recovery exists:
 
 At most one recovery is permitted per original claim. After accepted recovery, only the replacement effective claimant may pass/fail and the original claimant loses terminal authority. Cleaner segregation and the accepted pass/fail permissions remain unchanged; the recovery confirmation does not replace the separate `housekeeping-room-release-ready` confirmation required to pass.
 
-Package 19 runtime remains locked pending Package 18 independent review, explicit Owner authorization, and merge. Package 18 creates no runtime, migration, model, service, controller, request, policy, permission, route, seeder, sensitive intent registration, UI, or test.
+At that historical Contract Version 1.20 point, Package 19 runtime remained locked pending Package 18 independent review, explicit Owner authorization, and merge. Package 18 created no runtime, migration, model, service, controller, request, policy, permission, route, seeder, sensitive intent registration, UI, or test. These markers are retained as historical authorization evidence and are not the current runtime classification.
+
+## Package 19 Accepted Inspection Claim Recovery and Reassignment
+
+Package 19 is accepted and merged through PR #53. Accepted feature HEAD: `9bd18634e603ee7e545798dd7ddf913407e2a685`. Canonical merge commit: `086deefca673af57776fcaa14e06494c2f16ab4d`.
+
+Accepted append-only provenance:
+
+- original source: `3f05283dc878c9ec098ba0e27b319451abda36ad`;
+- original metadata: `88750a9a23067d1630d0bf151510f0a94083f546`;
+- deterministic timestamp/PostgreSQL correction: `a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50`;
+- corrected metadata/final feature HEAD: `9bd18634e603ee7e545798dd7ddf913407e2a685`;
+- canonical merge: `086deefca673af57776fcaa14e06494c2f16ab4d`.
+
+Current accepted behavior:
+
+- the original Package 17 claim remains immutable, including `supervisor_id`, `claimed_at`, `claim_idempotency_key`, `claim_source_hash`, and `claim_evidence_version`;
+- Package 19 uses a separate append-only `HousekeepingInspectionClaimReassignment` aggregate rather than overwriting Package 17 claim evidence;
+- before recovery, the effective claimant is the original Package 17 claimant; after one accepted recovery, the effective claimant is the validated replacement claimant;
+- original-claimant ineligibility is objectively re-resolved from inactive/deleted User state, inactive/missing current-Property membership, or loss of `housekeeping.inspection.conduct`;
+- the authenticated current-Property intervenor requires exact permission `housekeeping.inspection.approve` and Sensitive Action Confirmation intent `housekeeping-inspection-claim-reassignment`;
+- the replacement claimant independently requires `housekeeping.inspection.conduct`, active current-Property membership, and cleaner/inspector segregation;
+- at most one recovery is accepted for the original claim; a second recovery/reassignment chain remains future optional scope;
+- after accepted recovery, only the replacement effective claimant may pass or fail; the original claimant cannot regain terminal authority merely by becoming eligible again;
+- replacement pass still requires independent permission `housekeeping.room-readiness.release-ready` and separate `housekeeping-room-release-ready` Sensitive Action Confirmation;
+- replacement fail still requires independent permission `housekeeping.room-readiness.clean`;
+- recovery confirmation does not replace room-release confirmation;
+- deterministic `occurred_at` and `created_at` evidence, exact replay, audit evidence, PostgreSQL malformed-write protection, and real concurrency proof are accepted.
+
+Package 20, `PACKAGE_20_POST_PACKAGE_19_HOUSEKEEPING_FINAL_GOVERNANCE_CLOSURE`, synchronizes governance only. The Housekeeping turnover/readiness package-train closure remains pending Package 20 review and merge. `NO_PACKAGE_21_ACTIVATED`. No new ADR is required.
 
 ### Explicit Non-Goals
 
