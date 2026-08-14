@@ -210,12 +210,51 @@ export interface RoomInspection {
     claim: {
         state: 'available' | 'claimed' | 'legacy_claim' | 'unavailable';
         claimant_name: string | null;
+        original_claimant_name: string | null;
+        effective_claimant_name: string | null;
         is_current_actor_cleaner: boolean;
         is_owned_by_current_actor: boolean;
+        is_original_claimant_current_actor: boolean;
+        is_effective_claimant_current_actor: boolean;
+        has_reassignment: boolean;
+        can_reassign: boolean;
         can_claim: boolean;
         can_pass: boolean;
         can_fail: boolean;
     };
+    reassignment: {
+        state: 'committed';
+        original_ineligibility_code: string;
+        reason: string;
+        occurred_at: string;
+        intervenor_name: string | null;
+        replacement_claimant_name: string | null;
+    } | null;
+}
+
+export interface InspectionClaimReassignmentContext {
+    is_recovery_eligible: boolean;
+    has_reassignment: boolean;
+    original_claimant_id: string | null;
+    original_claimant_name: string | null;
+    effective_claimant_id: string | null;
+    effective_claimant_name: string | null;
+    original_ineligibility_code: string | null;
+    may_intervene: boolean;
+    replacement_candidates: { id: string; name: string }[];
+    reassignment: {
+        id: string;
+        original_claimant_id: string;
+        original_claimant_name: string | null;
+        replacement_claimant_id: string;
+        replacement_claimant_name: string | null;
+        intervened_by: string;
+        intervenor_name: string | null;
+        original_ineligibility_code: string;
+        reason: string;
+        occurred_at: string;
+        evidence_version: number;
+    } | null;
 }
 
 export interface InspectionPassContext {

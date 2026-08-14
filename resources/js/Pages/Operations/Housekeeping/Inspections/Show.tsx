@@ -1,6 +1,6 @@
 import AppLayout from '@/Layouts/AppLayout';
 import { Link, router } from '@inertiajs/react';
-import { EnumOption, InspectionPassContext, RoomInspection } from '@/Types';
+import { EnumOption, InspectionClaimReassignmentContext, InspectionPassContext, RoomInspection } from '@/Types';
 import axios from 'axios';
 import { useState } from 'react';
 
@@ -8,6 +8,7 @@ interface Props {
     inspection: RoomInspection;
     severities: EnumOption[];
     pass_context: InspectionPassContext | null;
+    reassignment_context: InspectionClaimReassignmentContext;
 }
 
 function statusBadge(status: EnumOption) {
@@ -25,7 +26,7 @@ function statusBadge(status: EnumOption) {
     );
 }
 
-export default function InspectionShow({ inspection, severities, pass_context }: Props) {
+export default function InspectionShow({ inspection, severities, pass_context, reassignment_context }: Props) {
     const status = String(inspection.status.value);
     const terminal = status === 'passed' || status === 'failed';
     const [action, setAction] = useState<'pass' | 'fail' | null>(null);
@@ -39,6 +40,13 @@ export default function InspectionShow({ inspection, severities, pass_context }:
     const [claimKey, setClaimKey] = useState<string | null>(null);
     const [claimAmbiguous, setClaimAmbiguous] = useState(false);
     const [confirmedRelease, setConfirmedRelease] = useState<{ reason: string; evidenceKey: string } | null>(null);
+    const [reassignOpen, setReassignOpen] = useState(false);
+    const [replacementId, setReplacementId] = useState('');
+    const [reassignmentReason, setReassignmentReason] = useState('');
+    const [reassignmentPassword, setReassignmentPassword] = useState('');
+    const [reassignmentKey, setReassignmentKey] = useState<string | null>(null);
+    const [reassignmentConfirmed, setReassignmentConfirmed] = useState(false);
+    const [reassignmentAmbiguous, setReassignmentAmbiguous] = useState(false);
     const evidenceKey = pass_context ? JSON.stringify({
         room_number: pass_context.room_number,
         inspection_status: pass_context.inspection_status,
@@ -137,6 +145,55 @@ export default function InspectionShow({ inspection, severities, pass_context }:
         setError('');
     };
 
+    const openReassignment = () => {
+        setReassignmentKey((current) => current ?? window.crypto.randomUUID());
+        setReplacementId((current) => current || reassignment_context.replacement_candidates[0]?.id || '');
+        setReassignOpen(true);
+        setError('');
+    };
+
+    const reassignInspector = async () => {
+        const idempotencyKey = reassignmentKey ?? window.crypto.randomUUID();
+        setReassignmentKey(idempotencyKey);
+        setProcessing(true);
+        setError('');
+        let confirmed = reassignmentConfirmed;
+
+        try {
+            if (!confirmed) {
+                await axios.post(`/operations/inspections/${inspection.id}/claim-reassignment-confirmation`, {
+                    replacement_inspector_id: replacementId,
+                    reason: reassignmentReason.trim(),
+                    idempotency_key: idempotencyKey,
+                    password: reassignmentPassword,
+                });
+                confirmed = true;
+                setReassignmentConfirmed(true);
+                setReassignmentPassword('');
+            }
+
+            await axios.post(`/operations/inspections/${inspection.id}/claim-reassignment`, {
+                replacement_inspector_id: replacementId,
+                reason: reassignmentReason.trim(),
+                idempotency_key: idempotencyKey,
+            });
+            setReassignmentAmbiguous(false);
+            router.reload();
+        } catch (requestError: any) {
+            if (confirmed && !requestError?.response) {
+                setReassignmentAmbiguous(true);
+                setError('The response was interrupted. Retry the retained command to recover any committed reassignment without entering the password again.');
+            } else {
+                if (/confirmation|source|eligib|conflict/i.test(requestError?.response?.data?.message ?? '')) {
+                    setReassignmentConfirmed(false);
+                }
+                setError(requestError?.response?.data?.message ?? 'The inspector could not be reassigned.');
+            }
+        } finally {
+            setProcessing(false);
+        }
+    };
+
     return (
         <AppLayout>
             <div className="mb-6">
@@ -161,10 +218,22 @@ export default function InspectionShow({ inspection, severities, pass_context }:
                     <div><dt className="text-xs text-gray-500">Room</dt><dd className="mt-1 text-sm font-medium text-gray-900">{inspection.room?.room_number ?? 'Unavailable'}</dd></div>
                     <div><dt className="text-xs text-gray-500">Type</dt><dd className="mt-1 text-sm text-gray-700">{inspection.inspection_type.label}</dd></div>
                     <div><dt className="text-xs text-gray-500">Cleaner</dt><dd className="mt-1 text-sm text-gray-700">{inspection.task?.completed_by_name ?? 'Unavailable'}</dd></div>
-                    <div><dt className="text-xs text-gray-500">Inspector claimant</dt><dd className="mt-1 text-sm text-gray-700">{inspection.claim.claimant_name ?? 'Not claimed'}</dd></div>
+                    <div><dt className="text-xs text-gray-500">Original claimant</dt><dd className="mt-1 text-sm text-gray-700">{inspection.claim.original_claimant_name ?? 'Not claimed'}</dd></div>
                     <div><dt className="text-xs text-gray-500">Cleaning Task</dt><dd className="mt-1 text-sm text-gray-700">{inspection.task?.task_code ?? 'Unavailable'}</dd></div>
                 </dl>
                 {inspection.remarks && <p className="mt-4 border-t border-gray-100 pt-4 text-sm text-gray-700">{inspection.remarks}</p>}
+                {inspection.reassignment && <div className="mt-5 border-t border-gray-100 pt-5">
+                    <h3 className="text-sm font-semibold text-gray-900">Controlled claim recovery</h3>
+                    <dl className="mt-3 grid grid-cols-2 gap-4 text-sm md:grid-cols-3">
+                        <div><dt className="text-gray-500">Original claimant</dt><dd className="font-medium text-gray-900">{inspection.claim.original_claimant_name ?? 'Unavailable'}</dd></div>
+                        <div><dt className="text-gray-500">Effective claimant</dt><dd className="font-medium text-gray-900">{inspection.reassignment.replacement_claimant_name ?? 'Unavailable'}</dd></div>
+                        <div><dt className="text-gray-500">Intervened by</dt><dd className="font-medium text-gray-900">{inspection.reassignment.intervenor_name ?? 'Unavailable'}</dd></div>
+                        <div><dt className="text-gray-500">Objective recovery reason</dt><dd className="font-medium text-gray-900">{inspection.reassignment.original_ineligibility_code}</dd></div>
+                        <div><dt className="text-gray-500">Human reason</dt><dd className="font-medium text-gray-900">{inspection.reassignment.reason}</dd></div>
+                        <div><dt className="text-gray-500">Occurred at</dt><dd className="font-medium text-gray-900">{inspection.reassignment.occurred_at}</dd></div>
+                    </dl>
+                    <p className="mt-3 text-xs text-gray-500">The original Package 17 claimant evidence remains unchanged; terminal authority now follows the effective claimant.</p>
+                </div>}
             </section>
 
             {!terminal && (
@@ -182,7 +251,8 @@ export default function InspectionShow({ inspection, severities, pass_context }:
                         )
                     )}
                     {status === 'in_progress' && action === null && (
-                        inspection.claim.can_pass || inspection.claim.can_fail ? <div className="flex gap-3">
+                        <div className="space-y-3">
+                        {inspection.claim.can_pass || inspection.claim.can_fail ? <div className="flex gap-3">
                             <button
                                 onClick={() => setAction('pass')}
                                 disabled={!inspection.claim.can_pass || !pass_context}
@@ -191,7 +261,11 @@ export default function InspectionShow({ inspection, severities, pass_context }:
                                 Pass Inspection
                             </button>
                             {inspection.claim.can_fail && <button onClick={() => setAction('fail')} className="rounded bg-red-700 px-4 py-2 text-sm text-white hover:bg-red-800">Fail Inspection</button>}
-                        </div> : <p className="rounded border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">This Inspection is owned by another inspector. Claim takeover is not available.</p>
+                        </div> : !inspection.claim.can_reassign && <p className="rounded border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">Terminal actions are available only to the effective inspector claimant.</p>}
+                        {inspection.claim.can_reassign && reassignment_context.may_intervene && reassignment_context.replacement_candidates.length > 0 && (
+                            <button onClick={openReassignment} className="rounded bg-indigo-700 px-4 py-2 text-sm text-white hover:bg-indigo-800">Reassign Inspector</button>
+                        )}
+                        </div>
                     )}
                     {action === 'fail' && (
                         <div className="max-w-2xl space-y-4 border-t border-gray-100 pt-4">
@@ -244,6 +318,48 @@ export default function InspectionShow({ inspection, severities, pass_context }:
                             <button onClick={() => { setClaimOpen(false); setError(''); }} disabled={processing} className="rounded bg-gray-100 px-4 py-2 text-sm text-gray-700 disabled:opacity-50">Cancel</button>
                             <button onClick={claimInspection} disabled={processing} className="rounded bg-yellow-700 px-4 py-2 text-sm text-white disabled:opacity-50">
                                 {processing ? 'Claiming Inspection...' : claimAmbiguous ? 'Retry Claim Recovery' : 'Confirm Inspection Claim'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {reassignOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 p-4" role="dialog" aria-modal="true" aria-labelledby="reassign-title">
+                    <div className="w-full max-w-xl rounded-lg bg-white shadow-xl">
+                        <div className="border-b border-gray-200 px-6 py-4">
+                            <h2 id="reassign-title" className="text-lg font-semibold text-gray-900">Reassign Inspector</h2>
+                            <p className="mt-1 text-sm text-gray-600">Recover terminal authority without changing the immutable original claim.</p>
+                        </div>
+                        <div className="space-y-4 px-6 py-5">
+                            <dl className="grid grid-cols-2 gap-3 rounded bg-gray-50 p-4 text-sm">
+                                <div><dt className="text-gray-500">Room</dt><dd className="font-medium">{inspection.room?.room_number ?? 'Unavailable'}</dd></div>
+                                <div><dt className="text-gray-500">Cleaning Task</dt><dd className="font-medium">{inspection.task?.task_code ?? 'Unavailable'}</dd></div>
+                                <div><dt className="text-gray-500">Completed cleaner</dt><dd className="font-medium">{inspection.task?.completed_by_name ?? 'Unavailable'}</dd></div>
+                                <div><dt className="text-gray-500">Original claimant</dt><dd className="font-medium">{reassignment_context.original_claimant_name ?? 'Unavailable'}</dd></div>
+                                <div className="col-span-2"><dt className="text-gray-500">Objective ineligibility reason</dt><dd className="font-medium">{reassignment_context.original_ineligibility_code}</dd></div>
+                            </dl>
+                            <div>
+                                <label htmlFor="replacement-inspector" className="block text-sm font-medium text-gray-700">Replacement inspector</label>
+                                <select id="replacement-inspector" value={replacementId} onChange={(event) => { setReplacementId(event.target.value); setReassignmentConfirmed(false); }} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm">
+                                    {reassignment_context.replacement_candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label htmlFor="reassignment-reason" className="block text-sm font-medium text-gray-700">Reason</label>
+                                <textarea id="reassignment-reason" value={reassignmentReason} onChange={(event) => { setReassignmentReason(event.target.value); setReassignmentConfirmed(false); }} rows={3} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+                            </div>
+                            {!reassignmentConfirmed && <div>
+                                <label htmlFor="reassignment-password" className="block text-sm font-medium text-gray-700">Current password</label>
+                                <input id="reassignment-password" type="password" value={reassignmentPassword} onChange={(event) => setReassignmentPassword(event.target.value)} autoComplete="current-password" className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+                            </div>}
+                            {reassignmentAmbiguous && <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">The exact in-memory command is retained for a recovery retry.</p>}
+                            {error && <p role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+                        </div>
+                        <div className="flex justify-end gap-3 border-t border-gray-200 px-6 py-4">
+                            <button onClick={() => { setReassignOpen(false); setError(''); }} disabled={processing} className="rounded bg-gray-100 px-4 py-2 text-sm text-gray-700 disabled:opacity-50">Cancel</button>
+                            <button onClick={reassignInspector} disabled={processing || replacementId === '' || reassignmentReason.trim() === '' || (!reassignmentConfirmed && reassignmentPassword === '')} className="rounded bg-indigo-700 px-4 py-2 text-sm text-white disabled:opacity-50">
+                                {processing ? 'Reassigning Inspector...' : reassignmentAmbiguous ? 'Retry Reassignment Recovery' : 'Confirm and Reassign Inspector'}
                             </button>
                         </div>
                     </div>

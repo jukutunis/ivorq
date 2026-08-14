@@ -2,13 +2,17 @@
 
 namespace Modules\Operations\Housekeeping\Models;
 
+use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Concerns\HasUlids;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
+use Modules\Operations\Housekeeping\Enums\InspectionStatusEnum;
+use Modules\Operations\Housekeeping\Enums\InspectionTypeEnum;
 
 class RoomInspection extends Model
 {
-    use SoftDeletes, HasUlids;
+    use HasUlids, SoftDeletes;
 
     protected $table = 'room_inspections';
 
@@ -42,9 +46,9 @@ class RoomInspection extends Model
         'results' => 'array',
         'score' => 'integer',
         'max_score' => 'integer',
-        'status' => \Modules\Operations\Housekeeping\Enums\InspectionStatusEnum::class,
-        'inspection_type' => \Modules\Operations\Housekeeping\Enums\InspectionTypeEnum::class,
-        'inspection_severity' => \Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum::class,
+        'status' => InspectionStatusEnum::class,
+        'inspection_type' => InspectionTypeEnum::class,
+        'inspection_severity' => InspectionSeverityEnum::class,
         'inspected_at' => 'datetime',
         'claimed_at' => 'datetime',
         'claim_evidence_version' => 'integer',
@@ -62,7 +66,12 @@ class RoomInspection extends Model
 
     public function inspector()
     {
-        return $this->belongsTo(\Modules\Foundation\User\Models\User::class, 'supervisor_id');
+        return $this->belongsTo(User::class, 'supervisor_id');
+    }
+
+    public function claimReassignment()
+    {
+        return $this->hasOne(HousekeepingInspectionClaimReassignment::class, 'room_inspection_id');
     }
 
     public function photos()

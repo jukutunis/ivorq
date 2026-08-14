@@ -17,7 +17,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
 
         $this->manifestPath = base_path('scripts/validation/ivorq-regression-baselines.json');
 
-        if (!file_exists($this->manifestPath)) {
+        if (! file_exists($this->manifestPath)) {
             $this->fail("Manifest file not found: {$this->manifestPath}");
         }
 
@@ -25,7 +25,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->manifest = json_decode($content);
 
         if ($this->manifest === null) {
-            $this->fail('Manifest JSON is invalid: ' . json_last_error_msg());
+            $this->fail('Manifest JSON is invalid: '.json_last_error_msg());
         }
     }
 
@@ -34,7 +34,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $content = file_get_contents($this->manifestPath);
         $decoded = json_decode($content);
 
-        $this->assertNotNull($decoded, 'Manifest JSON must be valid. Error: ' . json_last_error_msg());
+        $this->assertNotNull($decoded, 'Manifest JSON must be valid. Error: '.json_last_error_msg());
         $this->assertIsObject($decoded, 'Manifest root must be an object.');
     }
 
@@ -107,7 +107,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'general-cashier-terminal-obligation-attestation-baseline',
         ];
 
-        $actualIds = array_map(fn($b) => $b->id, $this->manifest->baselines);
+        $actualIds = array_map(fn ($b) => $b->id, $this->manifest->baselines);
 
         foreach ($requiredIds as $id) {
             $this->assertContains(
@@ -271,7 +271,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_package_17_housekeeping_source_scan_delta(): void
+    public function test_frontdesk_operational_baseline_matches_package_19_housekeeping_source_scan_delta(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
@@ -296,12 +296,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         ], $lastTwelve);
 
         $this->assertEquals(729, $baseline->expected->tests ?? null);
-        $this->assertEquals(5657, $baseline->expected->assertions ?? null);
+        $this->assertEquals(5693, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'df606720148a0a09df12eb111f5ddd79851608ed',
+            'a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -310,12 +310,16 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'Provenance SHA must be a full 40-character hex string.'
         );
         $this->assertEquals(
-            'codex/architecture-package-18-post-package-17-housekeeping-governance-sync',
+            'sprint-package-19-housekeeping-inspection-claim-recovery-reassignment',
             $baseline->provenance->branch ?? null
         );
 
-        $this->assertEquals('2026-08-13', $baseline->provenance->measured_at ?? null);
-        $this->assertSame('PACKAGE_17_ACCEPTED_CANONICAL__PACKAGE_18_CURRENT_GOVERNANCE__PACKAGE_19_RUNTIME_LOCKED', $baseline->provenance->governance_status ?? null);
+        $this->assertEquals('2026-08-14', $baseline->provenance->measured_at ?? null);
+        $this->assertSame('PACKAGE_19_INDEPENDENT_REVIEW_CORRECTED_RUNTIME_PROOF', $baseline->provenance->governance_status ?? null);
+        $this->assertStringContainsString('Contract Version 1.20', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/a99f4b20489c3259c416297310a7b02f9cb6dacb.*a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50.*3f05283dc878c9ec098ba0e27b319451abda36ad.*88750a9a23067d1630d0bf151510f0a94083f546/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/deterministic server ownership of occurred_at \/ created_at.*expanded direct PostgreSQL malformed-write proof.*no lifecycle redesign.*no Package 17 claim mutation/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/729 tests \/ 5693 assertions \/ 0 failures \/ 0 errors.*5657 \+ \(6 x 6\) = 5693/', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('Package 18 is governance-only under Contract Version 1.20', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('Package 17 is accepted and canonical through PR #51 at merge 37750626f9e0614d26d628a4707bcb205508ae03', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('Package 18 governance commit 8cc177066dcd0598e740bea9a70ef756353d1442 and Housekeeping Contract-guard alignment commit df606720148a0a09df12eb111f5ddd79851608ed', $baseline->provenance->governance_note ?? '');
@@ -431,12 +435,12 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringNotContainsString('No CURRENT_TIMESTAMP database-clock checks in trigger', $baseline->provenance->note ?? '');
     }
 
-    public function test_housekeeping_room_readiness_baseline_includes_package_17_controlled_inspection_claim_segregation(): void
+    public function test_housekeeping_room_readiness_baseline_includes_package_19_controlled_claim_recovery(): void
     {
         $baseline = $this->findBaseline('housekeeping-room-readiness-baseline');
         $this->assertNotNull($baseline, 'housekeeping-room-readiness-baseline must exist.');
         $this->assertEquals('active', $baseline->status ?? null);
-        $this->assertCount(28, $baseline->classes, 'Housekeeping baseline must have exactly 28 classes after Package 17.');
+        $this->assertCount(34, $baseline->classes, 'Housekeeping baseline must have exactly 34 classes after Package 19.');
 
         $this->assertSame([
             'HousekeepingCheckoutTurnoverIntakeFoundationTest',
@@ -446,21 +450,21 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'HousekeepingCheckoutTurnoverIntakeIsolatedConcurrencyProofTest',
             'HousekeepingCheckoutTurnoverWorkspaceTest',
             'HousekeepingCheckoutTurnoverWorkspaceSourceIntegrityTest',
-        ], array_slice($baseline->classes, -21, 7));
+        ], array_slice($baseline->classes, -27, 7));
 
         $this->assertSame([
             'HousekeepingCleaningInspectionReadinessIntegrationTest',
             'HousekeepingCleaningInspectionReadinessSourceIntegrityTest',
             'HousekeepingCleaningInspectionReadinessIsolatedConcurrencyProofTest',
             'HousekeepingCleaningInspectionReadinessMigrationProofTest',
-        ], array_slice($baseline->classes, -14, 4));
+        ], array_slice($baseline->classes, -20, 4));
 
         $this->assertSame([
             'HousekeepingControlledDispatchAssignmentTest',
             'HousekeepingControlledDispatchAssignmentSourceIntegrityTest',
             'HousekeepingControlledDispatchAssignmentMigrationProofTest',
             'HousekeepingControlledDispatchAssignmentIsolatedConcurrencyProofTest',
-        ], array_slice($baseline->classes, -10, 4));
+        ], array_slice($baseline->classes, -16, 4));
 
         $this->assertSame([
             'HousekeepingControlledInspectionClaimSegregationFoundationTest',
@@ -469,17 +473,33 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'HousekeepingControlledInspectionClaimSegregationSourceIntegrityTest',
             'HousekeepingControlledInspectionClaimSegregationWorkspaceTest',
             'HousekeepingControlledInspectionClaimSegregationIsolatedConcurrencyProofTest',
+        ], array_slice($baseline->classes, -12, 6));
+
+        $this->assertSame([
+            'HousekeepingControlledInspectionClaimRecoveryFoundationTest',
+            'HousekeepingControlledInspectionClaimRecoveryHttpTest',
+            'HousekeepingControlledInspectionClaimRecoveryMigrationProofTest',
+            'HousekeepingControlledInspectionClaimRecoverySourceIntegrityTest',
+            'HousekeepingControlledInspectionClaimRecoveryWorkspaceTest',
+            'HousekeepingControlledInspectionClaimRecoveryIsolatedConcurrencyProofTest',
         ], array_slice($baseline->classes, -6));
 
-        $this->assertEquals(191, $baseline->expected->tests ?? null);
-        $this->assertEquals(3539, $baseline->expected->assertions ?? null);
+        $this->assertEquals(209, $baseline->expected->tests ?? null);
+        $this->assertEquals(3793, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('df606720148a0a09df12eb111f5ddd79851608ed', $baseline->provenance->sha ?? null);
-        $this->assertEquals('codex/architecture-package-18-post-package-17-housekeeping-governance-sync', $baseline->provenance->branch ?? null);
-        $this->assertEquals('2026-08-13', $baseline->provenance->measured_at ?? null);
-        $this->assertSame('PACKAGE_17_ACCEPTED_CANONICAL__PACKAGE_18_CURRENT_GOVERNANCE__PACKAGE_19_RUNTIME_LOCKED', $baseline->provenance->governance_status ?? null);
+        $this->assertEquals('a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50', $baseline->provenance->sha ?? null);
+        $this->assertEquals('sprint-package-19-housekeeping-inspection-claim-recovery-reassignment', $baseline->provenance->branch ?? null);
+        $this->assertEquals('2026-08-14', $baseline->provenance->measured_at ?? null);
+        $this->assertSame('PACKAGE_19_INDEPENDENT_REVIEW_CORRECTED_RUNTIME_PROOF', $baseline->provenance->governance_status ?? null);
+        $this->assertStringContainsString('Contract Version 1.20', $baseline->provenance->current_governance_note ?? '');
+        $this->assertStringContainsString('a99f4b20489c3259c416297310a7b02f9cb6dacb', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50.*3f05283dc878c9ec098ba0e27b319451abda36ad.*88750a9a23067d1630d0bf151510f0a94083f546/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/deterministic server ownership of occurred_at \/ created_at.*expanded direct PostgreSQL malformed-write proof.*no lifecycle redesign.*no Package 17 claim mutation/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertStringContainsString('209 tests / 3793 assertions / 0 failures / 0 errors', $baseline->provenance->current_governance_note ?? '');
+        $this->assertStringContainsString('18 tests / 254 assertions', $baseline->provenance->current_governance_note ?? '');
+        $this->assertStringContainsString('NO_NEW_ADR_REQUIRED', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('Package 18 governance-only synchronization runs under Contract Version 1.20', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('Package 17 acceptance through PR #51 at canonical merge 37750626f9e0614d26d628a4707bcb205508ae03', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('Package 18 governance commit 8cc177066dcd0598e740bea9a70ef756353d1442 and Housekeeping Contract-guard alignment commit df606720148a0a09df12eb111f5ddd79851608ed', $baseline->provenance->governance_note ?? '');
@@ -626,7 +646,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             $this->assertContains(
                 $baseline->status,
                 $validStatuses,
-                "Baseline '{$baseline->id}' status '{$baseline->status}' is not valid. Must be one of: " . implode(', ', $validStatuses) . "."
+                "Baseline '{$baseline->id}' status '{$baseline->status}' is not valid. Must be one of: ".implode(', ', $validStatuses).'.'
             );
         }
     }
@@ -649,7 +669,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             $this->assertContains(
                 $baseline->execution_mode,
                 $validModes,
-                "Baseline '{$baseline->id}' execution_mode '{$baseline->execution_mode}' is not valid. Must be one of: " . implode(', ', $validModes) . "."
+                "Baseline '{$baseline->id}' execution_mode '{$baseline->execution_mode}' is not valid. Must be one of: ".implode(', ', $validModes).'.'
             );
         }
     }
@@ -730,7 +750,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
                 $this->assertGreaterThan(
                     0,
                     $baseline->expected->tests,
-                    "Baseline '{$baseline->id}' has " . count($baseline->classes) . " class(es) but expected.tests is {$baseline->expected->tests}. Non-empty classes must produce non-zero tests."
+                    "Baseline '{$baseline->id}' has ".count($baseline->classes)." class(es) but expected.tests is {$baseline->expected->tests}. Non-empty classes must produce non-zero tests."
                 );
             }
         }
@@ -786,7 +806,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertCount(
             14,
             $activeIds,
-            "Must have exactly 14 active baselines. Found: " . implode(', ', $activeIds)
+            'Must have exactly 14 active baselines. Found: '.implode(', ', $activeIds)
         );
 
         foreach ($expectedActiveIds as $id) {
@@ -815,7 +835,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertCount(
             2,
             $candidateIds,
-            "Must have exactly 2 candidate baselines. Found: " . implode(', ', $candidateIds)
+            'Must have exactly 2 candidate baselines. Found: '.implode(', ', $candidateIds)
         );
 
         foreach ($expectedCandidateIds as $id) {
@@ -885,13 +905,13 @@ class RegressionBaselineManifestTest extends PostgresTestCase
 
     public function test_manifest_has_complete_baseline_ids_list(): void
     {
-        $ids = array_map(fn($b) => $b->id, $this->manifest->baselines);
+        $ids = array_map(fn ($b) => $b->id, $this->manifest->baselines);
 
         $expectedCount = 16;
         $this->assertCount(
             $expectedCount,
             $ids,
-            "Manifest must contain exactly {$expectedCount} baselines. Found: " . implode(', ', $ids)
+            "Manifest must contain exactly {$expectedCount} baselines. Found: ".implode(', ', $ids)
         );
     }
 
@@ -1129,6 +1149,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
                 return $baseline;
             }
         }
+
         return null;
     }
 }

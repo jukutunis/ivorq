@@ -26,19 +26,20 @@ class SensitiveActionConfirmationService
         'inventory-issue-posting',
         'inventory-stock-count-posting',
         'inventory-adjustment-posting',
-            'engineering-room-availability-release',
-            'frontdesk-check-in',
-            'frontdesk-room-move',
-            'housekeeping-room-release-ready',
-            'pms-guest-payment-void',
-            'pms-guest-payment-reversal',
-            'guest-deposit-void',
-            'guest-deposit-application-reversal',
-            'guest-cash-refund',
-            'guest-ar-transfer-accept',
-            'guest-ar-transfer-reject',
-            'guest-ar-transfer-reverse',
-        ];
+        'engineering-room-availability-release',
+        'frontdesk-check-in',
+        'frontdesk-room-move',
+        'housekeeping-room-release-ready',
+        'housekeeping-inspection-claim-reassignment',
+        'pms-guest-payment-void',
+        'pms-guest-payment-reversal',
+        'guest-deposit-void',
+        'guest-deposit-application-reversal',
+        'guest-cash-refund',
+        'guest-ar-transfer-accept',
+        'guest-ar-transfer-reject',
+        'guest-ar-transfer-reverse',
+    ];
 
     private const SESSION_KEY = 'sensitive_action_confirmation';
 
@@ -53,7 +54,7 @@ class SensitiveActionConfirmationService
 
     public function confirm(User $actor, string $intent, string $password, ?string $companyId, string $propertyId, ?string $commercialEvidenceHash = null): void
     {
-        if (!in_array($intent, self::REGISTERED_INTENTS, true)) {
+        if (! in_array($intent, self::REGISTERED_INTENTS, true)) {
             throw new DomainException('The requested intent is not registered.');
         }
 
@@ -61,7 +62,7 @@ class SensitiveActionConfirmationService
             throw new DomainException('Checkout confirmation requires authoritative checkout context.');
         }
 
-        if (!Hash::check($password, $actor->password)) {
+        if (! Hash::check($password, $actor->password)) {
             throw new DomainException('The password is incorrect.');
         }
 
@@ -101,13 +102,13 @@ class SensitiveActionConfirmationService
     {
         $confirmations = session()->get(self::SESSION_KEY, []);
 
-        if (!isset($confirmations[$intent]) || !is_array($confirmations[$intent])) {
+        if (! isset($confirmations[$intent]) || ! is_array($confirmations[$intent])) {
             return false;
         }
 
         $metadata = $confirmations[$intent];
 
-        if (!isset($metadata['actor_id'], $metadata['intent'], $metadata['property_id'], $metadata['expires_at'])) {
+        if (! isset($metadata['actor_id'], $metadata['intent'], $metadata['property_id'], $metadata['expires_at'])) {
             return false;
         }
 
@@ -138,7 +139,7 @@ class SensitiveActionConfirmationService
 
     public function requireValidConfirmation(User $actor, string $intent, ?string $companyId, string $propertyId): void
     {
-        if (!$this->hasValidConfirmation($actor, $intent, $companyId, $propertyId)) {
+        if (! $this->hasValidConfirmation($actor, $intent, $companyId, $propertyId)) {
             throw new DomainException('Sensitive action confirmation is required and not currently valid.');
         }
     }
@@ -170,13 +171,13 @@ class SensitiveActionConfirmationService
     {
         $confirmations = session()->get(self::SESSION_KEY, []);
 
-        if (!isset($confirmations[$intent]) || !is_array($confirmations[$intent])) {
+        if (! isset($confirmations[$intent]) || ! is_array($confirmations[$intent])) {
             return null;
         }
 
         $metadata = $confirmations[$intent];
 
-        if (!isset($metadata['actor_id'], $metadata['intent'], $metadata['property_id'], $metadata['expires_at'])) {
+        if (! isset($metadata['actor_id'], $metadata['intent'], $metadata['property_id'], $metadata['expires_at'])) {
             return null;
         }
 
@@ -214,7 +215,7 @@ class SensitiveActionConfirmationService
     {
         $metadata = $this->confirmationMetadataFor($actor, $intent, $companyId, $propertyId);
 
-        if ($metadata === null || !isset($metadata['expires_at'])) {
+        if ($metadata === null || ! isset($metadata['expires_at'])) {
             return null;
         }
 

@@ -4,24 +4,28 @@ namespace Modules\Operations\Housekeeping\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 use Modules\Operations\Housekeeping\Enums\InspectionSeverityEnum;
 use Modules\Operations\Housekeeping\Enums\InspectionStatusEnum;
 use Modules\Operations\Housekeeping\Enums\InspectionTypeEnum;
+use Modules\Operations\Housekeeping\Http\Requests\ConductInspectionRequest;
+use Modules\Operations\Housekeeping\Http\Requests\ConfirmInspectionClaimReassignmentRequest;
+use Modules\Operations\Housekeeping\Http\Requests\ConfirmInspectionPassRequest;
 use Modules\Operations\Housekeeping\Http\Requests\FailInspectionRequest;
 use Modules\Operations\Housekeeping\Http\Requests\PassInspectionRequest;
-use Modules\Operations\Housekeeping\Http\Requests\ConfirmInspectionPassRequest;
-use Modules\Operations\Housekeeping\Http\Requests\ConductInspectionRequest;
+use Modules\Operations\Housekeeping\Http\Requests\ReassignInspectionClaimRequest;
 use Modules\Operations\Housekeeping\Http\Requests\StoreRoomInspectionRequest;
 use Modules\Operations\Housekeeping\Http\Requests\UpdateRoomInspectionRequest;
 use Modules\Operations\Housekeeping\Http\Resources\RoomInspectionResource;
 use Modules\Operations\Housekeeping\Models\RoomInspection;
 use Modules\Operations\Housekeeping\Repositories\InspectionRepository;
-use Modules\Operations\Housekeeping\Services\InspectionService;
 use Modules\Operations\Housekeeping\Services\HousekeepingCleaningInspectionReadinessLifecycleService;
+use Modules\Operations\Housekeeping\Services\HousekeepingInspectionClaimRecoveryService;
+use Modules\Operations\Housekeeping\Services\InspectionService;
 use Shared\Services\CurrentPropertyService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Throwable;
@@ -29,9 +33,10 @@ use Throwable;
 class RoomInspectionController extends Controller
 {
     public function __construct(
-        private InspectionService    $inspectionService,
+        private InspectionService $inspectionService,
         private InspectionRepository $inspectionRepository,
         private HousekeepingCleaningInspectionReadinessLifecycleService $lifecycle,
+        private HousekeepingInspectionClaimRecoveryService $claimRecovery,
     ) {}
 
     public function index(): Response
@@ -41,7 +46,7 @@ class RoomInspectionController extends Controller
 
         $requestPropertyId = request()->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         $this->authorize('viewAny', RoomInspection::class);
@@ -49,13 +54,13 @@ class RoomInspectionController extends Controller
         $inspections = $this->inspectionService->paginate(15, request()->only(['inspection_type', 'status']));
 
         return Inertia::render('Operations/Housekeeping/Inspections/Index', [
-            'inspections'      => RoomInspectionResource::collection($inspections),
+            'inspections' => RoomInspectionResource::collection($inspections),
             'inspection_types' => array_map(
-                fn(InspectionTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
+                fn (InspectionTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 InspectionTypeEnum::cases()
             ),
             'statuses' => array_map(
-                fn(InspectionStatusEnum $s) => ['value' => $s->value, 'label' => $s->label()],
+                fn (InspectionStatusEnum $s) => ['value' => $s->value, 'label' => $s->label()],
                 InspectionStatusEnum::cases()
             ),
         ]);
@@ -68,14 +73,14 @@ class RoomInspectionController extends Controller
 
         $requestPropertyId = request()->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         $this->authorize('create', RoomInspection::class);
 
         return Inertia::render('Operations/Housekeeping/Inspections/Create', [
             'inspection_types' => array_map(
-                fn(InspectionTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
+                fn (InspectionTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 InspectionTypeEnum::cases()
             ),
         ]);
@@ -88,16 +93,16 @@ class RoomInspectionController extends Controller
 
         $requestPropertyId = $request->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         if ($request->has('property_id') && $request->input('property_id') !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            throw new AuthorizationException('Property context mismatch.');
         }
 
         $validated = $request->validated();
-        $data      = array_merge($validated, [
-            'property_id'  => $resolvedPropertyId,
+        $data = array_merge($validated, [
+            'property_id' => $resolvedPropertyId,
         ]);
 
         $inspection = $this->inspectionService->create($data);
@@ -105,7 +110,7 @@ class RoomInspectionController extends Controller
         if ($request->wantsJson() || $request->ajax()) {
             return response()->json([
                 'success' => true,
-                'inspection' => new RoomInspectionResource($inspection->fresh())
+                'inspection' => new RoomInspectionResource($inspection->fresh()),
             ], 201);
         }
 
@@ -113,19 +118,19 @@ class RoomInspectionController extends Controller
             ->with('success', 'Inspection created successfully.');
     }
 
-    public function show(\Illuminate\Http\Request $request, string $inspection): Response
+    public function show(Request $request, string $inspection): Response
     {
         $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
         setPermissionsTeamId($resolvedPropertyId);
 
         $requestPropertyId = $request->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         $model = $this->inspectionService->find($inspection);
         if ($model->property_id !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            throw new AuthorizationException('Property context mismatch.');
         }
 
         $this->authorize('view', $model);
@@ -142,37 +147,41 @@ class RoomInspectionController extends Controller
             }
         }
 
+        $reassignmentContext = $this->claimRecovery->reassignmentContext($request->user(), $model->id);
+        $model->setAttribute('claim_reassignment_context', $reassignmentContext);
+
         return Inertia::render('Operations/Housekeeping/Inspections/Show', [
             'inspection' => (new RoomInspectionResource($model))->resolve($request),
             'severities' => array_map(
-                fn(InspectionSeverityEnum $s) => ['value' => $s->value, 'label' => $s->label()],
+                fn (InspectionSeverityEnum $s) => ['value' => $s->value, 'label' => $s->label()],
                 InspectionSeverityEnum::cases()
             ),
             'pass_context' => $passContext,
+            'reassignment_context' => $reassignmentContext,
         ]);
     }
 
-    public function edit(\Illuminate\Http\Request $request, string $inspection): Response
+    public function edit(Request $request, string $inspection): Response
     {
         $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
         setPermissionsTeamId($resolvedPropertyId);
 
         $requestPropertyId = $request->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         $model = $this->inspectionService->find($inspection);
         if ($model->property_id !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            throw new AuthorizationException('Property context mismatch.');
         }
 
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/Housekeeping/Inspections/Edit', [
-            'inspection'       => new RoomInspectionResource($model),
+            'inspection' => new RoomInspectionResource($model),
             'inspection_types' => array_map(
-                fn(InspectionTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
+                fn (InspectionTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 InspectionTypeEnum::cases()
             ),
         ]);
@@ -185,16 +194,16 @@ class RoomInspectionController extends Controller
 
         $requestPropertyId = $request->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         if ($request->has('property_id') && $request->input('property_id') !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            throw new AuthorizationException('Property context mismatch.');
         }
 
         $model = $this->inspectionService->find($inspection);
         if ($model->property_id !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            throw new AuthorizationException('Property context mismatch.');
         }
 
         $this->authorize('update', $model);
@@ -204,7 +213,7 @@ class RoomInspectionController extends Controller
         if ($request->wantsJson() || $request->ajax()) {
             return response()->json([
                 'success' => true,
-                'message' => 'Inspection updated successfully.'
+                'message' => 'Inspection updated successfully.',
             ]);
         }
 
@@ -212,19 +221,19 @@ class RoomInspectionController extends Controller
             ->with('success', 'Inspection updated successfully.');
     }
 
-    public function destroy(\Illuminate\Http\Request $request, string $inspection)
+    public function destroy(Request $request, string $inspection)
     {
         $resolvedPropertyId = app(CurrentPropertyService::class)->resolveOrFail();
         setPermissionsTeamId($resolvedPropertyId);
 
         $requestPropertyId = $request->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         $model = $this->inspectionService->find($inspection);
         if ($model->property_id !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            throw new AuthorizationException('Property context mismatch.');
         }
 
         $this->authorize('delete', $model);
@@ -234,7 +243,7 @@ class RoomInspectionController extends Controller
         if ($request->wantsJson() || $request->ajax()) {
             return response()->json([
                 'success' => true,
-                'message' => 'Inspection deleted successfully.'
+                'message' => 'Inspection deleted successfully.',
             ]);
         }
 
@@ -249,7 +258,7 @@ class RoomInspectionController extends Controller
 
         $requestPropertyId = $request->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         try {
@@ -271,7 +280,7 @@ class RoomInspectionController extends Controller
                 'success' => true,
                 'message' => $result->replayed ? 'Committed Inspection claim recovered.' : 'Inspection claimed.',
                 'replayed' => $result->replayed,
-                'inspection' => new RoomInspectionResource($result->inspection->fresh(['room', 'task.completedBy', 'inspector']))
+                'inspection' => new RoomInspectionResource($result->inspection->fresh(['room', 'task.completedBy', 'inspector'])),
             ]);
         }
 
@@ -286,17 +295,17 @@ class RoomInspectionController extends Controller
 
         $requestPropertyId = $request->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         $model = $this->inspectionService->find($inspection);
         if ($model->property_id !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            throw new AuthorizationException('Property context mismatch.');
         }
 
         $this->authorize('conduct', $model);
 
-        $data     = $request->validated();
+        $data = $request->validated();
         $severity = isset($data['inspection_severity'])
             ? InspectionSeverityEnum::from($data['inspection_severity'])
             : null;
@@ -317,8 +326,8 @@ class RoomInspectionController extends Controller
         }
 
         return response()->json([
-            'message'     => 'Inspection passed.',
-            'inspection'  => new RoomInspectionResource($updated->fresh(['room', 'task'])),
+            'message' => 'Inspection passed.',
+            'inspection' => new RoomInspectionResource($updated->fresh(['room', 'task'])),
         ]);
     }
 
@@ -329,17 +338,17 @@ class RoomInspectionController extends Controller
 
         $requestPropertyId = $request->header('X-Property-ID');
         if (empty($requestPropertyId) || $requestPropertyId !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context is missing, mismatched, or unauthorized.");
+            throw new AuthorizationException('Property context is missing, mismatched, or unauthorized.');
         }
 
         $model = $this->inspectionService->find($inspection);
         if ($model->property_id !== $resolvedPropertyId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException("Property context mismatch.");
+            throw new AuthorizationException('Property context mismatch.');
         }
 
         $this->authorize('conduct', $model);
 
-        $data     = $request->validated();
+        $data = $request->validated();
         $severity = isset($data['inspection_severity'])
             ? InspectionSeverityEnum::from($data['inspection_severity'])
             : null;
@@ -360,8 +369,8 @@ class RoomInspectionController extends Controller
         }
 
         return response()->json([
-            'message'     => 'Inspection failed.',
-            'inspection'  => new RoomInspectionResource($updated->fresh(['room', 'task'])),
+            'message' => 'Inspection failed.',
+            'inspection' => new RoomInspectionResource($updated->fresh(['room', 'task'])),
         ]);
     }
 
@@ -390,8 +399,48 @@ class RoomInspectionController extends Controller
         ]);
     }
 
+    public function confirmClaimReassignment(ConfirmInspectionClaimReassignmentRequest $request, string $inspection): JsonResponse
+    {
+        $data = $request->validated();
+        try {
+            $context = $this->claimRecovery->confirmReassignment(
+                $request->user(), $inspection, $data['replacement_inspector_id'], $data['reason'],
+                $data['idempotency_key'], $data['password'],
+            );
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        } catch (HttpException $exception) {
+            return response()->json(['message' => $exception->getMessage()], $exception->getStatusCode());
+        } catch (Throwable) {
+            return response()->json(['message' => 'HOUSEKEEPING_CLAIM_REASSIGNMENT_CONFIRMATION_FAILED'], 500);
+        }
+
+        return response()->json(['message' => 'Inspection claim reassignment confirmed.', 'reassignment_context' => $context]);
+    }
+
+    public function reassignClaim(ReassignInspectionClaimRequest $request, string $inspection): JsonResponse
+    {
+        $data = $request->validated();
+        try {
+            $result = $this->claimRecovery->reassign(
+                $request->user(), $inspection, $data['replacement_inspector_id'], $data['reason'], $data['idempotency_key'],
+            );
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        } catch (HttpException $exception) {
+            return response()->json(['message' => $exception->getMessage()], $exception->getStatusCode());
+        } catch (Throwable) {
+            return response()->json(['message' => 'HOUSEKEEPING_CLAIM_REASSIGNMENT_FAILED'], 500);
+        }
+
+        return response()->json([
+            'message' => $result->replayed ? 'Committed Inspection claim reassignment recovered.' : 'Inspection claim reassigned.',
+            ...$result->toArray(),
+        ]);
+    }
+
     private function boundedLifecycleResponse(
-        \Illuminate\Http\Request $request,
+        Request $request,
         string $message,
         int $status,
         string $inspection,
