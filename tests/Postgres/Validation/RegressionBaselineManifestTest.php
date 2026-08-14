@@ -301,7 +301,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            '3f05283dc878c9ec098ba0e27b319451abda36ad',
+            'a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -315,11 +315,11 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
 
         $this->assertEquals('2026-08-14', $baseline->provenance->measured_at ?? null);
-        $this->assertSame('PACKAGE_18_ACCEPTED_CANONICAL__PACKAGE_19_CURRENT_RUNTIME_PROOF', $baseline->provenance->governance_status ?? null);
+        $this->assertSame('PACKAGE_19_INDEPENDENT_REVIEW_CORRECTED_RUNTIME_PROOF', $baseline->provenance->governance_status ?? null);
         $this->assertStringContainsString('Contract Version 1.20', $baseline->provenance->current_governance_note ?? '');
-        $this->assertStringContainsString('a99f4b20489c3259c416297310a7b02f9cb6dacb', $baseline->provenance->current_governance_note ?? '');
-        $this->assertStringContainsString('729 tests / 5693 assertions / 0 failures / 0 errors', $baseline->provenance->current_governance_note ?? '');
-        $this->assertStringContainsString('5657 + (6 x 6) = 5693', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/a99f4b20489c3259c416297310a7b02f9cb6dacb.*a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50.*3f05283dc878c9ec098ba0e27b319451abda36ad.*88750a9a23067d1630d0bf151510f0a94083f546/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/deterministic server ownership of occurred_at \/ created_at.*expanded direct PostgreSQL malformed-write proof.*no lifecycle redesign.*no Package 17 claim mutation/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/729 tests \/ 5693 assertions \/ 0 failures \/ 0 errors.*5657 \+ \(6 x 6\) = 5693/', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('Package 18 is governance-only under Contract Version 1.20', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('Package 17 is accepted and canonical through PR #51 at merge 37750626f9e0614d26d628a4707bcb205508ae03', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('Package 18 governance commit 8cc177066dcd0598e740bea9a70ef756353d1442 and Housekeeping Contract-guard alignment commit df606720148a0a09df12eb111f5ddd79851608ed', $baseline->provenance->governance_note ?? '');
@@ -484,22 +484,22 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'HousekeepingControlledInspectionClaimRecoveryIsolatedConcurrencyProofTest',
         ], array_slice($baseline->classes, -6));
 
-        $this->assertEquals(204, $baseline->expected->tests ?? null);
-        $this->assertEquals(3692, $baseline->expected->assertions ?? null);
+        $this->assertEquals(209, $baseline->expected->tests ?? null);
+        $this->assertEquals(3793, $baseline->expected->assertions ?? null);
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('3f05283dc878c9ec098ba0e27b319451abda36ad', $baseline->provenance->sha ?? null);
+        $this->assertEquals('a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50', $baseline->provenance->sha ?? null);
         $this->assertEquals('sprint-package-19-housekeeping-inspection-claim-recovery-reassignment', $baseline->provenance->branch ?? null);
         $this->assertEquals('2026-08-14', $baseline->provenance->measured_at ?? null);
-        $this->assertSame('PACKAGE_18_ACCEPTED_CANONICAL__PACKAGE_19_CURRENT_RUNTIME_PROOF', $baseline->provenance->governance_status ?? null);
+        $this->assertSame('PACKAGE_19_INDEPENDENT_REVIEW_CORRECTED_RUNTIME_PROOF', $baseline->provenance->governance_status ?? null);
         $this->assertStringContainsString('Contract Version 1.20', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('a99f4b20489c3259c416297310a7b02f9cb6dacb', $baseline->provenance->current_governance_note ?? '');
-        $this->assertStringContainsString('204 tests / 3692 assertions / 0 failures / 0 errors', $baseline->provenance->current_governance_note ?? '');
-        $this->assertStringContainsString('13 tests / 153 assertions', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50.*3f05283dc878c9ec098ba0e27b319451abda36ad.*88750a9a23067d1630d0bf151510f0a94083f546/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/deterministic server ownership of occurred_at \/ created_at.*expanded direct PostgreSQL malformed-write proof.*no lifecycle redesign.*no Package 17 claim mutation/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertStringContainsString('209 tests / 3793 assertions / 0 failures / 0 errors', $baseline->provenance->current_governance_note ?? '');
+        $this->assertStringContainsString('18 tests / 254 assertions', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('NO_NEW_ADR_REQUIRED', $baseline->provenance->current_governance_note ?? '');
-        $this->assertStringContainsString('original Package 17 claim fields immutably', $baseline->provenance->current_governance_note ?? '');
-        $this->assertStringContainsString('one append-only recovery maximum', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('Package 18 governance-only synchronization runs under Contract Version 1.20', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('Package 17 acceptance through PR #51 at canonical merge 37750626f9e0614d26d628a4707bcb205508ae03', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('Package 18 governance commit 8cc177066dcd0598e740bea9a70ef756353d1442 and Housekeeping Contract-guard alignment commit df606720148a0a09df12eb111f5ddd79851608ed', $baseline->provenance->governance_note ?? '');
