@@ -14,6 +14,7 @@ class HousekeepingControlledInspectionClaimRecoverySourceIntegrityTest extends P
         $policy = file_get_contents(base_path('Modules/Operations/Housekeeping/Policies/RoomInspectionPolicy.php'));
         $intent = file_get_contents(base_path('Modules/Foundation/Authorization/Services/SensitiveActionConfirmationService.php'));
         $model = file_get_contents(base_path('Modules/Operations/Housekeeping/Models/HousekeepingInspectionClaimReassignment.php'));
+        $migration = file_get_contents(base_path('Modules/Operations/Housekeeping/database/migrations/2026_08_13_000001_control_housekeeping_inspection_claim_reassignments.php'));
         $contract = file_get_contents(base_path('.agents/contracts/IVORQ-Package-Execution-Contract.md'));
         $all = $service.$claim.$request.$policy.$intent.$model;
 
@@ -29,6 +30,15 @@ class HousekeepingControlledInspectionClaimRecoverySourceIntegrityTest extends P
         $this->assertStringContainsString("hasPermissionTo('housekeeping.inspection.approve')", $policy);
         $this->assertStringContainsString("REPLACEMENT_PERMISSION = 'housekeeping.inspection.conduct'", $service);
         $this->assertSame(1, substr_count($intent, "'housekeeping-inspection-claim-reassignment'"));
+        $this->assertStringContainsString("'occurred_at' => \$occurredAt", $service);
+        $this->assertStringContainsString("'created_at' => \$occurredAt", $service);
+        $this->assertStringContainsString('public $timestamps = false;', $model);
+        $this->assertStringContainsString("'created_at',", $model);
+        $this->assertStringNotContainsString('const UPDATED_AT', $model);
+        $this->assertStringNotContainsString("'occurred_at'", $request);
+        $this->assertStringNotContainsString("'created_at'", $request);
+        $this->assertStringContainsString('AND occurred_at = created_at', $migration);
+        $this->assertStringContainsString("AND inspection.status = 'in_progress'", $migration);
         $this->assertStringContainsString('Version: 1.20', $contract);
         foreach (['ShouldQueue', 'Queue::', 'Http::', 'WebSocket', 'Package 20'] as $forbidden) {
             $this->assertStringNotContainsString($forbidden, $all);

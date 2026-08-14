@@ -11,7 +11,7 @@ class HousekeepingInspectionClaimReassignment extends Model
 {
     use HasUlids;
 
-    public const UPDATED_AT = null;
+    public $timestamps = false;
 
     protected $table = 'housekeeping_inspection_claim_reassignments';
 
@@ -27,11 +27,13 @@ class HousekeepingInspectionClaimReassignment extends Model
         'source_hash',
         'evidence_version',
         'occurred_at',
+        'created_at',
     ];
 
     protected $casts = [
         'evidence_version' => 'integer',
         'occurred_at' => 'datetime',
+        'created_at' => 'datetime',
     ];
 
     public function inspection()
