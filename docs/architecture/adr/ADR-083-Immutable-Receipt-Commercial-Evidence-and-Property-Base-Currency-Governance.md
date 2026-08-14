@@ -7,6 +7,21 @@
 * **Status:** Active
 * **Related ADRs:** ADR-001 (Multi-Tenant Hierarchy), ADR-004 (Finance Module Boundary), ADR-079 (Controlled Inventory Ledger), ADR-080 (Controlled Purchasing and Goods Receipt), ADR-081 (Controlled Inventory Movement Lifecycle), ADR-082 (Controlled AVCO Cost Evidence)
 
+## Current Canonical Synchronization / CC-G1
+
+The immutable Goods Receipt commercial snapshot remains source evidence and participates in the supported enrolled receipt-valuation path. Later canonical source now integrates bounded enrolled receipt valuation with immutable `InventoryTransaction` evidence, durable `CostAvcoState`, and Cost Ledger persistence.
+
+This synchronization does not broaden the original evidence decision:
+
+- the receipt commercial snapshot remains immutable source evidence, not a ledger or mutable valuation record;
+- Cost Ledger integration exists only for bounded source-proven enrolled paths;
+- foreign-currency receipt cases remain blocked where immutable supported FX activation is absent;
+- current Purchase Order or Property state must not replace the immutable snapshot;
+- no historical snapshot backfill is authorized;
+- no Property base-currency correction workflow is authorized;
+- no foreign-currency AVCO expansion or global activation is authorized; and
+- CC-G1 introduces no runtime, migration, or write path.
+
 ## Context
 
 Sprint 39 deferred AVCO runtime activation because the commercial inputs (Property.currency, PurchaseOrderLine.unit_cost, PurchaseOrder.currency_code, PurchaseOrder.exchange_rate) were mutable after Goods Receipt posting. A read-only AVCO projection that relies on mutable source data cannot produce stable, auditable cost evidence.

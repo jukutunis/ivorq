@@ -3,6 +3,18 @@
 ## Status
 Accepted
 
+## Current Canonical Implementation Status / CC-G1 Synchronization
+
+The enrollment and cutover foundations described by this ADR now exist in canonical source, including immutable enrollment-group/scope evidence and seeded durable `CostAvcoState` provenance. Current authority precedence is frozen as follows:
+
+- before enrollment, legacy weighted-average-cost valuation remains authoritative for the complete Property + Item group;
+- after accepted complete enrollment, Finance/CostControl is the sole AVCO write authority for every included location in that Property + Item group;
+- mixed legacy and CostControl authority for one enrolled Property + Item group remains prohibited;
+- durable enrolled authority consists of immutable enrollment/cutover evidence, Inventory valuation sequence, immutable `InventoryTransaction` valuation evidence, `CostAvcoState`, and Cost Ledger;
+- the ADR-082 `InventoryStockMovement`-based projection is `READ_ONLY_EVIDENCE`, not a second valuation authority and not a GL/AP source;
+- controlled enrollment does not imply automatic enrollment, all-Property activation, global rollout, backfill, or activation expansion; and
+- no new enrollment, cutover, or rollout is authorized by CC-G1.
+
 ## Context
 Sistem saat ini mengelola data fisik persediaan (`InventoryStock`) dan nilai legacy weighted average cost (WAC) pada properti aktif menggunakan tabel `inventory_items` dengan kolom `weighted_average_cost`. Modul `CostControl` yang baru menggunakan `CostAvcoState` untuk melacak saldo fisik dan carrying value secara persisten. Namun, `CostAvcoStateRepository::bootstrapAndLock()` memulai scope baru secara kosong (quantity = 0, carrying value = 0, cost = null) tanpa membaca record saldo operasional. Hal ini menghalangi adopsi langsung saldo fisik live stock secara aman. Selain itu, enum `OpeningBalance` belum didukung oleh `InventoryPostingControlCoordinator` dan engine CostControl. Di sisi lain, terdapat pembaca operasional sinkron (`IssueService`, `AdjustmentService`, `TransferService`, `StockMovementService` fallback) yang membutuhkan cost secara real-time, serta modul `Finance` (`VariancePostingEngine`) yang mengambil data `total_cost` dari `InventoryTransaction` untuk posting General Ledger (GL). Tanpa enrollment transisi, aktivasi CostControl akan merusak konsistensi saldo awal, memicu error urutan sequence, dan menimbulkan risiko dual-authority.
 

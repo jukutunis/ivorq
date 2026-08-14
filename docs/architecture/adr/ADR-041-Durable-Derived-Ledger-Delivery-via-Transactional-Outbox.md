@@ -3,6 +3,24 @@
 ## Status
 Approved
 
+## Current Canonical Precedence / CC-G1 Synchronization
+
+ADR-041 remains **Approved** and governs **future deferred** Inventory-to-CostControl derived-ledger delivery. It does not retroactively invalidate the accepted synchronous enrolled valuation paths now present in canonical production source.
+
+Current accepted synchronous composition is classified as:
+
+`TRANSITIONAL_EXISTING_CANONICAL_PATH`
+
+The direct Operations/Inventory or Receiving-to-Finance/CostControl class dependency within that existing path is frozen as:
+
+`EXISTING_CANONICAL_BOUNDARY_EXCEPTION__NO_EXPANSION`
+
+This is a source-proven current-state exception, not permission for new coupling. No new direct dependency may be added and the existing coupling must not be expanded. A later runtime package that touches it must either introduce an approved application/port composition boundary or provide explicit source-backed justification within that package.
+
+For future deferred delivery, Inventory owns the immutable `InventoryTransaction` source evidence and durable outbox record; CostControl consumes the identifier and resolves the source read-only. Inventory must not construct, import, instantiate, or call CostControl implementation classes for that mode. The one-way consumer dependency and source-of-truth rules in this ADR remain governing.
+
+Approval of this ADR does not activate an outbox consumer. No CostControl consumer, queue, worker, retry loop, replay command, scheduler, or deferred delivery runtime is activated by CC-G1. Current synchronous production remains accepted while future expansion remains constrained by this ADR.
+
 ## Context
 Receipt, Issue, Transfer, dan Adjustment sudah menggunakan controlled Inventory posting boundary.
 Inventory Ledger adalah source transaction layer.

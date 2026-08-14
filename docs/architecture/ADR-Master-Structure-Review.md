@@ -1,5 +1,26 @@
 # IVORQ ADR Master Structure Review
 
+## Current Canonical Synchronization — CC-G1 (2026-08-15)
+
+This synchronization is the current governance state. Historical portfolio and package-train material below is preserved as point-in-time evidence and is not reopened.
+
+| Governance fact | Current state |
+| :--- | :--- |
+| Canonical branch | `ivorq-enterprise-core` |
+| Current canonical | `bc17d38060f2cdf91c45049aa593e358ae7e1c4c` |
+| Package Execution Contract | Version 1.22 |
+| Housekeeping bounded train | `CANONICALLY_CLOSED` |
+| Master Domain Registry | `ACCEPTED` through PR #55 |
+| CC-R1 | `ACCEPTED_AND_MERGED` at `bc17d38060f2cdf91c45049aa593e358ae7e1c4c` |
+| Cost Control readiness | `CC_GOVERNANCE_FREEZE_REQUIRED` |
+| Current authorized package | `CC-G1_COST_CONTROL_OWNERSHIP_ACTIVATION_AND_LEDGER_PRECEDENCE_FREEZE` |
+| Package type | `GOVERNANCE_ONLY` |
+| Runtime authorization | None |
+
+CC-G1 synchronizes existing architecture only. ADR-041 remains Approved for future deferred delivery. ADR-042 is synchronized to Approved from repository-history provenance, while its deferred consumer remains unimplemented and inactive. ADR-043 remains Accepted; ADR-082 and ADR-083 remain Active. Current synchronous enrolled valuation is preserved as `TRANSITIONAL_EXISTING_CANONICAL_PATH`, with direct coupling frozen as `EXISTING_CANONICAL_BOUNDARY_EXCEPTION__NO_EXPANSION`.
+
+No new ADR is required or created. No Cost Control, Inventory, General Ledger, Payables, Procurement, Receiving, outbox, queue, worker, migration, model, service, controller, request, policy, route, permission, Sensitive Action intent, or interaction-layer runtime is activated. `CC-P01` is not activated. Housekeeping is not reopened. `NO_PACKAGE_21_ACTIVATED`.
+
 ## 1. ADR Portfolio Delivery Status
 
 | ADR Range / ADR | Title | Git Baseline Status | ADR Decision Status | Architecture Role |

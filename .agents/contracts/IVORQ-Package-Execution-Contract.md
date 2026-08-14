@@ -1,9 +1,9 @@
 # IVORQ Package Execution Contract
 
 Status: APPROVED
-Version: 1.21
+Version: 1.22
 Created: 2026-07-10
-Last amended: 2026-08-14
+Last amended: 2026-08-15
 
 Amendment note:
   - Version 1.1 was explicitly approved by the IVORQ Owner for ADR-034 activation and controlled Business Date / Night Audit sequencing.
@@ -27,6 +27,7 @@ Amendment note:
   - Version 1.19 is explicitly Owner-authorized for Package 14 acceptance and merge through PR #47, Package 15 acceptance and merge through PR #49, canonical synchronization to `29731a60afc16ab4b50291cc06b00e67011e92f7`, accepted controlled Housekeeping initial assignment, pre-start reassignment, immutable assignment history, deterministic Property-scoped idempotency, attendant workload projection, and validation synchronization, activation of Package 16 governance-only synchronization, determination of Package 17 Controlled Housekeeping Inspection Claim and Segregation as the next separate runtime package, continued locking of Package 17 runtime pending independent review and Owner-authorized merge of Package 16, and confirmation that no new ADR is required.
   - Version 1.20 is explicitly Owner-authorized for Package 16 acceptance and merge, Package 17 acceptance and merge through PR #51, canonical synchronization to `37750626f9e0614d26d628a4707bcb205508ae03`, accepted Package 17 feature HEAD `0a1e2a1eb9f4882ad05e3966604b8b36fa262fb4`, accepted controlled post-cleaning Inspection claim, cleaner/inspector segregation, immutable claim evidence, claimant-owned terminal decisions, PostgreSQL claim-bypass closure, historical Package 13 evidence compatibility, predecessor concurrency and migration-proof alignment, Package 18 governance synchronization activation, Package 19 recovery/reassignment readiness determination, continued locking of Package 19 runtime pending Package 18 independent review, explicit Owner authorization, and merge, and confirmation that no new ADR is required. Package 17's full registry aggregate exit code was not captured; Version 1.20 preserves that disclosure and does not rewrite the historical validation record to claim otherwise.
   - Version 1.21 is explicitly Owner-authorized for Package 18 acceptance and merge through PR #52 at canonical merge `a99f4b20489c3259c416297310a7b02f9cb6dacb`; Package 19 acceptance and merge through PR #53 at canonical merge `086deefca673af57776fcaa14e06494c2f16ab4d`; accepted Package 19 feature HEAD `9bd18634e603ee7e545798dd7ddf913407e2a685`; append-only Package 19 provenance comprising original source `3f05283dc878c9ec098ba0e27b319451abda36ad`, original metadata `88750a9a23067d1630d0bf151510f0a94083f546`, timestamp/PostgreSQL correction `a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50`, and corrected metadata/final feature HEAD `9bd18634e603ee7e545798dd7ddf913407e2a685`; accepted controlled Inspection claim recovery; immutable original Package 17 claim evidence; effective replacement claimant semantics; objective original-claimant ineligibility; one recovery maximum; dedicated sensitive confirmation intent; deterministic evidence timestamps; PostgreSQL malformed-write protection; Package 19 validation-process deviation disclosure; Package 20 governance-only final synchronization; closure of the current Housekeeping turnover/readiness package train; `NO_PACKAGE_21_ACTIVATED`; and confirmation that no new ADR is required. Initial corrected-head complete-registry execution exposed one transient Front Desk Scenario H worker-marker timeout. The exact failing class subsequently passed twice: 14 tests / 383 assertions. An additional clean registry retry was performed WITHOUT prior independent rerun authorization. That additional run passed: 14/14 targets, 1351 tests, 13108 assertions, 0 failures, exactly 2 registered inherited errors, 0 skipped, exit code 0. Independent review accepted the retry as a disclosed validation-process deviation, not source-correction evidence. Package 17's historical validation disclosure remains preserved and is not rewritten.
+  - Version 1.22 is explicitly Owner-authorized for acceptance of the Master Domain Registry and CC-R1 through PR #55 at canonical merge `bc17d38060f2cdf91c45049aa593e358ae7e1c4c`; preservation of CC-R1 original audit provenance `cf8d1c840497d476362ca72925dfbfa3bba7ce1f` and provenance-correction/final feature HEAD `c368a0b93aaca7b963c9ba076268a327d93caf6b`; activation of the governance-only `CC-G1_COST_CONTROL_OWNERSHIP_ACTIVATION_AND_LEDGER_PRECEDENCE_FREEZE`; exact Inventory/Cost Ledger precedence, legacy-versus-enrolled AVCO authority, current synchronous-versus-future deferred delivery, dependency direction, negative-stock, reversal/correction, bounded GRNI/AP, Business Date/Financial Period, and analytical-workspace-versus-durable-write ownership freezes; synchronization of existing ADRs only; no new ADR; no runtime implementation; no `CC-P01`, `INV-R1`, `FIN-R1`, or `PROC-R1` activation; and `NO_PACKAGE_21_ACTIVATED`.
 
 Amendment protocol:
   - Only Owner may approve amendments to this contract.
@@ -326,6 +327,20 @@ FD-C2 checkout handoff
 ## 6. Package sequencing model
 
 Packages must run sequentially. One package may depend on earlier package evidence, but must not silently implement later package behavior.
+
+### Version 1.22 current Cost Control authorization snapshot (2026-08-15)
+
+- Canonical branch: `ivorq-enterprise-core`.
+- Current canonical SHA: `bc17d38060f2cdf91c45049aa593e358ae7e1c4c`.
+- The Master Domain Registry and `CC-R1_COST_CONTROL_CANONICAL_REVALIDATION_AND_BOUNDARY_AUDIT` are accepted and merged through PR #55.
+- CC-R1 provenance is preserved as original audit `cf8d1c840497d476362ca72925dfbfa3bba7ce1f`, provenance correction/final feature HEAD `c368a0b93aaca7b963c9ba076268a327d93caf6b`, and canonical merge `bc17d38060f2cdf91c45049aa593e358ae7e1c4c`.
+- `CC-G1_COST_CONTROL_OWNERSHIP_ACTIVATION_AND_LEDGER_PRECEDENCE_FREEZE` is the current explicitly authorized package.
+- Package type: `GOVERNANCE_ONLY`.
+- CC-G1 may synchronize only the exact governance documents and executable Contract-version guards named by its Owner authorization.
+- CC-G1 freezes current ownership, activation, Inventory/Cost Ledger source precedence, legacy/enrolled AVCO authority, synchronous/future-deferred delivery precedence, dependency direction, negative-stock scope, reversal/correction scope, bounded GRNI/AP scope, Business Date/Financial Period controls, and analytical-workspace-versus-durable-write ownership.
+- CC-G1 creates no runtime, migration, model, service, controller, request, policy, route, permission, Sensitive Action intent, React/TypeScript, queue, worker, deferred consumer, GL/AP/Procurement runtime, or new ADR.
+- `CC-P01`, `INV-R1`, `FIN-R1`, and `PROC-R1` are not activated.
+- `NO_PACKAGE_21_ACTIVATED`.
 
 ### Current controlled sequence
 

@@ -1,5 +1,9 @@
 # IVORQ Cost Control PRD
 
+> **CURRENT-STATE GOVERNANCE NOTICE — 2026-08-15**
+>
+> This Draft contains historical and planning assumptions. For current ownership, activation, Inventory/Cost Ledger precedence, AVCO authority, delivery-mode precedence, negative-stock policy, and reversal/correction scope, consult the accepted CC-R1 canonical revalidation, the CC-G1 governance freeze, and the current applicable ADRs. The analytical Cost Control workspace remains read-only, but the backend Finance/CostControl domain now write-owns durable Cost Ledger and AVCO state for enrolled scopes. That backend ownership does not authorize the workspace to mutate Inventory, Purchasing, Receiving, AP, GL, Financial Period, or Property Business Date facts.
+
 ## Document Status
 Draft
 

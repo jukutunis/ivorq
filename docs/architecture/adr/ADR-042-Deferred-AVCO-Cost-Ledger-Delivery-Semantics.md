@@ -1,10 +1,28 @@
 # ADR-042: Deferred AVCO Cost Ledger Delivery Semantics
 
 ## Status
-Proposed — Owner Approval Required
+Approved
 
 ## Date
 2026-06-27
+
+## Approval Provenance and Current Canonical Implementation Status
+
+Repository history proves the ADR approval provenance at `bf5d01fb4954de4c29c94c1860771edd600b6404` (`ADR-042: Approve deferred AVCO delivery semantics`) and the later strict-sequence synchronization at `bc67d98346ad442561a16de610a4b9fc557b0c9a` (`ADR-042: Record AVCO strict sequence barrier`). Both commits are ancestors of current canonical, and no later explicit revocation, rejection, withdrawal, or supersession was found.
+
+`APPROVED ARCHITECTURE != ACTIVE DEFERRED CONSUMER RUNTIME`
+
+Current canonical implementation status is:
+
+- deterministic Inventory valuation-sequence allocation exists;
+- durable CostControl-owned `CostAvcoState` exists;
+- immutable durable Cost Ledger persistence exists;
+- current active enrolled valuation runtime is synchronous;
+- the deferred CostControl outbox consumer remains not implemented and not activated;
+- the strict sequence barrier remains governing for any future deferred consumer;
+- closed Business Date and Financial Period handling remains fail-closed;
+- generic correction, recovery, replay, and reopen behavior remains future scope; and
+- Approved status does not activate a worker, queue, publisher, listener, retry loop, or scheduler.
 
 ## Context
 IVORQ uses a Transactional Outbox pattern (as approved in ADR-041) to decouple the synchronous Inventory posting module from derived ledgers such as the Cost Ledger.

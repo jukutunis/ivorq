@@ -4,11 +4,17 @@
 
 - Review date: 2026-08-15
 - Canonical branch: `ivorq-enterprise-core`
-- Canonical SHA reviewed: `c5f12ef60b55a31f402b2c4166b7ef2d807cf7d8`
-- Package Execution Contract: Version 1.21, unchanged
+- Canonical SHA reviewed for the original Registry / CC-R1 work: `c5f12ef60b55a31f402b2c4166b7ef2d807cf7d8`
+- Current canonical synchronization: `bc17d38060f2cdf91c45049aa593e358ae7e1c4c`
+- Registry and CC-R1 acceptance: PR #55, `ACCEPTED_AND_MERGED`
+- CC-R1 original audit: `cf8d1c840497d476362ca72925dfbfa3bba7ce1f`
+- CC-R1 provenance correction / final feature HEAD: `c368a0b93aaca7b963c9ba076268a327d93caf6b`
+- Package Execution Contract: Version 1.22
 - Registry role: governance and workstream selection only
 - Registered master domains: 19
 - Runtime authorization: none
+- Current authorized package: `CC-G1_COST_CONTROL_OWNERSHIP_ACTIVATION_AND_LEDGER_PRECEDENCE_FREEZE`
+- Current package type: `GOVERNANCE_ONLY`
 
 `NO_PACKAGE_21_ACTIVATED`
 
@@ -44,7 +50,7 @@ Evidence labels: `SOURCE_PROVEN` means current source or schema exists; `TEST_PR
 | **MPD-BDN** - Business Date and Night Audit | `Modules/Foundation/Property` and `Modules/Operations/NightAudit` (`SOURCE_PROVEN`) | ADR-034, ADR-089; Contract 1.21 accepted predecessor records | BD-A1, NA-A1, NA-A2 and read integrations have accepted package provenance; full close/advance/reopen/checkpoint scope is not declared complete | `ACCEPTED_PARTIAL` | FND, PMS, FIN, INV, CC, TAX | `BDN-R1` | P2 |
 | **MPD-FIN** - GL, AP, AR, Banking, General Cashier, FX, reporting | `Modules/Finance/{GeneralLedger,AccountsPayable,AccountsReceivable,Payables,Banking,GeneralCashier,FxReference,Treasury}` and `Modules/Operations/GeneralCashier` (`SOURCE_PROVEN`) | ADR-004, ADR-013, ADR-016, ADR-018, ADR-019, ADR-028, ADR-047-ADR-078; Finance implementation plans and audits under `docs/architecture/Finance/` | Multiple accepted runtime trains and commit provenance exist; breadth, parallel legacy/controlled paths, and dated foundation reviews require an end-to-end audit | `SOURCE_PRESENT_REVALIDATION_REQUIRED` | FND, SEC, BDN, CC, INV, PROC, TAX, PMS | `FIN-R1` | P0 |
 | **MPD-INV** - Inventory Ledger, stock, transfer, reversal | `Modules/Operations/Inventory`; both `inventory_transactions` and `inventory_stock_movements` persistence are present (`SOURCE_PROVEN`) | ADR-008-ADR-010, ADR-035-ADR-037, ADR-041-ADR-046, ADR-079-ADR-083; `docs/02-operations/reviews/Inventory-Validation-Audit.md` | Controlled posting and movement tests exist, but two forward-ledger representations and an active inherited reversal-test debt require canonical reconciliation; historical foundation docs are stale | `SOURCE_PRESENT_REVALIDATION_REQUIRED` | FND, BDN, CC, PROC, FIN, POS | `INV-R1` | P0 |
-| **MPD-CC** - Cost Control, Cost Ledger, AVCO, valuation | `Modules/Finance/CostControl`; `cost_ledger_entries` and `cost_avco_states` are durable (`SOURCE_PROVEN`, `TEST_PROVEN`) | ADR-010-ADR-017, ADR-041-ADR-047, ADR-082-ADR-083; `docs/architecture/CostControl/Cost-Control-PRD.md`; historical Sprint 15 audit/specifications | Sprint 15 commits delivered persistence and enrolled-path valuation, but the PRD and historical readiness documents still describe Cost Control as only read/analyze and claim absent ledgers; current source therefore outranks those documents | `SOURCE_PRESENT_REVALIDATION_REQUIRED` | INV, FIN, PROC, BDN, FND, TAX, POS | `CC-G1` after completed `CC-R1` | P0; selected first |
+| **MPD-CC** - Cost Control, Cost Ledger, AVCO, valuation | `Modules/Finance/CostControl`; `cost_ledger_entries` and `cost_avco_states` are durable (`SOURCE_PROVEN`, `TEST_PROVEN`) | ADR-010-ADR-017, ADR-041-ADR-047, ADR-082-ADR-083; `docs/architecture/CostControl/CC-G1-Cost-Control-Ownership-Activation-and-Ledger-Precedence-Freeze.md`; historical PRD and execution specifications | `CC-R1 = ACCEPTED_AND_MERGED` through PR #55 at `bc17d38060f2cdf91c45049aa593e358ae7e1c4c`; `CC-G1 = CURRENT_AUTHORIZED_GOVERNANCE_FREEZE`; stale documents are bannered and current precedence is frozen without rewriting their history | `CC_GOVERNANCE_FREEZE_REQUIRED` while CC-G1 is open; runtime authorization `NONE` | INV, FIN, PROC, BDN, FND, TAX, POS | `CC_RUNTIME_STILL_BLOCKED`; next required audit `INV-R1` | P0; governance freeze current |
 | **MPD-PROC** - Procurement, Purchasing, Receiving, Vendor controls | `Modules/Operations/{Purchasing,Receiving}` plus Purchasing/Receiving aggregates in Inventory and tenant-owned Vendor source (`SOURCE_PROVEN`) | ADR-006, ADR-011, ADR-014, ADR-015, ADR-032, ADR-047, ADR-080, ADR-083; Purchasing and Receiving plans/reviews | PO, receiving, commercial-evidence, supplier-invoice, and GRNI/AP integration source is present; documents span older and newer models and require a canonical audit | `SOURCE_PRESENT_REVALIDATION_REQUIRED` | FND, SEC, INV, CC, FIN, TAX | `PROC-R1` | P0 |
 | **MPD-TAX** - Tax and multi-jurisdiction | No dedicated current Tax runtime module found (`DOCUMENTATION_ONLY`) | ADR-025, ADR-033 and tax-sensitive clauses in ADR-060/ADR-083 | Architecture exists, but no dedicated runtime provenance was established by this selection audit | `ARCHITECTURE_READY_IMPLEMENTATION_AUDIT_REQUIRED` | FND, SEC, FIN, PROC, PMS, POS | `TAX-R1` | P2 |
 | **MPD-ENG** - Engineering, Maintenance, Asset, Contractor PTW | `Modules/Operations/{Engineering,EngineeringWorkspace,Maintenance,AssetManagement,ContractorPTW,WorkOrder}` (`SOURCE_PROVEN`) | ADR-027, ADR-085; `docs/completion-reports/Sprint-ENG-A1-Engineering-Room-Availability-Readiness-Record.md`; engineering PRD/foundation reviews | ENG-A1 room-availability evidence is accepted; broader maintenance, asset, and contractor documentation requires current-source revalidation | `ACCEPTED_PARTIAL` | FND, SEC, PMS, HKG, FIN, DOC | `ENG-R1` | P1 |
@@ -75,3 +81,19 @@ PR #54 merged the Package 20 governance closure into canonical at `c5f12ef60b55a
 This document is a registry and selection aid. It grants no permission for a migration, model, service, controller, request, policy, route, seeder, permission, Sensitive Action intent, UI, dependency, database change, test change, deployment, or runtime implementation.
 
 `NO_PACKAGE_21_ACTIVATED`
+
+## CC-G1 conclusion and next-package decision
+
+`CC-R1 = ACCEPTED_AND_MERGED`
+
+`CC-G1 = CURRENT_AUTHORIZED_GOVERNANCE_FREEZE`
+
+`RUNTIME_AUTHORIZATION = NONE`
+
+`CC_RUNTIME_STILL_BLOCKED`
+
+The exact blocker is the absence of one source-proven runtime cutover/composition contract that can introduce deferred Inventory-owned outbox delivery without double-applying the already accepted synchronous enrolled Cost Ledger path, expanding the frozen direct Operations-to-CostControl dependency, or confusing `inventory_transactions` with the separate `inventory_stock_movements` quantity/evidence ledger. CC-G1 records the current exception and future direction; it does not establish the runtime switching, coexistence, replay, or retirement mechanics needed to activate a consumer safely.
+
+The next required audit is `INV-R1`. It must reconcile the broader Inventory persistence and producer boundary, prove the canonical source/outbox contract for future deferred delivery, and define how any later consumer package avoids duplicate synchronous and deferred valuation effects. This registry does not activate `INV-R1`; it records it only as the next required audit before a Cost Control runtime candidate can be authorized.
+
+No `CC-P01` candidate is activated. The master-domain count remains 19. No Package 21 is created or activated.
