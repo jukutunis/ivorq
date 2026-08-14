@@ -21,7 +21,7 @@ CC-R1 outranks immediate runtime implementation because canonical source has adv
 
 ## Why global Package 21 was rejected
 
-Historical Packages 1-20 are an accepted, traceable Housekeeping/Front Desk package train governed by Contract 1.21. Package 20 closes only the current Housekeeping turnover/readiness train. Reusing a global Package 21 label for an unrelated Finance/Inventory/Cost Control decision would obscure domain ownership, imply continuation of a closed train, and weaken provenance.
+Historical Packages 1-20 are preserved as accepted, package-scoped provenance under their recorded domain/workstream and Contract histories. Packages 11-20 specifically form the current Housekeeping turnover/readiness package train, which Package 20 closes. The current Package Execution Contract is Version 1.21. Reusing a global Package 21 label for an unrelated Finance/Inventory/Cost Control decision would obscure domain ownership, imply continuation of a canonically closed bounded Housekeeping train, and weaken provenance.
 
 Domain-coded workstreams are clearer because the identifier communicates both owner and intent:
 
