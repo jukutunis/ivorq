@@ -271,7 +271,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         );
     }
 
-    public function test_frontdesk_operational_baseline_matches_package_19_housekeeping_source_scan_delta(): void
+    public function test_frontdesk_operational_baseline_matches_package_20_final_governance_closure(): void
     {
         $baseline = $this->findBaseline('frontdesk-operational-baseline');
         $this->assertNotNull($baseline, 'frontdesk-operational-baseline must exist.');
@@ -301,7 +301,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
         $this->assertEquals(
-            'a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50',
+            '17ae862f1efc6592e5bfed7002c39ff47ef59c27',
             $baseline->provenance->sha ?? null
         );
         $this->assertMatchesRegularExpression(
@@ -310,15 +310,15 @@ class RegressionBaselineManifestTest extends PostgresTestCase
             'Provenance SHA must be a full 40-character hex string.'
         );
         $this->assertEquals(
-            'sprint-package-19-housekeeping-inspection-claim-recovery-reassignment',
+            'codex/architecture-package-20-post-package-19-housekeeping-final-closure',
             $baseline->provenance->branch ?? null
         );
 
         $this->assertEquals('2026-08-14', $baseline->provenance->measured_at ?? null);
-        $this->assertSame('PACKAGE_19_INDEPENDENT_REVIEW_CORRECTED_RUNTIME_PROOF', $baseline->provenance->governance_status ?? null);
-        $this->assertStringContainsString('Contract Version 1.20', $baseline->provenance->current_governance_note ?? '');
-        $this->assertMatchesRegularExpression('/a99f4b20489c3259c416297310a7b02f9cb6dacb.*a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50.*3f05283dc878c9ec098ba0e27b319451abda36ad.*88750a9a23067d1630d0bf151510f0a94083f546/', $baseline->provenance->current_governance_note ?? '');
-        $this->assertMatchesRegularExpression('/deterministic server ownership of occurred_at \/ created_at.*expanded direct PostgreSQL malformed-write proof.*no lifecycle redesign.*no Package 17 claim mutation/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertSame('PACKAGE_19_ACCEPTED_CANONICAL__PACKAGE_20_FINAL_GOVERNANCE_CLOSURE', $baseline->provenance->governance_status ?? null);
+        $this->assertSame('1.21', $baseline->provenance->contract ?? null);
+        $this->assertMatchesRegularExpression('/086deefca673af57776fcaa14e06494c2f16ab4d.*a99f4b20489c3259c416297310a7b02f9cb6dacb.*9bd18634e603ee7e545798dd7ddf913407e2a685.*3f05283dc878c9ec098ba0e27b319451abda36ad.*88750a9a23067d1630d0bf151510f0a94083f546.*a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50.*9bd18634e603ee7e545798dd7ddf913407e2a685.*086deefca673af57776fcaa14e06494c2f16ab4d/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/deterministic server ownership of occurred_at \/ created_at.*expanded direct PostgreSQL malformed-write proof.*no lifecycle redesign.*no Package 17 claim mutation.*Initial corrected-head complete-registry execution exposed one transient Front Desk Scenario H worker-marker timeout.*14 tests \/ 383 assertions.*WITHOUT prior independent rerun authorization.*14\/14 targets.*1351 tests.*13108 assertions.*exactly 2 registered inherited errors.*0 skipped.*exit code 0.*disclosed validation-process deviation, not source-correction evidence/', $baseline->provenance->current_governance_note ?? '');
         $this->assertMatchesRegularExpression('/729 tests \/ 5693 assertions \/ 0 failures \/ 0 errors.*5657 \+ \(6 x 6\) = 5693/', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('Package 18 is governance-only under Contract Version 1.20', $baseline->provenance->governance_note ?? '');
         $this->assertStringContainsString('Package 17 is accepted and canonical through PR #51 at merge 37750626f9e0614d26d628a4707bcb205508ae03', $baseline->provenance->governance_note ?? '');
@@ -435,7 +435,7 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertStringNotContainsString('No CURRENT_TIMESTAMP database-clock checks in trigger', $baseline->provenance->note ?? '');
     }
 
-    public function test_housekeeping_room_readiness_baseline_includes_package_19_controlled_claim_recovery(): void
+    public function test_housekeeping_room_readiness_baseline_matches_package_20_final_governance_closure(): void
     {
         $baseline = $this->findBaseline('housekeeping-room-readiness-baseline');
         $this->assertNotNull($baseline, 'housekeeping-room-readiness-baseline must exist.');
@@ -489,14 +489,14 @@ class RegressionBaselineManifestTest extends PostgresTestCase
         $this->assertEquals(0, $baseline->expected->failures ?? null);
         $this->assertEquals(0, $baseline->expected->errors ?? null);
         $this->assertSame([], $baseline->accepted_debt ?? null);
-        $this->assertEquals('a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50', $baseline->provenance->sha ?? null);
-        $this->assertEquals('sprint-package-19-housekeeping-inspection-claim-recovery-reassignment', $baseline->provenance->branch ?? null);
+        $this->assertEquals('17ae862f1efc6592e5bfed7002c39ff47ef59c27', $baseline->provenance->sha ?? null);
+        $this->assertEquals('codex/architecture-package-20-post-package-19-housekeeping-final-closure', $baseline->provenance->branch ?? null);
         $this->assertEquals('2026-08-14', $baseline->provenance->measured_at ?? null);
-        $this->assertSame('PACKAGE_19_INDEPENDENT_REVIEW_CORRECTED_RUNTIME_PROOF', $baseline->provenance->governance_status ?? null);
-        $this->assertStringContainsString('Contract Version 1.20', $baseline->provenance->current_governance_note ?? '');
-        $this->assertStringContainsString('a99f4b20489c3259c416297310a7b02f9cb6dacb', $baseline->provenance->current_governance_note ?? '');
-        $this->assertMatchesRegularExpression('/a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50.*3f05283dc878c9ec098ba0e27b319451abda36ad.*88750a9a23067d1630d0bf151510f0a94083f546/', $baseline->provenance->current_governance_note ?? '');
-        $this->assertMatchesRegularExpression('/deterministic server ownership of occurred_at \/ created_at.*expanded direct PostgreSQL malformed-write proof.*no lifecycle redesign.*no Package 17 claim mutation/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertSame('PACKAGE_19_ACCEPTED_CANONICAL__PACKAGE_20_FINAL_GOVERNANCE_CLOSURE', $baseline->provenance->governance_status ?? null);
+        $this->assertSame('1.21', $baseline->provenance->contract ?? null);
+        $this->assertStringContainsString('086deefca673af57776fcaa14e06494c2f16ab4d', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/a99f4b20489c3259c416297310a7b02f9cb6dacb.*9bd18634e603ee7e545798dd7ddf913407e2a685.*3f05283dc878c9ec098ba0e27b319451abda36ad.*88750a9a23067d1630d0bf151510f0a94083f546.*a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50.*9bd18634e603ee7e545798dd7ddf913407e2a685.*086deefca673af57776fcaa14e06494c2f16ab4d/', $baseline->provenance->current_governance_note ?? '');
+        $this->assertMatchesRegularExpression('/deterministic server ownership of occurred_at \/ created_at.*expanded direct PostgreSQL malformed-write proof.*no lifecycle redesign.*no Package 17 claim mutation.*Initial corrected-head complete-registry execution exposed one transient Front Desk Scenario H worker-marker timeout.*14 tests \/ 383 assertions.*WITHOUT prior independent rerun authorization.*14\/14 targets.*1351 tests.*13108 assertions.*exactly 2 registered inherited errors.*0 skipped.*exit code 0.*disclosed validation-process deviation, not source-correction evidence/', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('209 tests / 3793 assertions / 0 failures / 0 errors', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('18 tests / 254 assertions', $baseline->provenance->current_governance_note ?? '');
         $this->assertStringContainsString('NO_NEW_ADR_REQUIRED', $baseline->provenance->current_governance_note ?? '');

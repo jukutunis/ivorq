@@ -30,8 +30,8 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 | Procurement and vendor commercial controls | Tracked | Architecture ready, implementation pending | ADR-006, ADR-032 |
 | Inventory, GRNI, Cost Ledger, Finance boundary | Active | Foundation ready | ADR-004, ADR-008 through ADR-015 |
 | Tax and multi-jurisdiction architecture | Tracked | Architecture ready, implementation pending | ADR-033 |
-| Night Audit and hospitality business-date foundation | Approved | Architecture activated on 2026-07-16; BD-A1 authoritative Property Business Date runtime, FD-B11 read integration, NA-A1 Night Audit run/active-lock foundation, and FD-B12 read-only Front Desk lock integration are accepted. FD-B13 is accepted and canonical. ADR-089 is Approved and canonical at `1682dec0fb7f654e77888a476b4ec55a1507610b`. NA-A2, GLF-E, GLF-E-S1, GC-A2, FD-C1, FD-C2, Package 8, and Package 9 remain accepted at their recorded canonical identities. Package 11 is accepted and merged through PR #44 at `39b673109109d28e140b67f3835696836401a9e4`; Package 12 through Package 15 remain accepted at their recorded merge identities; Package 16 is accepted governance synchronization; Package 17 is accepted runtime through PR #51 at canonical SHA `37750626f9e0614d26d628a4707bcb205508ae03`. Package 18 is the current governance-only synchronization. | ADR-034, ADR-089 |
-| PMS readiness | Partial accepted foundations | PMS Guest Ledger, PMS Cashiering, Front Desk, General Cashier, the accepted checkout package train, and Housekeeping Packages 11 through 17 are accepted per Contract Version 1.20. Checkout execution is server-projected authority, not browser-granted authority. Package 11 owns durable downstream handoff consumption and turnover intake; Package 12 owns the turnover workspace; Package 13 integrates Cleaning Task and post-cleaning Inspection readiness; Package 15 owns controlled task assignment; Package 17 owns controlled post-cleaning Inspection claim, immutable claim evidence, cleaner/inspector identity segregation, and claimant-owned terminal decisions. Package 18 is the current governance synchronization. Package 19 controlled Inspection claim recovery and supervisory reassignment is only the proposed next runtime boundary and remains locked. The FD-B13 verdict remains historical pre-Package-9 evidence: `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES`. | ADR-034, ADR-040, ADR-066, ADR-086, ADR-087, ADR-088, ADR-089 |
+| Night Audit and hospitality business-date foundation | Approved | Architecture activated on 2026-07-16; BD-A1 authoritative Property Business Date runtime, FD-B11 read integration, NA-A1 Night Audit run/active-lock foundation, and FD-B12 read-only Front Desk lock integration are accepted. FD-B13 is accepted and canonical. ADR-089 is Approved and canonical at `1682dec0fb7f654e77888a476b4ec55a1507610b`. NA-A2, GLF-E, GLF-E-S1, GC-A2, FD-C1, FD-C2, Package 8, and Package 9 remain accepted at their recorded canonical identities. Package 11 through Package 19 are accepted at their recorded merge identities. Package 18 governance synchronization was accepted through PR #52. Package 19 runtime was accepted through PR #53. Current canonical is `086deefca673af57776fcaa14e06494c2f16ab4d`. Package 20 is the current governance-only final closure. | ADR-034, ADR-089 |
+| PMS readiness | Partial accepted foundations | PMS Guest Ledger, PMS Cashiering, Front Desk, General Cashier, the accepted checkout package train, and Housekeeping Packages 11 through 19 are accepted per Contract Version 1.21. Checkout execution is server-projected authority, not browser-granted authority. Package 11 owns durable downstream handoff consumption and turnover intake; Package 12 owns the turnover workspace; Package 13 integrates Cleaning Task and post-cleaning Inspection readiness; Package 15 owns controlled task assignment; Package 17 owns controlled post-cleaning Inspection claim, immutable claim evidence, cleaner/inspector identity segregation, and claimant-owned terminal decisions; Package 19 owns the controlled recovery/reassignment extension to that accepted Inspection claim boundary. Package 20 is the current governance-only final closure. The FD-B13 verdict remains historical pre-Package-9 evidence: `CHECKOUT_EXECUTION_BLOCKED_BY_PREREQUISITES`. | ADR-034, ADR-040, ADR-066, ADR-086, ADR-087, ADR-088, ADR-089 |
 | Guest Ledger, Folio, and hospitality financial subledger boundary | Active | Completed by ADR-088; durable ownership boundary established across PMS Guest Ledger, PMS Cashiering, General Cashier, Accounting, Finance, Front Desk, and Business Date / Night Audit. Implementation remains package-scoped and does not imply checkout execution. | ADR-088 |
 | Cost Control readiness | Planning | Separate Audit / Readiness Workstream | Not included in this ADR update |
 | HRIS readiness | Deferred | Deferred roadmap domain | Requires future PRDs |
@@ -93,7 +93,7 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 
 1. **Inventory Ledger posting governance references**: Treat ADR-035, ADR-036, and ADR-037 as existing Approved architecture decisions, not future ADR candidates. This ADR-034 activation package does not modify or reopen those decisions. (Source-truth synchronization)
 2. **Cost Control Readiness Audit**: Continue the separate Cost Control audit workstream. (Review/Audit)
-3. **PMS Core Module Specifications**: Treat this as historical planning language unless a future package reauthorizes the scope. Current source truth includes the accepted PMS, checkout, and Housekeeping foundations through Package 17 at canonical SHA `37750626f9e0614d26d628a4707bcb205508ae03`. Package 16 is accepted governance synchronization; Package 17 is accepted runtime; Package 18 is the current governance synchronization; Package 19 controlled Housekeeping Inspection claim recovery and supervisory reassignment is the proposed next runtime package and remains locked pending Package 18 review, explicit Owner authorization, and merge. PR #22 language is historical. (PRD/Specification -> package-scoped delivery)
+3. **PMS Core Module Specifications**: Treat this as historical planning language unless a future package reauthorizes the scope. Current source truth includes the accepted PMS, checkout, and Housekeeping foundations through Package 19 at canonical SHA `086deefca673af57776fcaa14e06494c2f16ab4d`. Package 18 is accepted governance synchronization through PR #52; Package 19 controlled Housekeeping Inspection claim recovery and supervisory reassignment is accepted runtime through PR #53; Package 20 is the current governance-only final closure. No additional Housekeeping turnover/readiness runtime package is activated by this review. Future Housekeeping additions require new source review and explicit Owner authorization. PR #22 language is historical. (PRD/Specification -> package-scoped delivery)
 4. **Integration Specifications**: Draft technical specifications for external data exchange boundaries based on ADR-017 and ADR-031. (PRD/Specification)
 5. **Night Audit Checkpoint Catalog**: Draft the operational checklist and checkpoint specification for the Night Audit process based on ADR-034 only after the controlled Business Date / Night Audit package sequence authorizes that scope. NA-A1 does not authorize a checkpoint catalog. (Specification)
 
@@ -102,12 +102,12 @@ The previously planned next five ADRs (ADR-030 through ADR-034) represent comple
 **Finance Foundation**: Architecture Ready, Implementation Pending
 **Enterprise Security & Privacy**: Architecture Ready, Implementation Pending
 **Procurement & Tax Governance**: Architecture Ready, Implementation Pending
-**PMS Foundation**: Partial Accepted Foundations through Package 17 at canonical SHA `37750626f9e0614d26d628a4707bcb205508ae03`; Package 11 accepted through PR #44, Package 12 through PR #45, Package 13 through PR #46, Package 14 through PR #47, Package 15 through PR #49, Package 16 accepted governance synchronization, Package 17 accepted runtime through PR #51; Package 18 governance synchronization current; Package 19 runtime locked
+**PMS Foundation**: Partial Accepted Foundations through Package 19 at canonical SHA `086deefca673af57776fcaa14e06494c2f16ab4d`; Package 11 accepted through PR #44, Package 12 through PR #45, Package 13 through PR #46, Package 14 through PR #47, Package 15 through PR #49, Package 16 accepted governance synchronization, Package 17 accepted runtime through PR #51, Package 18 accepted governance synchronization through PR #52, Package 19 accepted runtime through PR #53; Package 20 governance-only final closure current; `NO_PACKAGE_21_ACTIVATED`
 **Cost Control**: Separate Audit / Readiness Workstream, Not Included in This ADR Update
 
 ADR-035, ADR-036, and ADR-037 already exist and are Approved. Their controlled Inventory Ledger posting governance decisions are no longer future ADR candidates. Implementation status remains distinct from architecture decision status, and this ADR-034 activation package does not modify or reopen those decisions.
 
-The current ADR portfolio is architecturally sufficient to continue controlled Finance, Security, Privacy, Procurement, Tax, and package-scoped PMS/Business Date work. It is not a claim of full PMS production readiness. The accepted package train is canonical through Package 17 at `37750626f9e0614d26d628a4707bcb205508ae03`. Package 16 is accepted governance synchronization and Package 17 is accepted runtime through PR #51. ADR-086 remains Active and governs Housekeeping readiness, Inspection ownership, maker-checker identity, and the proposed bounded recovery of an already-owned Inspection; ADR-040 governs the controlled interaction layer; ADR-066 governs sensitive confirmation. A controlled recovery remains within the durable Housekeeping boundary, so `NO_NEW_ADR_REQUIRED`. Package 18 is governance-only. Package 19 requires a separate runtime branch, Draft PR, independent review, explicit Owner runtime authorization, and Owner-authorized merge, and remains locked pending Package 18 merge.
+The current ADR portfolio is architecturally sufficient to continue controlled Finance, Security, Privacy, Procurement, Tax, and package-scoped PMS/Business Date work. It is not a claim of full PMS production readiness or that all Housekeeping functionality is complete forever. The accepted package train is canonical through Package 19 at `086deefca673af57776fcaa14e06494c2f16ab4d`. Package 18 is accepted governance synchronization through PR #52 and Package 19 is accepted runtime through PR #53, with accepted feature HEAD `9bd18634e603ee7e545798dd7ddf913407e2a685`. ADR-086 remains Active and governs Housekeeping readiness, Inspection ownership, maker-checker identity, and bounded controlled recovery of an already-owned Inspection; ADR-040 governs the controlled interaction layer; ADR-066 governs sensitive confirmation. The accepted recovery remains within the durable Housekeeping boundary, so `NO_NEW_ADR_REQUIRED`. Package 20 is governance-only final synchronization. `HOUSEKEEPING_TURNOVER_READINESS_PACKAGE_TRAIN_CLOSED` is the intended result after Package 20 review and merge. No additional Housekeeping turnover/readiness runtime package is activated by this review; future Housekeeping additions require new source review and explicit Owner authorization. `NO_PACKAGE_21_ACTIVATED`.
 
 ### FD-C1 Governance Synchronization (2026-07-23)
 
@@ -230,7 +230,7 @@ ADR_040_AND_ADR_086_REMAIN_GOVERNING
 PACKAGE_17_RUNTIME_REQUIRES_SEPARATE_DRAFT_PR
 ```
 
-### Package 18 Post-Package-17 Housekeeping Governance Synchronization (2026-08-13)
+### Historical Package 18 Post-Package-17 Housekeeping Governance Synchronization (2026-08-13)
 
 Contract Version 1.20. Canonical SHA: `37750626f9e0614d26d628a4707bcb205508ae03`.
 
@@ -252,5 +252,28 @@ PACKAGE_17_INSPECTION_CLAIM_AND_SEGREGATION_ACCEPTED
 PACKAGE_18_POST_PACKAGE_17_GOVERNANCE_SYNCHRONIZATION
 PACKAGE_19_INSPECTION_CLAIM_RECOVERY_BOUNDARY_FROZEN
 PACKAGE_19_RUNTIME_LOCKED_PENDING_PACKAGE_18_MERGE
+NO_NEW_ADR_REQUIRED
+```
+
+### Package 20 Post-Package-19 Housekeeping Final Governance Closure (2026-08-14)
+
+Contract Version 1.21. Current canonical SHA: `086deefca673af57776fcaa14e06494c2f16ab4d`.
+
+- Package 18 governance synchronization is accepted and merged through PR #52 at canonical merge `a99f4b20489c3259c416297310a7b02f9cb6dacb`.
+- Package 19 controlled Inspection claim recovery and supervisory reassignment is accepted and merged through PR #53 at canonical merge `086deefca673af57776fcaa14e06494c2f16ab4d`, with accepted feature HEAD `9bd18634e603ee7e545798dd7ddf913407e2a685`.
+- Package 19 owns the controlled recovery/reassignment extension to the accepted Package 17 Inspection claim boundary: separate append-only reassignment evidence, immutable original claim, effective replacement claimant, objective original-claimant ineligibility, exact supervisory intervention and replacement eligibility permissions, one recovery maximum, Sensitive Action Confirmation, deterministic evidence timestamps, PostgreSQL integrity, exact replay, and real concurrency proof.
+- Package 20 is the current governance-only final closure. It adds no runtime, migration, model, service, controller, request, policy, route, permission, sensitive intent, UI, dependency, or cross-domain mutation.
+- No additional Housekeeping turnover/readiness runtime package is activated by this review. Future Housekeeping additions require new source review and explicit Owner authorization.
+- No other domain package is activated.
+- `NO_NEW_ADR_REQUIRED`.
+
+Current verdict:
+
+```text
+PACKAGE_18_ACCEPTED_AND_MERGED
+PACKAGE_19_ACCEPTED_AND_MERGED
+PACKAGE_20_CURRENT_GOVERNANCE_FINAL_CLOSURE
+HOUSEKEEPING_TURNOVER_READINESS_PACKAGE_TRAIN_CLOSURE_PENDING_PACKAGE_20_REVIEW_AND_MERGE
+NO_PACKAGE_21_ACTIVATED
 NO_NEW_ADR_REQUIRED
 ```

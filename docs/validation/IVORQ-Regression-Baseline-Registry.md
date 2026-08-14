@@ -62,8 +62,24 @@ All baselines in this registry use `selection_policy: "exact-test-classes"`. The
 
 | ID | Status | Description |
 |----|--------|-------------|
-| `frontdesk-operational-baseline` | `active` | Front Desk operational tests with preserved Package 17/18 provenance and Package 19 deterministic six-file Housekeeping source-scan delta - unchanged 68 classes, 729 tests / 5693 assertions |
-| `housekeeping-room-readiness-baseline` | `active` | Housekeeping room readiness through Package 17 controlled claim segregation and corrected Package 19 controlled supervisory claim recovery/reassignment - 34 classes, 209 tests / 3793 assertions |
+| `frontdesk-operational-baseline` | `active` | Front Desk operational tests with preserved Package 17/18/19 provenance and Package 20 final governance closure - unchanged 68 classes, 729 tests / 5693 assertions |
+| `housekeeping-room-readiness-baseline` | `active` | Housekeeping room readiness through accepted Package 19 controlled supervisory claim recovery/reassignment and Package 20 final governance closure - unchanged 34 classes, 209 tests / 3793 assertions |
+
+## Package 20 Final Governance Closure (2026-08-14)
+
+- Contract Version 1.21 is approved for `PACKAGE_20_POST_PACKAGE_19_HOUSEKEEPING_FINAL_GOVERNANCE_CLOSURE`; `NO_NEW_ADR_REQUIRED`; `NO_PACKAGE_21_ACTIVATED`.
+- Package 18 is accepted through PR #52 at canonical merge `a99f4b20489c3259c416297310a7b02f9cb6dacb`.
+- Package 19 is accepted through PR #53 at canonical merge `086deefca673af57776fcaa14e06494c2f16ab4d`, with accepted feature HEAD `9bd18634e603ee7e545798dd7ddf913407e2a685`.
+- Package 19 append-only provenance remains original source `3f05283dc878c9ec098ba0e27b319451abda36ad`; original metadata `88750a9a23067d1630d0bf151510f0a94083f546`; deterministic timestamp/PostgreSQL correction `a65736bab5f49c6ab9c39287f5ae01e7dd0b9a50`; corrected metadata/final feature HEAD `9bd18634e603ee7e545798dd7ddf913407e2a685`; canonical merge `086deefca673af57776fcaa14e06494c2f16ab4d`.
+- Current Front Desk and Housekeeping provenance is branch `codex/architecture-package-20-post-package-19-housekeeping-final-closure`, governance SHA `17ae862f1efc6592e5bfed7002c39ff47ef59c27`, measured 2026-08-14.
+- Exactly four executable Contract guards changed only from Version 1.20 to Version 1.21. No runtime or integrity assertion was weakened.
+- The exact 34-class Housekeeping baseline remains 209 tests / 3,793 assertions / 0 failures / 0 errors.
+- The exact 68-class Front Desk baseline remains 729 tests / 5,693 assertions / 0 failures / 0 errors.
+- Package 19 validation-process deviation remains transparent: initial corrected-head complete-registry execution exposed one transient Front Desk Scenario H worker-marker timeout. The exact failing class subsequently passed twice at 14 tests / 383 assertions. An additional clean registry retry was performed WITHOUT prior independent rerun authorization. That additional run passed 14/14 targets, 1,351 tests, 13,108 assertions, 0 failures, exactly 2 registered inherited errors, 0 skipped, exit code 0. Independent review accepted the retry as a disclosed validation-process deviation, not source-correction evidence.
+- Package 20 changes no Front Desk runtime and no Housekeeping production source. It adds no migration, model, service, controller, request, policy, route, permission, Sensitive Action intent, React/TypeScript source, dependency, new ADR, or accepted debt.
+- Inventory Reversal inherited debt remains 8 tests / 72 assertions / 0 failures / exactly 2 documented inherited errors.
+- Governance status: `PACKAGE_19_ACCEPTED_CANONICAL__PACKAGE_20_FINAL_GOVERNANCE_CLOSURE`.
+- `HOUSEKEEPING_TURNOVER_READINESS_PACKAGE_TRAIN_CLOSED` is the governance conclusion subject to Package 20 independent review and merge.
 
 ## Package 19 Independent-Review Correction (2026-08-14)
 

@@ -39,7 +39,7 @@ class HousekeepingControlledInspectionClaimRecoverySourceIntegrityTest extends P
         $this->assertStringNotContainsString("'created_at'", $request);
         $this->assertStringContainsString('AND occurred_at = created_at', $migration);
         $this->assertStringContainsString("AND inspection.status = 'in_progress'", $migration);
-        $this->assertStringContainsString('Version: 1.20', $contract);
+        $this->assertStringContainsString('Version: 1.21', $contract);
         foreach (['ShouldQueue', 'Queue::', 'Http::', 'WebSocket', 'Package 20'] as $forbidden) {
             $this->assertStringNotContainsString($forbidden, $all);
         }
