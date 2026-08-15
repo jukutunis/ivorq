@@ -351,7 +351,7 @@ class FrontDeskCheckoutHousekeepingHandoffSourceIntegrityTest extends PostgresTe
         $this->assertStringNotContainsString('$blockerCodes[] = self::BLOCKER_CHECKOUT_NOT_IMPLEMENTED;', $source);
     }
 
-    // ── Contract Version remains 1.21 ─────────────────────────────────────
+    // ── Contract Version remains 1.22 ─────────────────────────────────────
 
     public function test_contract_version_remains_1_22(): void
     {

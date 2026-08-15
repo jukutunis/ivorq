@@ -324,7 +324,7 @@ class FrontDeskCheckoutExecutionEvidenceSourceIntegrityTest extends PostgresTest
         }
     }
 
-    // ── Contract Version remains 1.21 ─────────────────────────────────────
+    // ── Contract Version remains 1.22 ─────────────────────────────────────
 
     public function test_contract_version_remains_1_22(): void
     {
