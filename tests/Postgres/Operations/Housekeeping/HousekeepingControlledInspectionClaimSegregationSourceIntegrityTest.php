@@ -112,7 +112,7 @@ class HousekeepingControlledInspectionClaimSegregationSourceIntegrityTest extend
         $this->assertStringNotContainsString('Package 18', $newRuntime);
 
         $contract = $this->source('.agents/contracts/IVORQ-Package-Execution-Contract.md');
-        $this->assertStringContainsString('Version: 1.21', $contract);
+        $this->assertStringContainsString('Version: 1.22', $contract);
         $this->assertDirectoryExists(base_path('docs/architecture/adr'));
         foreach (glob(base_path('docs/architecture/adr/ADR-*.md')) ?: [] as $adr) {
             if (preg_match('/^ADR-(\d+)-/', basename($adr), $matches) === 1) {

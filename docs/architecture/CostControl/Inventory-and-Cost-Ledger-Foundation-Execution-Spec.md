@@ -1,5 +1,9 @@
 # Inventory and Cost Ledger Foundation Execution Specification
 
+> **CURRENT-STATE GOVERNANCE NOTICE — 2026-08-15**
+>
+> This Draft contains historical branch evidence and planning assumptions. Its missing-ledger and non-owner statements are not current canonical truth. For current ownership, activation, Inventory/Cost Ledger precedence, AVCO authority, synchronous-versus-deferred delivery, negative-stock policy, and reversal/correction scope, consult the accepted CC-R1 canonical revalidation, the CC-G1 governance freeze, and the current applicable ADRs. Historical slice content below is preserved and is not runtime authorization.
+
 ## Document Status
 Draft
 

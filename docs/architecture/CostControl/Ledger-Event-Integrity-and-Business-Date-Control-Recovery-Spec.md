@@ -1,5 +1,9 @@
 # Ledger Event Integrity and Property Business Date Control Recovery Specification
 
+> **CURRENT-STATE GOVERNANCE NOTICE — 2026-08-15**
+>
+> This Draft contains historical branch evidence and recovery planning assumptions. Property Business Date, controlled InventoryTransaction evidence, durable outbox foundation, Cost Ledger, and durable AVCO state now exist in canonical source. For current ownership, activation, Inventory/Cost Ledger precedence, AVCO authority, synchronous-versus-deferred delivery, negative-stock policy, and reversal/correction scope, consult the accepted CC-R1 canonical revalidation, the CC-G1 governance freeze, and the current applicable ADRs. Historical content below is preserved and is not runtime authorization.
+
 ## Document Status
 Draft
 

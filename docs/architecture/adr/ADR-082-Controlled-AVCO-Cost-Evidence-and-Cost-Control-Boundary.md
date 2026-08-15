@@ -29,6 +29,21 @@ Receipt commercial evidence immutability enforced by:
 Sprint 39.1 (ADR-083) established the immutable evidence foundation.
 Sprint 39.2 activated AVCO runtime from that foundation.
 
+## Post-Sprint-39 Current Canonical Precedence
+
+The original Sprint 39 decision remains a read-only controlled AVCO evidence projection. It reads `InventoryStockMovement` as controlled forward quantity/evidence within that projection's scope. `InventoryStockMovement` does not become authoritative monetary evidence, a Cost Ledger source replacement, or a GL/AP valuation source.
+
+Later canonical packages delivered a separate durable Finance/CostControl path: immutable `InventoryTransaction` valuation evidence, deterministic valuation sequences, durable `CostAvcoState`, and immutable Cost Ledger entries for enrolled scopes. Cost Ledger persistence is therefore no longer merely a future capability in current canonical source, even though it was correctly outside the original Sprint 39 scope.
+
+Precedence is frozen as follows:
+
+- the ADR-082 projection remains `READ_ONLY_EVIDENCE`;
+- it does not persist or override `CostAvcoState` or Cost Ledger;
+- it does not supersede the enrolled CostControl durable AVCO write authority;
+- the Cost Control workspace remains read-only and analytical;
+- backend Finance/CostControl durable write ownership is distinct from UI write permission; and
+- no UI mutation, second AVCO authority, GL/AP source substitution, dual-write reconciliation, or activation expansion is authorized by CC-G1.
+
 ### Activation Prerequisites for Future Sprint
 
 ## Context
