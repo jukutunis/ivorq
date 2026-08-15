@@ -48,8 +48,6 @@ class ControlledTransferPostingService
             $unitId = $this->defaultUnitId($transfer->property_id);
 
             foreach ($transfer->lines as $line) {
-                $sourceId = (string) Str::ulid();
-
                 $itemId = $line->item_id;
                 $fromLocId = $transfer->from_location_id;
                 $toLocId = $transfer->to_location_id;
@@ -74,7 +72,7 @@ class ControlledTransferPostingService
                     'quantity' => $qty,
                     'source_domain' => 'inventory',
                     'source_type' => InventoryTransferLine::class,
-                    'source_id' => $sourceId,
+                    'source_id' => $line->id,
                     'correlation_id' => $correlationId,
                     'idempotency_key' => "trf_post_{$transfer->id}_{$line->id}_out",
                     'occurred_at' => now(),
@@ -92,7 +90,7 @@ class ControlledTransferPostingService
                     'quantity' => $qty,
                     'source_domain' => 'inventory',
                     'source_type' => InventoryTransferLine::class,
-                    'source_id' => $sourceId,
+                    'source_id' => $line->id,
                     'correlation_id' => $correlationId,
                     'idempotency_key' => "trf_post_{$transfer->id}_{$line->id}_in",
                     'occurred_at' => now(),

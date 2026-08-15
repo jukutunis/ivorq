@@ -40,10 +40,7 @@ class InventoryPostingValuationAuthorizationTest extends PostgresTestCase
 
         $this->coordinator   = app(InventoryPostingControlCoordinator::class);
         $this->transactionRepo = app(InventoryTransactionRepository::class);
-        $this->property      = Property::first();
-
-        $this->property->currency = 'USD';
-        $this->property->save();
+        $this->property      = Property::where('currency', 'USD')->firstOrFail();
 
         app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
 
@@ -241,13 +238,13 @@ class InventoryPostingValuationAuthorizationTest extends PostgresTestCase
                 locationId:         $this->location1->id,
                 businessDate:       now()->toDateString(),
                 occurredAt:         now(),
-                sourceDocumentType: 'receipt',
+                sourceDocumentType: 'synthetic_unsupported',
                 sourceDocumentId:   (string) Str::ulid(),
-                sourceLineType:     'receipt_line',
+                sourceLineType:     'synthetic_unsupported_line',
                 sourceLineId:       (string) Str::ulid(),
-                movementRole:       'receive',
+                movementRole:       'opening_balance',
                 idempotencyKey:     'auth-unsupported-' . Str::ulid(),
-                transactionType:    TransactionTypeEnum::PurchaseReceipt,
+                transactionType:    TransactionTypeEnum::OpeningBalance,
                 quantityChange:     '10.0000',
                 unitCost:           '5.0000',
                 totalCost:          '50.0000'

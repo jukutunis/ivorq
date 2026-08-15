@@ -42,11 +42,7 @@ class InventoryPostingSequenceAllocationTest extends PostgresTestCase
         parent::setUp();
 
         $this->coordinator = app(InventoryPostingControlCoordinator::class);
-        $this->property = Property::first();
-
-        // Ensure property has valid currency code
-        $this->property->currency = 'USD';
-        $this->property->save();
+        $this->property = Property::where('currency', 'USD')->firstOrFail();
 
         app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
 
@@ -243,11 +239,75 @@ class InventoryPostingSequenceAllocationTest extends PostgresTestCase
 
     public function test_invalid_property_currency_fails_atomically(): void
     {
-        // Set invalid currency
-        $this->property->currency = 'US';
-        $this->property->save();
+        $invalidProperty = Property::create([
+            'company_id' => $this->property->company_id,
+            'name' => 'Invalid Currency Property',
+            'slug' => 'invalid-currency-' . strtolower(Str::random(8)),
+            'code' => 'IC-' . strtoupper(Str::random(6)),
+            'currency' => 'US',
+            'is_active' => true,
+        ]);
 
-        $intent = $this->createPostingIntent('idem-invalid-currency', $this->location1->id);
+        $invalidCategory = \Modules\Operations\Inventory\Models\InventoryCategory::create([
+            'property_id' => $invalidProperty->id,
+            'name' => 'Invalid Currency Test',
+        ]);
+        $invalidItem = InventoryItem::create([
+            'property_id' => $invalidProperty->id,
+            'category_id' => $invalidCategory->id,
+            'sku' => 'INVALID-CURRENCY-ITEM',
+            'name' => 'Invalid Currency Item',
+            'inventory_type' => 'goods',
+            'weighted_average_cost' => 10.00,
+            'is_active' => true,
+        ]);
+        $invalidLocation = InventoryLocation::create([
+            'property_id' => $invalidProperty->id,
+            'name' => 'Invalid Currency Store',
+            'type' => 'internal',
+        ]);
+        InventoryStock::create([
+            'property_id' => $invalidProperty->id,
+            'item_id' => $invalidItem->id,
+            'location_id' => $invalidLocation->id,
+            'physical_quantity' => 100.0000,
+            'status' => \Modules\Operations\Inventory\Enums\ItemStatusEnum::InStock,
+        ]);
+        PropertyBusinessDate::create([
+            'property_id' => $invalidProperty->id,
+            'business_date' => now()->toDateString(),
+            'status' => PropertyBusinessDateStatusEnum::Open,
+            'is_open' => true,
+            'opened_at' => now(),
+            'opened_by' => $this->user->id,
+        ]);
+        FinancialPeriod::create([
+            'property_id' => $invalidProperty->id,
+            'period_year' => now()->year,
+            'period_month' => now()->month,
+            'status' => FinancialPeriodStatusEnum::Open,
+            'start_date' => now()->startOfMonth(),
+            'end_date' => now()->endOfMonth(),
+        ]);
+        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($invalidProperty->id);
+
+        $intent = new InventoryLedgerPostingIntent(
+            propertyId: $invalidProperty->id,
+            itemId: $invalidItem->id,
+            locationId: $invalidLocation->id,
+            businessDate: now()->toDateString(),
+            occurredAt: now(),
+            sourceDocumentType: 'inventory_adjustment',
+            sourceDocumentId: (string) Str::ulid(),
+            sourceLineType: 'inventory_adjustment_line',
+            sourceLineId: (string) Str::ulid(),
+            movementRole: 'adjustment_in',
+            idempotencyKey: 'idem-invalid-currency',
+            transactionType: TransactionTypeEnum::AdjustmentIn,
+            quantityChange: '10.0000',
+            unitCost: '5.5000',
+            totalCost: '55.0000'
+        );
 
         $thrown = false;
         try {
@@ -263,9 +323,9 @@ class InventoryPostingSequenceAllocationTest extends PostgresTestCase
         $this->assertDatabaseCount('inventory_transactions', 0);
         $this->assertDatabaseCount('outbox_messages', 0);
 
-        $counter = InventoryValuationSequence::where('property_id', $this->property->id)
-            ->where('location_id', $this->location1->id)
-            ->where('item_id', $this->item->id)
+        $counter = InventoryValuationSequence::where('property_id', $invalidProperty->id)
+            ->where('location_id', $invalidLocation->id)
+            ->where('item_id', $invalidItem->id)
             ->first();
         $this->assertNull($counter);
     }

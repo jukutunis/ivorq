@@ -48,7 +48,6 @@ class ControlledIssuePostingService
             $unitId = $this->defaultUnitId($issue->property_id);
 
             foreach ($issue->lines as $line) {
-                $sourceId = (string) Str::ulid();
                 $itemId = $line->item_id;
                 $locId = $line->location_id;
                 $qty = (float) ($line->quantity ?? 0);
@@ -68,7 +67,7 @@ class ControlledIssuePostingService
                     'quantity' => $qty,
                     'source_domain' => 'inventory',
                     'source_type' => InventoryIssueLine::class,
-                    'source_id' => $sourceId,
+                    'source_id' => $line->id,
                     'correlation_id' => $correlationId,
                     'idempotency_key' => "iss_post_{$issue->id}_{$line->id}",
                     'occurred_at' => now(),

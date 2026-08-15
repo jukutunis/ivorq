@@ -242,11 +242,28 @@ function runScenario(array $cfg, string $dbName, string $barrierDir, array $f): 
 
     $rA = rw($barrierDir, 'A');
     $rB = rw($barrierDir, 'B');
+    $quantityConnection = new PDO("pgsql:host={$cfg['db_host']};port={$cfg['db_port']};dbname={$dbName}", $cfg['db_user'], $cfg['db_pass'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    $quantityQuery = $quantityConnection->prepare("
+        SELECT COALESCE(SUM(CASE WHEN direction = 'IN' THEN quantity ELSE -quantity END), 0)
+        FROM inventory_stock_movements
+        WHERE property_id = :property_id
+          AND inventory_item_id = :inventory_item_id
+          AND inventory_location_id = :inventory_location_id
+    ");
+    $quantityQuery->execute([
+        'property_id' => $f['property_id'],
+        'inventory_item_id' => $f['inventory_item_id'],
+        'inventory_location_id' => $f['inventory_location_id'],
+    ]);
+    $finalNetQuantity = (float) $quantityQuery->fetchColumn();
+    $quantityConnection = null;
+
     return [
         'worker_a' => $rA, 'worker_b' => $rB,
         'pid_different' => ($rA['pid']??0) !== ($rB['pid']??-1),
         'pg_different' => ($rA['pg_backend_pid']??0) !== ($rB['pg_backend_pid']??-1),
         'outcomes' => [$rA['outcome']??'?', $rB['outcome']??'?'],
+        'final_net_quantity' => $finalNetQuantity,
     ];
 }
 

@@ -50,6 +50,12 @@ class InventoryLedgerPostingService
                 ? $intent['direction'] : InventoryMovementDirectionEnum::tryFrom((string) $intent['direction']);
 
             if ($direction === InventoryMovementDirectionEnum::Out) {
+                $this->lockControlledLedgerScope(
+                    $propertyId,
+                    $intent['inventory_item_id'],
+                    $intent['inventory_location_id']
+                );
+
                 $currentQty = $this->computeControlledLedgerQuantity($propertyId, $intent['inventory_item_id'], $intent['inventory_location_id']);
                 $requested = (float) $intent['quantity'];
                 if ($requested > $currentQty) {
@@ -138,6 +144,16 @@ class InventoryLedgerPostingService
         if (bccomp((string) $existing->quantity, (string) $intent['quantity'], 3) !== 0) {
             throw new RuntimeException('Idempotent replay mismatch on quantity.');
         }
+    }
+
+    private function lockControlledLedgerScope(string $propertyId, string $itemId, string $locationId): void
+    {
+        InventoryStockMovement::withoutGlobalScope('property')
+            ->where('property_id', $propertyId)
+            ->where('inventory_item_id', $itemId)
+            ->where('inventory_location_id', $locationId)
+            ->lockForUpdate()
+            ->get(['id']);
     }
 
     private function computeControlledLedgerQuantity(string $propertyId, string $itemId, string $locationId): float

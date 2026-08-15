@@ -718,6 +718,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->assertEquals(InventoryMovementDirectionEnum::In, $movement->direction);
         $this->assertEquals('purchasing', $movement->source_domain);
         $this->assertEquals(GoodsReceiptLine::class, $movement->source_type);
+        $this->assertEquals($line->id, $movement->source_id);
         $this->assertEquals('PRIMARY', $movement->source_leg->value);
     }
 
@@ -918,11 +919,11 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
     {
         $this->createPostedReceipt(3.000);
         $movement = InventoryStockMovement::first();
-        $keyType = $movement->getKeyType();
-        $this->assertEquals('string', $keyType);
-        $this->assertFalse($movement->timestamps);
 
-        $this->assertTrue(true);
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table('inventory_stock_movements')
+            ->where('id', $movement->id)
+            ->delete();
     }
 
     public function test_active_property_context_required_for_posting(): void

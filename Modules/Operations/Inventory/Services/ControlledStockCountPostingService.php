@@ -78,7 +78,6 @@ class ControlledStockCountPostingService
                     continue;
                 }
 
-                $sourceId = (string) Str::ulid();
                 $itemId = $line->item_id;
                 $locId = $session->location_id;
                 $unitId = $this->defaultUnitId($session->property_id);
@@ -97,7 +96,7 @@ class ControlledStockCountPostingService
                         'quantity' => $absVariance,
                         'source_domain' => 'inventory',
                         'source_type' => StockCountLine::class,
-                        'source_id' => $sourceId,
+                        'source_id' => $line->id,
                         'correlation_id' => $correlationId,
                         'idempotency_key' => "sc_post_{$session->id}_{$line->id}",
                         'occurred_at' => now(),
@@ -115,7 +114,7 @@ class ControlledStockCountPostingService
                         'quantity' => $absVariance,
                         'source_domain' => 'inventory',
                         'source_type' => StockCountLine::class,
-                        'source_id' => $sourceId,
+                        'source_id' => $line->id,
                         'correlation_id' => $correlationId,
                         'idempotency_key' => "sc_post_{$session->id}_{$line->id}",
                         'occurred_at' => now(),

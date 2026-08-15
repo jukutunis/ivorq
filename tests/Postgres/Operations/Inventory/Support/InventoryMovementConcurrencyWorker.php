@@ -32,8 +32,7 @@ if ($dbName) {
 $result = ['worker_id' => $workerId, 'pid' => getmypid(), 'pg_backend_pid' => null,
     'idempotency_key' => $request['idempotency_key'] ?? null,
     'outcome' => 'UNKNOWN', 'movement_id' => null,
-    'error_class' => null, 'error_message' => null,
-    'lock_acquired' => false];
+    'error_class' => null, 'error_message' => null];
 
 try {
     $pgPid = \Illuminate\Support\Facades\DB::select('SELECT pg_backend_pid() as pid');
@@ -52,19 +51,8 @@ try {
 
     touch($barrierDir . '/locking-' . $workerId);
 
-    \Illuminate\Support\Facades\DB::beginTransaction();
-    try {
-        $locked = \Illuminate\Support\Facades\DB::table('inventory_stock_movements')
-            ->where('property_id', $request['property_id'])
-            ->where('inventory_item_id', $request['inventory_item_id'])
-            ->where('inventory_location_id', $request['inventory_location_id'])
-            ->lockForUpdate()
-            ->exists();
-
-        $result['lock_acquired'] = true;
-
-        $postingService = app(\Modules\Operations\Inventory\Services\InventoryLedgerPostingService::class);
-        $movement = $postingService->post([
+    $postingService = app(\Modules\Operations\Inventory\Services\InventoryLedgerPostingService::class);
+    $movement = $postingService->post([
             'property_id' => $request['property_id'],
             'inventory_item_id' => $request['inventory_item_id'],
             'inventory_location_id' => $request['inventory_location_id'],
@@ -80,18 +68,11 @@ try {
             'idempotency_key' => $request['idempotency_key'],
             'occurred_at' => \Illuminate\Support\Carbon::now(),
             'created_by' => $request['actor_id'],
-        ]);
+    ]);
 
-        \Illuminate\Support\Facades\DB::commit();
-
-        $result['outcome'] = 'POSTED';
-        $result['movement_id'] = $movement->id;
-        touch($barrierDir . '/posted-' . $workerId);
-
-    } catch (\Throwable $e) {
-        \Illuminate\Support\Facades\DB::rollBack();
-        throw $e;
-    }
+    $result['outcome'] = 'POSTED';
+    $result['movement_id'] = $movement->id;
+    touch($barrierDir . '/posted-' . $workerId);
 
 } catch (\RuntimeException $e) {
     try { \Illuminate\Support\Facades\DB::rollBack(); } catch (\Throwable $ex) {}
