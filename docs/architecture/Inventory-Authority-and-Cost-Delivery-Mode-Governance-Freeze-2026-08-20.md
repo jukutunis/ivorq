@@ -104,14 +104,27 @@ For one `InventoryTransaction`, exactly one of `SYNCHRONOUS_OWNED` or `DEFERRED_
 
 ## Freeze 7 — Cutover unit and watermark
 
-Future cutover operates on the complete accepted Property + Item enrollment group, never an arbitrary request, line, location, or UI action. Within the group, valuation ordering remains per `PROPERTY_LOCATION_ITEM` scope.
+Future cutover operates on the complete accepted Property + Item enrollment group, never an arbitrary request, line, location, or UI action. All included Property + Location + Item valuation scopes must cross the delivery-mode boundary coherently, and valuation ordering remains per `PROPERTY_LOCATION_ITEM` scope.
+
+The existing ADR-043 accounting-boundary, quiescence, and initial-activation gates are frozen as:
+
+- `CUTOVER_ACCOUNTING_BOUNDARY = FINANCIAL_PERIOD_BOUNDARY_ONLY`
+- `MID_PERIOD_DELIVERY_MODE_CUTOVER = PROHIBITED`
+- `CUTOVER_QUIESCENCE_REQUIRED = YES`
+- `RELEVANT_INVENTORY_DOCUMENTS_IN_FLIGHT_AT_CUTOVER = PROHIBITED`
+- `UNRESOLVED_CONTROLLED_DELIVERY_STATE_AT_CUTOVER = PROHIBITED`
+- `INITIAL_DEFERRED_ACTIVATION_SCOPE = ONE_PILOT_PROPERTY_ONLY`
+
+Cutover may occur only at an eligible Financial Period boundary; mid-period synchronous-to-deferred switching is prohibited. The complete Property + Item group must be quiescent, with no relevant Inventory document in flight across the boundary. Historical pending outbox rows must first receive the explicit disposition required by Freeze 9. After that disposition, no unresolved controlled delivery state belonging to the group may remain ambiguous at cutover.
+
+A pending or failed message intentionally and durably classified as `SYNCHRONOUSLY_SATISFIED_HISTORY` or `UNENROLLED_OR_NON_COSTCONTROL_ELIGIBLE_HISTORY` is not deferred work merely to clear the quiescence gate. No source transaction may be posted with undefined mode ownership during the cutover transition. Initial future deferred activation remains limited to one explicitly authorized pilot Property; this is a planning constraint, not activation authorization.
 
 Before deferred processing begins, every included valuation scope must have durable mode ownership and a durable cutover watermark identifying the boundary between:
 
 - `LAST_SYNCHRONOUSLY_OWNED_SEQUENCE`; and
 - `FIRST_DEFERRED_OWNED_SEQUENCE`.
 
-The exact schema representation is deferred. Governance requires:
+The exact database column, table, enum, lock implementation, maintenance-window implementation, queue-drain mechanism, and deployment mechanism are not selected by INV-G1 and remain deferred to a future authorized CC-P01 plan. Governance requires:
 
 - `NO_SEQUENCE_MAY_BE_OWNED_BY_BOTH_MODES`; and
 - `NO_SEQUENCE_MAY_HAVE_UNDEFINED_MODE_OWNERSHIP_AFTER_CUTOVER`.
@@ -178,12 +191,20 @@ ADR-042 remains governing. Where applicable, one future deferred-processing tran
 
 Adding a consumer does not activate deferred delivery. At the same durable cutover boundary, a future runtime package must prove that:
 
+- the Financial Period boundary is eligible;
+- the complete Property + Item group is quiescent;
+- no relevant Inventory document is in flight;
+- historical outbox disposition is complete;
+- unresolved controlled delivery ambiguity is zero;
+- every included Property + Location + Item valuation scope has its durable cutover watermark;
+- reversal behavior is mode-safe;
+- deferred ownership is durable and exclusive;
 - synchronous ownership is disabled or bypassed for deferred-owned sequences;
 - deferred eligibility begins only for deferred-owned sequences;
 - historical synchronously satisfied rows remain non-deliverable;
 - no request can pass through both paths;
 - every supported valuation-sequence-producing transaction type follows exactly one mode;
-- reversal behavior is mode-safe; and
+- no source transaction is posted with undefined mode ownership; and
 - the existing direct dependency is not expanded.
 
 The current synchronous path remains active until all of that proof exists.
@@ -213,7 +234,7 @@ INV-G1 authorizes none of the following:
 |---|---|
 | ADR-041 | Inventory-owned immutable source/outbox evidence, CostControl read-only source resolution, one-way future dependency, and no consumer activation |
 | ADR-042 | Exact Inventory sequence, strict per-scope barrier, atomic deferred outcome, fail-closed errors, and no automatic retry/replay authorization |
-| ADR-043 | Complete Property + Item authority enrollment, no mixed authority, immutable cutover evidence, and per-location state/sequence scope |
+| ADR-043 | Complete Property + Item authority enrollment, no mixed authority, immutable cutover evidence, per-location state/sequence scope, Financial Period boundary, quiescence, and initial one-pilot-Property activation constraint |
 | ADR-079 | Bounded immutable quantity-only `InventoryStockMovement` universe with no historical completeness or monetary claim |
 | ADR-080 | Controlled Goods Receipt writes the movement ledger without direct stock mutation or AP/accounting expansion |
 | ADR-081 | Inventory-owned directional movement lifecycle and quantity protection with no unified or correction claim |
@@ -228,7 +249,7 @@ Existing ADRs define the applicable architecture. INV-G1 synchronizes and freeze
 
 `RUNTIME_PLANNING_VERDICT = CC_P01_RUNTIME_PLANNING_ELIGIBLE_NOT_ACTIVATED`
 
-The accepted INV-R1 source findings plus this explicit mode, cutover, sequence, historical-disposition, idempotency, reversal, and retirement freeze are sufficient to permit a later separately authorized CC-P01 planning package. Planning eligibility is not runtime authorization. CC-P01 remains `NOT ACTIVATED`, and INV-G1 creates no CC-P01 branch, code, migration, consumer, queue, worker, listener, scheduler, replay command, or runtime test package.
+The accepted INV-R1 source findings plus this explicit mode, cutover, sequence, historical-disposition, idempotency, reversal, and retirement freeze are sufficient to permit a later separately authorized CC-P01 planning package. The accounting-boundary, quiescence, and pilot-Property constraints synchronize existing ADR-043 gates and introduce no new architecture decision or source contradiction. Planning eligibility is not runtime authorization. CC-P01 remains `NOT ACTIVATED`, and INV-G1 creates no CC-P01 branch, code, migration, consumer, queue, worker, listener, scheduler, replay command, runtime test package, synchronous retirement, enrollment, or pilot activation.
 
 `NO_PACKAGE_21_ACTIVATED`
 
