@@ -5,7 +5,7 @@
 - Review date: 2026-08-20
 - Canonical branch: `ivorq-enterprise-core`
 - Canonical SHA reviewed for the original Registry / CC-R1 work: `c5f12ef60b55a31f402b2c4166b7ef2d807cf7d8`
-- Current canonical synchronization: `3a55f27d8af27d9cd18b1ff07e00d1fb8b044a64`
+- Canonical predecessor reviewed for current governance record: `8df32e31a332c9c55c052ade145d2328ff690859`
 - Registry and CC-R1 acceptance: PR #55, `ACCEPTED_AND_MERGED`
 - CC-R1 original audit: `cf8d1c840497d476362ca72925dfbfa3bba7ce1f`
 - CC-R1 provenance correction / final feature HEAD: `c368a0b93aaca7b963c9ba076268a327d93caf6b`
@@ -14,13 +14,18 @@
 - INV-C1: `ACCEPTED_AND_MERGED`
 - INV-C1 feature HEAD: `fdfff84c18078a5dc584778512f26489136f9ff9`
 - INV-C1 canonical merge: `3a55f27d8af27d9cd18b1ff07e00d1fb8b044a64`
-- INV-R1: `CANONICAL_RERUN_COMPLETE`
+- INV-R1: `ACCEPTED_AND_MERGED`
+- INV-R1 final feature HEAD: `93b0ea6e40ecc12cd10e06334e60887450f8c9ce`
+- INV-R1 canonical merge: `8df32e31a332c9c55c052ade145d2328ff690859`
+- INV-G1: `GOVERNANCE_FREEZE_COMPLETE`
 - Package Execution Contract: Version 1.22
 - Registry role: governance and workstream selection only
 - Registered master domains: 19
 - Runtime authorization: `NONE`
-- Current governance record: `INV-R1_INVENTORY_CANONICAL_RECONCILIATION_AND_PRODUCER_SOURCE_OUTBOX_BOUNDARY_AUDIT`
-- Current package type: `AUDIT_ONLY / GOVERNANCE_ONLY`
+- Current governance record: `INV-G1_INVENTORY_AUTHORITY_AND_COST_DELIVERY_MODE_GOVERNANCE_FREEZE`
+- Current package type: `GOVERNANCE_ONLY / FREEZE_ONLY`
+- CC-P01: `NOT ACTIVATED`
+- Package 21: `NOT ACTIVATED`
 
 `NO_PACKAGE_21_ACTIVATED`
 
@@ -55,8 +60,8 @@ Evidence labels: `SOURCE_PROVEN` means current source or schema exists; `TEST_PR
 | **MPD-HKG** - Housekeeping | `Modules/Operations/Housekeeping` (`SOURCE_PROVEN`) | ADR-086; `docs/architecture/Housekeeping-Package-20-Final-Governance-Closure-Review.md` | Packages 11-20 are accepted for the current turnover/readiness train; PR #54 merged at the reviewed canonical SHA (`GOVERNANCE_PROVEN`, `TEST_PROVEN`) | `CANONICAL_CLOSED` for the current turnover/readiness package train only | PMS, SEC, FND | No new candidate activated | P3 monitoring only |
 | **MPD-BDN** - Business Date and Night Audit | `Modules/Foundation/Property` and `Modules/Operations/NightAudit` (`SOURCE_PROVEN`) | ADR-034, ADR-089; Contract 1.21 accepted predecessor records | BD-A1, NA-A1, NA-A2 and read integrations have accepted package provenance; full close/advance/reopen/checkpoint scope is not declared complete | `ACCEPTED_PARTIAL` | FND, PMS, FIN, INV, CC, TAX | `BDN-R1` | P2 |
 | **MPD-FIN** - GL, AP, AR, Banking, General Cashier, FX, reporting | `Modules/Finance/{GeneralLedger,AccountsPayable,AccountsReceivable,Payables,Banking,GeneralCashier,FxReference,Treasury}` and `Modules/Operations/GeneralCashier` (`SOURCE_PROVEN`) | ADR-004, ADR-013, ADR-016, ADR-018, ADR-019, ADR-028, ADR-047-ADR-078; Finance implementation plans and audits under `docs/architecture/Finance/` | Multiple accepted runtime trains and commit provenance exist; breadth, parallel legacy/controlled paths, and dated foundation reviews require an end-to-end audit | `SOURCE_PRESENT_REVALIDATION_REQUIRED` | FND, SEC, BDN, CC, INV, PROC, TAX, PMS | `FIN-R1` | P0 |
-| **MPD-INV** - Inventory Ledger, stock, transfer, reversal | `Modules/Operations/Inventory`; `inventory_transactions`, `inventory_stock_movements`, and `inventory_stocks` are present as distinct bounded persistence roles (`SOURCE_PROVEN`, `TEST_PROVEN`) | ADR-008-ADR-010, ADR-035-ADR-037, ADR-041-ADR-046, ADR-079-ADR-083; `docs/architecture/Inventory-Canonical-Reconciliation-Audit-2026-08-20.md`; historical `docs/02-operations/reviews/Inventory-Validation-Audit.md` | `INV-C1 = ACCEPTED_AND_MERGED` through PR #57 at `3a55f27d8af27d9cd18b1ff07e00d1fb8b044a64`; `INV-R1 = CANONICAL_RERUN_COMPLETE`; all four prior source contradictions are closed; transaction-ledger, controlled-movement-ledger, and stock-projection authorities are reconciled as parallel bounded workflow universes; inherited reversal debt remains exact and non-blocking | `ACCEPTED_PARTIAL`; canonical reconciliation complete, runtime authorization `NONE` | FND, BDN, CC, PROC, FIN, POS | `INV_GOVERNANCE_FREEZE_REQUIRED`; not activated | P0; governance boundary required |
-| **MPD-CC** - Cost Control, Cost Ledger, AVCO, valuation | `Modules/Finance/CostControl`; `cost_ledger_entries` and `cost_avco_states` are durable; enrolled synchronous composition is active and no deferred delivery consumer is composed (`SOURCE_PROVEN`, `TEST_PROVEN`) | ADR-010-ADR-017, ADR-041-ADR-047, ADR-082-ADR-083; `docs/architecture/CostControl/CC-G1-Cost-Control-Ownership-Activation-and-Ledger-Precedence-Freeze.md`; `docs/architecture/Inventory-Canonical-Reconciliation-Audit-2026-08-20.md`; historical PRD and execution specifications | `CC-R1 = ACCEPTED_AND_MERGED` through PR #55; `CC-G1 = ACCEPTED_AND_MERGED` at `a52eb8add79f7df4c65987f4be3c30f4b8e0f8d5`; INV-R1 reconfirms synchronous CostControl active, deferred consumer inactive, and synchronous/deferred double-application risk proven without a cutover contract | `ACCEPTED_PARTIAL`; precedence frozen, deferred runtime blocked, runtime authorization `NONE` | INV, FIN, PROC, BDN, FND, TAX, POS | `INV_GOVERNANCE_FREEZE_REQUIRED`; `CC-P01` not activated | P0; no current runtime package |
+| **MPD-INV** - Inventory Ledger, stock, transfer, reversal | `Modules/Operations/Inventory`; `inventory_transactions`, `inventory_stock_movements`, and `inventory_stocks` remain distinct bounded persistence roles (`SOURCE_PROVEN`, `TEST_PROVEN`) | ADR-008-ADR-010, ADR-035-ADR-037, ADR-041-ADR-046, ADR-079-ADR-083; `docs/architecture/Inventory-Canonical-Reconciliation-Audit-2026-08-20.md`; `docs/architecture/Inventory-Authority-and-Cost-Delivery-Mode-Governance-Freeze-2026-08-20.md`; historical `docs/02-operations/reviews/Inventory-Validation-Audit.md` | `INV-C1 = ACCEPTED_AND_MERGED` through PR #57 at `3a55f27d8af27d9cd18b1ff07e00d1fb8b044a64`; `INV-R1 = ACCEPTED_AND_MERGED` through PR #58 at `8df32e31a332c9c55c052ade145d2328ff690859`; `INV-G1 = GOVERNANCE_FREEZE_COMPLETE`; transaction/valuation and controlled-movement universes are `PARALLEL_BOUNDED_WORKFLOW_UNIVERSES`; unified enterprise stock authority is not claimed; ledger merge, dual write, and movement monetary promotion are prohibited | `ACCEPTED_PARTIAL`; authority and delivery-mode governance frozen, runtime authorization `NONE` | FND, BDN, CC, PROC, FIN, POS | `CC_P01_RUNTIME_PLANNING_ELIGIBLE_NOT_ACTIVATED`; separate Owner authorization required | P0; governance freeze complete, no runtime activation |
+| **MPD-CC** - Cost Control, Cost Ledger, AVCO, valuation | `Modules/Finance/CostControl`; `cost_ledger_entries` and `cost_avco_states` are durable; enrolled synchronous composition is active and no deferred delivery consumer is composed (`SOURCE_PROVEN`, `TEST_PROVEN`) | ADR-010-ADR-017, ADR-041-ADR-047, ADR-082-ADR-083; `docs/architecture/CostControl/CC-G1-Cost-Control-Ownership-Activation-and-Ledger-Precedence-Freeze.md`; `docs/architecture/Inventory-Canonical-Reconciliation-Audit-2026-08-20.md`; `docs/architecture/Inventory-Authority-and-Cost-Delivery-Mode-Governance-Freeze-2026-08-20.md`; historical PRD and execution specifications | `CC-R1 = ACCEPTED_AND_MERGED` through PR #55; `CC-G1 = ACCEPTED_AND_MERGED` at `a52eb8add79f7df4c65987f4be3c30f4b8e0f8d5`; INV-G1 freezes `InventoryTransaction` as cost-delivery source, `SYNCHRONOUS_TRANSITIONAL_ACTIVE` as current mode, deferred mode as `INACTIVE_FUTURE_CANDIDATE`, complete Property + Item group ownership, and `ONE_SOURCE_TRANSACTION_ONE_VALUATION_MODE` | `ACCEPTED_PARTIAL`; planning boundary frozen, deferred runtime inactive, runtime authorization `NONE` | INV, FIN, PROC, BDN, FND, TAX, POS | `CC_P01_RUNTIME_PLANNING_ELIGIBLE_NOT_ACTIVATED`; `CC-P01` not activated | P0; planning eligible only, no current runtime package |
 | **MPD-PROC** - Procurement, Purchasing, Receiving, Vendor controls | `Modules/Operations/{Purchasing,Receiving}` plus Purchasing/Receiving aggregates in Inventory and tenant-owned Vendor source (`SOURCE_PROVEN`) | ADR-006, ADR-011, ADR-014, ADR-015, ADR-032, ADR-047, ADR-080, ADR-083; Purchasing and Receiving plans/reviews | PO, receiving, commercial-evidence, supplier-invoice, and GRNI/AP integration source is present; documents span older and newer models and require a canonical audit | `SOURCE_PRESENT_REVALIDATION_REQUIRED` | FND, SEC, INV, CC, FIN, TAX | `PROC-R1` | P0 |
 | **MPD-TAX** - Tax and multi-jurisdiction | No dedicated current Tax runtime module found (`DOCUMENTATION_ONLY`) | ADR-025, ADR-033 and tax-sensitive clauses in ADR-060/ADR-083 | Architecture exists, but no dedicated runtime provenance was established by this selection audit | `ARCHITECTURE_READY_IMPLEMENTATION_AUDIT_REQUIRED` | FND, SEC, FIN, PROC, PMS, POS | `TAX-R1` | P2 |
 | **MPD-ENG** - Engineering, Maintenance, Asset, Contractor PTW | `Modules/Operations/{Engineering,EngineeringWorkspace,Maintenance,AssetManagement,ContractorPTW,WorkOrder}` (`SOURCE_PROVEN`) | ADR-027, ADR-085; `docs/completion-reports/Sprint-ENG-A1-Engineering-Room-Availability-Readiness-Record.md`; engineering PRD/foundation reviews | ENG-A1 room-availability evidence is accepted; broader maintenance, asset, and contractor documentation requires current-source revalidation | `ACCEPTED_PARTIAL` | FND, SEC, PMS, HKG, FIN, DOC | `ENG-R1` | P1 |
@@ -88,7 +93,7 @@ This document is a registry and selection aid. It grants no permission for a mig
 
 `NO_PACKAGE_21_ACTIVATED`
 
-## INV-R1 canonical reconciliation and next-boundary decision
+## INV-G1 authority and delivery-mode governance freeze
 
 `CC-R1 = ACCEPTED_AND_MERGED`
 
@@ -102,22 +107,30 @@ This document is a registry and selection aid. It grants no permission for a mig
 
 `INV-C1_CANONICAL_MERGE = 3a55f27d8af27d9cd18b1ff07e00d1fb8b044a64`
 
-`INV-R1 = CANONICAL_RERUN_COMPLETE`
+`INV-R1 = ACCEPTED_AND_MERGED`
+
+`INV-R1_FINAL_FEATURE_HEAD = 93b0ea6e40ecc12cd10e06334e60887450f8c9ce`
+
+`INV-R1_CANONICAL_MERGE = 8df32e31a332c9c55c052ade145d2328ff690859`
 
 `INV_R1_CANONICAL_RECONCILIATION_COMPLETE`
 
-`INV_GOVERNANCE_FREEZE_REQUIRED`
+`INV-G1 = GOVERNANCE_FREEZE_COMPLETE`
+
+`CURRENT_GOVERNANCE_RECORD = INV-G1_INVENTORY_AUTHORITY_AND_COST_DELIVERY_MODE_GOVERNANCE_FREEZE`
 
 `RUNTIME_AUTHORIZATION = NONE`
 
-`CC_RUNTIME_STILL_BLOCKED`
+`CC_P01_RUNTIME_PLANNING_ELIGIBLE_NOT_ACTIVATED`
 
-INV-R1 reconciles current authority without combining the ledgers. `InventoryTransaction` is canonical Inventory transaction, monetary, valuation-provenance, reversal, and Cost Ledger source evidence for its workflow family. `InventoryStockMovement` is canonical controlled forward physical quantity/movement evidence for its bounded workflow family. `InventoryStock.physical_quantity` is the mutable current-balance projection for transaction-ledger workflows and is not a unified movement-ledger balance.
+INV-G1 freezes the `InventoryTransaction` plus `InventoryStock.physical_quantity` transaction/valuation universe and the `InventoryStockMovement` controlled-movement universe as `PARALLEL_BOUNDED_WORKFLOW_UNIVERSES`. Unified enterprise stock authority is `NOT_CLAIMED`. Ledger auto-merge, cross-universe dual write, movement monetary promotion, and transaction-ledger movement-completeness claims are prohibited.
 
-The Inventory-owned producer is a future deferred-delivery source candidate, but no production deferred CostControl delivery consumer is active. Enrolled synchronous CostControl remains active, and double application is proven if a deferred consumer is activated without mutually exclusive mode ownership and a cutover contract. A future governance freeze must define stock-universe authority, mode ownership, cutover, sequence ownership, idempotency, replay, crash recovery, synchronous retirement, and historical pending-outbox disposition before any runtime package may be planned.
+`InventoryTransaction` is the cost-delivery source authority. Current CostControl delivery is `SYNCHRONOUS_TRANSITIONAL_ACTIVE`; deferred delivery is an `INACTIVE_FUTURE_CANDIDATE`. Mode ownership applies to the complete Property + Item enrollment group, ordering remains per Property + Location + Item, and `ONE_SOURCE_TRANSACTION_ONE_VALUATION_MODE` prohibits double application. A later separately authorized runtime plan must implement durable cutover watermarks, historical outbox disposition, fail-closed eligibility, cross-mode source equivalence, mode-safe reversal, ADR-042 failure semantics, and synchronous retirement as one coherent cutover contract.
+
+Planning eligibility does not activate runtime. No deferred consumer, queue, worker, listener, scheduler, replay command, migration, or synchronous retirement is authorized by INV-G1.
 
 `CC-P01 = NOT ACTIVATED`
 
 `NO_PACKAGE_21_ACTIVATED`
 
-No next governance/runtime package is activated by this registry update. The master-domain count remains 19.
+No runtime package is activated by this registry update. The master-domain count remains 19.
