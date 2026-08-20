@@ -109,7 +109,15 @@ class InventoryCostDeliveryModeStampTest extends PostgresTestCase
         $itemId = (string) Str::ulid();
         $locationId = (string) Str::ulid();
         $ownershipId = (string) Str::ulid();
-        $decision = CostDeliveryPostingDecision::synchronous($propertyId, $itemId, $ownershipId, 1);
+        $valuationScope = "property:{$propertyId}:location:{$locationId}:item:{$itemId}";
+        $decision = CostDeliveryPostingDecision::synchronous(
+            $propertyId,
+            $itemId,
+            $locationId,
+            $valuationScope,
+            $ownershipId,
+            1,
+        );
         $intent = new InventoryLedgerPostingIntent(
             propertyId: $propertyId,
             itemId: $itemId,
@@ -137,7 +145,7 @@ class InventoryCostDeliveryModeStampTest extends PostgresTestCase
             actorId: (string) Str::ulid(),
             currencyCode: 'USD',
             financialPeriodId: (string) Str::ulid(),
-            valuationScope: "property:{$propertyId}:location:{$locationId}:item:{$itemId}",
+            valuationScope: $valuationScope,
             valuationSequence: 1,
             costDeliveryDecision: $decision,
         );
@@ -197,6 +205,8 @@ class InventoryCostDeliveryModeStampTest extends PostgresTestCase
         $decision = CostDeliveryPostingDecision::synchronous(
             (string) Str::ulid(),
             $itemId,
+            (string) Str::ulid(),
+            'property:mismatch:location:mismatch:item:mismatch',
             (string) Str::ulid(),
             1,
         );

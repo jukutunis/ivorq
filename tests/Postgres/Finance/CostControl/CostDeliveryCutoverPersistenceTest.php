@@ -161,6 +161,48 @@ class CostDeliveryCutoverPersistenceTest extends PostgresTestCase
         ]);
     }
 
+    public function test_non_virgin_evidence_cannot_replace_an_absent_allocator_with_matching_history(): void
+    {
+        $fixture = $this->makeFixture(1);
+        $snapshot = $fixture['snapshots'][0];
+        CostAvcoState::where('enrollment_scope_snapshot_id', $snapshot['id'])->update([
+            'last_valuation_sequence' => 5,
+            'last_valuation_business_date' => '2026-08-20',
+        ]);
+        $this->insertHistoricalSource($snapshot, 5);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessageMatches('/CUTOVER_BLOCKED_SEQUENCE_STATE_DIVERGENCE/');
+        DB::transaction(function () use ($fixture, $snapshot) {
+            $cutoverId = $this->insertCutover($fixture);
+            $this->insertScope($fixture, $snapshot, $cutoverId, [
+                'inventory_sequence_source' => 'ALLOCATOR_ABSENT',
+                'inventory_valuation_sequence_id' => null,
+                'inventory_allocator_last_sequence' => 5,
+                'cost_avco_last_valuation_sequence' => 5,
+                'sequence_state_classification' => 'PRIOR_APPLIED_VALUATION_SEQUENCE',
+                'last_synchronously_owned_sequence' => 5,
+                'first_deferred_owned_sequence' => 6,
+            ]);
+        });
+    }
+
+    public function test_allocator_identity_from_another_scope_is_rejected(): void
+    {
+        $fixture = $this->makeFixture(2);
+        $foreignAllocatorId = $this->insertAllocator($fixture['snapshots'][1]['location_id'], 0);
+
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessageMatches('/CUTOVER_BLOCKED_SEQUENCE_STATE_DIVERGENCE/');
+        DB::transaction(function () use ($fixture, $foreignAllocatorId) {
+            $cutoverId = $this->insertCutover($fixture);
+            $this->insertScope($fixture, $fixture['snapshots'][0], $cutoverId, [
+                'inventory_sequence_source' => 'ALLOCATOR_ROW',
+                'inventory_valuation_sequence_id' => $foreignAllocatorId,
+            ]);
+        });
+    }
+
     public function test_n_plus_one_constraint_and_complete_scope_coverage_are_enforced(): void
     {
         $fixture = $this->makeFixture(2);
@@ -195,6 +237,89 @@ class CostDeliveryCutoverPersistenceTest extends PostgresTestCase
         } finally {
             DB::statement('SET CONSTRAINTS ALL DEFERRED');
         }
+    }
+
+    public function test_activated_attempt_requires_exact_cutover_identity_context_and_provenance(): void
+    {
+        $fixture = $this->makeFixture(1);
+        $cutoverId = $this->activate($fixture, 'ALLOCATOR_ABSENT');
+        $cutover = DB::table('cost_delivery_cutovers')->where('id', $cutoverId)->first();
+        $this->assertNotNull($cutover);
+
+        DB::table('cost_delivery_cutover_attempts')->insert($this->attemptAttributes($cutover));
+        $this->assertDatabaseHas('cost_delivery_cutover_attempts', [
+            'cutover_id' => $cutoverId,
+            'outcome' => 'ACTIVATED',
+            'property_id' => $this->property->id,
+            'item_id' => $this->item->id,
+            'enrollment_group_id' => $fixture['group_id'],
+            'target_financial_period_id' => $this->period->id,
+        ]);
+
+        $otherProperty = $this->makeOtherProperty();
+        $otherItem = $this->makeItem($otherProperty, 'CROSS-PROPERTY');
+        $otherGroupId = $this->insertEnrollmentGroup($otherProperty->id, $otherItem->id);
+        $otherPeriod = FinancialPeriod::updateOrCreate(
+            ['property_id' => $otherProperty->id, 'period_year' => 2026, 'period_month' => 8],
+            ['status' => FinancialPeriodStatusEnum::Open]
+        );
+        $this->assertAttemptRejected($this->attemptAttributes($cutover, [
+            'property_id' => $otherProperty->id,
+            'item_id' => $otherItem->id,
+            'enrollment_group_id' => $otherGroupId,
+            'target_financial_period_id' => $otherPeriod->id,
+        ]), 'activated cutover context mismatch');
+
+        $wrongItem = $this->makeItem($this->property, 'WRONG-ITEM');
+        $wrongItemGroupId = $this->insertEnrollmentGroup($this->property->id, $wrongItem->id);
+        $this->assertAttemptRejected($this->attemptAttributes($cutover, [
+            'item_id' => $wrongItem->id,
+            'enrollment_group_id' => $wrongItemGroupId,
+        ]), 'activated cutover context mismatch');
+
+        $wrongGroupId = $this->insertEnrollmentGroup($this->property->id, $this->item->id);
+        $this->assertAttemptRejected($this->attemptAttributes($cutover, [
+            'enrollment_group_id' => $wrongGroupId,
+        ]), 'activated cutover context mismatch');
+
+        $wrongPeriod = FinancialPeriod::updateOrCreate(
+            ['property_id' => $this->property->id, 'period_year' => 2026, 'period_month' => 9],
+            ['status' => FinancialPeriodStatusEnum::Open]
+        );
+        $this->assertAttemptRejected($this->attemptAttributes($cutover, [
+            'target_financial_period_id' => $wrongPeriod->id,
+        ]), 'activated cutover context mismatch');
+
+        $this->assertAttemptRejected($this->attemptAttributes($cutover, [
+            'boundary_business_date' => '2026-09-01',
+        ]), 'activated cutover context mismatch');
+        $this->assertAttemptRejected($this->attemptAttributes($cutover, [
+            'owner_approval_reference' => 'OWNER-UNRELATED',
+        ]), 'activated cutover context mismatch');
+        $this->assertAttemptRejected($this->attemptAttributes($cutover, [
+            'requested_by' => (string) Str::ulid(),
+        ]), 'activated cutover context mismatch');
+        $this->assertAttemptRejected($this->attemptAttributes($cutover, [
+            'requested_at' => now()->subDay(),
+        ]), 'activated cutover context mismatch');
+    }
+
+    public function test_every_attempt_enforces_enrollment_and_financial_period_property_isolation(): void
+    {
+        $fixture = $this->makeFixture(1);
+        $otherProperty = $this->makeOtherProperty();
+        $otherPeriod = FinancialPeriod::updateOrCreate(
+            ['property_id' => $otherProperty->id, 'period_year' => 2026, 'period_month' => 8],
+            ['status' => FinancialPeriodStatusEnum::Open]
+        );
+
+        $blocked = $this->blockedAttemptAttributes($fixture);
+        $this->assertAttemptRejected(array_merge($blocked, [
+            'property_id' => $otherProperty->id,
+        ]), 'enrollment Property/Item mismatch');
+        $this->assertAttemptRejected(array_merge($blocked, [
+            'target_financial_period_id' => $otherPeriod->id,
+        ]), 'Financial Period Property mismatch');
     }
 
     public function test_cutover_scope_and_attempts_are_append_only_and_deferred_is_terminal(): void
@@ -482,5 +607,101 @@ class CostDeliveryCutoverPersistenceTest extends PostgresTestCase
             'valuation_scope' => $snapshot['valuation_scope'],
             'valuation_sequence' => $sequence,
         ]);
+    }
+
+    private function attemptAttributes(object $cutover, array $overrides = []): array
+    {
+        return array_merge([
+            'id' => (string) Str::ulid(),
+            'request_id' => (string) Str::ulid(),
+            'property_id' => $cutover->property_id,
+            'item_id' => $cutover->item_id,
+            'enrollment_group_id' => $cutover->enrollment_group_id,
+            'target_financial_period_id' => $cutover->financial_period_id,
+            'boundary_business_date' => $cutover->boundary_business_date,
+            'outcome' => 'ACTIVATED',
+            'reason_code' => null,
+            'cutover_id' => $cutover->id,
+            'owner_approval_reference' => $cutover->owner_approval_reference,
+            'requested_by' => $cutover->requested_by,
+            'requested_at' => $cutover->requested_at,
+            'created_at' => now(),
+        ], $overrides);
+    }
+
+    private function blockedAttemptAttributes(array $fixture): array
+    {
+        return [
+            'id' => (string) Str::ulid(),
+            'request_id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'item_id' => $this->item->id,
+            'enrollment_group_id' => $fixture['group_id'],
+            'target_financial_period_id' => $this->period->id,
+            'boundary_business_date' => '2026-08-31',
+            'outcome' => 'CUTOVER_BLOCKED',
+            'reason_code' => 'CUTOVER_BLOCKED_SEQUENCE_STATE_DIVERGENCE',
+            'cutover_id' => null,
+            'owner_approval_reference' => 'OWNER-CC-P01A-TEST',
+            'requested_by' => $this->actor->id,
+            'requested_at' => now(),
+            'created_at' => now(),
+        ];
+    }
+
+    private function assertAttemptRejected(array $attributes, string $message): void
+    {
+        try {
+            DB::transaction(fn () => DB::table('cost_delivery_cutover_attempts')->insert($attributes));
+            $this->fail("Attempt should have been rejected with {$message}.");
+        } catch (QueryException $exception) {
+            $this->assertStringContainsString($message, $exception->getMessage());
+        }
+    }
+
+    private function makeOtherProperty(): Property
+    {
+        return Property::create([
+            'company_id' => $this->property->company_id,
+            'name' => 'CC-P01A Other Property '.Str::random(8),
+            'slug' => 'cc-p01a-other-'.Str::random(8),
+            'code' => 'CP'.Str::upper(Str::random(5)),
+            'currency' => 'USD',
+            'timezone' => 'UTC',
+            'is_active' => true,
+        ]);
+    }
+
+    private function makeItem(Property $property, string $suffix): InventoryItem
+    {
+        $category = InventoryCategory::firstOrCreate([
+            'property_id' => $property->id,
+            'name' => 'CC-P01A '.$suffix,
+        ]);
+
+        return InventoryItem::create([
+            'property_id' => $property->id,
+            'category_id' => $category->id,
+            'sku' => 'CCP01A-'.$suffix.'-'.Str::random(8),
+            'name' => 'CC-P01A '.$suffix,
+            'inventory_type' => 'goods',
+            'weighted_average_cost' => 0,
+            'is_active' => true,
+        ]);
+    }
+
+    private function insertEnrollmentGroup(string $propertyId, string $itemId): string
+    {
+        $id = (string) Str::ulid();
+        DB::table('cost_authority_enrollment_groups')->insert([
+            'id' => $id,
+            'property_id' => $propertyId,
+            'item_id' => $itemId,
+            'status' => 'draft',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
     }
 }

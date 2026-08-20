@@ -206,7 +206,100 @@ class CostDeliveryModeOwnershipBootstrapTest extends PostgresTestCase
         ));
         $this->assertSame(CostDeliveryPostingDecision::NOT_ENROLLED, $decision->outcome);
         $this->assertNull($decision->deliveryMode);
+        $this->assertNull($decision->locationId);
+        $this->assertNull($decision->valuationScope);
+        $this->assertNull($decision->lastSynchronouslyOwnedSequence);
+        $this->assertNull($decision->firstDeferredOwnedSequence);
         $this->assertDatabaseMissing('cost_delivery_mode_ownerships', ['item_id' => $notEnrolledItem->id]);
+    }
+
+    public function test_adapter_returns_locked_canonical_scope_and_deferred_watermark_evidence(): void
+    {
+        $group = $this->makeGroup(CostAuthorityEnrollmentStatusEnum::Enrolled);
+        $ownership = DB::transaction(fn () => app(CostDeliveryModeOwnershipBootstrapService::class)
+            ->bootstrap($group->id, $this->actor->id));
+        $adapter = app(InventoryCostDeliveryModeAdapter::class);
+        $expectedScope = "property:{$this->property->id}:location:{$this->location->id}:item:{$this->item->id}";
+
+        $synchronous = DB::transaction(fn () => $adapter->resolveForPosting(
+            $this->property->id,
+            $this->item->id,
+            $this->location->id,
+        ));
+        $this->assertSame(CostDeliveryPostingDecision::SYNCHRONOUS, $synchronous->outcome);
+        $this->assertSame($this->location->id, $synchronous->locationId);
+        $this->assertSame($expectedScope, $synchronous->valuationScope);
+        $this->assertSame($ownership->id, $synchronous->ownershipId);
+        $this->assertSame(1, $synchronous->ownershipVersion);
+        $this->assertNull($synchronous->cutoverId);
+        $this->assertNull($synchronous->lastSynchronouslyOwnedSequence);
+        $this->assertNull($synchronous->firstDeferredOwnedSequence);
+
+        $this->transitionToDeferred($group, $ownership->id);
+        $deferred = DB::transaction(fn () => $adapter->resolveForPosting(
+            $this->property->id,
+            $this->item->id,
+            $this->location->id,
+        ));
+        $this->assertSame(CostDeliveryPostingDecision::DEFERRED, $deferred->outcome);
+        $this->assertSame($this->location->id, $deferred->locationId);
+        $this->assertSame($expectedScope, $deferred->valuationScope);
+        $this->assertSame($ownership->id, $deferred->ownershipId);
+        $this->assertSame(2, $deferred->ownershipVersion);
+        $this->assertNotNull($deferred->cutoverId);
+        $this->assertSame(0, $deferred->lastSynchronouslyOwnedSequence);
+        $this->assertSame(1, $deferred->firstDeferredOwnedSequence);
+    }
+
+    public function test_deferred_adapter_fails_closed_without_exact_scope_watermark_evidence(): void
+    {
+        $group = $this->makeGroup(CostAuthorityEnrollmentStatusEnum::Enrolled);
+        $ownership = DB::transaction(fn () => app(CostDeliveryModeOwnershipBootstrapService::class)
+            ->bootstrap($group->id, $this->actor->id));
+        CostDeliveryPilotProperty::create([
+            'pilot_slot' => 1,
+            'property_id' => $group->property_id,
+            'owner_approval_reference' => 'OWNER-CC-P01A-MISSING-WATERMARK',
+            'authorized_by' => $this->actor->id,
+            'authorized_at' => now(),
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('DEFERRED_DELIVERY_SCOPE_WATERMARK_MISSING');
+        DB::transaction(function () use ($group, $ownership) {
+            $cutoverId = (string) Str::ulid();
+            DB::table('cost_delivery_cutovers')->insert([
+                'id' => $cutoverId,
+                'ownership_id' => $ownership->id,
+                'enrollment_group_id' => $group->id,
+                'property_id' => $group->property_id,
+                'item_id' => $group->item_id,
+                'financial_period_id' => $this->period->id,
+                'boundary_business_date' => '2026-08-31',
+                'owner_approval_reference' => 'OWNER-CC-P01A-MISSING-WATERMARK',
+                'requested_by' => $this->actor->id,
+                'requested_at' => now()->subMinutes(2),
+                'approved_by' => $this->actor->id,
+                'approved_at' => now()->subMinute(),
+                'activated_by' => $this->actor->id,
+                'activated_at' => now(),
+                'created_at' => now(),
+            ]);
+            DB::table('cost_delivery_mode_ownerships')->where('id', $ownership->id)->update([
+                'delivery_mode' => 'DEFERRED',
+                'ownership_version' => 2,
+                'activated_cutover_id' => $cutoverId,
+                'changed_by' => $this->actor->id,
+                'changed_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            app(InventoryCostDeliveryModeAdapter::class)->resolveForPosting(
+                $this->property->id,
+                $this->item->id,
+                $this->location->id,
+            );
+        });
     }
 
     public function test_two_postgresql_contexts_concurrently_bootstrap_exactly_one_ownership(): void

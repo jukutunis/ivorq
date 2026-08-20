@@ -137,6 +137,8 @@ return new class extends Migration
                 AND first_deferred_owned_sequence = 1)
             OR
             (sequence_state_classification = 'PRIOR_APPLIED_VALUATION_SEQUENCE'
+                AND inventory_sequence_source = 'ALLOCATOR_ROW'
+                AND inventory_valuation_sequence_id IS NOT NULL
                 AND inventory_allocator_last_sequence > 0
                 AND cost_avco_last_valuation_sequence = inventory_allocator_last_sequence
                 AND last_synchronously_owned_sequence = inventory_allocator_last_sequence)
@@ -229,6 +231,11 @@ return new class extends Migration
                    AND item_id = NEW.item_id;
 
                 IF NEW.inventory_sequence_source = 'ALLOCATOR_ABSENT' THEN
+                    IF NEW.sequence_state_classification <> 'NO_PRIOR_APPLIED_VALUATION_SEQUENCE' THEN
+                        RAISE EXCEPTION 'CUTOVER_BLOCKED_SEQUENCE_STATE_DIVERGENCE: absent allocator is virgin-only'
+                            USING ERRCODE = '23514';
+                    END IF;
+
                     IF allocator.id IS NOT NULL THEN
                         RAISE EXCEPTION 'CUTOVER_BLOCKED_SEQUENCE_STATE_DIVERGENCE: allocator expected absent'
                             USING ERRCODE = '23514';
@@ -287,6 +294,56 @@ return new class extends Migration
                        OR NOT positive_source_exists
                        OR max_source_sequence IS DISTINCT FROM NEW.inventory_allocator_last_sequence THEN
                         RAISE EXCEPTION 'CUTOVER_BLOCKED_SEQUENCE_STATE_DIVERGENCE: non-virgin sequences differ'
+                            USING ERRCODE = '23514';
+                    END IF;
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            CREATE OR REPLACE FUNCTION guard_cdca_identity()
+            RETURNS trigger AS $$
+            DECLARE
+                enrollment record;
+                period_property text;
+                cutoff record;
+            BEGIN
+                SELECT * INTO enrollment
+                  FROM cost_authority_enrollment_groups
+                 WHERE id = NEW.enrollment_group_id;
+
+                IF enrollment.id IS NULL
+                   OR enrollment.property_id IS DISTINCT FROM NEW.property_id
+                   OR enrollment.item_id IS DISTINCT FROM NEW.item_id THEN
+                    RAISE EXCEPTION 'cost_delivery_cutover_attempts: enrollment Property/Item mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                SELECT property_id INTO period_property
+                  FROM gl_financial_periods
+                 WHERE id = NEW.target_financial_period_id;
+
+                IF period_property IS DISTINCT FROM NEW.property_id THEN
+                    RAISE EXCEPTION 'cost_delivery_cutover_attempts: Financial Period Property mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                IF NEW.outcome = 'ACTIVATED' THEN
+                    SELECT * INTO cutoff
+                      FROM cost_delivery_cutovers
+                     WHERE id = NEW.cutover_id;
+
+                    IF cutoff.id IS NULL
+                       OR cutoff.property_id IS DISTINCT FROM NEW.property_id
+                       OR cutoff.item_id IS DISTINCT FROM NEW.item_id
+                       OR cutoff.enrollment_group_id IS DISTINCT FROM NEW.enrollment_group_id
+                       OR cutoff.financial_period_id IS DISTINCT FROM NEW.target_financial_period_id
+                       OR cutoff.boundary_business_date IS DISTINCT FROM NEW.boundary_business_date
+                       OR cutoff.owner_approval_reference IS DISTINCT FROM NEW.owner_approval_reference
+                       OR cutoff.requested_by IS DISTINCT FROM NEW.requested_by
+                       OR cutoff.requested_at IS DISTINCT FROM NEW.requested_at THEN
+                        RAISE EXCEPTION 'cost_delivery_cutover_attempts: activated cutover context mismatch'
                             USING ERRCODE = '23514';
                     END IF;
                 END IF;
@@ -366,6 +423,10 @@ return new class extends Migration
             BEFORE INSERT ON cost_delivery_cutover_scopes
             FOR EACH ROW EXECUTE FUNCTION guard_cdcs_identity_and_sequence();
 
+            CREATE TRIGGER trg_cdca_identity
+            BEFORE INSERT ON cost_delivery_cutover_attempts
+            FOR EACH ROW EXECUTE FUNCTION guard_cdca_identity();
+
             CREATE TRIGGER trg_cdc_no_update_delete
             BEFORE UPDATE OR DELETE ON cost_delivery_cutovers
             FOR EACH ROW EXECUTE FUNCTION guard_cdce_immutable();
@@ -402,6 +463,7 @@ return new class extends Migration
             DB::statement('DROP FUNCTION IF EXISTS enforce_cdc_complete_scope() CASCADE');
             DB::statement('DROP FUNCTION IF EXISTS guard_cdc_identity() CASCADE');
             DB::statement('DROP FUNCTION IF EXISTS guard_cdcs_identity_and_sequence() CASCADE');
+            DB::statement('DROP FUNCTION IF EXISTS guard_cdca_identity() CASCADE');
             DB::statement('DROP FUNCTION IF EXISTS guard_cdce_immutable() CASCADE');
         }
 
