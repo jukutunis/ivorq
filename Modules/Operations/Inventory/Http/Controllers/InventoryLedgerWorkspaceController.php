@@ -23,11 +23,13 @@ class InventoryLedgerWorkspaceController extends Controller
             ->orderByDesc('occurred_at')
             ->paginate(25);
 
+        $signedQuantity = "SUM(CASE WHEN direction = 'IN' THEN quantity ELSE -quantity END)";
+
         $stockOnHand = InventoryStockMovement::query()
-            ->selectRaw('inventory_item_id, inventory_location_id, inventory_unit_id, SUM(quantity) as controlled_quantity')
+            ->selectRaw("inventory_item_id, inventory_location_id, inventory_unit_id, {$signedQuantity} as controlled_quantity")
             ->groupBy('inventory_item_id', 'inventory_location_id', 'inventory_unit_id')
             ->with(['item', 'location', 'unit'])
-            ->havingRaw('SUM(quantity) > 0')
+            ->havingRaw("{$signedQuantity} > 0")
             ->get();
 
         return Inertia::render('Operations/Inventory/InventoryLedgerWorkspace', [

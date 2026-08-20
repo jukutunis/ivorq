@@ -35,6 +35,8 @@ class InventoryMovementIsolatedConcurrencyProofTest extends TestCase
         }
         $this->assertEquals(1, $postedCount, 'Exactly one issue must succeed');
         $this->assertEquals(1, $failureCount, 'Exactly one issue must fail controlled');
+        $this->assertGreaterThanOrEqual(0.000, (float) ($ic['final_net_quantity'] ?? -1));
+        $this->assertEquals(4.000, (float) ($ic['final_net_quantity'] ?? -1), 'Final net quantity must be exactly 4.000');
 
         // Final controlled quantity assertion must be done in the coordinator result
         $this->assertNull($result['error'] ?? null, 'Coordinator error: ' . ($result['error'] ?? 'none'));

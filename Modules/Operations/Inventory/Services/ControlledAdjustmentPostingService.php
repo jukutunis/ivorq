@@ -81,7 +81,6 @@ class ControlledAdjustmentPostingService
                     continue;
                 }
 
-                $sourceId = (string) Str::ulid();
                 $itemId = $line->item_id;
                 $locId = $adjustment->location_id;
                 $unitId = $this->defaultUnitId($adjustment->property_id);
@@ -107,7 +106,7 @@ class ControlledAdjustmentPostingService
                     'quantity' => $absQty,
                     'source_domain' => 'inventory',
                     'source_type' => InventoryAdjustmentLine::class,
-                    'source_id' => $sourceId,
+                    'source_id' => $line->id,
                     'correlation_id' => $correlationId,
                     'idempotency_key' => "adj_post_{$adjustment->id}_{$line->id}",
                     'occurred_at' => now(),

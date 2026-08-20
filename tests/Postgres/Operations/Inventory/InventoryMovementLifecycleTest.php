@@ -412,6 +412,10 @@ class InventoryMovementLifecycleTest extends PostgresTestCase
 
         $this->assertEquals($countBefore + 2, InventoryStockMovement::count());
 
+        $movements = InventoryStockMovement::where('source_type', InventoryTransferLine::class)->get();
+        $this->assertCount(2, $movements);
+        $this->assertTrue($movements->every(fn (InventoryStockMovement $movement) => $movement->source_id === $transfer->lines->first()->id));
+
         $locA = $this->netQuantityForLocation($this->locationA->id);
         $locB = $this->netQuantityForLocation($this->locationB->id);
         $this->assertEquals(17.000, $locA);
@@ -587,6 +591,7 @@ class InventoryMovementLifecycleTest extends PostgresTestCase
         $this->assertCount(1, $movements);
         $this->assertEquals(InventoryMovementTypeEnum::IssueConsumption, $movements->first()->movement_type);
         $this->assertEquals(InventoryMovementDirectionEnum::Out, $movements->first()->direction);
+        $this->assertEquals($issue->lines->first()->id, $movements->first()->source_id);
 
         $locA = $this->netQuantityForLocation($this->locationA->id);
         $this->assertEquals(17.000, $locA);
@@ -707,6 +712,7 @@ class InventoryMovementLifecycleTest extends PostgresTestCase
         $movements = InventoryStockMovement::where('source_type', StockCountLine::class)->get();
         $this->assertCount(1, $movements);
         $this->assertEquals(InventoryMovementTypeEnum::CountVarianceIn, $movements->first()->movement_type);
+        $this->assertEquals($session->lines->first()->id, $movements->first()->source_id);
     }
 
     public function test_stock_count_confirmation_rejects_changed_snapshot(): void
@@ -918,6 +924,7 @@ class InventoryMovementLifecycleTest extends PostgresTestCase
         $movement = InventoryStockMovement::where('source_type', InventoryAdjustmentLine::class)->first();
         $this->assertEquals(InventoryMovementTypeEnum::ManualAdjustmentOut, $movement->movement_type);
         $this->assertEquals(InventoryMovementDirectionEnum::Out, $movement->direction);
+        $this->assertEquals($adjustment->lines->first()->id, $movement->source_id);
     }
 
     // ═══════════════════════════════════════════════════════════════════

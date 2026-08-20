@@ -315,24 +315,51 @@ class InventoryStockMovementLedgerTest extends PostgresTestCase
 
     public function test_controlled_ledger_quantity_derives_from_movements(): void
     {
-        $intent = $this->makePostingIntent(['quantity' => 15.000]);
+        $intent = $this->makePostingIntent(['quantity' => 20.000]);
         $this->postingService()->post($intent);
 
         $intent2 = $this->makePostingIntent([
             'quantity' => 5.000,
+            'movement_type' => InventoryMovementTypeEnum::IssueConsumption,
+            'direction' => InventoryMovementDirectionEnum::Out,
+            'source_domain' => 'inventory',
+            'source_type' => 'InventoryIssueLine',
             'idempotency_key' => (string) Str::ulid(),
             'source_id' => (string) Str::ulid(),
         ]);
         $this->postingService()->post($intent2);
 
         $projection = InventoryStockMovement::query()
-            ->selectRaw('SUM(quantity) as controlled_quantity')
+            ->selectRaw("SUM(CASE WHEN direction = 'IN' THEN quantity ELSE -quantity END) as controlled_quantity")
             ->where('inventory_item_id', $this->item->id)
             ->where('inventory_location_id', $this->location->id)
             ->groupBy('inventory_item_id', 'inventory_location_id')
             ->first();
 
-        $this->assertEquals(20.000, (float) $projection->controlled_quantity);
+        $this->assertEquals(15.000, (float) $projection->controlled_quantity);
+    }
+
+    public function test_workspace_uses_signed_controlled_quantity(): void
+    {
+        $this->postingService()->post($this->makePostingIntent(['quantity' => 20.000]));
+        $this->postingService()->post($this->makePostingIntent([
+            'quantity' => 5.000,
+            'movement_type' => InventoryMovementTypeEnum::IssueConsumption,
+            'direction' => InventoryMovementDirectionEnum::Out,
+            'source_domain' => 'inventory',
+            'source_type' => 'InventoryIssueLine',
+            'idempotency_key' => (string) Str::ulid(),
+            'source_id' => (string) Str::ulid(),
+        ]));
+
+        $this->user->givePermissionTo('inventory.ledger.view');
+
+        $this->actingAs($this->user)
+            ->get('/operations/inventory/ledger')
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('stockOnHand.0.controlled_quantity', '15.000')
+            );
     }
 
     public function test_workspace_requires_authentication(): void
@@ -430,13 +457,15 @@ class InventoryStockMovementLedgerTest extends PostgresTestCase
         $this->assertTrue(true);
     }
 
-    public function test_movement_is_not_updatable(): void
+    public function test_stock_movement_cannot_be_updated_via_postgresql(): void
     {
         $intent = $this->makePostingIntent();
         $movement = $this->postingService()->post($intent);
 
-        $this->assertFalse(property_exists($movement, 'updated_at'));
-        $this->assertFalse($movement->timestamps);
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table('inventory_stock_movements')
+            ->where('id', $movement->id)
+            ->update(['quantity' => 99.000]);
     }
 
     public function test_goods_receipt_source_leg_is_primary(): void
