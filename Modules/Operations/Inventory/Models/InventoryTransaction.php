@@ -3,37 +3,45 @@
 namespace Modules\Operations\Inventory\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Shared\Traits\HasUlid;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Shared\Traits\BelongsToProperty;
+use Shared\Traits\HasUlid;
 
 class InventoryTransaction extends Model
 {
-    use HasUlid, BelongsToProperty;
+    use BelongsToProperty, HasUlid;
 
     protected $guarded = [];
+
     public const UPDATED_AT = null;
 
     protected $casts = [
-        'transaction_type'   => \Modules\Operations\Inventory\Enums\TransactionTypeEnum::class,
-        'quantity_before'    => 'decimal:4',
-        'quantity_change'    => 'decimal:4',
-        'quantity_after'     => 'decimal:4',
-        'unit_cost'          => 'decimal:2',
-        'total_cost'         => 'decimal:2',
-        'posted_at'          => 'datetime',
-        'business_date'      => 'date',
-        'occurred_at'        => 'datetime',
-        'currency_code'      => 'string',
-        'financial_period_id'=> 'string',
-        'valuation_scope'              => 'string',
-        'valuation_sequence'           => 'integer',
-        'valuation_approval_status'    => 'string',
+        'transaction_type' => TransactionTypeEnum::class,
+        'quantity_before' => 'decimal:4',
+        'quantity_change' => 'decimal:4',
+        'quantity_after' => 'decimal:4',
+        'unit_cost' => 'decimal:2',
+        'total_cost' => 'decimal:2',
+        'posted_at' => 'datetime',
+        'business_date' => 'date',
+        'occurred_at' => 'datetime',
+        'currency_code' => 'string',
+        'financial_period_id' => 'string',
+        'valuation_scope' => 'string',
+        'valuation_sequence' => 'integer',
+        'valuation_approval_status' => 'string',
         'valuation_approval_reference' => 'string',
+        'cost_delivery_mode' => 'string',
+        'cost_delivery_ownership_id' => 'string',
+        'cost_delivery_ownership_version' => 'integer',
+        'cost_delivery_cutover_id' => 'string',
     ];
 
     public function property()
     {
-        return $this->belongsTo(\Modules\Foundation\Property\Models\Property::class);
+        return $this->belongsTo(Property::class);
     }
 
     public function item()
@@ -48,7 +56,7 @@ class InventoryTransaction extends Model
 
     public function postedBy()
     {
-        return $this->belongsTo(\Modules\Foundation\User\Models\User::class, 'posted_by');
+        return $this->belongsTo(User::class, 'posted_by');
     }
 
     public function reversesTransaction()
