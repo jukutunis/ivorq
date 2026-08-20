@@ -14,7 +14,7 @@
 - INV-C1: `ACCEPTED_AND_MERGED`
 - INV-C1 feature HEAD: `fdfff84c18078a5dc584778512f26489136f9ff9`
 - INV-C1 canonical merge: `3a55f27d8af27d9cd18b1ff07e00d1fb8b044a64`
-- INV-R1: `CANONICAL_RERUN_COMPLETE`, awaiting independent review
+- INV-R1: `CANONICAL_RERUN_COMPLETE`
 - Package Execution Contract: Version 1.22
 - Registry role: governance and workstream selection only
 - Registered master domains: 19
