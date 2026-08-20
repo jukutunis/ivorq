@@ -15,7 +15,11 @@
 - Deferred consumer activation: `NONE`
 - Package 21 activation: `NONE`
 
-`CC_P01_IMPLEMENTATION_PLAN_READY_FOR_INDEPENDENT_REVIEW`
+`CC_P01_IMPLEMENTATION_PLAN_READY_FOR_INDEPENDENT_RE_REVIEW`
+
+- Independent review verdict received: `CC_P01_INDEPENDENT_REVIEW_CHANGES_REQUIRED`
+- Planning correction scope: virgin-sequence semantics, existing-enrollment ownership bootstrap, ADR-043 GL authority proof, and cross-cutover existing-source idempotency
+- Correction runtime authorization: `NONE`
 
 This document translates accepted CC-G1, INV-R1, and INV-G1 constraints into an implementation-ready design. It does not implement, register, dispatch, schedule, or activate deferred delivery. Each implementation slice below requires separate Owner authorization and independent review.
 
@@ -49,6 +53,10 @@ The planning inspection was limited to the Owner-named Inventory, Receiving, Fou
 8. `FinancialPeriod` is calendar year/month scoped and supports Open, Closing, Closed, and Reopened. The general `PeriodControlService::isOpen()` auto-creates missing periods; cutover must not use that method because absence must fail closed.
 9. Producer document terminal states are source-specific. The cutover query must treat Receipt `draft`, Issue `draft`, Adjustment `draft|submitted`, Transfer `draft|submitted`, and Receiving `draft|submitted` as in flight for a matching Property + Item. Approved Adjustment and Receiving records and completed/posted records are terminal only when their controlled posting evidence exists.
 10. Goods Receipt records in the separate `InventoryStockMovement`-only universe are not Cost Ledger delivery candidates and must not be pulled into this plan's transaction-universe quiescence claim.
+11. Enrollment baseline seeding intentionally writes `CostAvcoState.last_valuation_sequence = NULL`: no CostControl transaction has been applied, no N is fabricated, and no Inventory allocator row is auto-created. Separately, `InventoryValuationSequenceRepository` creates its control row at zero and allocates sequence 1 first; `AvcoValuationEngine` also expects sequence 1 when prior state is null.
+12. Existing enrolled groups predate delivery-mode ownership persistence. Schema migrations must not insert their business ownership records, so a controlled bootstrap boundary is required before enrolled source stamping becomes mandatory.
+13. `InventoryPostingControlCoordinator` resolves and equivalence-checks an existing source by Property + idempotency key before Business Date, stock, or sequence allocation. That immutable existing source must remain authoritative across a later mode cutover.
+14. `VariancePostingEngine` fails closed before creating an InventoryTransaction-based legacy variance candidate for an enrolled Property + Item, while `CostIssuePostingEngine` uses `CostLedgerEntry` as the enrolled issue accounting source. ADR-043 requires these and every other applicable supported GL path to be proven before pilot activation.
 
 ## Recommended runtime architecture
 
@@ -77,9 +85,23 @@ Create immutable `cost_delivery_pilot_properties` with singleton `pilot_slot = 1
 
 At posting time, the Inventory-owned port returns one of:
 
-- `UNENROLLED`: no CostControl delivery ownership and a null source mode stamp;
+- `NOT_ENROLLED`: CostAuthority enrollment is absent, so no CostControl delivery ownership exists and the source mode stamp is null;
 - `SYNCHRONOUS`: enrolled, ownership locked, synchronous source stamp required;
 - `DEFERRED`: enrolled, ownership/cutover/scope watermark locked, deferred source stamp required.
+
+The prior `UNENROLLED` business description means `NOT_ENROLLED` only. Once ownership enforcement is installed, an enrolled group without an ownership row is `ENROLLED_DELIVERY_OWNERSHIP_MISSING` and fails closed. The adapter must distinguish these outcomes and must never downgrade missing ownership to `NOT_ENROLLED` or fabricate a row during posting.
+
+Existing enrolled groups acquire initial ownership only through CostControl-owned `CostDeliveryModeOwnershipBootstrapService`. The service:
+
+- accepts one exact `enrollment_group_id` and requires an active outer transaction;
+- locks the enrollment group and requires status `ENROLLED`;
+- verifies Property + Item identity and complete immutable canonical scope snapshots;
+- checks whether ownership exists, then creates exactly one `SYNCHRONOUS`, version 1 ownership with null activated cutover and actor/provenance when absent;
+- returns idempotent success only for an exactly equivalent existing ownership;
+- fails closed on mismatched ownership, incomplete snapshots, `DRAFT`, `APPROVED`, `REJECTED`, `SUPERSEDED`, any other non-enrolled lifecycle state, or concurrent conflicting evidence; and
+- never creates enrollment, changes AVCO authority, creates pilot authorization, stamps a source, or activates deferred delivery.
+
+After ownership enforcement exists, future enrollment has an atomic authority invariant: a new enrollment may become authority-active only if its initial `SYNCHRONOUS` ownership record is created in the same activation transaction. If that cannot be done, enrollment activation fails closed and the group remains unactivated. CC-P01 planning does not modify current enrollment runtime; the implementing slice must integrate this invariant before enabling future enrollment activation.
 
 Rejected alternatives:
 
@@ -98,9 +120,20 @@ For each enrollment snapshot, the scope row records:
 - `first_deferred_owned_sequence = N + 1`;
 - Property, location, item, canonical valuation scope, enrollment snapshot, and source sequence-row identity.
 
-The cutover service locks all group sequence rows in ascending canonical `valuation_scope` order and takes their current `last_sequence` as N. A check constraint requires `first_deferred_owned_sequence = last_synchronously_owned_sequence + 1`. A deferred constraint trigger verifies at commit that the scope rows exactly equal the group's enrollment snapshots, the ownership points to that cutover, and no scope is missing or duplicated.
+The cutover service locks all group sequence control rows in ascending canonical `valuation_scope` order and reconciles each with its locked seeded `CostAvcoState`. A check constraint requires `first_deferred_owned_sequence = last_synchronously_owned_sequence + 1`. A deferred constraint trigger verifies at commit that the scope rows exactly equal the group's enrollment snapshots, the ownership points to that cutover, and no scope is missing or duplicated.
 
-An empty sequence allocator row is created and locked when necessary using the existing insert-if-missing then `FOR UPDATE` convention. Its N is the enrolled baseline already aligned with `CostAvcoState`; the cutover never invents a historical transaction.
+Virgin scope classification is explicit:
+
+`NO_PRIOR_APPLIED_VALUATION_SEQUENCE`
+
+A scope is virgin only when `CostAvcoState.last_valuation_sequence IS NULL` and the Inventory allocator row is absent, or exists with `last_sequence = 0`, and no `InventoryTransaction` for the scope has valuation sequence greater than zero. Cutover may then persist:
+
+- `LAST_SYNCHRONOUSLY_OWNED_SEQUENCE = 0`;
+- `FIRST_DEFERRED_OWNED_SEQUENCE = 1`.
+
+Zero is a cutover-boundary sentinel only. It is not a historical `InventoryTransaction`, applied AVCO sequence, enrollment baseline transaction, Cost Ledger sequence, or value to write into `CostAvcoState.last_valuation_sequence`. The AVCO state remains null until sequence 1 is successfully applied. When serialization needs a row, cutover may use the existing Inventory-owned insert-if-absent then `FOR UPDATE` convention to create/lock an allocator control row at zero; that control row does not fabricate historical evidence.
+
+For a non-virgin scope, Inventory allocator `last_sequence > 0` must equal `CostAvcoState.last_valuation_sequence` exactly. Any mismatch fails with `CUTOVER_BLOCKED_SEQUENCE_STATE_DIVERGENCE`. This includes allocator 5/state 4, allocator 5/state null, and allocator absent-or-zero/state 5. Null AVCO sequence is valid only for a proven virgin scope.
 
 Rejected alternatives:
 
@@ -108,6 +141,7 @@ Rejected alternatives:
 - A timestamp, ULID, outbox ID, or queue position is rejected because ADR-042 requires the Inventory valuation sequence.
 - Calculating the watermark dynamically during delivery is rejected because it permits ownership drift and cannot prove the cutover boundary.
 - Updating enrollment snapshots is rejected because opening/enrollment evidence is already immutable and has a different lifecycle purpose.
+- Coercing or persisting a null AVCO sequence as zero is rejected because it would fabricate an applied valuation baseline.
 
 ## C. Historical outbox disposition and processing outcomes
 
@@ -152,7 +186,7 @@ Rejected alternatives:
 8. source Business Date row is open and source Financial Period row is Open or Reopened when delivery is attempted; closed/missing context fails closed without remapping the period;
 9. no Cost Ledger row exists for the source, or the existing row is exactly equivalent;
 10. transaction type is supported by its registered handler: receipt, issue, adjustment in/out, transfer out/in pair, return where the existing planner proves it, or reversal. `opening_balance` remains unsupported;
-11. `CostAvcoState.last_valuation_sequence + 1` equals the source sequence for every affected scope; and
+11. for every affected scope, expected source sequence is 1 when `CostAvcoState.last_valuation_sequence IS NULL`; otherwise it is `last_valuation_sequence + 1`. Null is never coerced or persisted as zero; and
 12. negative inventory, unsupported FX, missing approval evidence, and unsupported correction semantics remain fail-closed under existing rules.
 
 Eligibility never mutates Inventory, enrollment, period, Business Date, or source evidence. It does not infer facts from `InventoryStock`, `InventoryStockMovement`, current item WAC, timestamps, or queue order.
@@ -179,11 +213,18 @@ Add a PostgreSQL unique constraint on `cost_ledger_entries.source_inventory_tran
 
 An exact equivalent row is idempotent success and creates no second entry. Any mismatch is a permanent integrity failure. Database conflict exception text is never parsed.
 
+Producer idempotency across cutover follows:
+
+`IMMUTABLE_SOURCE_MODE_STAMP_IS_AUTHORITATIVE_FOR_EXISTING_SOURCE`
+
+When the coordinator finds an exact equivalent existing `InventoryTransaction`, it returns that immutable source under its original stamp before consulting current delivery ownership for a new source. It must never restamp the row, allocate another sequence, create another source/outbox record, or create another Cost Ledger effect. A source stamped synchronous before cutover remains synchronously satisfied after group ownership becomes deferred and cannot enter deferred eligibility. A historical null-stamped source remains governed by its immutable historical disposition. A non-equivalent request using the same source idempotency identity fails closed as an idempotency collision.
+
 Rejected alternatives:
 
 - Mode-prefixed idempotency keys are rejected because synchronous and deferred keys can differ for the same source.
 - A consumer-only claim table without Cost Ledger uniqueness is rejected because another write boundary could bypass it.
 - Silent acceptance of a source-ID match without full field equivalence is rejected because it can conceal corruption.
+- Re-resolving an existing source's mode from current ownership is rejected because it would rewrite immutable posting-time ownership and permit cross-mode duplication.
 
 ## F. Deferred consumer and handler boundary
 
@@ -268,6 +309,8 @@ Every transaction-producing service checks at the beginning of its outer transac
 
 A deferred decision posts source/outbox but never calls the synchronous valuation port. The deferred consumer rejects a synchronous or null stamp. Holding the ownership row lock until producer commit makes bypass atomic with cutover.
 
+The existing-source idempotency branch is intentionally earlier than new-source mode resolution. When an exact immutable source is found, its stored mode or accepted historical disposition governs the result even if current ownership has since changed. The current ownership lock and mandatory stamp apply only when a new source will be created. Exact retry after cutover therefore returns the original source without another sequence, outbox row, synchronous invocation, or deferred application; mismatched retry fails closed.
+
 The existing direct CostControl imports/container resolutions in Receipt, Issue, Adjustment, Transfer, and Receiving integration are removed rather than copied. Legacy unenrolled behavior remains unchanged and never becomes deferred eligible.
 
 Rejected alternatives:
@@ -293,11 +336,14 @@ The service fails closed unless all checks pass:
 9. No deferred disposition for the group is Pending, Failed, or Blocked Sequence; historical exclusions are resolved and do not become deferred work.
 10. Reversal source stamping/outbox and both synchronous/deferred reversal tests are installed and passing.
 11. Cost Ledger source uniqueness/equivalence, source mode stamps, synchronous bypass, deferred handlers, and required database triggers are installed.
-12. All sequence rows and seeded CostAvcoState rows exist and agree on their last sequence. The service locks them in canonical order and derives all N/N+1 watermarks.
+12. Each locked scope passes either the true-virgin proof (null AVCO sequence plus absent/zero allocator and no positive-sequence source) or exact non-virgin allocator/AVCO equality. True virgin receives only the 0/1 cutover sentinel; any divergence records `CUTOVER_BLOCKED_SEQUENCE_STATE_DIVERGENCE`.
+13. The accepted CC-P01G readiness record and Owner authorization include `GL_AUTHORITY_PATH_PROOF = PASS` for every applicable supported enrolled transaction path.
 
 After validation, one transaction inserts immutable cutover/scope evidence, updates ownership to terminal deferred, and records an activated attempt. A deferred constraint trigger verifies completeness at commit. If validation fails, the activation transaction rolls back and a separate append-only `cost_delivery_cutover_attempts` row records `CUTOVER_BLOCKED` and a safe reason; no mode or watermark changes.
 
 Financial Period rows are queried and locked directly by identity using fail-closed repository logic. `PeriodControlService::isOpen()` is prohibited because its auto-create behavior is unsuitable for cutover proof.
+
+The GL proof is governance/readiness evidence, not a runtime code-introspection check and not dynamically stored test output. The cutover service consumes only the accepted Owner approval that is prohibited from being issued without a passing CC-P01G record. It does not inspect PHP source or rerun tests during cutover.
 
 Rejected alternatives:
 
@@ -369,6 +415,7 @@ No migration is created by this planning package. Expected migrations and contro
 - FK policy: enrollment and activated cutover are CostControl FKs `RESTRICT`; Property/item references are `RESTRICT` and never cascade.
 - Locking: canonical serialization latch; `FOR UPDATE` before producer, cutover, reversal, and consumer state work.
 - Lifecycle: controlled one-way trigger; no delete; deferred terminal.
+- Bootstrap: migrations insert no rows. Existing enrolled groups receive version 1 synchronous ownership only through `CostDeliveryModeOwnershipBootstrapService`; uniqueness arbitrates concurrent bootstrap and exact equivalence is the only idempotent result.
 - Audit: ownership version and actor/time retained permanently.
 
 ### `cost_delivery_cutovers`
@@ -387,10 +434,11 @@ No migration is created by this planning package. Expected migrations and contro
 - Purpose/owner: immutable location watermark evidence.
 - Columns: cutover, enrollment snapshot, Property/location/item, canonical scope, Inventory sequence-row identity, last synchronous N, first deferred N+1.
 - Isolation: all identities must match parent cutover and snapshot.
-- Constraints: unique `(cutover_id, location_id)`, unique enrollment snapshot, unique canonical scope per cutover, check N >= 0 and first = last + 1.
+- Constraints: unique `(cutover_id, location_id)`, unique enrollment snapshot, unique canonical scope per cutover, check N >= 0 and first = last + 1. N = 0 is allowed only for a service-proven virgin scope and is a boundary sentinel, never an applied AVCO sequence.
 - FK policy: cutover/snapshot FKs `RESTRICT`; external sequence ID is an opaque immutable reference verified by service to avoid CostControl controlling Inventory retention.
 - Locking: source sequence rows locked in canonical scope order before inserts.
 - Immutability: insert-only and update/delete trigger; deferred constraint trigger verifies complete snapshot coverage and ownership linkage at commit.
+- AVCO integrity: cutover never writes `CostAvcoState.last_valuation_sequence`; null remains null until sequence 1 applies. Non-virgin allocator/state divergence blocks before insert.
 - Retention: permanent; never recomputed or compacted.
 
 ### `cost_delivery_cutover_attempts`
@@ -423,6 +471,7 @@ No migration is created by this planning package. Expected migrations and contro
 - Constraints: mode null requires all provenance null; synchronous requires ownership/version and null cutover; deferred requires ownership/version/cutover. Mode values limited to `SYNCHRONOUS|DEFERRED`.
 - FK policy: CostControl identifiers are opaque ULIDs without cross-owner FK; the posting port proves them while holding the owner row lock.
 - Immutability: extend existing InventoryTransaction PostgreSQL immutability trigger and model fill/insert boundary; no update path.
+- Existing-source rule: an exact idempotent retry returns the immutable original row and its original stamp/disposition before any new-source mode resolution; no restamp or second allocation/outbox/effect is permitted.
 - Indexes: `(property_id, item_id, cost_delivery_mode, valuation_sequence)` and `cost_delivery_cutover_id`.
 - Retention: same permanent source-evidence retention as InventoryTransaction.
 
@@ -442,6 +491,7 @@ All proofs use `phpunit.pg.xml` against isolated PostgreSQL test databases or th
 | Race/failure | Two-context setup | Required proof |
 |---|---|---|
 | Simultaneous cutover attempts | Two transactions request same ownership; first holds ownership row | Exactly one activated cutover/ownership transition; second blocks then records `CUTOVER_BLOCKED`; no duplicate scopes. |
+| Simultaneous ownership bootstrap | Two transactions bootstrap the same enrolled group | Unique ownership arbitration yields exactly one version 1 synchronous row; the second returns exact-equivalent idempotent success and no mismatch is hidden. |
 | Inventory posting vs cutover | Posting locks synchronous owner while cutover waits, then reverse ordering | Posting-first source is synchronous and included in N; cutover-first source waits then is deferred and gets N+1; no undefined stamp. |
 | Same-message consumers | Two consumers pre-read same outbox then contend | One append/state advance/delivery only; second returns exact-equivalent delivered success. |
 | Same-scope messages | Two distinct rows for one scope | CostAvcoState row serializes them; only next sequence advances. |
@@ -453,6 +503,8 @@ All proofs use `phpunit.pg.xml` against isolated PostgreSQL test databases or th
 | Transfer pair consumers | Trigger each leg concurrently | Both outbox rows/states are locked canonically; exactly one atomic paired apply; no one-leg delivery. |
 | Cross-Property attempts | Same item/location-shaped IDs in two Properties | Locks and reads remain Property-scoped; no cross-Property owner, watermark, disposition, or ledger match. |
 | Document creation vs cutover | Hold ownership lock in line mutation or cutover | A pre-cutover draft is detected and blocks; a post-cutover draft waits and is created only after deferred ownership commits. |
+| Virgin first sequence | Cut over a seeded null-state scope with absent/zero allocator, then contend source sequences 1 and 2 | Watermark is 0/1 without AVCO mutation; sequence 1 is eligible, while sequence 2 cannot apply before 1. |
+| Existing-source retry after cutover | Create and synchronously value source T, pause exact retry while ownership changes to deferred | Retry returns T unchanged; no sequence, source, outbox, ledger, or deferred effect is added. A non-equivalent retry fails collision. |
 
 Deadlock tests must use bounded lock/statement timeouts, separate PostgreSQL connections/processes, synchronization barriers, deterministic final-state assertions, and teardown that terminates test connections before database removal.
 
@@ -461,6 +513,7 @@ Deadlock tests must use bounded lock/statement timeouts, separate PostgreSQL con
 Expected new classes:
 
 - `tests/Postgres/Finance/CostControl/CostDeliveryModeOwnershipPersistenceTest.php`
+- `tests/Postgres/Finance/CostControl/CostDeliveryModeOwnershipBootstrapTest.php`
 - `tests/Postgres/Finance/CostControl/CostDeliveryCutoverPersistenceTest.php`
 - `tests/Postgres/Finance/CostControl/CostDeliveryHistoricalDispositionTest.php`
 - `tests/Postgres/Finance/CostControl/DeferredCostDeliveryEligibilityTest.php`
@@ -471,19 +524,24 @@ Expected new classes:
 - `tests/Postgres/Finance/CostControl/CostDeliveryConcurrencyProofTest.php`
 - `tests/Postgres/Operations/Inventory/InventoryCostDeliveryModeStampTest.php`
 - `tests/Postgres/Operations/Inventory/InventoryCostDeliveryModeGateTest.php`
+- `tests/Postgres/Operations/Inventory/InventoryCostDeliveryCrossCutoverIdempotencyTest.php`
 - `tests/Postgres/Operations/Inventory/InventoryReversalDeliveryModeTest.php`
 
 Mandatory assertions cover:
 
 - ownership and pilot uniqueness;
+- enrolled bootstrap creates exactly one synchronous version 1 ownership; exact repeat is idempotent; mismatch, non-enrolled lifecycle, incomplete snapshots, and concurrent conflict fail closed;
+- enrolled-without-ownership fails as `ENROLLED_DELIVERY_OWNERSHIP_MISSING`, while truly non-enrolled resolves `NOT_ENROLLED` without fabricating ownership;
 - immutable ownership identity and activated cutover evidence;
-- complete group/snapshot coverage and N/N+1 constraint;
+- complete group/snapshot coverage and N/N+1 constraint, including virgin null/absent -> 0/1 and null/zero -> 0/1 without AVCO-state mutation;
+- allocator positive with null AVCO, unequal positive allocator/AVCO, and absent-or-zero allocator with positive AVCO all block as sequence-state divergence;
 - no mid-period or Reopened-period cutover;
 - quiescence and in-flight producer-document failure;
 - historical synchronous and unenrolled exclusion without outbox-history rewrite;
 - exact watermark boundary and rejection below it;
 - synchronous source cannot apply deferred and deferred source cannot apply synchronously;
 - N+1 blocked by unresolved N;
+- first deferred sequence 1 is accepted from virgin null AVCO state, while sequence 2 before 1 is blocked;
 - exact duplicate equivalence is success and mismatched duplicate is integrity failure;
 - consumer crash atomicity at both injected points;
 - mode-aligned reversal and paired transfer;
@@ -491,8 +549,9 @@ Mandatory assertions cover:
 - malformed/missing source, unsupported type, closed Business Date/Period, missing enrollment, and mismatched scope fail closed;
 - no InventoryStockMovement monetary/source use;
 - no new direct Operations/Receiving import of CostControl implementations.
+- exact synchronous source retry after deferred cutover preserves its original stamp and produces no new source, sequence, outbox, Cost Ledger, or deferred apply; mismatched retry fails closed.
 
-Existing focused tests that must remain green include Inventory posting/outbox/sequence/immutability/reversal tests, enrollment persistence/preflight tests, controlled receipt/issue/adjustment/transfer apply tests, Cost Ledger schema/append tests, Foundation Outbox tests, Receiving controlled posting tests, and Financial Period/Business Date integration tests.
+Existing focused tests that must remain green include Inventory posting/outbox/sequence/immutability/reversal tests, enrollment persistence/preflight tests, controlled receipt/issue/adjustment/transfer apply tests, Cost Ledger schema/append tests, Foundation Outbox tests, Receiving controlled posting tests, Financial Period/Business Date integration tests, `tests/Postgres/Finance/GeneralLedger/VariancePostingEngineEnrollmentGuardTest.php`, and `tests/Postgres/Finance/CostControl/ControlledIssueValuationInvocationGLTest.php`.
 
 ## Dependency-ordered implementation slices
 
@@ -512,6 +571,7 @@ Expected production files:
 - `Modules/Finance/CostControl/Models/CostDeliveryCutoverAttempt.php`
 - `Modules/Finance/CostControl/Repositories/CostDeliveryModeOwnershipRepository.php`
 - `Modules/Finance/CostControl/Repositories/CostDeliveryCutoverRepository.php`
+- `Modules/Finance/CostControl/Services/CostDeliveryModeOwnershipBootstrapService.php`
 - `Modules/Operations/Inventory/Contracts/CostDeliveryModePort.php`
 - `Modules/Operations/Inventory/ValueObjects/CostDeliveryPostingDecision.php`
 - `Modules/Finance/CostControl/Adapters/InventoryCostDeliveryModeAdapter.php`
@@ -527,14 +587,23 @@ Expected migrations:
 - `Modules/Finance/CostControl/database/migrations/2026_08_21_000300_create_cost_delivery_cutover_evidence_tables.php`
 - `Modules/Operations/Inventory/database/migrations/2026_08_21_000400_add_cost_delivery_mode_evidence_to_inventory_transactions_table.php`
 
-Tests: ownership, trigger, source-stamp, complete-watermark, pilot-isolation, migration rollback, and PostgreSQL lock tests listed above.
+Tests: ownership, controlled bootstrap, trigger, source-stamp, virgin 0/1 watermark, non-virgin divergence, pilot isolation, migration rollback, and PostgreSQL lock tests listed above. Bootstrap proof covers exact repeat idempotency, mismatch rejection, every non-enrolled group status, incomplete snapshots, concurrent attempts, missing ownership under posting enforcement, and truly non-enrolled behavior.
 
-Prerequisites: accepted CC-P01 plan and clean canonical rebase. Non-goals: consumer, disposition, synchronous bypass, cutover service, activation. Activation effect: `NONE`; all created ownership rows remain synchronous and no pilot/cutover data is inserted by migration. Rollback: schema rollback allowed only before operational data; once evidence exists, forward correction is required.
+Deployment order is mandatory:
+
+1. **A1:** install schema, models, repositories, Inventory-owned ports, and the controlled bootstrap capability. New columns remain compatible; mandatory enrolled stamping is not enabled.
+2. **A2:** through an explicitly authorized invocation of `CostDeliveryModeOwnershipBootstrapService`, create exact version 1 `SYNCHRONOUS` ownership evidence for every existing enrolled Property + Item group. No migration seeds business rows.
+3. **A3:** prove every enrolled group has exactly one equivalent synchronous ownership row, with no deferred row, missing group, duplicate, or snapshot mismatch.
+4. **A4:** only after A3 passes, enable mandatory source mode stamping for enrolled postings. `ENROLLED + NO OWNERSHIP` fails closed and never resolves as unenrolled.
+
+No source may be stamped `DEFERRED` during CC-P01A. Current production remains `SYNCHRONOUS_TRANSITIONAL_ACTIVE`. The future enrollment activation invariant must be installed before any later enrollment is authority-activated: initial synchronous ownership is created atomically with activation or activation fails closed.
+
+Prerequisites: accepted CC-P01 plan and clean canonical rebase. Non-goals: consumer, disposition, synchronous bypass, cutover service, pilot/deferred activation, or current enrollment runtime mutation in this planning correction. Activation effect: `NONE`; controlled bootstrap records only current synchronous delivery ownership and no pilot/cutover data is inserted by migration. Rollback: schema rollback allowed only before operational data; once evidence exists, forward correction is required.
 
 Validation command:
 
 ```powershell
-php artisan test --configuration=phpunit.pg.xml tests/Postgres/Finance/CostControl/CostDeliveryModeOwnershipPersistenceTest.php tests/Postgres/Finance/CostControl/CostDeliveryCutoverPersistenceTest.php tests/Postgres/Operations/Inventory/InventoryCostDeliveryModeStampTest.php
+php artisan test --configuration=phpunit.pg.xml tests/Postgres/Finance/CostControl/CostDeliveryModeOwnershipPersistenceTest.php tests/Postgres/Finance/CostControl/CostDeliveryModeOwnershipBootstrapTest.php tests/Postgres/Finance/CostControl/CostDeliveryCutoverPersistenceTest.php tests/Postgres/Operations/Inventory/InventoryCostDeliveryModeStampTest.php
 ```
 
 ### CC-P01B — Historical disposition and observability foundation
@@ -644,7 +713,7 @@ php artisan test --configuration=phpunit.pg.xml tests/Postgres/Finance/CostContr
 
 ### CC-P01F — Synchronous ownership gate and cutover coordinator
 
-Purpose: replace frozen direct coupling with Inventory-owned ports, make every producer mode-safe, and implement the non-UI cutover service.
+Purpose: replace frozen direct coupling with Inventory-owned ports, make every new producer source mode-safe, preserve existing-source idempotency across cutover, and implement the non-UI cutover service.
 
 Expected production files:
 
@@ -664,6 +733,7 @@ Expected production files:
 - `Modules/Operations/Inventory/Services/IssueService.php`
 - `Modules/Operations/Inventory/Services/AdjustmentService.php`
 - `Modules/Operations/Inventory/Services/TransferService.php`
+- `Modules/Operations/Inventory/Services/InventoryPostingControlCoordinator.php`
 - `Modules/Operations/Inventory/Repositories/InventoryReceiptRepository.php`
 - `Modules/Operations/Inventory/Repositories/InventoryIssueRepository.php`
 - `Modules/Operations/Inventory/Repositories/InventoryAdjustmentRepository.php`
@@ -674,21 +744,33 @@ Expected production files:
 - `Modules/Operations/Receiving/Repositories/ReceivingLineRepository.php`
 - `Modules/Finance/CostControl/CostControlServiceProvider.php`
 
-Migrations: none. Tests: all producer mode stamps/bypass paths, removal of direct imports, document mutation quiescence lock, complete preflight, period boundary, historical disposition, watermarks, and posting/cutover races.
+Migrations: none. Tests: all producer mode stamps/bypass paths, removal of direct imports, document mutation quiescence lock, complete preflight, period boundary, historical disposition, watermarks, posting/cutover races, and exact existing-source retry after ownership changes. The retry proof requires unchanged original source stamp and counts for InventoryTransaction, allocator sequence, OutboxMessage, CostLedgerEntry, and deferred application; a mismatched retry must fail closed.
 
 Prerequisites: CC-P01A-E. Non-goals: UI, general command, consumer transport activation, replay, Property rollout. Activation effect: `NONE` until an Owner-approved pilot row and cutover call are supplied; default synchronous behavior remains. Rollback: safe only while all ownership remains synchronous; after a deferred cutover, rollback to code that can synchronously apply is prohibited.
 
 Validation command:
 
 ```powershell
-php artisan test --configuration=phpunit.pg.xml tests/Postgres/Operations/Inventory/InventoryCostDeliveryModeGateTest.php tests/Postgres/Finance/CostControl/CostDeliveryCutoverServiceTest.php tests/Postgres/Finance/CostControl/CostDeliveryConcurrencyProofTest.php tests/Postgres/Operations/Receiving/ReceivingControlledPostingTest.php
+php artisan test --configuration=phpunit.pg.xml tests/Postgres/Operations/Inventory/InventoryCostDeliveryModeGateTest.php tests/Postgres/Operations/Inventory/InventoryCostDeliveryCrossCutoverIdempotencyTest.php tests/Postgres/Finance/CostControl/CostDeliveryCutoverServiceTest.php tests/Postgres/Finance/CostControl/CostDeliveryConcurrencyProofTest.php tests/Postgres/Operations/Receiving/ReceivingControlledPostingTest.php
 ```
 
 ### CC-P01G — Pilot readiness and PostgreSQL activation proof
 
-Purpose: run the complete source-integrity, migration, functional, and isolated-concurrency proof for one candidate Property without activating production.
+Purpose: run the complete source-integrity, migration, functional, accounting-authority, and isolated-concurrency proof for one candidate Property without activating production.
 
-Expected production files/migrations: none unless an earlier accepted slice has a proven defect; any defect returns to its owning slice and requires review. Expected tests are the twelve new classes listed above plus all directly affected existing PostgreSQL classes.
+Expected production files/migrations: none unless an earlier accepted slice has a proven defect; any defect returns to its owning slice and requires review. Expected tests are all new classes listed above plus all directly affected existing PostgreSQL classes.
+
+CC-P01G must produce an accepted readiness record proving all of the following before Owner pilot authorization:
+
+- every existing enrolled group has exactly one version 1 synchronous ownership and no enrolled group is missing ownership;
+- virgin scopes produce only the 0/1 sentinel, keep `CostAvcoState.last_valuation_sequence` null, accept sequence 1 first, and block sequence 2 before 1;
+- every non-virgin allocator value equals the AVCO state's applied sequence, with every divergence case blocked;
+- exact pre-cutover synchronous source retry after deferred cutover preserves the original source and creates no second sequence, outbox row, Cost Ledger entry, or deferred application;
+- `GL_AUTHORITY_PATH_PROOF = PASS`.
+
+The GL authority proof must include `tests/Postgres/Finance/GeneralLedger/VariancePostingEngineEnrollmentGuardTest.php` and `tests/Postgres/Finance/CostControl/ControlledIssueValuationInvocationGLTest.php`, plus any other applicable enrolled CostControl-to-GL integration test exposed by implementation source. It proves enrolled adjustment cannot create a legacy InventoryTransaction-based variance candidate, enrolled issue accounting originates from `CostLedgerEntry`, no supported enrolled CC-P01 transaction receives a second monetary GL candidate from independently trusted InventoryTransaction cost, and cross-Property behavior remains isolated. If later source inspection finds another direct enrolled InventoryTransaction-to-GL monetary path, CC-P01G stops and requires source correction before pilot readiness.
+
+Test/source-integrity results are accepted governance evidence in the readiness record. They are not introspected by a runtime service or written dynamically into cutover tables. Owner pilot authorization is prohibited unless that accepted record states `GL_AUTHORITY_PATH_PROOF = PASS`.
 
 Prerequisites: accepted A-F commits, clean fresh database migration, explicit test-only pilot fixture, no unresolved findings. Non-goals: production pilot data, cutover invocation, queue/worker/listener, replay, global rollout, registry-baseline promotion without separate governance. Activation effect: `NONE`; proof ends with a signed readiness record and Owner decision gate. Rollback: drop only the isolated proof database after terminating its connections; do not mutate `ivorq_testing` outside the approved test protocol.
 
@@ -696,7 +778,7 @@ Validation commands:
 
 ```powershell
 php artisan migrate:fresh --env=testing --database=pgsql
-php artisan test --configuration=phpunit.pg.xml tests/Postgres/Finance/CostControl tests/Postgres/Operations/Inventory tests/Postgres/Operations/Receiving/ReceivingControlledPostingTest.php tests/Postgres/Foundation/Outbox
+php artisan test --configuration=phpunit.pg.xml tests/Postgres/Finance/CostControl tests/Postgres/Operations/Inventory tests/Postgres/Operations/Receiving/ReceivingControlledPostingTest.php tests/Postgres/Foundation/Outbox tests/Postgres/Finance/GeneralLedger/VariancePostingEngineEnrollmentGuardTest.php
 git diff --check
 ```
 
@@ -705,6 +787,7 @@ The implementing package must use the repository regression-baseline registry to
 ## Activation and rollback invariants
 
 - Database migrations never insert pilot, ownership, disposition, or cutover business data automatically.
+- Existing enrolled groups are bootstrapped through the controlled synchronous ownership service before mandatory stamping; enrolled-without-ownership then fails closed.
 - Installing A-F leaves current synchronous production active.
 - Creating the pilot singleton alone does not change delivery mode.
 - Historical classification alone does not activate consumer processing.
@@ -712,6 +795,9 @@ The implementing package must use the repository regression-baseline registry to
 - Once any deferred source is posted, rollback to synchronous code/configuration is prohibited. Recovery is forward-only and separately authorized.
 - A cutover failure leaves ownership synchronous, creates no watermark, and records a blocked attempt.
 - Deferred handler failure never falls back to synchronous valuation.
+- Virgin zero is only a cutover sentinel; AVCO sequence remains null until sequence 1 successfully applies.
+- Owner pilot authorization requires an accepted CC-P01G record with `GL_AUTHORITY_PATH_PROOF = PASS`.
+- Exact existing-source retry always preserves its immutable original mode stamp or historical disposition across cutover.
 - No all-Property rollout mechanism exists in this train.
 
 ## ADR reconciliation
@@ -719,8 +805,8 @@ The implementing package must use the repository regression-baseline registry to
 | ADR | Plan conformance |
 |---|---|
 | ADR-041 | Inventory retains immutable source/outbox ownership; payload remains transaction ID only; consumer is CostControl-owned; dependency is one-way; no automatic retry or production transport is added. |
-| ADR-042 | Exact posting-time sequence, locked AVCO state, strict N/N+1 barrier, closed-context fail-closed handling, structured equivalence, atomic apply/delivered transaction, durable failures, and no automatic retry are explicit. |
-| ADR-043 | Complete Property + Item ownership, per-location canonical scopes, one pilot Property, Financial Period boundary, no mid-period cutover, quiescence, immutable evidence, and no mixed authority are explicit. |
+| ADR-042 | Exact posting-time sequence, null-to-sequence-1 virgin semantics, zero boundary sentinel without fabricated AVCO history, locked AVCO state, strict N/N+1 barrier, closed-context fail-closed handling, structured equivalence, atomic apply/delivered transaction, durable failures, and no automatic retry are explicit. |
+| ADR-043 | Complete Property + Item ownership, controlled synchronous bootstrap, per-location canonical scopes, one pilot Property, Financial Period boundary, no mid-period cutover, quiescence, immutable evidence, GL authority-path proof, and no mixed authority are explicit. |
 | ADR-079 | `InventoryStockMovement` remains quantity-only and is not promoted to monetary or Cost Ledger source authority. |
 | ADR-080 | Controlled Goods Receipt movement evidence is not conflated with the transaction/valuation universe or AP/GL. |
 | ADR-081 | Inventory movement ownership and quantity protection remain unchanged; no unified-ledger or correction claim is made. |
@@ -729,7 +815,7 @@ The implementing package must use the repository regression-baseline registry to
 
 `ADR_VERDICT = NO_NEW_ADR_REQUIRED_FOR_CC_P01_PLAN`
 
-The selected tables, source stamp, application ports, locks, and service boundaries are implementation details required to realize already accepted ADR-041/042/043 and INV-G1 decisions. They do not introduce a new source authority, dependency direction, accounting boundary, retry policy, correction policy, or rollout model.
+The selected tables, source stamp, zero cutover sentinel, ownership bootstrap, application ports, GL readiness proof, locks, and service boundaries are implementation details required to realize already accepted ADR-041/042/043 and INV-G1 decisions. They do not introduce a new source authority, dependency direction, accounting boundary, retry policy, correction policy, or rollout model. Zero never fabricates historical valuation evidence.
 
 ## Explicit package non-goals
 
@@ -745,14 +831,17 @@ The selected tables, source stamp, application ports, locks, and service boundar
 
 - Recommended architecture: CostControl control plane + Inventory-owned mode/application ports + immutable source stamp + source-unique Cost Ledger + CostControl deferred consumer.
 - Delivery-mode persistence: `cost_delivery_mode_ownerships` at complete Property + Item enrollment-group scope.
-- Cutover persistence: immutable cutover and complete per-location N/N+1 scope evidence.
+- Existing-enrollment bootstrap: controlled CostControl service creates exact synchronous version 1 ownership before mandatory stamping; missing enrolled ownership fails closed.
+- Cutover persistence: immutable cutover and complete per-location N/N+1 scope evidence, with virgin 0/1 sentinel and null AVCO state preserved until sequence 1 applies.
 - Historical disposition: immutable CostControl classification separate from shared outbox state.
 - Eligibility: one fail-closed CostControl service with under-lock revalidation.
 - Cross-mode idempotency: unique source transaction plus exact equivalence.
+- Existing-source idempotency: immutable original mode stamp or historical disposition remains authoritative across later ownership cutover.
 - Reversal: same source stamp/outbox/mode pipeline as other valuation-sequence-producing transactions.
 - Synchronous bypass: ownership lock before sequence/state work and port revalidation before apply.
 - Cutover: non-UI controlled application service with one-pilot, boundary, quiescence, document, disposition, watermark, and reversal gates.
 - Concurrency: one canonical ownership-first PostgreSQL lock order with isolated two-context proofs.
+- GL readiness: accepted CC-P01G source/test record must state `GL_AUTHORITY_PATH_PROOF = PASS` before Owner pilot authorization.
 - Observability: durable disposition/outcome and cutover-attempt records; no log-only business state.
 - Recovery: separate future authorization; no automatic retry or broad replay.
 - Implementation order: `CC-P01A -> CC-P01B -> CC-P01C -> CC-P01D -> CC-P01E -> CC-P01F -> CC-P01G`.
@@ -771,4 +860,4 @@ The selected tables, source stamp, application ports, locks, and service boundar
 
 `PACKAGE_21_ACTIVATED = NO`
 
-`FINAL_STATUS = CC_P01_IMPLEMENTATION_PLAN_AWAITING_INDEPENDENT_REVIEW`
+`FINAL_STATUS = CC_P01_PLAN_CORRECTED_AWAITING_INDEPENDENT_RE_REVIEW`
