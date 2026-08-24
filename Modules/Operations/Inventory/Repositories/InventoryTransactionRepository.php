@@ -4,7 +4,12 @@ namespace Modules\Operations\Inventory\Repositories;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Str;
+use InvalidArgumentException;
+use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\ValueObjects\CostDeliveryPostingDecision;
+use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
 
 class InventoryTransactionRepository
 {
@@ -55,7 +60,7 @@ class InventoryTransactionRepository
 
     public function create(array $data): InventoryTransaction
     {
-        $transaction = (new InventoryTransaction())->forceFill($data);
+        $transaction = (new InventoryTransaction)->forceFill($data);
         $transaction->save();
 
         return $transaction;
@@ -67,7 +72,7 @@ class InventoryTransactionRepository
     }
 
     public function appendControlled(
-        \Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent $intent,
+        InventoryLedgerPostingIntent $intent,
         string $quantityBefore,
         string $quantityAfter,
         string $valuationApprovalStatus,
@@ -76,9 +81,28 @@ class InventoryTransactionRepository
         ?string $currencyCode = null,
         ?string $financialPeriodId = null,
         ?string $valuationScope = null,
-        ?int $valuationSequence = null
+        ?int $valuationSequence = null,
+        ?CostDeliveryPostingDecision $costDeliveryDecision = null
     ): InventoryTransaction {
-        $transaction = new InventoryTransaction();
+        if ($costDeliveryDecision !== null
+            && ($costDeliveryDecision->propertyId !== $intent->propertyId
+                || $costDeliveryDecision->itemId !== $intent->itemId)) {
+            throw new InvalidArgumentException(
+                'Cost delivery posting decision Property/Item identity does not match the Inventory intent.'
+            );
+        }
+
+        if ($costDeliveryDecision !== null
+            && $costDeliveryDecision->outcome !== CostDeliveryPostingDecision::NOT_ENROLLED
+            && ($costDeliveryDecision->locationId !== $intent->locationId
+                || $valuationScope === null
+                || $costDeliveryDecision->valuationScope !== $valuationScope)) {
+            throw new InvalidArgumentException(
+                'Cost delivery posting decision scope does not match the Inventory intent.'
+            );
+        }
+
+        $transaction = new InventoryTransaction;
 
         $transaction->property_id = $intent->propertyId;
         $transaction->item_id = $intent->itemId;
@@ -89,6 +113,10 @@ class InventoryTransactionRepository
         $transaction->valuation_sequence = $valuationSequence;
         $transaction->valuation_approval_status = $valuationApprovalStatus;
         $transaction->valuation_approval_reference = $valuationApprovalReference;
+        $transaction->cost_delivery_mode = $costDeliveryDecision?->deliveryMode;
+        $transaction->cost_delivery_ownership_id = $costDeliveryDecision?->ownershipId;
+        $transaction->cost_delivery_ownership_version = $costDeliveryDecision?->ownershipVersion;
+        $transaction->cost_delivery_cutover_id = $costDeliveryDecision?->cutoverId;
 
         // Controlled fields
         $transaction->business_date = $intent->businessDate;
@@ -152,9 +180,9 @@ class InventoryTransactionRepository
         string $idempotencyKey,
         ?string $actorId = null
     ): InventoryTransaction {
-        $transaction = new InventoryTransaction();
+        $transaction = new InventoryTransaction;
 
-        $transaction->id = (string) \Illuminate\Support\Str::ulid();
+        $transaction->id = (string) Str::ulid();
         $transaction->property_id = $original->property_id;
         $transaction->item_id = $original->item_id;
         $transaction->location_id = $original->location_id;
@@ -176,7 +204,7 @@ class InventoryTransactionRepository
         $transaction->idempotency_key = $idempotencyKey;
 
         // Cost and values negated
-        $transaction->transaction_type = \Modules\Operations\Inventory\Enums\TransactionTypeEnum::Reversal;
+        $transaction->transaction_type = TransactionTypeEnum::Reversal;
         $transaction->quantity_before = $quantityBefore;
         $transaction->quantity_change = bcmul((string) $original->quantity_change, '-1', 4);
         $transaction->quantity_after = $quantityAfter;
