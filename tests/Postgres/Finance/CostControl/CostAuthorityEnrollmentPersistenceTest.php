@@ -2,17 +2,21 @@
 
 namespace Tests\Postgres\Finance\CostControl;
 
-use Tests\PostgresTestCase;
+use Carbon\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
-use RuntimeException;
-use Carbon\Carbon;
 use Modules\Finance\CostControl\Enums\CostAuthorityEnrollmentStatusEnum;
 use Modules\Finance\CostControl\Models\CostAuthorityEnrollmentGroup;
 use Modules\Finance\CostControl\Models\CostAuthorityEnrollmentScopeSnapshot;
 use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
+use Modules\Finance\CostControl\Repositories\CostDeliveryModeOwnershipRepository;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Operations\Inventory\Models\InventoryCategory;
+use Modules\Operations\Inventory\Models\InventoryItem;
+use Tests\PostgresTestCase;
 
 class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 {
@@ -28,22 +32,42 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
     }
 
     private CostAuthorityEnrollmentRepository $repo;
+
     private string $propertyId;
+
     private string $itemId;
+
     private string $locationA;
+
     private string $locationB;
+
     private string $actorId;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->repo       = new CostAuthorityEnrollmentRepository();
-        $this->propertyId = (string) Str::ulid();
-        $this->itemId     = (string) Str::ulid();
-        $this->locationA  = (string) Str::ulid();
-        $this->locationB  = (string) Str::ulid();
-        $this->actorId    = (string) Str::ulid();
+        $this->repo = new CostAuthorityEnrollmentRepository;
+        $property = Property::where('currency', 'USD')->firstOrFail();
+        $category = InventoryCategory::firstOrCreate([
+            'property_id' => $property->id,
+            'name' => 'Cost Authority Enrollment Persistence',
+        ]);
+        $item = InventoryItem::create([
+            'property_id' => $property->id,
+            'category_id' => $category->id,
+            'sku' => 'CAEP-'.Str::random(10),
+            'name' => 'Cost Authority Enrollment Persistence Item',
+            'inventory_type' => 'goods',
+            'weighted_average_cost' => 0,
+            'is_active' => true,
+        ]);
+
+        $this->propertyId = $property->id;
+        $this->itemId = $item->id;
+        $this->locationA = (string) Str::ulid();
+        $this->locationB = (string) Str::ulid();
+        $this->actorId = (string) Str::ulid();
     }
 
     // -------------------------------------------------------------------------
@@ -62,15 +86,15 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
     private function makeSnapshot(string $locationId, ?string $scope = null, array $overrides = []): array
     {
         return array_merge([
-            'location_id'            => $locationId,
-            'valuation_scope'        => $scope ?? $this->canonicalScope($locationId),
-            'opening_quantity'       => '100.0000',
+            'location_id' => $locationId,
+            'valuation_scope' => $scope ?? $this->canonicalScope($locationId),
+            'opening_quantity' => '100.0000',
             'opening_carrying_value' => '1500.0000',
-            'currency_code'          => 'USD',
-            'business_date'          => '2026-07-01',
-            'financial_period_id'    => (string) Str::ulid(),
-            'source_reference'       => 'MIGRATION-PACKAGE-001',
-            'evidence_timestamp'     => now()->toDateTimeString(),
+            'currency_code' => 'USD',
+            'business_date' => '2026-07-01',
+            'financial_period_id' => (string) Str::ulid(),
+            'source_reference' => 'MIGRATION-PACKAGE-001',
+            'evidence_timestamp' => now()->toDateTimeString(),
         ], $overrides);
     }
 
@@ -85,6 +109,24 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
             ['property_id' => $this->propertyId, 'item_id' => $this->itemId],
             $snapshots
         );
+    }
+
+    private function commitEnrollmentWithOwnership(CostAuthorityEnrollmentGroup $group): void
+    {
+        DB::transaction(function () use ($group): void {
+            DB::table('cost_authority_enrollment_groups')
+                ->where('id', $group->id)
+                ->update([
+                    'status' => 'enrolled',
+                    'enrolled_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+            app(CostDeliveryModeOwnershipRepository::class)->createInitialSynchronous(
+                CostAuthorityEnrollmentGroup::findOrFail($group->id),
+                $this->actorId,
+            );
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -104,7 +146,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
         $this->assertCount(2, $snapshots);
 
         $locationIds = $snapshots->pluck('location_id')->sort()->values()->toArray();
-        $expected    = collect([$this->locationA, $this->locationB])->sort()->values()->toArray();
+        $expected = collect([$this->locationA, $this->locationB])->sort()->values()->toArray();
         $this->assertEquals($expected, $locationIds);
 
         // Verify each snapshot carries its canonical valuation_scope.
@@ -123,7 +165,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
     public function test_duplicate_location_within_group_is_rejected(): void
     {
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         // Both snapshots share location_id — must violate uk_caess_group_location.
         $this->repo->createDraft(
@@ -156,7 +198,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
     public function test_draft_to_approved_succeeds_with_metadata(): void
     {
-        $group    = $this->makeDraftGroup();
+        $group = $this->makeDraftGroup();
         $approvedAt = Carbon::now();
 
         $updated = DB::transaction(
@@ -174,7 +216,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
     public function test_draft_to_approved_pg_trigger_rejects_missing_approved_by(): void
     {
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/requires approved_by and approved_at/');
 
         $group = $this->makeDraftGroup();
@@ -184,10 +226,10 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
             DB::table('cost_authority_enrollment_groups')
                 ->where('id', $group->id)
                 ->update([
-                    'status'      => 'approved',
+                    'status' => 'approved',
                     'approved_by' => null,
                     'approved_at' => now(),
-                    'updated_at'  => now(),
+                    'updated_at' => now(),
                 ]);
         });
     }
@@ -203,7 +245,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
         DB::transaction(fn () => $this->repo->approve($group->id, $this->actorId, $approvedAt));
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/property_id is immutable/');
 
         DB::table('cost_authority_enrollment_groups')
@@ -218,7 +260,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
         DB::transaction(fn () => $this->repo->approve($group->id, $this->actorId, $approvedAt));
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/item_id is immutable/');
 
         DB::table('cost_authority_enrollment_groups')
@@ -233,7 +275,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
         DB::transaction(fn () => $this->repo->approve($group->id, $this->actorId, $approvedAt));
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/approved_by is immutable after approval/');
 
         DB::table('cost_authority_enrollment_groups')
@@ -254,7 +296,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
         $snapshot = CostAuthorityEnrollmentScopeSnapshot::where('enrollment_group_id', $group->id)->first();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/snapshot changes are not allowed when parent status=approved/');
 
         DB::table('cost_authority_enrollment_scope_snapshots')
@@ -271,22 +313,22 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
         $newLocationId = (string) Str::ulid();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         // Parent-draft guard fires before canonical-scope guard — existing message.
         $this->expectExceptionMessageMatches('/snapshot changes are not allowed when parent status=approved/');
 
         DB::table('cost_authority_enrollment_scope_snapshots')->insert([
-            'id'                     => (string) Str::ulid(),
-            'enrollment_group_id'    => $group->id,
-            'location_id'            => $newLocationId,
-            'valuation_scope'        => $this->canonicalScope($newLocationId),
-            'opening_quantity'       => '1.0000',
+            'id' => (string) Str::ulid(),
+            'enrollment_group_id' => $group->id,
+            'location_id' => $newLocationId,
+            'valuation_scope' => $this->canonicalScope($newLocationId),
+            'opening_quantity' => '1.0000',
             'opening_carrying_value' => '10.0000',
-            'currency_code'          => 'USD',
-            'business_date'          => '2026-07-01',
-            'evidence_timestamp'     => now(),
-            'created_at'             => now(),
-            'updated_at'             => now(),
+            'currency_code' => 'USD',
+            'business_date' => '2026-07-01',
+            'evidence_timestamp' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
     }
 
@@ -299,7 +341,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
         $snapshot = CostAuthorityEnrollmentScopeSnapshot::where('enrollment_group_id', $group->id)->first();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/snapshot changes are not allowed when parent status=approved/');
 
         DB::table('cost_authority_enrollment_scope_snapshots')
@@ -327,7 +369,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
     public function test_approved_to_superseded_pg_trigger_rejects_missing_reason(): void
     {
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/requires superseded_by, superseded_at, and non-empty superseded_reason/');
 
         $group = $this->makeDraftGroup();
@@ -337,40 +379,51 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
         DB::table('cost_authority_enrollment_groups')
             ->where('id', $group->id)
             ->update([
-                'status'          => 'superseded',
-                'superseded_by'   => $this->actorId,
-                'superseded_at'   => now(),
+                'status' => 'superseded',
+                'superseded_by' => $this->actorId,
+                'superseded_at' => now(),
                 'superseded_reason' => '',   // empty — trigger must reject
-                'updated_at'      => now(),
+                'updated_at' => now(),
             ]);
     }
 
     // -------------------------------------------------------------------------
-    // Test 9: approved → enrolled succeeds only when enrolled_at is supplied
-    //         (direct model write — repository intentionally has no enroll())
+    // Test 9: approved → enrolled without ownership fails at commit
     // -------------------------------------------------------------------------
 
-    public function test_approved_to_enrolled_succeeds_with_enrolled_at(): void
+    public function test_approved_to_enrolled_without_initial_ownership_fails_at_commit(): void
     {
         $group = $this->makeDraftGroup();
         DB::transaction(fn () => $this->repo->approve($group->id, $this->actorId, Carbon::now()));
 
-        DB::table('cost_authority_enrollment_groups')
-            ->where('id', $group->id)
-            ->update([
-                'status'      => 'enrolled',
-                'enrolled_at' => now(),
-                'updated_at'  => now(),
-            ]);
+        try {
+            DB::transaction(function () use ($group): void {
+                DB::table('cost_authority_enrollment_groups')
+                    ->where('id', $group->id)
+                    ->update([
+                        'status' => 'enrolled',
+                        'enrolled_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+            });
+            $this->fail('ENROLLED must not commit without an equivalent initial ownership.');
+        } catch (\Throwable $exception) {
+            $this->assertStringContainsString(
+                'ENROLLED commit requires exactly one equivalent initial SYNCHRONOUS ownership',
+                $exception->getMessage(),
+            );
+        }
 
-        $fresh = CostAuthorityEnrollmentGroup::find($group->id);
-        $this->assertEquals(CostAuthorityEnrollmentStatusEnum::Enrolled, $fresh->status);
-        $this->assertNotNull($fresh->enrolled_at);
+        $this->assertSame(CostAuthorityEnrollmentStatusEnum::Approved, $group->fresh()->status);
+        $this->assertSame(
+            0,
+            DB::table('cost_delivery_mode_ownerships')->where('enrollment_group_id', $group->id)->count(),
+        );
     }
 
     public function test_approved_to_enrolled_pg_trigger_rejects_missing_enrolled_at(): void
     {
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/requires enrolled_at/');
 
         $group = $this->makeDraftGroup();
@@ -379,9 +432,9 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
         DB::table('cost_authority_enrollment_groups')
             ->where('id', $group->id)
             ->update([
-                'status'      => 'enrolled',
+                'status' => 'enrolled',
                 'enrolled_at' => null,    // missing — trigger must reject
-                'updated_at'  => now(),
+                'updated_at' => now(),
             ]);
     }
 
@@ -391,14 +444,12 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
     public function test_partial_unique_index_rejects_second_enrolled_group(): void
     {
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         // Enroll first group
         $group1 = $this->makeDraftGroup();
         DB::transaction(fn () => $this->repo->approve($group1->id, $this->actorId, Carbon::now()));
-        DB::table('cost_authority_enrollment_groups')
-            ->where('id', $group1->id)
-            ->update(['status' => 'enrolled', 'enrolled_at' => now(), 'updated_at' => now()]);
+        $this->commitEnrollmentWithOwnership($group1);
 
         // Attempt to enroll second group for same property + item
         $group2 = $this->repo->createDraft(
@@ -421,11 +472,9 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
     {
         $group = $this->makeDraftGroup();
         DB::transaction(fn () => $this->repo->approve($group->id, $this->actorId, Carbon::now()));
-        DB::table('cost_authority_enrollment_groups')
-            ->where('id', $group->id)
-            ->update(['status' => 'enrolled', 'enrolled_at' => now(), 'updated_at' => now()]);
+        $this->commitEnrollmentWithOwnership($group);
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/status=enrolled records are immutable/');
 
         DB::table('cost_authority_enrollment_groups')
@@ -437,11 +486,9 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
     {
         $group = $this->makeDraftGroup();
         DB::transaction(fn () => $this->repo->approve($group->id, $this->actorId, Carbon::now()));
-        DB::table('cost_authority_enrollment_groups')
-            ->where('id', $group->id)
-            ->update(['status' => 'enrolled', 'enrolled_at' => now(), 'updated_at' => now()]);
+        $this->commitEnrollmentWithOwnership($group);
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/status=enrolled records cannot be deleted/');
 
         DB::table('cost_authority_enrollment_groups')
@@ -456,33 +503,33 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
     public function test_pg_trigger_rejects_non_canonical_valuation_scope(): void
     {
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/valuation_scope is not canonical/');
 
         // Insert a parent group directly to bypass the repository scope guard.
         $groupId = (string) Str::ulid();
         DB::table('cost_authority_enrollment_groups')->insert([
-            'id'          => $groupId,
+            'id' => $groupId,
             'property_id' => $this->propertyId,
-            'item_id'     => $this->itemId,
-            'status'      => 'draft',
-            'created_at'  => now(),
-            'updated_at'  => now(),
+            'item_id' => $this->itemId,
+            'status' => 'draft',
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
         // Insert a snapshot with an arbitrary (non-canonical) scope string.
         DB::table('cost_authority_enrollment_scope_snapshots')->insert([
-            'id'                     => (string) Str::ulid(),
-            'enrollment_group_id'    => $groupId,
-            'location_id'            => $this->locationA,
-            'valuation_scope'        => 'arbitrary:non:canonical:string',
-            'opening_quantity'       => '100.0000',
+            'id' => (string) Str::ulid(),
+            'enrollment_group_id' => $groupId,
+            'location_id' => $this->locationA,
+            'valuation_scope' => 'arbitrary:non:canonical:string',
+            'opening_quantity' => '100.0000',
             'opening_carrying_value' => '1500.0000',
-            'currency_code'          => 'USD',
-            'business_date'          => '2026-07-01',
-            'evidence_timestamp'     => now(),
-            'created_at'             => now(),
-            'updated_at'             => now(),
+            'currency_code' => 'USD',
+            'business_date' => '2026-07-01',
+            'evidence_timestamp' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
     }
 
@@ -494,7 +541,7 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
 
     public function test_unique_index_rejects_second_snapshot_for_same_location(): void
     {
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         // First snapshot for locationA.
         $group = $this->makeDraftGroup([
@@ -504,17 +551,17 @@ class CostAuthorityEnrollmentPersistenceTest extends PostgresTestCase
         // Second snapshot for the same locationA — canonical scope is identical
         // (confirmed by canonicalScope helper), so uk_caess_group_location fires.
         DB::table('cost_authority_enrollment_scope_snapshots')->insert([
-            'id'                     => (string) Str::ulid(),
-            'enrollment_group_id'    => $group->id,
-            'location_id'            => $this->locationA,
-            'valuation_scope'        => $this->canonicalScope($this->locationA),
-            'opening_quantity'       => '50.0000',
+            'id' => (string) Str::ulid(),
+            'enrollment_group_id' => $group->id,
+            'location_id' => $this->locationA,
+            'valuation_scope' => $this->canonicalScope($this->locationA),
+            'opening_quantity' => '50.0000',
             'opening_carrying_value' => '750.0000',
-            'currency_code'          => 'USD',
-            'business_date'          => '2026-07-01',
-            'evidence_timestamp'     => now(),
-            'created_at'             => now(),
-            'updated_at'             => now(),
+            'currency_code' => 'USD',
+            'business_date' => '2026-07-01',
+            'evidence_timestamp' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
     }
 }
