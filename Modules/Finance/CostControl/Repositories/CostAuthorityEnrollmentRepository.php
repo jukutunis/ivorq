@@ -3,13 +3,14 @@
 namespace Modules\Finance\CostControl\Repositories;
 
 use DateTimeInterface;
-use InvalidArgumentException;
-use RuntimeException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use Modules\Finance\CostControl\Enums\CostAuthorityEnrollmentStatusEnum;
 use Modules\Finance\CostControl\Models\CostAuthorityEnrollmentGroup;
 use Modules\Finance\CostControl\Models\CostAuthorityEnrollmentScopeSnapshot;
+use RuntimeException;
 
 class CostAuthorityEnrollmentRepository
 {
@@ -25,7 +26,7 @@ class CostAuthorityEnrollmentRepository
      *   - Does not write any sequence baseline or item WAC.
      *   - Trigger constraints are the final lifecycle authority.
      *
-     * @param  array<string, mixed>   $groupAttributes   Fields for the parent group.
+     * @param  array<string, mixed>  $groupAttributes  Fields for the parent group.
      * @param  array<int, array<string, mixed>>  $snapshotAttributes  Array of per-scope snapshot field arrays.
      */
     public function createDraft(
@@ -42,29 +43,29 @@ class CostAuthorityEnrollmentRepository
             $groupId = (string) Str::ulid();
 
             DB::table('cost_authority_enrollment_groups')->insert([
-                'id'          => $groupId,
+                'id' => $groupId,
                 'property_id' => $groupAttributes['property_id'],
-                'item_id'     => $groupAttributes['item_id'],
-                'status'      => CostAuthorityEnrollmentStatusEnum::Draft->value,
-                'created_at'  => now(),
-                'updated_at'  => now(),
+                'item_id' => $groupAttributes['item_id'],
+                'status' => CostAuthorityEnrollmentStatusEnum::Draft->value,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
 
             foreach ($snapshotAttributes as $snapshot) {
                 DB::table('cost_authority_enrollment_scope_snapshots')->insert([
-                    'id'                     => (string) Str::ulid(),
-                    'enrollment_group_id'    => $groupId,
-                    'location_id'            => $snapshot['location_id'],
-                    'valuation_scope'        => $snapshot['valuation_scope'],
-                    'opening_quantity'       => $snapshot['opening_quantity'],
+                    'id' => (string) Str::ulid(),
+                    'enrollment_group_id' => $groupId,
+                    'location_id' => $snapshot['location_id'],
+                    'valuation_scope' => $snapshot['valuation_scope'],
+                    'opening_quantity' => $snapshot['opening_quantity'],
                     'opening_carrying_value' => $snapshot['opening_carrying_value'],
-                    'currency_code'          => $snapshot['currency_code'],
-                    'business_date'          => $snapshot['business_date'],
-                    'financial_period_id'    => $snapshot['financial_period_id'],
-                    'source_reference'       => $snapshot['source_reference'] ?? null,
-                    'evidence_timestamp'     => $snapshot['evidence_timestamp'],
-                    'created_at'             => now(),
-                    'updated_at'             => now(),
+                    'currency_code' => $snapshot['currency_code'],
+                    'business_date' => $snapshot['business_date'],
+                    'financial_period_id' => $snapshot['financial_period_id'],
+                    'source_reference' => $snapshot['source_reference'] ?? null,
+                    'evidence_timestamp' => $snapshot['evidence_timestamp'],
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ]);
             }
 
@@ -92,12 +93,12 @@ class CostAuthorityEnrollmentRepository
 
         if ($group->status !== CostAuthorityEnrollmentStatusEnum::Draft) {
             throw new InvalidArgumentException(
-                "CostAuthorityEnrollmentRepository::approve requires status='draft'. " .
+                "CostAuthorityEnrollmentRepository::approve requires status='draft'. ".
                 "Current status: '{$group->status->value}'."
             );
         }
 
-        $group->status      = CostAuthorityEnrollmentStatusEnum::Approved;
+        $group->status = CostAuthorityEnrollmentStatusEnum::Approved;
         $group->approved_by = $approvedBy;
         $group->approved_at = $approvedAt;
         $group->save();
@@ -129,14 +130,14 @@ class CostAuthorityEnrollmentRepository
 
         if ($group->status !== CostAuthorityEnrollmentStatusEnum::Draft) {
             throw new InvalidArgumentException(
-                "CostAuthorityEnrollmentRepository::reject requires status='draft'. " .
+                "CostAuthorityEnrollmentRepository::reject requires status='draft'. ".
                 "Current status: '{$group->status->value}'."
             );
         }
 
-        $group->status          = CostAuthorityEnrollmentStatusEnum::Rejected;
-        $group->rejected_by     = $rejectedBy;
-        $group->rejected_at     = $rejectedAt;
+        $group->status = CostAuthorityEnrollmentStatusEnum::Rejected;
+        $group->rejected_by = $rejectedBy;
+        $group->rejected_at = $rejectedAt;
         $group->rejected_reason = $reason;
         $group->save();
 
@@ -167,15 +168,44 @@ class CostAuthorityEnrollmentRepository
 
         if ($group->status !== CostAuthorityEnrollmentStatusEnum::Approved) {
             throw new InvalidArgumentException(
-                "CostAuthorityEnrollmentRepository::supersedeApproved requires status='approved'. " .
+                "CostAuthorityEnrollmentRepository::supersedeApproved requires status='approved'. ".
                 "Current status: '{$group->status->value}'."
             );
         }
 
-        $group->status             = CostAuthorityEnrollmentStatusEnum::Superseded;
-        $group->superseded_by      = $supersededBy;
-        $group->superseded_at      = $supersededAt;
-        $group->superseded_reason  = $reason;
+        $group->status = CostAuthorityEnrollmentStatusEnum::Superseded;
+        $group->superseded_by = $supersededBy;
+        $group->superseded_at = $supersededAt;
+        $group->superseded_reason = $reason;
+        $group->save();
+
+        return $group->fresh();
+    }
+
+    /**
+     * Advance an approved enrollment group to enrolled.
+     *
+     * This method only performs the lifecycle transition. The caller owns the
+     * outer transaction and must create the matching initial delivery ownership
+     * before commit. The deferred PostgreSQL constraint is the final authority.
+     */
+    public function enrollApproved(
+        string $groupId,
+        DateTimeInterface $enrolledAt
+    ): CostAuthorityEnrollmentGroup {
+        $this->requireTransaction(__METHOD__);
+
+        $group = $this->findForUpdate($groupId);
+
+        if ($group->status !== CostAuthorityEnrollmentStatusEnum::Approved) {
+            throw new InvalidArgumentException(
+                "CostAuthorityEnrollmentRepository::enrollApproved requires status='approved'. ".
+                "Current status: '{$group->status->value}'."
+            );
+        }
+
+        $group->status = CostAuthorityEnrollmentStatusEnum::Enrolled;
+        $group->enrolled_at = $enrolledAt;
         $group->save();
 
         return $group->fresh();
@@ -191,7 +221,7 @@ class CostAuthorityEnrollmentRepository
      *
      * MUST be called inside an active outer transaction.
      */
-    public function findSnapshotsLockedByLocationOrder(string $groupId): \Illuminate\Support\Collection
+    public function findSnapshotsLockedByLocationOrder(string $groupId): Collection
     {
         $this->requireTransaction(__METHOD__);
 

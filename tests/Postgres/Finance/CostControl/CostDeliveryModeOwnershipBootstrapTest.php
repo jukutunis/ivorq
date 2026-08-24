@@ -341,7 +341,10 @@ try {
     \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_groups')->insert(['id'=>$groupId,'property_id'=>$propertyId,'item_id'=>$itemId,'status'=>'draft','created_at'=>now(),'updated_at'=>now()]);
     \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_scope_snapshots')->insert(['id'=>(string)\Illuminate\Support\Str::ulid(),'enrollment_group_id'=>$groupId,'location_id'=>$locationId,'valuation_scope'=>"property:{$propertyId}:location:{$locationId}:item:{$itemId}",'opening_quantity'=>0,'opening_carrying_value'=>0,'currency_code'=>'USD','business_date'=>'2026-08-01','financial_period_id'=>$periodId,'source_reference'=>'CC-P01A-CONCURRENCY','evidence_timestamp'=>now(),'created_at'=>now(),'updated_at'=>now()]);
     \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_groups')->where('id',$groupId)->update(['status'=>'approved','approved_by'=>$actorId,'approved_at'=>now(),'updated_at'=>now()]);
-    \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_groups')->where('id',$groupId)->update(['status'=>'enrolled','enrolled_at'=>now(),'updated_at'=>now()]);
+    \Illuminate\Support\Facades\DB::transaction(function()use($groupId,$actorId){
+        \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_groups')->where('id',$groupId)->update(['status'=>'enrolled','enrolled_at'=>now(),'updated_at'=>now()]);
+        app(\Modules\Finance\CostControl\Services\CostDeliveryModeOwnershipBootstrapService::class)->bootstrap($groupId,$actorId);
+    });
 
     $worker = <<<'WORKER'
 $base=$argv[1]; $db=$argv[2]; $group=$argv[3]; $actor=$argv[4]; $dir=$argv[5]; $name=$argv[6];
