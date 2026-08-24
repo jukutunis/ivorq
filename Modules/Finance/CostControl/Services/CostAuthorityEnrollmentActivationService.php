@@ -83,6 +83,16 @@ class CostAuthorityEnrollmentActivationService
                 );
             }
 
+            if ($this->ownershipRepository->findForUpdateByEnrollmentGroup($group->id) !== null
+                || $this->ownershipRepository->findForUpdateByPropertyItem(
+                    $group->property_id,
+                    $group->item_id,
+                ) !== null) {
+                throw new RuntimeException(
+                    'CostAuthorityEnrollmentActivationService: conflicting delivery ownership already exists.'
+                );
+            }
+
             $states = $this->avcoStateRepository->findLockedByScopesOrdered(
                 $group->property_id,
                 $group->item_id,
@@ -120,16 +130,6 @@ class CostAuthorityEnrollmentActivationService
                         "CostAuthorityEnrollmentActivationService: seeded CostAvcoState baseline mismatch for snapshot '{$snapshot->id}'."
                     );
                 }
-            }
-
-            if ($this->ownershipRepository->findForUpdateByEnrollmentGroup($group->id) !== null
-                || $this->ownershipRepository->findForUpdateByPropertyItem(
-                    $group->property_id,
-                    $group->item_id,
-                ) !== null) {
-                throw new RuntimeException(
-                    'CostAuthorityEnrollmentActivationService: conflicting delivery ownership already exists.'
-                );
             }
 
             $enrolled = $this->enrollmentRepository->enrollApproved($group->id, now());

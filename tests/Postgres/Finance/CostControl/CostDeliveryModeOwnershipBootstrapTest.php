@@ -312,7 +312,7 @@ class CostDeliveryModeOwnershipBootstrapTest extends PostgresTestCase
 $base = $argv[1]; $database = $argv[2]; $dir = $argv[3]; $resultFile = $argv[4];
 $host = getenv('DB_HOST') ?: '127.0.0.1'; $port = getenv('DB_PORT') ?: '5432';
 $user = getenv('DB_USERNAME') ?: ''; $pass = getenv('DB_PASSWORD') ?: '';
-$result = ['ok' => false, 'db_created' => false, 'db_dropped' => false, 'workers' => [], 'count' => null, 'row' => null, 'error' => null];
+$result = ['ok' => false, 'db_created' => false, 'db_dropped' => false, 'guard_restored' => false, 'historical_status' => null, 'pre_worker_count' => null, 'workers' => [], 'count' => null, 'row' => null, 'error' => null];
 $quote = fn (string $name): string => '"' . preg_replace('/[^a-z0-9_]/', '', $name) . '"';
 $admin = null;
 try {
@@ -325,6 +325,9 @@ try {
     config(['database.connections.pgsql.database' => $database]);
     \Illuminate\Support\Facades\DB::purge('pgsql'); \Illuminate\Support\Facades\DB::reconnect('pgsql');
     \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
+
+    $guardMigration = require $base . '/Modules/Finance/CostControl/database/migrations/2026_08_21_000500_enforce_atomic_cost_delivery_ownership_on_cost_authority_enrollment.php';
+    $guardMigration->down();
 
     $companyId = (string) \Illuminate\Support\Str::ulid();
     \Illuminate\Support\Facades\DB::table('companies')->insert(['id'=>$companyId,'name'=>'CCP01A Company','slug'=>'ccp01a-'.\Illuminate\Support\Str::random(8),'created_at'=>now(),'updated_at'=>now()]);
@@ -341,10 +344,12 @@ try {
     \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_groups')->insert(['id'=>$groupId,'property_id'=>$propertyId,'item_id'=>$itemId,'status'=>'draft','created_at'=>now(),'updated_at'=>now()]);
     \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_scope_snapshots')->insert(['id'=>(string)\Illuminate\Support\Str::ulid(),'enrollment_group_id'=>$groupId,'location_id'=>$locationId,'valuation_scope'=>"property:{$propertyId}:location:{$locationId}:item:{$itemId}",'opening_quantity'=>0,'opening_carrying_value'=>0,'currency_code'=>'USD','business_date'=>'2026-08-01','financial_period_id'=>$periodId,'source_reference'=>'CC-P01A-CONCURRENCY','evidence_timestamp'=>now(),'created_at'=>now(),'updated_at'=>now()]);
     \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_groups')->where('id',$groupId)->update(['status'=>'approved','approved_by'=>$actorId,'approved_at'=>now(),'updated_at'=>now()]);
-    \Illuminate\Support\Facades\DB::transaction(function()use($groupId,$actorId){
-        \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_groups')->where('id',$groupId)->update(['status'=>'enrolled','enrolled_at'=>now(),'updated_at'=>now()]);
-        app(\Modules\Finance\CostControl\Services\CostDeliveryModeOwnershipBootstrapService::class)->bootstrap($groupId,$actorId);
-    });
+    \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_groups')->where('id',$groupId)->update(['status'=>'enrolled','enrolled_at'=>now(),'updated_at'=>now()]);
+
+    $guardMigration->up();
+    $result['guard_restored'] = (bool) \Illuminate\Support\Facades\DB::selectOne("SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_caeg_enrolled_initial_ownership' AND NOT tgisinternal) AS present")->present;
+    $result['historical_status'] = \Illuminate\Support\Facades\DB::table('cost_authority_enrollment_groups')->where('id',$groupId)->value('status');
+    $result['pre_worker_count'] = \Illuminate\Support\Facades\DB::table('cost_delivery_mode_ownerships')->where('enrollment_group_id',$groupId)->count();
 
     $worker = <<<'WORKER'
 $base=$argv[1]; $db=$argv[2]; $group=$argv[3]; $actor=$argv[4]; $dir=$argv[5]; $name=$argv[6];
@@ -363,7 +368,7 @@ WORKER;
     $result['workers']=[json_decode((string)@file_get_contents($dir.'/result-A.json'),true),json_decode((string)@file_get_contents($dir.'/result-B.json'),true)];
     $result['count']=\Illuminate\Support\Facades\DB::table('cost_delivery_mode_ownerships')->where('enrollment_group_id',$groupId)->count();
     $result['row']=(array)\Illuminate\Support\Facades\DB::table('cost_delivery_mode_ownerships')->where('enrollment_group_id',$groupId)->first();
-    $result['ok']=$result['workers'][0]['ok']&&$result['workers'][1]['ok']&&$result['workers'][0]['id']===$result['workers'][1]['id']&&$result['workers'][0]['pid']!==$result['workers'][1]['pid']&&$result['count']===1;
+    $result['ok']=$result['guard_restored']&&$result['historical_status']==='enrolled'&&$result['pre_worker_count']===0&&$result['workers'][0]['ok']&&$result['workers'][1]['ok']&&$result['workers'][0]['id']===$result['workers'][1]['id']&&$result['workers'][0]['pid']!==$result['workers'][1]['pid']&&$result['count']===1;
 } catch(\Throwable $e){$result['error']=get_class($e).':'.$e->getMessage();}
 try { if(class_exists(\Illuminate\Support\Facades\DB::class)){\Illuminate\Support\Facades\DB::disconnect();\Illuminate\Support\Facades\DB::purge('pgsql');} if(!$admin){$admin=new PDO("pgsql:host={$host};port={$port};dbname=postgres",$user,$pass,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);} $stmt=$admin->prepare('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=:db AND pid<>pg_backend_pid()');$stmt->execute(['db'=>$database]);$admin->exec('DROP DATABASE IF EXISTS '.$quote($database));$result['db_dropped']=true;}catch(\Throwable $e){$result['error']=($result['error']??'').' cleanup:'.$e->getMessage();}
 file_put_contents($resultFile,json_encode($result),LOCK_EX);
@@ -397,6 +402,11 @@ PHP;
             $this->assertTrue($result['db_created'], (string) $result['error']);
             $this->assertTrue($result['db_dropped'], (string) $result['error']);
             $this->assertTrue($result['ok'], json_encode($result));
+            $this->assertTrue($result['guard_restored']);
+            $this->assertSame('enrolled', $result['historical_status']);
+            $this->assertSame(0, $result['pre_worker_count']);
+            $this->assertNotSame($result['workers'][0]['pid'], $result['workers'][1]['pid']);
+            $this->assertSame($result['workers'][0]['id'], $result['workers'][1]['id']);
             $this->assertSame(1, $result['count']);
             $this->assertSame('SYNCHRONOUS', $result['row']['delivery_mode']);
             $this->assertSame(1, (int) $result['row']['ownership_version']);
