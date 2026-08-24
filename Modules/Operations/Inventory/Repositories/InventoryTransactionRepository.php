@@ -92,6 +92,16 @@ class InventoryTransactionRepository
             );
         }
 
+        if ($costDeliveryDecision !== null
+            && $costDeliveryDecision->outcome !== CostDeliveryPostingDecision::NOT_ENROLLED
+            && ($costDeliveryDecision->locationId !== $intent->locationId
+                || $valuationScope === null
+                || $costDeliveryDecision->valuationScope !== $valuationScope)) {
+            throw new InvalidArgumentException(
+                'Cost delivery posting decision scope does not match the Inventory intent.'
+            );
+        }
+
         $transaction = new InventoryTransaction;
 
         $transaction->property_id = $intent->propertyId;

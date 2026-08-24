@@ -11,6 +11,7 @@ use InvalidArgumentException;
 use Modules\Finance\CostControl\Adapters\InventoryCostDeliveryModeAdapter;
 use Modules\Operations\Inventory\Contracts\CostDeliveryModePort;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
 use Modules\Operations\Inventory\Repositories\InventoryTransactionRepository;
 use Modules\Operations\Inventory\ValueObjects\CostDeliveryPostingDecision;
 use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
@@ -156,6 +157,188 @@ class InventoryCostDeliveryModeStampTest extends PostgresTestCase
         $this->assertNull($transaction->cost_delivery_cutover_id);
     }
 
+    public function test_repository_rejects_owned_decision_for_another_location_before_insert(): void
+    {
+        $propertyId = (string) Str::ulid();
+        $itemId = (string) Str::ulid();
+        $decisionLocationId = (string) Str::ulid();
+        $intentLocationId = (string) Str::ulid();
+        $sourceDocumentId = (string) Str::ulid();
+        $decisionScope = $this->canonicalScope($propertyId, $decisionLocationId, $itemId);
+        $intentScope = $this->canonicalScope($propertyId, $intentLocationId, $itemId);
+        $decision = CostDeliveryPostingDecision::synchronous(
+            $propertyId,
+            $itemId,
+            $decisionLocationId,
+            $decisionScope,
+            (string) Str::ulid(),
+            1,
+        );
+
+        try {
+            $this->appendDecision(
+                $this->makePostingIntent($propertyId, $itemId, $intentLocationId, $sourceDocumentId),
+                $intentScope,
+                $decision,
+            );
+            $this->fail('A decision for another Inventory Location must be rejected.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertSame(
+                'Cost delivery posting decision scope does not match the Inventory intent.',
+                $exception->getMessage(),
+            );
+        }
+
+        $this->assertDatabaseMissing('inventory_transactions', ['source_document_id' => $sourceDocumentId]);
+    }
+
+    public function test_repository_rejects_owned_decision_with_different_transaction_scope_before_insert(): void
+    {
+        $propertyId = (string) Str::ulid();
+        $itemId = (string) Str::ulid();
+        $locationId = (string) Str::ulid();
+        $sourceDocumentId = (string) Str::ulid();
+        $decisionScope = $this->canonicalScope($propertyId, $locationId, $itemId);
+        $transactionScope = $this->canonicalScope($propertyId, (string) Str::ulid(), $itemId);
+        $decision = CostDeliveryPostingDecision::synchronous(
+            $propertyId,
+            $itemId,
+            $locationId,
+            $decisionScope,
+            (string) Str::ulid(),
+            1,
+        );
+
+        try {
+            $this->appendDecision(
+                $this->makePostingIntent($propertyId, $itemId, $locationId, $sourceDocumentId),
+                $transactionScope,
+                $decision,
+            );
+            $this->fail('A decision with a different Inventory valuation scope must be rejected.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertSame(
+                'Cost delivery posting decision scope does not match the Inventory intent.',
+                $exception->getMessage(),
+            );
+        }
+
+        $this->assertDatabaseMissing('inventory_transactions', ['source_document_id' => $sourceDocumentId]);
+    }
+
+    public function test_repository_rejects_owned_decision_when_transaction_scope_is_null_before_insert(): void
+    {
+        $propertyId = (string) Str::ulid();
+        $itemId = (string) Str::ulid();
+        $locationId = (string) Str::ulid();
+        $sourceDocumentId = (string) Str::ulid();
+        $decision = CostDeliveryPostingDecision::synchronous(
+            $propertyId,
+            $itemId,
+            $locationId,
+            $this->canonicalScope($propertyId, $locationId, $itemId),
+            (string) Str::ulid(),
+            1,
+        );
+
+        try {
+            $this->appendDecision(
+                $this->makePostingIntent($propertyId, $itemId, $locationId, $sourceDocumentId),
+                null,
+                $decision,
+            );
+            $this->fail('An owned decision requires a non-null Inventory valuation scope.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertSame(
+                'Cost delivery posting decision scope does not match the Inventory intent.',
+                $exception->getMessage(),
+            );
+        }
+
+        $this->assertDatabaseMissing('inventory_transactions', ['source_document_id' => $sourceDocumentId]);
+    }
+
+    public function test_synchronous_decision_rejects_malformed_canonical_scope(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('exact canonical Property/Location/Item valuation scope');
+        CostDeliveryPostingDecision::synchronous(
+            'P1',
+            'I1',
+            'L1',
+            'arbitrary-non-empty-scope',
+            (string) Str::ulid(),
+            1,
+        );
+    }
+
+    public function test_deferred_decision_rejects_scope_for_another_location(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('exact canonical Property/Location/Item valuation scope');
+        CostDeliveryPostingDecision::deferred(
+            'P1',
+            'I1',
+            'L1',
+            'property:P1:location:L2:item:I1',
+            (string) Str::ulid(),
+            2,
+            (string) Str::ulid(),
+            5,
+            6,
+        );
+    }
+
+    public function test_deferred_decision_accepts_exact_canonical_scope_and_watermark(): void
+    {
+        $decision = CostDeliveryPostingDecision::deferred(
+            'P1',
+            'I1',
+            'L1',
+            'property:P1:location:L1:item:I1',
+            'OWNERSHIP-1',
+            2,
+            'CUTOVER-1',
+            5,
+            6,
+        );
+
+        $this->assertSame('P1', $decision->propertyId);
+        $this->assertSame('I1', $decision->itemId);
+        $this->assertSame('L1', $decision->locationId);
+        $this->assertSame('property:P1:location:L1:item:I1', $decision->valuationScope);
+        $this->assertSame(CostDeliveryPostingDecision::DEFERRED, $decision->outcome);
+        $this->assertSame(5, $decision->lastSynchronouslyOwnedSequence);
+        $this->assertSame(6, $decision->firstDeferredOwnedSequence);
+    }
+
+    public function test_not_enrolled_decision_preserves_all_null_source_stamp_and_scope_provenance(): void
+    {
+        $propertyId = (string) Str::ulid();
+        $itemId = (string) Str::ulid();
+        $locationId = (string) Str::ulid();
+        $decision = CostDeliveryPostingDecision::notEnrolled($propertyId, $itemId);
+
+        $this->assertNull($decision->locationId);
+        $this->assertNull($decision->valuationScope);
+        $this->assertNull($decision->deliveryMode);
+        $this->assertNull($decision->ownershipId);
+        $this->assertNull($decision->ownershipVersion);
+        $this->assertNull($decision->cutoverId);
+        $this->assertNull($decision->lastSynchronouslyOwnedSequence);
+        $this->assertNull($decision->firstDeferredOwnedSequence);
+
+        $transaction = $this->appendDecision(
+            $this->makePostingIntent($propertyId, $itemId, $locationId),
+            $this->canonicalScope($propertyId, $locationId, $itemId),
+            $decision,
+        );
+        $this->assertNull($transaction->cost_delivery_mode);
+        $this->assertNull($transaction->cost_delivery_ownership_id);
+        $this->assertNull($transaction->cost_delivery_ownership_version);
+        $this->assertNull($transaction->cost_delivery_cutover_id);
+    }
+
     public function test_source_stamp_fields_are_covered_by_inventory_transaction_immutability(): void
     {
         $id = $this->insertLegacyTransaction([
@@ -185,14 +368,16 @@ class InventoryCostDeliveryModeStampTest extends PostgresTestCase
     {
         $propertyId = (string) Str::ulid();
         $itemId = (string) Str::ulid();
+        $locationId = (string) Str::ulid();
+        $sourceDocumentId = (string) Str::ulid();
         $intent = new InventoryLedgerPostingIntent(
             propertyId: $propertyId,
             itemId: $itemId,
-            locationId: (string) Str::ulid(),
+            locationId: $locationId,
             businessDate: '2026-08-21',
             occurredAt: now(),
             sourceDocumentType: 'inventory_adjustment',
-            sourceDocumentId: (string) Str::ulid(),
+            sourceDocumentId: $sourceDocumentId,
             sourceLineType: 'inventory_adjustment_line',
             sourceLineId: (string) Str::ulid(),
             movementRole: 'adjustment_in',
@@ -202,11 +387,13 @@ class InventoryCostDeliveryModeStampTest extends PostgresTestCase
             unitCost: '1.0000',
             totalCost: '1.0000',
         );
+        $decisionPropertyId = (string) Str::ulid();
+        $decisionLocationId = (string) Str::ulid();
         $decision = CostDeliveryPostingDecision::synchronous(
-            (string) Str::ulid(),
+            $decisionPropertyId,
             $itemId,
-            (string) Str::ulid(),
-            'property:mismatch:location:mismatch:item:mismatch',
+            $decisionLocationId,
+            $this->canonicalScope($decisionPropertyId, $decisionLocationId, $itemId),
             (string) Str::ulid(),
             1,
         );
@@ -221,6 +408,39 @@ class InventoryCostDeliveryModeStampTest extends PostgresTestCase
             valuationApprovalReference: 'inventory_adjustment:test:approved',
             costDeliveryDecision: $decision,
         );
+    }
+
+    public function test_repository_rejects_owned_decision_item_mismatch_before_insert(): void
+    {
+        $propertyId = (string) Str::ulid();
+        $intentItemId = (string) Str::ulid();
+        $decisionItemId = (string) Str::ulid();
+        $locationId = (string) Str::ulid();
+        $sourceDocumentId = (string) Str::ulid();
+        $decision = CostDeliveryPostingDecision::synchronous(
+            $propertyId,
+            $decisionItemId,
+            $locationId,
+            $this->canonicalScope($propertyId, $locationId, $decisionItemId),
+            (string) Str::ulid(),
+            1,
+        );
+
+        try {
+            $this->appendDecision(
+                $this->makePostingIntent($propertyId, $intentItemId, $locationId, $sourceDocumentId),
+                $this->canonicalScope($propertyId, $locationId, $intentItemId),
+                $decision,
+            );
+            $this->fail('A decision for another Inventory Item must be rejected.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertSame(
+                'Cost delivery posting decision Property/Item identity does not match the Inventory intent.',
+                $exception->getMessage(),
+            );
+        }
+
+        $this->assertDatabaseMissing('inventory_transactions', ['source_document_id' => $sourceDocumentId]);
     }
 
     public function test_inventory_owned_port_is_bound_to_costcontrol_adapter_without_reverse_implementation_import(): void
@@ -251,5 +471,55 @@ class InventoryCostDeliveryModeStampTest extends PostgresTestCase
         ], $overrides));
 
         return $id;
+    }
+
+    private function canonicalScope(string $propertyId, string $locationId, string $itemId): string
+    {
+        return "property:{$propertyId}:location:{$locationId}:item:{$itemId}";
+    }
+
+    private function makePostingIntent(
+        string $propertyId,
+        string $itemId,
+        string $locationId,
+        ?string $sourceDocumentId = null
+    ): InventoryLedgerPostingIntent {
+        return new InventoryLedgerPostingIntent(
+            propertyId: $propertyId,
+            itemId: $itemId,
+            locationId: $locationId,
+            businessDate: '2026-08-21',
+            occurredAt: now(),
+            sourceDocumentType: 'inventory_adjustment',
+            sourceDocumentId: $sourceDocumentId ?? (string) Str::ulid(),
+            sourceLineType: 'inventory_adjustment_line',
+            sourceLineId: (string) Str::ulid(),
+            movementRole: 'adjustment_in',
+            idempotencyKey: 'cc-p01a-scope-'.Str::random(12),
+            transactionType: TransactionTypeEnum::AdjustmentIn,
+            quantityChange: '1.0000',
+            unitCost: '2.0000',
+            totalCost: '2.0000',
+        );
+    }
+
+    private function appendDecision(
+        InventoryLedgerPostingIntent $intent,
+        ?string $valuationScope,
+        CostDeliveryPostingDecision $decision
+    ): InventoryTransaction {
+        return app(InventoryTransactionRepository::class)->appendControlled(
+            intent: $intent,
+            quantityBefore: '0.0000',
+            quantityAfter: '1.0000',
+            valuationApprovalStatus: 'approved',
+            valuationApprovalReference: 'inventory_adjustment:test:approved',
+            actorId: (string) Str::ulid(),
+            currencyCode: 'USD',
+            financialPeriodId: (string) Str::ulid(),
+            valuationScope: $valuationScope,
+            valuationSequence: 1,
+            costDeliveryDecision: $decision,
+        );
     }
 }

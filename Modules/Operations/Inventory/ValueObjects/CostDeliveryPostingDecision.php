@@ -62,6 +62,13 @@ final readonly class CostDeliveryPostingDecision
             );
         }
 
+        $expectedValuationScope = "property:{$propertyId}:location:{$locationId}:item:{$itemId}";
+        if ($valuationScope !== $expectedValuationScope) {
+            throw new InvalidArgumentException(
+                'Owned delivery decisions require exact canonical Property/Location/Item valuation scope.'
+            );
+        }
+
         if ($outcome === self::SYNCHRONOUS
             && ($cutoverId !== null
                 || $lastSynchronouslyOwnedSequence !== null
