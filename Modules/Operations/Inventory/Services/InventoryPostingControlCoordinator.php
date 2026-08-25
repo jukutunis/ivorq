@@ -2,22 +2,27 @@
 
 namespace Modules\Operations\Inventory\Services;
 
-use Throwable;
-use Modules\Operations\Inventory\Exceptions\InventoryPostingRetryableException;
-use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
-use Modules\Operations\Inventory\Models\InventoryTransaction;
-use Modules\Operations\Inventory\Repositories\InventoryTransactionRepository;
-use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
-use Modules\Foundation\Property\Models\PropertyBusinessDate;
-use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
-use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
-use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
-use Modules\Operations\Inventory\Enums\ItemStatusEnum;
+use Illuminate\Validation\ValidationException;
+use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
 use Modules\Foundation\Outbox\Repositories\OutboxRepository;
-use Modules\Operations\Inventory\Repositories\InventoryValuationSequenceRepository;
+use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Operations\Inventory\Contracts\CostDeliveryModePort;
+use Modules\Operations\Inventory\Enums\ItemStatusEnum;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
+use Modules\Operations\Inventory\Exceptions\InventoryPostingRetryableException;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
+use Modules\Operations\Inventory\Repositories\InventoryTransactionRepository;
+use Modules\Operations\Inventory\Repositories\InventoryValuationSequenceRepository;
+use Modules\Operations\Inventory\ValueObjects\CostDeliveryPostingDecision;
+use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
+use RuntimeException;
+use Throwable;
 
 class InventoryPostingControlCoordinator
 {
@@ -32,9 +37,9 @@ class InventoryPostingControlCoordinator
         private readonly InventoryTransactionRepository $transactionRepo,
         private readonly InventoryStockRepository $stockRepo,
         private readonly OutboxRepository $outboxRepository,
-        private readonly InventoryValuationSequenceRepository $sequenceRepo
-    ) {
-    }
+        private readonly InventoryValuationSequenceRepository $sequenceRepo,
+        private readonly CostDeliveryModePort $costDeliveryModePort,
+    ) {}
 
     public function post(
         InventoryLedgerPostingIntent $intent,
@@ -58,9 +63,9 @@ class InventoryPostingControlCoordinator
                                $existing->movement_role === $intent->movementRole &&
                                $existing->item_id === $intent->itemId &&
                                $existing->location_id === $intent->locationId &&
-                               bccomp((string)$existing->quantity_change, (string)$intent->quantityChange, 4) === 0 &&
-                               bccomp((string)$existing->unit_cost, (string)$intent->unitCost, 4) === 0 &&
-                               bccomp((string)$existing->total_cost, (string)$intent->totalCost, 4) === 0;
+                               bccomp((string) $existing->quantity_change, (string) $intent->quantityChange, 4) === 0 &&
+                               bccomp((string) $existing->unit_cost, (string) $intent->unitCost, 4) === 0 &&
+                               bccomp((string) $existing->total_cost, (string) $intent->totalCost, 4) === 0;
 
                     if ($isMatch) {
                         return $existing;
@@ -71,30 +76,40 @@ class InventoryPostingControlCoordinator
                     );
                 }
 
+                $costDeliveryDecision = $this->costDeliveryModePort->resolveForPosting(
+                    $intent->propertyId,
+                    $intent->itemId,
+                    $intent->locationId,
+                );
+
+                if ($costDeliveryDecision->outcome === CostDeliveryPostingDecision::DEFERRED) {
+                    throw new RuntimeException('CC_P01A_A4_DEFERRED_SOURCE_STAMP_PROHIBITED');
+                }
+
                 [$businessDate, $period] = $this->lockContext($intent->propertyId, $intent->businessDate, $intent->occurredAt);
 
                 $stock = $this->stockRepo->createOrLockControlled($intent->propertyId, $intent->itemId, $intent->locationId);
 
-                if ($businessDate->status !== PropertyBusinessDateStatusEnum::Open || !$businessDate->is_open) {
-                    throw new RuntimeException("Business date became closed during lock acquisition.");
+                if ($businessDate->status !== PropertyBusinessDateStatusEnum::Open || ! $businessDate->is_open) {
+                    throw new RuntimeException('Business date became closed during lock acquisition.');
                 }
 
                 if ($period->status !== FinancialPeriodStatusEnum::Open && $period->status !== FinancialPeriodStatusEnum::Reopened) {
-                    throw new RuntimeException("Financial period became closed during lock acquisition.");
+                    throw new RuntimeException('Financial period became closed during lock acquisition.');
                 }
 
-                $quantityBefore = (string)$stock->physical_quantity;
-                $quantityAfter = bcadd($quantityBefore, (string)$intent->quantityChange, 4);
+                $quantityBefore = (string) $stock->physical_quantity;
+                $quantityAfter = bcadd($quantityBefore, (string) $intent->quantityChange, 4);
 
                 if (bccomp($quantityAfter, '0', 4) < 0) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                    throw ValidationException::withMessages([
                         'stock' => ["Negative stock is not allowed for item {$intent->itemId} at location {$intent->locationId}"],
                     ]);
                 }
 
-                $property = \Modules\Foundation\Property\Models\Property::findOrFail($intent->propertyId);
+                $property = Property::findOrFail($intent->propertyId);
                 $currency = trim($property->currency);
-                if (!preg_match('/^[A-Z]{3}$/', $currency)) {
+                if (! preg_match('/^[A-Z]{3}$/', $currency)) {
                     throw new RuntimeException("Property currency is invalid or missing. Actual currency: '{$currency}'");
                 }
 
@@ -111,7 +126,8 @@ class InventoryPostingControlCoordinator
                     $currency,
                     $period->id,
                     $valuationScope,
-                    $valuationSequence
+                    $valuationSequence,
+                    $costDeliveryDecision,
                 );
 
                 $this->outboxRepository->createPending([
@@ -132,9 +148,9 @@ class InventoryPostingControlCoordinator
 
     private function resolveValuationAuthorizationEvidence(InventoryLedgerPostingIntent $intent): array
     {
-        $type   = $intent->transactionType;
+        $type = $intent->transactionType;
         $docType = $intent->sourceDocumentType;
-        $docId   = $intent->sourceDocumentId;
+        $docId = $intent->sourceDocumentId;
 
         if ($type === TransactionTypeEnum::PurchaseReceipt) {
             if ($docType !== 'inventory_receipt' && $docType !== 'receiving_document') {
@@ -143,6 +159,7 @@ class InventoryPostingControlCoordinator
                 );
             }
             $prefix = $docType === 'inventory_receipt' ? 'inventory_receipt' : 'receiving_document';
+
             return ['approved', "{$prefix}:{$docId}:posted"];
         }
 
@@ -152,6 +169,7 @@ class InventoryPostingControlCoordinator
                     "Controlled posting source-document-type mismatch: expected 'inventory_issue', got '{$docType}'."
                 );
             }
+
             return ['approved', "inventory_issue:{$docId}:posted"];
         }
 
@@ -161,6 +179,7 @@ class InventoryPostingControlCoordinator
                     "Controlled posting source-document-type mismatch: expected 'inventory_adjustment', got '{$docType}'."
                 );
             }
+
             return ['approved', "inventory_adjustment:{$docId}:approved"];
         }
 
@@ -170,6 +189,7 @@ class InventoryPostingControlCoordinator
                     "Controlled posting source-document-type mismatch: expected 'inventory_transfer', got '{$docType}'."
                 );
             }
+
             return ['approved', "inventory_transfer:{$docId}:completed"];
         }
 
@@ -178,7 +198,7 @@ class InventoryPostingControlCoordinator
         );
     }
 
-    public function lockContext(string $propertyId, string $businessDate, \Illuminate\Support\Carbon $occurredAt): array
+    public function lockContext(string $propertyId, string $businessDate, Carbon $occurredAt): array
     {
         if (DB::transactionLevel() < 1) {
             throw new RuntimeException(
@@ -191,8 +211,8 @@ class InventoryPostingControlCoordinator
             ->lockForUpdate()
             ->first();
 
-        if (!$dbDate || $dbDate->status !== PropertyBusinessDateStatusEnum::Open || !$dbDate->is_open) {
-            throw new RuntimeException("Business date is closed or missing.");
+        if (! $dbDate || $dbDate->status !== PropertyBusinessDateStatusEnum::Open || ! $dbDate->is_open) {
+            throw new RuntimeException('Business date is closed or missing.');
         }
 
         $year = $occurredAt->year;
@@ -204,8 +224,8 @@ class InventoryPostingControlCoordinator
             ->lockForUpdate()
             ->first();
 
-        if (!$period || ($period->status !== FinancialPeriodStatusEnum::Open && $period->status !== FinancialPeriodStatusEnum::Reopened)) {
-            throw new RuntimeException("Financial period is closed or missing.");
+        if (! $period || ($period->status !== FinancialPeriodStatusEnum::Open && $period->status !== FinancialPeriodStatusEnum::Reopened)) {
+            throw new RuntimeException('Financial period is closed or missing.');
         }
 
         return [$dbDate, $period];
