@@ -5,9 +5,10 @@ namespace Modules\Finance\CostControl\Services;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Modules\Finance\CostControl\Models\CostDeliveryOutboxDisposition;
-use Modules\Finance\CostControl\Models\CostLedgerEntry;
 use Modules\Finance\CostControl\Repositories\CostDeliveryOutboxDispositionRepository;
+use Modules\Finance\CostControl\Repositories\CostLedgerRepository;
 use Modules\Finance\CostControl\ValueObjects\CostDeliveryDispositionDecision;
+use Modules\Finance\CostControl\ValueObjects\CostLedgerSourceEquivalence;
 use Modules\Foundation\Outbox\Repositories\OutboxRepository;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
@@ -23,6 +24,7 @@ final class CostDeliveryHistoricalDispositionService
         private readonly OutboxRepository $outboxRepository,
         private readonly InventoryTransactionRepository $inventoryTransactionRepository,
         private readonly CostDeliveryOutboxDispositionRepository $dispositionRepository,
+        private readonly CostLedgerRepository $costLedgerRepository,
     ) {}
 
     public function classify(
@@ -85,12 +87,9 @@ final class CostDeliveryHistoricalDispositionService
                 throw new RuntimeException('CC_P01B_SOURCE_DELIVERY_MODE_INVALID');
             }
 
-            $ledgerEntries = CostLedgerEntry::where('source_inventory_transaction_id', $source->id)
-                ->orderBy('id')
-                ->get();
+            $sourceEquivalence = $this->costLedgerRepository->resolveInventoryTransaction($source, true);
 
-            if ($ledgerEntries->count() === 1
-                && $this->isExactCostLedgerEquivalent($source, $ledgerEntries->first())) {
+            if ($sourceEquivalence->status === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT) {
                 $decision = CostDeliveryDispositionDecision::synchronouslySatisfied(
                     $outbox->id,
                     $source->id,
@@ -101,7 +100,7 @@ final class CostDeliveryHistoricalDispositionService
                     $source->valuation_sequence,
                     $source->cost_delivery_ownership_id,
                     $source->cost_delivery_ownership_version,
-                    $ledgerEntries->first()->id,
+                    $sourceEquivalence->costLedgerEntryId,
                     $actorId,
                     now(),
                 );
@@ -109,7 +108,7 @@ final class CostDeliveryHistoricalDispositionService
                 return $this->dispositionRepository->persistHistorical($decision);
             }
 
-            if ($ledgerEntries->isNotEmpty()) {
+            if ($sourceEquivalence->status !== CostLedgerSourceEquivalence::NO_EXISTING_EFFECT) {
                 throw new RuntimeException('CC_P01B_AMBIGUOUS_COST_LEDGER_EQUIVALENCE');
             }
 
@@ -161,64 +160,6 @@ final class CostDeliveryHistoricalDispositionService
             || $location->property_id !== $source->property_id) {
             throw new RuntimeException('CC_P01B_INVENTORY_SOURCE_PROPERTY_MISMATCH');
         }
-    }
-
-    private function isExactCostLedgerEquivalent(
-        InventoryTransaction $source,
-        CostLedgerEntry $entry,
-    ): bool {
-        $expectedEntryType = $this->expectedEntryType($source);
-        if ($expectedEntryType === null || $source->corrects_inventory_transaction_id !== null) {
-            return false;
-        }
-
-        $expectedIdempotencyKey = $source->transaction_type === TransactionTypeEnum::Reversal
-            ? "reversal_ledger:{$source->id}"
-            : (string) $source->idempotency_key;
-
-        if ($expectedIdempotencyKey === '') {
-            return false;
-        }
-
-        $coreMatches = $entry->property_id === $source->property_id
-            && $entry->source_inventory_transaction_id === $source->id
-            && $entry->entry_type === $expectedEntryType
-            && $entry->idempotency_key === $expectedIdempotencyKey
-            && $entry->entry_sequence === $source->valuation_sequence
-            && $entry->currency_code === $source->currency_code
-            && bccomp((string) $entry->quantity_delta, (string) $source->quantity_change, 4) === 0
-            && bccomp((string) $entry->unit_cost, (string) $source->unit_cost, 4) === 0
-            && bccomp((string) $entry->value_delta, (string) $source->total_cost, 4) === 0
-            && $entry->business_date?->format('Y-m-d') === $source->business_date?->format('Y-m-d')
-            && $entry->occurred_at?->format('Y-m-d H:i:s') === $source->occurred_at?->format('Y-m-d H:i:s')
-            && $entry->prior_cost_ledger_entry_id === null;
-
-        if (! $coreMatches) {
-            return false;
-        }
-
-        if ($source->transaction_type !== TransactionTypeEnum::Reversal) {
-            return $source->reverses_inventory_transaction_id === null
-                && $entry->original_business_date === null;
-        }
-
-        if ($source->reverses_inventory_transaction_id === null) {
-            return false;
-        }
-
-        $original = InventoryTransaction::find($source->reverses_inventory_transaction_id);
-        $metadata = $entry->metadata;
-
-        return $original !== null
-            && $original->property_id === $source->property_id
-            && $original->item_id === $source->item_id
-            && $original->location_id === $source->location_id
-            && $entry->original_business_date?->format('Y-m-d') === $original->business_date?->format('Y-m-d')
-            && is_array($metadata)
-            && ($metadata['original_transaction_id'] ?? null) === $original->id
-            && ($metadata['approval_reference'] ?? null) === $source->valuation_approval_reference
-            && is_string($metadata['reversal_reason'] ?? null)
-            && trim($metadata['reversal_reason']) !== '';
     }
 
     private function expectedEntryType(InventoryTransaction $source): ?string
