@@ -2,6 +2,8 @@
 
 namespace Modules\Finance\CostControl\ValueObjects;
 
+use InvalidArgumentException;
+
 final readonly class DeferredCostDeliveryEligibleContext
 {
     public function __construct(
@@ -22,5 +24,18 @@ final readonly class DeferredCostDeliveryEligibleContext
         public bool $alreadySatisfied,
         public bool $requiresPairedApplication,
         public ?string $pairedInventoryTransactionId,
-    ) {}
+        public DeferredCostDeliveryEligibleLegContext $sourceLeg,
+        public ?DeferredCostDeliveryEligibleLegContext $pairedLeg,
+    ) {
+        if ($sourceLeg->sourceInventoryTransactionId !== $sourceInventoryTransactionId) {
+            throw new InvalidArgumentException('Source leg evidence must match the eligible source identity.');
+        }
+
+        $hasCompletePair = $pairedInventoryTransactionId !== null
+            && $pairedLeg !== null
+            && $pairedLeg->sourceInventoryTransactionId === $pairedInventoryTransactionId;
+        if ($requiresPairedApplication !== $hasCompletePair) {
+            throw new InvalidArgumentException('Paired eligibility requires complete matching partner-leg evidence.');
+        }
+    }
 }
