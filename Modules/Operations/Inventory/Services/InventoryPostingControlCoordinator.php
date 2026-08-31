@@ -231,6 +231,20 @@ class InventoryPostingControlCoordinator
         return [$dbDate, $period];
     }
 
+    public function resolveCostDeliveryMode(
+        string $propertyId,
+        string $itemId,
+        string $locationId,
+    ): CostDeliveryPostingDecision {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(
+                'Controlled inventory posting mode resolution requires an active transaction.'
+            );
+        }
+
+        return $this->costDeliveryModePort->resolveForPosting($propertyId, $itemId, $locationId);
+    }
+
     public function executeOnce(callable $operation): mixed
     {
         try {

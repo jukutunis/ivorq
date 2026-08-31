@@ -4,6 +4,7 @@ namespace Modules\Operations\Inventory\Repositories;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
@@ -178,8 +179,23 @@ class InventoryTransactionRepository
         string $quantityAfter,
         string $valuationApprovalReference,
         string $idempotencyKey,
-        ?string $actorId = null
+        ?string $actorId,
+        CostDeliveryPostingDecision $costDeliveryDecision,
+        Carbon $occurredAt,
     ): InventoryTransaction {
+        $expectedScope = "property:{$original->property_id}:location:{$original->location_id}:item:{$original->item_id}";
+
+        if ($original->valuation_scope !== $expectedScope
+            || $costDeliveryDecision->outcome === CostDeliveryPostingDecision::NOT_ENROLLED
+            || $costDeliveryDecision->propertyId !== $original->property_id
+            || $costDeliveryDecision->itemId !== $original->item_id
+            || $costDeliveryDecision->locationId !== $original->location_id
+            || $costDeliveryDecision->valuationScope !== $expectedScope) {
+            throw new InvalidArgumentException(
+                'Cost delivery posting decision scope does not match the reversal source.'
+            );
+        }
+
         $transaction = new InventoryTransaction;
 
         $transaction->id = (string) Str::ulid();
@@ -192,10 +208,14 @@ class InventoryTransactionRepository
         $transaction->valuation_sequence = $valuationSequence;
         $transaction->valuation_approval_status = 'approved';
         $transaction->valuation_approval_reference = $valuationApprovalReference;
+        $transaction->cost_delivery_mode = $costDeliveryDecision->deliveryMode;
+        $transaction->cost_delivery_ownership_id = $costDeliveryDecision->ownershipId;
+        $transaction->cost_delivery_ownership_version = $costDeliveryDecision->ownershipVersion;
+        $transaction->cost_delivery_cutover_id = $costDeliveryDecision->cutoverId;
 
         // Reversal control fields
         $transaction->business_date = $businessDate;
-        $transaction->occurred_at = now();
+        $transaction->occurred_at = $occurredAt;
         $transaction->source_document_type = $original->source_document_type;
         $transaction->source_document_id = $original->source_document_id;
         $transaction->source_line_type = $original->source_line_type;
@@ -211,7 +231,7 @@ class InventoryTransactionRepository
         $transaction->posted_by = $actorId;
         $transaction->unit_cost = $original->unit_cost;
         $transaction->total_cost = bcmul((string) $original->total_cost, '-1', 2);
-        $transaction->posted_at = now();
+        $transaction->posted_at = $occurredAt;
 
         $transaction->reverses_inventory_transaction_id = $original->id;
 
@@ -220,10 +240,18 @@ class InventoryTransactionRepository
         return $transaction;
     }
 
-    public function findByIdempotency(string $propertyId, string $idempotencyKey): ?InventoryTransaction
-    {
-        return InventoryTransaction::where('property_id', $propertyId)
-            ->where('idempotency_key', $idempotencyKey)
-            ->first();
+    public function findByIdempotency(
+        string $propertyId,
+        string $idempotencyKey,
+        bool $forUpdate = false,
+    ): ?InventoryTransaction {
+        $query = InventoryTransaction::where('property_id', $propertyId)
+            ->where('idempotency_key', $idempotencyKey);
+
+        if ($forUpdate) {
+            $query->lockForUpdate();
+        }
+
+        return $query->first();
     }
 }
