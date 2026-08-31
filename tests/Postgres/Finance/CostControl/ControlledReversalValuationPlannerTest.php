@@ -2,12 +2,12 @@
 
 namespace Tests\Postgres\Finance\CostControl;
 
-use Tests\PostgresTestCase;
 use Modules\Finance\CostControl\Services\ControlledReversalValuationPlanner;
+use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
 use Modules\Finance\CostControl\ValueObjects\ControlledValuationCostLedgerIntent;
 use Modules\Finance\CostControl\ValueObjects\ControlledValuationStateTransitionIntent;
 use Modules\Finance\CostControl\ValueObjects\ValuationSequence;
-use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
+use Tests\PostgresTestCase;
 
 class ControlledReversalValuationPlannerTest extends PostgresTestCase
 {
@@ -16,7 +16,7 @@ class ControlledReversalValuationPlannerTest extends PostgresTestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->planner = new ControlledReversalValuationPlanner();
+        $this->planner = new ControlledReversalValuationPlanner;
     }
 
     public function test_planner_correctly_negates_and_computes_reversal(): void
@@ -50,9 +50,9 @@ class ControlledReversalValuationPlannerTest extends PostgresTestCase
 
         $plan = $this->planner->plan($intent);
 
-        $this->assertEquals('5.0000', (string) $plan->quantityAfter);
-        $this->assertEquals('50.0000', (string) $plan->carryingValueAfter);
-        $this->assertEquals('10.0000', (string) $plan->weightedAverageUnitCostAfter);
+        $this->assertSame('5.0000', $plan->quantityAfter->getValue());
+        $this->assertSame('50.0000', $plan->carryingValueAfter->getValue());
+        $this->assertSame('10.0000', $plan->weightedAverageUnitCostAfter?->getValue());
         $this->assertEquals(2, $plan->lastAppliedValuationSequenceAfter->ledgerSequence);
     }
 

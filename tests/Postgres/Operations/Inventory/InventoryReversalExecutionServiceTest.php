@@ -2,26 +2,26 @@
 
 namespace Tests\Postgres\Operations\Inventory;
 
-use Tests\PostgresTestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Modules\Operations\Inventory\Services\InventoryReversalExecutionService;
+use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
+use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Modules\Operations\Inventory\Exceptions\InventoryReversalExecutionRejectedException;
 use Modules\Operations\Inventory\Exceptions\InventoryReversalPostingRejectedException;
-use Modules\Operations\Inventory\ValueObjects\InventoryReversalExecutionIntent;
-use Modules\Operations\Inventory\ValueObjects\InventoryReversalExecutionResult;
-use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
-use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\Models\InventoryCategory;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
-use Modules\Operations\Inventory\Models\InventoryCategory;
-use Modules\Foundation\Property\Models\Property;
-use Modules\Foundation\User\Models\User;
-use Modules\Foundation\Property\Models\PropertyBusinessDate;
-use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
-use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
-use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\Services\InventoryReversalExecutionService;
+use Modules\Operations\Inventory\ValueObjects\InventoryReversalExecutionIntent;
+use Shared\Services\CurrentPropertyService;
+use Tests\PostgresTestCase;
 
 class InventoryReversalExecutionServiceTest extends PostgresTestCase
 {
@@ -30,12 +30,19 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
     protected $seed = true;
 
     private InventoryReversalExecutionService $service;
+
     private Property $property;
+
     private User $user;
+
     private InventoryItem $item;
+
     private InventoryLocation $location;
+
     private InventoryCategory $category;
+
     private PropertyBusinessDate $businessDate;
+
     private FinancialPeriod $period;
 
     protected function setUp(): void
@@ -43,20 +50,17 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
         parent::setUp();
 
         $this->service = app(InventoryReversalExecutionService::class);
-        $this->property = Property::first();
+        $this->property = Property::where('currency', 'USD')->firstOrFail();
         $this->user = User::first();
         $this->actingAs($this->user);
 
-        $this->property->currency = 'USD';
-        $this->property->save();
-
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
 
         $this->businessDate = PropertyBusinessDate::updateOrCreate(
             ['property_id' => $this->property->id, 'business_date' => now()->toDateString()],
             [
-                'status'    => PropertyBusinessDateStatusEnum::Open,
-                'is_open'   => true,
+                'status' => PropertyBusinessDateStatusEnum::Open,
+                'is_open' => true,
                 'opened_at' => now(),
                 'opened_by' => $this->user->id,
             ]
@@ -65,31 +69,31 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
         $this->period = FinancialPeriod::updateOrCreate(
             ['property_id' => $this->property->id, 'period_year' => now()->year, 'period_month' => now()->month],
             [
-                'status'     => FinancialPeriodStatusEnum::Open,
+                'status' => FinancialPeriodStatusEnum::Open,
                 'start_date' => now()->startOfMonth(),
-                'end_date'   => now()->endOfMonth(),
+                'end_date' => now()->endOfMonth(),
             ]
         );
 
         $this->category = InventoryCategory::firstOrCreate([
             'property_id' => $this->property->id,
-            'name'        => 'General',
+            'name' => 'General',
         ]);
 
         $this->item = InventoryItem::create([
-            'property_id'           => $this->property->id,
-            'category_id'           => $this->category->id,
-            'sku'                   => 'ITM-EXEC-999',
-            'name'                  => 'Execution Reversal Item',
-            'inventory_type'        => 'goods',
+            'property_id' => $this->property->id,
+            'category_id' => $this->category->id,
+            'sku' => 'ITM-EXEC-999',
+            'name' => 'Execution Reversal Item',
+            'inventory_type' => 'goods',
             'weighted_average_cost' => 10.00,
-            'is_active'             => true,
+            'is_active' => true,
         ]);
 
         $this->location = InventoryLocation::create([
             'property_id' => $this->property->id,
-            'name'        => 'Execution Reversal Warehouse',
-            'type'        => 'internal',
+            'name' => 'Execution Reversal Warehouse',
+            'type' => 'internal',
         ]);
     }
 
@@ -100,10 +104,11 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
             'id' => $id,
             'property_id' => $this->property->id,
             'item_id' => $this->item->id,
-            'status' => $status,
+            'status' => 'draft',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
         return $id;
     }
 
@@ -125,7 +130,44 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+        DB::table('cost_authority_enrollment_groups')->where('id', $groupId)->update([
+            'status' => 'approved',
+            'approved_by' => $this->user->id,
+            'approved_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('cost_authority_enrollment_groups')->where('id', $groupId)->update([
+            'status' => 'enrolled',
+            'enrolled_at' => now(),
+            'updated_at' => now(),
+        ]);
+
         return $id;
+    }
+
+    private function seedSynchronousControl(string $groupId, int $lastSequence): void
+    {
+        DB::table('cost_delivery_mode_ownerships')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'item_id' => $this->item->id,
+            'enrollment_group_id' => $groupId,
+            'delivery_mode' => 'SYNCHRONOUS',
+            'ownership_version' => 1,
+            'established_by' => $this->user->id,
+            'established_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('inventory_valuation_sequences')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'location_id' => $this->location->id,
+            'item_id' => $this->item->id,
+            'last_sequence' => $lastSequence,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     private function seedState(string $groupId, string $snapshotId, string $qty = '10.0000', string $val = '100.0000', ?int $lastSeq = null, ?string $lastDate = null): void
@@ -172,7 +214,7 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
         string $unitCost = '10.0000',
         string $totalCost = '50.0000'
     ): InventoryTransaction {
-        $tx = new InventoryTransaction();
+        $tx = new InventoryTransaction;
         $tx->id = (string) Str::ulid();
         $tx->property_id = $this->property->id;
         $tx->item_id = $this->item->id;
@@ -186,6 +228,11 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
         $tx->posted_at = now();
         $tx->business_date = now()->toDateString();
         $tx->occurred_at = now();
+        $tx->source_document_type = 'inventory_execution_test';
+        $tx->source_document_id = (string) Str::ulid();
+        $tx->source_line_type = 'inventory_execution_test_line';
+        $tx->source_line_id = (string) Str::ulid();
+        $tx->movement_role = $type === TransactionTypeEnum::Issue ? 'issue' : 'receive';
         $tx->currency_code = 'USD';
         $tx->financial_period_id = $this->period->id;
         $tx->valuation_scope = "property:{$this->property->id}:location:{$this->location->id}:item:{$this->item->id}";
@@ -205,6 +252,7 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
             'id' => 'mock-wf-id',
             'property_id' => $this->property->id,
             'name' => 'Mock Reversal Approval Workflow',
+            'approvable_type' => $approvableType,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -227,12 +275,13 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
         $groupId = $this->seedGroup('enrolled');
         $snapshotId = $this->seedSnapshot($groupId);
         $this->seedState($groupId, $snapshotId, '10.0000', '100.0000', 1, now()->toDateString());
+        $this->seedSynchronousControl($groupId, 1);
         $this->seedStock('10.0000');
 
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
 
         $approvalId = (string) Str::ulid();
-        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $txMorph = (new InventoryTransaction)->getMorphClass();
         $this->seedApproval($approvalId, 'Approved', $tx->id, $txMorph);
 
         $intent = new InventoryReversalExecutionIntent(
@@ -263,13 +312,13 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
         $groupId = $this->seedGroup('enrolled');
         $snapshotId = $this->seedSnapshot($groupId);
         $this->seedState($groupId, $snapshotId, '10.0000', '100.0000', 1, now()->toDateString());
+        $this->seedSynchronousControl($groupId, 1);
         $this->seedStock('10.0000');
 
         $tx1 = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
-        $tx2 = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '2.0000', '10.0000', '20.0000');
 
         $approvalId1 = (string) Str::ulid();
-        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $txMorph = (new InventoryTransaction)->getMorphClass();
         $this->seedApproval($approvalId1, 'Approved', $tx1->id, $txMorph);
 
         $intent1 = new InventoryReversalExecutionIntent(
@@ -282,16 +331,20 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
 
         $this->service->execute($intent1);
 
+        $tx2 = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 3, '2.0000', '10.0000', '20.0000');
+
+        $approvalId2 = (string) Str::ulid();
+        $this->seedApproval($approvalId2, 'Approved', $tx2->id, $txMorph);
         $intent2 = new InventoryReversalExecutionIntent(
             originalTransactionId: $tx2->id,
             actorId: $this->user->id,
-            approvalReference: 'some-other-approval',
+            approvalReference: $approvalId2,
             reversalReason: 'Reason 2',
             idempotencyKey: 'exec-idem-conflict'
         );
 
-        $this->expectException(InventoryReversalExecutionRejectedException::class);
-        $this->expectExceptionMessage('Idempotency key is in use by a different request.');
+        $this->expectException(InventoryReversalPostingRejectedException::class);
+        $this->expectExceptionMessage('CC_P01D_EXISTING_REVERSAL_SOURCE_CONFLICT');
 
         $this->service->execute($intent2);
     }
@@ -319,7 +372,7 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
 
         $approvalId = (string) Str::ulid();
-        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $txMorph = (new InventoryTransaction)->getMorphClass();
         $this->seedApproval($approvalId, 'Pending', $tx->id, $txMorph);
 
         $intent = new InventoryReversalExecutionIntent(
@@ -341,7 +394,7 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
 
         $approvalId = (string) Str::ulid();
-        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $txMorph = (new InventoryTransaction)->getMorphClass();
         $this->seedApproval($approvalId, 'Rejected', $tx->id, $txMorph);
 
         $intent = new InventoryReversalExecutionIntent(
@@ -361,10 +414,10 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
     public function test_unrelated_approval_fails(): void
     {
         $tx1 = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
-        $tx2 = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '2.0000', '10.0000', '20.0000');
+        $tx2 = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 2, '2.0000', '10.0000', '20.0000');
 
         $approvalId = (string) Str::ulid();
-        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $txMorph = (new InventoryTransaction)->getMorphClass();
         // approval is bound to tx1
         $this->seedApproval($approvalId, 'Approved', $tx1->id, $txMorph);
 
@@ -389,13 +442,15 @@ class InventoryReversalExecutionServiceTest extends PostgresTestCase
         $snapshotId = $this->seedSnapshot($groupId);
         // seed with sequence 2
         $this->seedState($groupId, $snapshotId, '10.0000', '100.0000', 2, now()->toDateString());
+        $this->seedSynchronousControl($groupId, 2);
         $this->seedStock('10.0000');
 
         // transaction sequence is 1, which will trigger blocker rejection (since last seq is 2)
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
+        $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 2, '1.0000', '10.0000', '10.0000');
 
         $approvalId = (string) Str::ulid();
-        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $txMorph = (new InventoryTransaction)->getMorphClass();
         $this->seedApproval($approvalId, 'Approved', $tx->id, $txMorph);
 
         $intent = new InventoryReversalExecutionIntent(

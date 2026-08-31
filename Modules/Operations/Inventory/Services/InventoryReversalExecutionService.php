@@ -2,16 +2,13 @@
 
 namespace Modules\Operations\Inventory\Services;
 
+use Modules\Foundation\Approval\Models\ApprovalRequest;
+use Modules\Operations\Inventory\Exceptions\InventoryReversalExecutionRejectedException;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
 use Modules\Operations\Inventory\Repositories\InventoryTransactionRepository;
-use Modules\Operations\Inventory\Services\InventoryReversalPostingService;
 use Modules\Operations\Inventory\ValueObjects\InventoryReversalExecutionIntent;
 use Modules\Operations\Inventory\ValueObjects\InventoryReversalExecutionResult;
 use Modules\Operations\Inventory\ValueObjects\InventoryReversalPostingIntent;
-use Modules\Operations\Inventory\Exceptions\InventoryReversalExecutionRejectedException;
-use Modules\Operations\Inventory\Models\InventoryTransaction;
-use Modules\Foundation\Approval\Models\ApprovalRequest;
-use Modules\Finance\CostControl\Models\CostLedgerEntry;
-use Modules\Foundation\Audit\Models\AuditLog;
 
 class InventoryReversalExecutionService
 {
@@ -39,12 +36,12 @@ class InventoryReversalExecutionService
         }
 
         $originalTx = $this->transactionRepo->findById($intent->originalTransactionId);
-        if (!$originalTx) {
+        if (! $originalTx) {
             throw new InventoryReversalExecutionRejectedException('approval_not_found', 'Original transaction not found.');
         }
 
         $approval = ApprovalRequest::find($intent->approvalReference);
-        if (!$approval) {
+        if (! $approval) {
             throw new InventoryReversalExecutionRejectedException('approval_not_found', 'Approval request not found.');
         }
 
@@ -55,39 +52,9 @@ class InventoryReversalExecutionService
             throw new InventoryReversalExecutionRejectedException('approval_not_finally_approved', 'Approval is not finally approved.');
         }
 
-        $txMorphClass = (new InventoryTransaction())->getMorphClass();
+        $txMorphClass = (new InventoryTransaction)->getMorphClass();
         if ($approval->approvable_type !== $txMorphClass || $approval->approvable_id !== $intent->originalTransactionId) {
             throw new InventoryReversalExecutionRejectedException('approval_not_applicable', 'Approval is not applicable to the original transaction.');
-        }
-
-        // Check idempotency lookup
-        $existing = $this->transactionRepo->findByIdempotency($originalTx->property_id, $intent->idempotencyKey);
-
-        if ($existing) {
-            // Prove equivalence
-            if (
-                $existing->reverses_inventory_transaction_id !== $intent->originalTransactionId ||
-                $existing->valuation_approval_reference !== $intent->approvalReference ||
-                $existing->posted_by !== $intent->actorId
-            ) {
-                throw new InventoryReversalExecutionRejectedException('idempotency_conflict', 'Idempotency key is in use by a different request.');
-            }
-
-            // Find existing ledger and audit details to reconstruct the result
-            $costLedgerEntry = CostLedgerEntry::where('source_inventory_transaction_id', $existing->id)->first();
-            $auditLog = AuditLog::where('auditable_type', get_class($existing))
-                ->where('auditable_id', $existing->id)
-                ->first();
-
-            return new InventoryReversalExecutionResult(
-                outcome: 'replayed',
-                originalTransaction: $originalTx,
-                reversalTransaction: $existing,
-                approvalReference: $intent->approvalReference,
-                idempotencyKey: $intent->idempotencyKey,
-                costLedgerEntry: $costLedgerEntry,
-                auditLog: $auditLog
-            );
         }
 
         $postingIntent = new InventoryReversalPostingIntent(
@@ -101,12 +68,12 @@ class InventoryReversalExecutionService
         $postingResult = $this->postingService->post($postingIntent);
 
         return new InventoryReversalExecutionResult(
-            outcome: 'posted',
+            outcome: $postingResult->replayed ? 'replayed' : 'posted',
             originalTransaction: $postingResult->originalTransaction,
             reversalTransaction: $postingResult->reversalTransaction,
             approvalReference: $intent->approvalReference,
             idempotencyKey: $intent->idempotencyKey,
-            costLedgerEntry: $postingResult->costLedgerEntry,
+            costLedgerEntryId: $postingResult->costLedgerEntryId,
             auditLog: $postingResult->auditLog
         );
     }
