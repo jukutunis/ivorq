@@ -244,6 +244,7 @@ final class DeferredCostDeliveryFailureRecorder
      */
     private function proveCostLedgerAvcoStateDivergence(array $legs, array $states): void
     {
+        $exactCount = 0;
         $divergent = false;
         usort($legs, fn (array $left, array $right): int => $left['valuation_scope'] <=> $right['valuation_scope']);
         foreach ($legs as $leg) {
@@ -252,18 +253,24 @@ final class DeferredCostDeliveryFailureRecorder
                 throw new RuntimeException('CC_P01E_LEDGER_AVCO_DIVERGENCE_PROOF_CONTRADICTION');
             }
             $equivalence = $this->costLedgerRepository->resolveInventoryTransaction($source, true);
-            if ($equivalence->status !== CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT) {
-                throw new RuntimeException('CC_P01E_LEDGER_AVCO_DIVERGENCE_PROOF_CONTRADICTION');
-            }
-
             $state = $states[$leg['valuation_scope']];
-            if ($state->last_valuation_sequence === null
-                || $state->last_valuation_sequence < $source->valuation_sequence) {
-                $divergent = true;
+            if ($equivalence->status === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT) {
+                $exactCount++;
+                if ($state->last_valuation_sequence === null
+                    || $state->last_valuation_sequence < $source->valuation_sequence) {
+                    $divergent = true;
+                }
+
+                continue;
+            }
+            if ($equivalence->status !== CostLedgerSourceEquivalence::NO_EXISTING_EFFECT
+                || ($state->last_valuation_sequence !== null
+                    && $state->last_valuation_sequence >= $source->valuation_sequence)) {
+                throw new RuntimeException('CC_P01E_LEDGER_AVCO_DIVERGENCE_PROOF_CONTRADICTION');
             }
         }
 
-        if (! $divergent) {
+        if ($exactCount === 0 || ! $divergent) {
             throw new RuntimeException('CC_P01E_LEDGER_AVCO_DIVERGENCE_PROOF_CONTRADICTION');
         }
     }

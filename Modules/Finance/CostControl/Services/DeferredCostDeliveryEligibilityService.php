@@ -306,6 +306,7 @@ final class DeferredCostDeliveryEligibilityService
         }
 
         // Lock both AVCO rows in canonical scope order.
+        $avcoStates = [];
         $expectedSequences = [];
         foreach ($orderedInitialLegs as $legName => $initialLeg) {
             $leg = $lockedLegs[$legName];
@@ -319,6 +320,7 @@ final class DeferredCostDeliveryEligibilityService
                     $leg['is_partner'] ? 'TRANSFER_PAIR_AVCO_STATE_MISSING' : 'AVCO_STATE_MISSING',
                 );
             }
+            $avcoStates[$legName] = $avcoState;
             $expectedSequences[$legName] = $avcoState->last_valuation_sequence === null
                 ? 1
                 : $avcoState->last_valuation_sequence + 1;
@@ -347,6 +349,22 @@ final class DeferredCostDeliveryEligibilityService
                 );
             }
             $equivalences[$legName] = $equivalence;
+        }
+
+        foreach ($lockedLegs as $legName => $leg) {
+            $equivalence = $equivalences[$legName];
+            $avcoState = $avcoStates[$legName];
+            if ($equivalence->status === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT
+                && ($avcoState->last_valuation_sequence === null
+                    || $avcoState->last_valuation_sequence < $leg['source']->valuation_sequence)) {
+                return $this->failure('COST_LEDGER_AVCO_STATE_DIVERGENCE', [
+                    'affected_source_inventory_transaction_id' => $leg['source']->id,
+                    'affected_scope' => $leg['source']->valuation_scope,
+                    'exact_cost_ledger_entry_id' => (string) $equivalence->costLedgerEntryId,
+                    'source_valuation_sequence' => $leg['source']->valuation_sequence,
+                    'current_avco_sequence' => $avcoState->last_valuation_sequence,
+                ]);
+            }
         }
 
         if (isset($lockedLegs['partner'])) {

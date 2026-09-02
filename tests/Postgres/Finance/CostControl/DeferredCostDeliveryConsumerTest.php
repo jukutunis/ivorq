@@ -270,6 +270,32 @@ class DeferredCostDeliveryConsumerTest extends PostgresTestCase
         $this->assertDatabaseCount('cost_ledger_entries', 1);
     }
 
+    public function test_exact_ledger_avco_divergence_precedes_sequence_blocking(): void
+    {
+        $source = $this->makeDeferredSource(overrides: ['valuation_sequence' => 2]);
+        $outbox = $this->makeOutbox($source);
+        $this->makeExactLedger($source);
+
+        $result = $this->consumer->consume($outbox->id);
+        $disposition = CostDeliveryOutboxDisposition::where('outbox_message_id', $outbox->id)->firstOrFail();
+
+        $this->assertSame(DeferredCostDeliveryResult::FAILED, $result->status);
+        $this->assertSame('COST_LEDGER_AVCO_STATE_DIVERGENCE', $result->code);
+        $this->assertNotSame('BLOCKED_SEQUENCE', $result->code);
+        $this->assertDatabaseCount('cost_ledger_entries', 1);
+        $this->assertNull($this->state($this->location)->last_valuation_sequence);
+        $this->assertSame(CostDeliveryProcessingState::Failed, $disposition->processing_state);
+        $this->assertFalse($disposition->is_recoverable);
+        $this->assertSame(1, $disposition->attempt_count);
+        $this->assertSame('COST_LEDGER_AVCO_STATE_DIVERGENCE', $disposition->last_failure_code);
+        $this->assertSame(OutboxStatusEnum::Failed, $outbox->fresh()->status);
+
+        $second = $this->consumer->consume($outbox->id);
+        $this->assertSame(DeferredCostDeliveryResult::RECOVERY_REQUIRED, $second->status);
+        $this->assertSame(1, $disposition->fresh()->attempt_count);
+        $this->assertDatabaseCount('cost_ledger_entries', 1);
+    }
+
     public function test_deferred_reversal_uses_original_and_audit_provenance(): void
     {
         $original = $this->makeDeferredSource(overrides: [

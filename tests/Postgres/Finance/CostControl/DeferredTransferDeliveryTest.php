@@ -208,6 +208,70 @@ class DeferredTransferDeliveryTest extends PostgresTestCase
         $this->assertSame(OutboxStatusEnum::Failed, $pair['inbound_outbox']->fresh()->status);
     }
 
+    public function test_both_exact_transfer_effects_with_avco_divergence_precede_sequence_blocking(): void
+    {
+        $pair = $this->makeTransferPair(2, 2);
+        $this->makeExactTransferLedger($pair['outbound']);
+        $this->makeExactTransferLedger($pair['inbound']);
+
+        $result = $this->consumer->consume($pair['outbound_outbox']->id);
+
+        $this->assertSame(DeferredCostDeliveryResult::FAILED, $result->status);
+        $this->assertSame('COST_LEDGER_AVCO_STATE_DIVERGENCE', $result->code);
+        $this->assertNotSame('BLOCKED_SEQUENCE', $result->code);
+        $this->assertSame(2, CostLedgerEntry::whereIn('source_inventory_transaction_id', [
+            $pair['outbound']->id,
+            $pair['inbound']->id,
+        ])->count());
+        $this->assertNull($this->state($this->location)->last_valuation_sequence);
+        $this->assertNull($this->state($this->partnerLocation)->last_valuation_sequence);
+        $dispositions = CostDeliveryOutboxDisposition::whereIn('outbox_message_id', [
+            $pair['outbound_outbox']->id,
+            $pair['inbound_outbox']->id,
+        ])->get();
+        $this->assertCount(2, $dispositions);
+        foreach ($dispositions as $disposition) {
+            $this->assertSame(CostDeliveryProcessingState::Failed, $disposition->processing_state);
+            $this->assertFalse($disposition->is_recoverable);
+            $this->assertSame(1, $disposition->attempt_count);
+            $this->assertSame('COST_LEDGER_AVCO_STATE_DIVERGENCE', $disposition->last_failure_code);
+        }
+        $this->assertSame(OutboxStatusEnum::Failed, $pair['outbound_outbox']->fresh()->status);
+        $this->assertSame(OutboxStatusEnum::Failed, $pair['inbound_outbox']->fresh()->status);
+    }
+
+    public function test_mixed_transfer_exact_avco_divergence_precedes_partial_and_sequence_blocking(): void
+    {
+        $pair = $this->makeTransferPair(1, 2);
+        $this->makeExactTransferLedger($pair['outbound']);
+
+        $result = $this->consumer->consume($pair['inbound_outbox']->id);
+
+        $this->assertSame(DeferredCostDeliveryResult::FAILED, $result->status);
+        $this->assertSame('COST_LEDGER_AVCO_STATE_DIVERGENCE', $result->code);
+        $this->assertNotSame('TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION', $result->code);
+        $this->assertNotSame('BLOCKED_SEQUENCE', $result->code);
+        $this->assertSame(1, CostLedgerEntry::whereIn('source_inventory_transaction_id', [
+            $pair['outbound']->id,
+            $pair['inbound']->id,
+        ])->count());
+        $this->assertNull($this->state($this->location)->last_valuation_sequence);
+        $this->assertNull($this->state($this->partnerLocation)->last_valuation_sequence);
+        $dispositions = CostDeliveryOutboxDisposition::whereIn('outbox_message_id', [
+            $pair['outbound_outbox']->id,
+            $pair['inbound_outbox']->id,
+        ])->get();
+        $this->assertCount(2, $dispositions);
+        foreach ($dispositions as $disposition) {
+            $this->assertSame(CostDeliveryProcessingState::Failed, $disposition->processing_state);
+            $this->assertFalse($disposition->is_recoverable);
+            $this->assertSame(1, $disposition->attempt_count);
+            $this->assertSame('COST_LEDGER_AVCO_STATE_DIVERGENCE', $disposition->last_failure_code);
+        }
+        $this->assertSame(OutboxStatusEnum::Failed, $pair['outbound_outbox']->fresh()->status);
+        $this->assertSame(OutboxStatusEnum::Failed, $pair['inbound_outbox']->fresh()->status);
+    }
+
     public function test_transfer_crash_after_first_ledger_leg_rolls_back_both_legs_and_states(): void
     {
         $pair = $this->makeTransferPair();
