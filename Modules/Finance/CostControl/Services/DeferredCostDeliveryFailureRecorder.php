@@ -73,7 +73,9 @@ final class DeferredCostDeliveryFailureRecorder
             }
 
             $states = $this->lockStates($legs);
-            $this->proveNoAttemptAdvancement($legs, $states, $failure, $eligibleContext);
+            if (! $this->provePermanentMonetaryContradiction($legs, $states, $failure)) {
+                $this->proveNoAttemptAdvancement($legs, $states, $failure, $eligibleContext);
+            }
 
             $attemptedAt = now();
             if ($failure->code === 'BLOCKED_SEQUENCE') {
@@ -156,6 +158,114 @@ final class DeferredCostDeliveryFailureRecorder
         }
 
         return $states;
+    }
+
+    /**
+     * @param  list<array<string, int|string>>  $legs
+     * @param  array<string, CostAvcoState>  $states
+     */
+    private function provePermanentMonetaryContradiction(
+        array $legs,
+        array $states,
+        DeferredCostDeliveryFailure $failure,
+    ): bool {
+        if ($failure->code === 'TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION') {
+            $this->proveTransferPartialMonetaryEffect($legs, $states, $failure);
+
+            return true;
+        }
+        if ($failure->code === 'COST_LEDGER_AVCO_STATE_DIVERGENCE') {
+            $this->proveCostLedgerAvcoStateDivergence($legs, $states);
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  list<array<string, int|string>>  $legs
+     * @param  array<string, CostAvcoState>  $states
+     */
+    private function proveTransferPartialMonetaryEffect(
+        array $legs,
+        array $states,
+        DeferredCostDeliveryFailure $failure,
+    ): void {
+        if (count($legs) !== 2) {
+            throw new RuntimeException('CC_P01E_PARTIAL_MONETARY_FAILURE_PROOF_CONTRADICTION');
+        }
+
+        usort($legs, fn (array $left, array $right): int => $left['valuation_scope'] <=> $right['valuation_scope']);
+        $exact = [];
+        $missing = [];
+        foreach ($legs as $leg) {
+            $source = InventoryTransaction::find($leg['source_id']);
+            if ($source === null) {
+                throw new RuntimeException('CC_P01E_PARTIAL_MONETARY_FAILURE_PROOF_CONTRADICTION');
+            }
+            $equivalence = $this->costLedgerRepository->resolveInventoryTransaction($source, true);
+            if ($equivalence->status === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT) {
+                $exact[] = [$leg, $source, $equivalence];
+            } elseif ($equivalence->status === CostLedgerSourceEquivalence::NO_EXISTING_EFFECT) {
+                $missing[] = [$leg, $source];
+            } else {
+                throw new RuntimeException('CC_P01E_PARTIAL_MONETARY_FAILURE_PROOF_CONTRADICTION');
+            }
+        }
+        if (count($exact) !== 1 || count($missing) !== 1) {
+            throw new RuntimeException('CC_P01E_PARTIAL_MONETARY_FAILURE_PROOF_CONTRADICTION');
+        }
+
+        [$exactLeg, $exactSource, $exactEquivalence] = $exact[0];
+        [$missingLeg, $missingSource] = $missing[0];
+        if (($failure->evidence['exact_source_inventory_transaction_id'] ?? $exactSource->id) !== $exactSource->id
+            || ($failure->evidence['exact_cost_ledger_entry_id'] ?? $exactEquivalence->costLedgerEntryId) !== $exactEquivalence->costLedgerEntryId
+            || ($failure->evidence['missing_source_inventory_transaction_id'] ?? $missingSource->id) !== $missingSource->id) {
+            throw new RuntimeException('CC_P01E_PARTIAL_MONETARY_FAILURE_PROOF_CONTRADICTION');
+        }
+
+        $exactState = $states[$exactLeg['valuation_scope']];
+        if ($exactState->last_valuation_sequence === null
+            || $exactState->last_valuation_sequence < $exactSource->valuation_sequence
+            || $exactState->last_valuation_business_date === null) {
+            throw new RuntimeException('CC_P01E_PARTIAL_MONETARY_FAILURE_PROOF_CONTRADICTION');
+        }
+        $missingState = $states[$missingLeg['valuation_scope']];
+        if ($missingState->last_valuation_sequence !== null
+            && $missingState->last_valuation_sequence >= $missingSource->valuation_sequence) {
+            throw new RuntimeException('CC_P01E_PARTIAL_MONETARY_FAILURE_PROOF_CONTRADICTION');
+        }
+    }
+
+    /**
+     * @param  list<array<string, int|string>>  $legs
+     * @param  array<string, CostAvcoState>  $states
+     */
+    private function proveCostLedgerAvcoStateDivergence(array $legs, array $states): void
+    {
+        $divergent = false;
+        usort($legs, fn (array $left, array $right): int => $left['valuation_scope'] <=> $right['valuation_scope']);
+        foreach ($legs as $leg) {
+            $source = InventoryTransaction::find($leg['source_id']);
+            if ($source === null) {
+                throw new RuntimeException('CC_P01E_LEDGER_AVCO_DIVERGENCE_PROOF_CONTRADICTION');
+            }
+            $equivalence = $this->costLedgerRepository->resolveInventoryTransaction($source, true);
+            if ($equivalence->status !== CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT) {
+                throw new RuntimeException('CC_P01E_LEDGER_AVCO_DIVERGENCE_PROOF_CONTRADICTION');
+            }
+
+            $state = $states[$leg['valuation_scope']];
+            if ($state->last_valuation_sequence === null
+                || $state->last_valuation_sequence < $source->valuation_sequence) {
+                $divergent = true;
+            }
+        }
+
+        if (! $divergent) {
+            throw new RuntimeException('CC_P01E_LEDGER_AVCO_DIVERGENCE_PROOF_CONTRADICTION');
+        }
     }
 
     /**

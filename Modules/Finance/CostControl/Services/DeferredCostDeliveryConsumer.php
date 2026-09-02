@@ -120,10 +120,6 @@ final class DeferredCostDeliveryConsumer
             return DeferredCostDeliveryResult::rejected($outcome->code, $applyLegs);
         }
 
-        if ($this->isMonetaryContradiction($outcome->code)) {
-            return DeferredCostDeliveryResult::rejected($outcome->code, $applyLegs);
-        }
-
         $this->failureRecorder->record($applyLegs, $outcome, $eligibleContext);
 
         return DeferredCostDeliveryResult::failed($outcome->code, $applyLegs);
@@ -528,14 +524,6 @@ final class DeferredCostDeliveryConsumer
     {
         return str_contains($code, 'LIFECYCLE_CONTRADICTION')
             || $code === 'HISTORICAL_DISPOSITION_NOT_CONSUMABLE';
-    }
-
-    private function isMonetaryContradiction(string $code): bool
-    {
-        return in_array($code, [
-            'TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION',
-            'COST_LEDGER_AVCO_STATE_DIVERGENCE',
-        ], true);
     }
 
     private function failure(string $code): DeferredCostDeliveryFailure

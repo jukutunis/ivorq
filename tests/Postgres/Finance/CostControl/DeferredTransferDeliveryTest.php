@@ -144,15 +144,68 @@ class DeferredTransferDeliveryTest extends PostgresTestCase
 
         $result = $this->consumer->consume($pair['inbound_outbox']->id);
 
-        $this->assertSame(DeferredCostDeliveryResult::REJECTED, $result->status);
+        $this->assertSame(DeferredCostDeliveryResult::FAILED, $result->status);
         $this->assertSame('TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION', $result->code);
         $this->assertSame(1, CostLedgerEntry::whereIn('source_inventory_transaction_id', [
             $pair['outbound']->id,
             $pair['inbound']->id,
         ])->count());
         $this->assertNull($this->state($this->partnerLocation)->last_valuation_sequence);
-        $this->assertSame(OutboxStatusEnum::Pending, $pair['outbound_outbox']->fresh()->status);
-        $this->assertSame(OutboxStatusEnum::Pending, $pair['inbound_outbox']->fresh()->status);
+        $dispositions = CostDeliveryOutboxDisposition::whereIn('outbox_message_id', [
+            $pair['outbound_outbox']->id,
+            $pair['inbound_outbox']->id,
+        ])->get();
+        $this->assertCount(2, $dispositions);
+        foreach ($dispositions as $disposition) {
+            $this->assertSame(CostDeliveryProcessingState::Failed, $disposition->processing_state);
+            $this->assertSame(1, $disposition->attempt_count);
+            $this->assertFalse($disposition->is_recoverable);
+            $this->assertSame('TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION', $disposition->last_failure_code);
+        }
+        $this->assertSame(OutboxStatusEnum::Failed, $pair['outbound_outbox']->fresh()->status);
+        $this->assertSame(OutboxStatusEnum::Failed, $pair['inbound_outbox']->fresh()->status);
+
+        foreach ([$pair['outbound_outbox'], $pair['inbound_outbox']] as $outbox) {
+            $second = $this->consumer->consume($outbox->id);
+            $this->assertSame(DeferredCostDeliveryResult::RECOVERY_REQUIRED, $second->status);
+        }
+        foreach ($dispositions as $disposition) {
+            $this->assertSame(1, $disposition->fresh()->attempt_count);
+        }
+    }
+
+    public function test_partial_monetary_effect_precedes_partner_sequence_gap(): void
+    {
+        $pair = $this->makeTransferPair(1, 2);
+        $this->makeExactTransferLedger($pair['outbound']);
+        $sourceState = $this->state($this->location);
+        $sourceState->last_valuation_sequence = 1;
+        $sourceState->last_valuation_business_date = '2026-08-25';
+        $sourceState->save();
+
+        $result = $this->consumer->consume($pair['inbound_outbox']->id);
+
+        $this->assertSame(DeferredCostDeliveryResult::FAILED, $result->status);
+        $this->assertSame('TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION', $result->code);
+        $this->assertSame(1, CostLedgerEntry::whereIn('source_inventory_transaction_id', [
+            $pair['outbound']->id,
+            $pair['inbound']->id,
+        ])->count());
+        $this->assertSame(1, $this->state($this->location)->last_valuation_sequence);
+        $this->assertNull($this->state($this->partnerLocation)->last_valuation_sequence);
+        $dispositions = CostDeliveryOutboxDisposition::whereIn('outbox_message_id', [
+            $pair['outbound_outbox']->id,
+            $pair['inbound_outbox']->id,
+        ])->get();
+        $this->assertCount(2, $dispositions);
+        foreach ($dispositions as $disposition) {
+            $this->assertSame(CostDeliveryProcessingState::Failed, $disposition->processing_state);
+            $this->assertFalse($disposition->is_recoverable);
+            $this->assertSame(1, $disposition->attempt_count);
+            $this->assertSame('TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION', $disposition->last_failure_code);
+        }
+        $this->assertSame(OutboxStatusEnum::Failed, $pair['outbound_outbox']->fresh()->status);
+        $this->assertSame(OutboxStatusEnum::Failed, $pair['inbound_outbox']->fresh()->status);
     }
 
     public function test_transfer_crash_after_first_ledger_leg_rolls_back_both_legs_and_states(): void

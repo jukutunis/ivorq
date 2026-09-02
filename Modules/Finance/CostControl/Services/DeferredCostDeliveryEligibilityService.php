@@ -349,6 +349,26 @@ final class DeferredCostDeliveryEligibilityService
             $equivalences[$legName] = $equivalence;
         }
 
+        if (isset($lockedLegs['partner'])) {
+            $sourceExact = $equivalences['source']->status
+                === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT;
+            $partnerExact = $equivalences['partner']->status
+                === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT;
+            if ($sourceExact !== $partnerExact) {
+                $exactLegName = $sourceExact ? 'source' : 'partner';
+                $missingLegName = $sourceExact ? 'partner' : 'source';
+                if ($equivalences[$missingLegName]->status !== CostLedgerSourceEquivalence::NO_EXISTING_EFFECT) {
+                    return $this->failure('CC_P01E_PARTIAL_MONETARY_EQUIVALENCE_PROOF_CONTRADICTION');
+                }
+
+                return $this->failure('TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION', [
+                    'exact_source_inventory_transaction_id' => $lockedLegs[$exactLegName]['source']->id,
+                    'exact_cost_ledger_entry_id' => (string) $equivalences[$exactLegName]->costLedgerEntryId,
+                    'missing_source_inventory_transaction_id' => $lockedLegs[$missingLegName]['source']->id,
+                ]);
+            }
+        }
+
         $alreadySatisfied = [];
         foreach ($lockedLegs as $legName => $leg) {
             $expectedSequence = $expectedSequences[$legName];
