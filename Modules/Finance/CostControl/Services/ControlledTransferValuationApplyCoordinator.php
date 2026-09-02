@@ -4,17 +4,21 @@ namespace Modules\Finance\CostControl\Services;
 
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
-use RuntimeException;
-use Modules\Finance\CostControl\Repositories\CostAvcoStateRepository;
+use Modules\Finance\CostControl\Models\CostAvcoState;
 use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
-use Modules\Finance\CostControl\Services\ControlledTransferValuationPlanner;
-use Modules\Finance\CostControl\Services\ControlledValuationCostLedgerAdapter;
+use Modules\Finance\CostControl\Repositories\CostAvcoStateRepository;
+use Modules\Finance\CostControl\Repositories\CostLedgerRepository;
+use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
 use Modules\Finance\CostControl\ValueObjects\ControlledTransferValuationIntent;
 use Modules\Finance\CostControl\ValueObjects\ControlledTransferValuationPlan;
 use Modules\Finance\CostControl\ValueObjects\ControlledValuationCostLedgerIntent;
+use Modules\Finance\CostControl\ValueObjects\CostLedgerSourceEquivalence;
+use Modules\Finance\CostControl\ValueObjects\DeferredCostDeliveryEligibleContext;
 use Modules\Finance\CostControl\ValueObjects\ValuationSequence;
-use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
-use Modules\Finance\CostControl\Models\CostAvcoState;
+use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\Repositories\InventoryTransactionRepository;
+use RuntimeException;
 
 /**
  * final transfer apply coordinator to coordinate paired transfer valuation transitions.
@@ -25,14 +29,125 @@ final class ControlledTransferValuationApplyCoordinator
         private readonly CostAvcoStateRepository $stateRepository,
         private readonly CostAuthorityEnrollmentRepository $enrollmentRepository,
         private readonly ControlledTransferValuationPlanner $planner,
-        private readonly ControlledValuationCostLedgerAdapter $ledgerAdapter
+        private readonly ControlledValuationCostLedgerAdapter $ledgerAdapter,
+        private readonly CostLedgerRepository $costLedgerRepository,
     ) {}
+
+    /** @return array{outbound:string,inbound:string} */
+    public function applyDeferred(DeferredCostDeliveryEligibleContext $context): array
+    {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(__METHOD__.' requires an active outer transaction.');
+        }
+        if (! $context->requiresPairedApplication || $context->pairedLeg === null) {
+            throw new RuntimeException('CC_P01E_TRANSFER_HANDLER_REQUIRES_COMPLETE_PAIR');
+        }
+        if ($context->sourceLeg->processingState !== 'PENDING'
+            || $context->pairedLeg->processingState !== 'PENDING') {
+            throw new RuntimeException('CC_P01E_TRANSFER_DISPOSITION_NOT_PENDING');
+        }
+
+        $sourceIds = [
+            $context->sourceLeg->sourceInventoryTransactionId,
+            $context->pairedLeg->sourceInventoryTransactionId,
+        ];
+        sort($sourceIds, SORT_STRING);
+        $sources = InventoryTransaction::whereIn('id', $sourceIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+        if ($sources->count() !== 2) {
+            throw new RuntimeException('CC_P01E_TRANSFER_PAIR_SOURCE_MISSING');
+        }
+
+        $outbound = $sources->first(fn (InventoryTransaction $source): bool => $source->transaction_type === TransactionTypeEnum::TransferOut);
+        $inbound = $sources->first(fn (InventoryTransaction $source): bool => $source->transaction_type === TransactionTypeEnum::TransferIn);
+        if ($outbound === null || $inbound === null) {
+            throw new RuntimeException('CC_P01E_TRANSFER_PAIR_TYPE_CONTRADICTION');
+        }
+        $this->assertExactDeferredPair($context, $outbound, $inbound);
+
+        [$sourceState, $destinationState] = $this->stateRepository->lockExistingSeededStatePair(
+            $outbound->property_id,
+            $outbound->item_id,
+            $outbound->location_id,
+            $inbound->location_id,
+        );
+
+        $outboundEquivalence = $this->costLedgerRepository->resolveInventoryTransaction($outbound, true);
+        $inboundEquivalence = $this->costLedgerRepository->resolveInventoryTransaction($inbound, true);
+        $outboundExact = $outboundEquivalence->status === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT;
+        $inboundExact = $inboundEquivalence->status === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT;
+
+        foreach ([$outboundEquivalence, $inboundEquivalence] as $equivalence) {
+            if ($equivalence->status === CostLedgerSourceEquivalence::CONFLICTING_EFFECT) {
+                throw new RuntimeException('CC_P01C_COST_LEDGER_SOURCE_CONFLICT');
+            }
+            if ($equivalence->status === CostLedgerSourceEquivalence::LEGACY_SOURCE_DUPLICATE_CONTRADICTION) {
+                throw new RuntimeException('CC_P01C_COST_LEDGER_SOURCE_DUPLICATE_CONTRADICTION');
+            }
+        }
+
+        if ($outboundExact xor $inboundExact) {
+            throw new RuntimeException('TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION');
+        }
+        if ($outboundExact && $inboundExact) {
+            if ($sourceState->last_valuation_sequence === null
+                || $sourceState->last_valuation_sequence < $outbound->valuation_sequence
+                || $destinationState->last_valuation_sequence === null
+                || $destinationState->last_valuation_sequence < $inbound->valuation_sequence) {
+                throw new RuntimeException('COST_LEDGER_AVCO_STATE_DIVERGENCE');
+            }
+
+            return [
+                'outbound' => (string) $outboundEquivalence->costLedgerEntryId,
+                'inbound' => (string) $inboundEquivalence->costLedgerEntryId,
+            ];
+        }
+
+        $outboundExpected = $sourceState->last_valuation_sequence === null
+            ? 1
+            : $sourceState->last_valuation_sequence + 1;
+        $inboundExpected = $destinationState->last_valuation_sequence === null
+            ? 1
+            : $destinationState->last_valuation_sequence + 1;
+        if ($outbound->valuation_sequence !== $outboundExpected
+            || $inbound->valuation_sequence !== $inboundExpected) {
+            throw new RuntimeException('CC_P01E_TRANSFER_STRICT_SEQUENCE_CHANGED_BEFORE_PLAN');
+        }
+
+        $requestedIntent = new ControlledTransferValuationIntent(
+            propertyId: $outbound->property_id,
+            itemId: $outbound->item_id,
+            sourceLocationId: $outbound->location_id,
+            destinationLocationId: $inbound->location_id,
+            sourceCurrentLastValuationSequence: $this->priorSequence($sourceState),
+            sourceCurrentQuantity: new AvcoDecimal((string) $sourceState->on_hand_quantity),
+            sourceCurrentCarryingValue: new AvcoDecimal((string) $sourceState->carrying_value),
+            destinationCurrentLastValuationSequence: $this->priorSequence($destinationState),
+            destinationCurrentQuantity: new AvcoDecimal((string) $destinationState->on_hand_quantity),
+            destinationCurrentCarryingValue: new AvcoDecimal((string) $destinationState->carrying_value),
+            outboundIntent: $this->deferredTransferLedgerIntent($outbound),
+            inboundIntent: $this->deferredTransferLedgerIntent($inbound),
+        );
+
+        $this->applyUsingLockedStates($sourceState, $destinationState, $requestedIntent);
+
+        $outboundApplied = $this->costLedgerRepository->resolveInventoryTransaction($outbound, true);
+        $inboundApplied = $this->costLedgerRepository->resolveInventoryTransaction($inbound, true);
+        if ($outboundApplied->status !== CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT
+            || $inboundApplied->status !== CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT) {
+            throw new RuntimeException('CC_P01E_TRANSFER_POST_APPLY_EQUIVALENCE_FAILED');
+        }
+
+        return [
+            'outbound' => (string) $outboundApplied->costLedgerEntryId,
+            'inbound' => (string) $inboundApplied->costLedgerEntryId,
+        ];
+    }
 
     /**
      * Coordinate and atomically apply a single approved controlled transfer pair.
-     *
-     * @param ControlledTransferValuationIntent $requestedIntent
-     * @return ControlledTransferValuationPlan
      */
     public function apply(
         ControlledTransferValuationIntent $requestedIntent
@@ -52,11 +167,6 @@ final class ControlledTransferValuationApplyCoordinator
 
     /**
      * Coordinate and atomically apply controlled valuation using already-locked states.
-     *
-     * @param CostAvcoState $lockedSourceState
-     * @param CostAvcoState $lockedDestinationState
-     * @param ControlledTransferValuationIntent $requestedIntent
-     * @return ControlledTransferValuationPlan
      */
     public function applyUsingLockedStates(
         CostAvcoState $lockedSourceState,
@@ -104,12 +214,12 @@ final class ControlledTransferValuationApplyCoordinator
             $itemId
         );
 
-        if (!$isSourceEnrolled || !$isDestEnrolled) {
+        if (! $isSourceEnrolled || ! $isDestEnrolled) {
             throw new RuntimeException('Source and/or destination scopes are not ENROLLED.');
         }
 
         // 4. Resolve and validate InventoryTransaction records using container
-        $txRepo = app(\Modules\Operations\Inventory\Repositories\InventoryTransactionRepository::class);
+        $txRepo = app(InventoryTransactionRepository::class);
 
         $outboundTx = $txRepo->findById($requestedIntent->outboundIntent->sourceInventoryTransactionId);
         $inboundTx = $txRepo->findById($requestedIntent->inboundIntent->sourceInventoryTransactionId);
@@ -229,5 +339,87 @@ final class ControlledTransferValuationApplyCoordinator
         $this->stateRepository->persistPairedTransferTransition($lockedSourceState, $lockedDestinationState, $plan);
 
         return $plan;
+    }
+
+    private function assertExactDeferredPair(
+        DeferredCostDeliveryEligibleContext $context,
+        InventoryTransaction $outbound,
+        InventoryTransaction $inbound,
+    ): void {
+        $eligibleIds = [
+            $context->sourceLeg->sourceInventoryTransactionId,
+            $context->pairedLeg?->sourceInventoryTransactionId,
+        ];
+        $exact = in_array($outbound->id, $eligibleIds, true)
+            && in_array($inbound->id, $eligibleIds, true)
+            && $outbound->property_id === $context->propertyId
+            && $inbound->property_id === $context->propertyId
+            && $outbound->item_id === $context->itemId
+            && $inbound->item_id === $context->itemId
+            && $outbound->source_document_id === $inbound->source_document_id
+            && $outbound->source_line_id === $inbound->source_line_id
+            && $outbound->location_id !== $inbound->location_id
+            && $outbound->currency_code === $inbound->currency_code
+            && $outbound->business_date?->format('Y-m-d') === $inbound->business_date?->format('Y-m-d')
+            && $outbound->occurred_at?->getTimestamp() === $inbound->occurred_at?->getTimestamp()
+            && $outbound->cost_delivery_mode === 'DEFERRED'
+            && $inbound->cost_delivery_mode === 'DEFERRED'
+            && $outbound->cost_delivery_ownership_id === $context->ownershipId
+            && $inbound->cost_delivery_ownership_id === $context->ownershipId
+            && $outbound->cost_delivery_ownership_version === $context->ownershipVersion
+            && $inbound->cost_delivery_ownership_version === $context->ownershipVersion
+            && $outbound->cost_delivery_cutover_id === $context->cutoverId
+            && $inbound->cost_delivery_cutover_id === $context->cutoverId
+            && bccomp((string) $outbound->quantity_change, bcmul((string) $inbound->quantity_change, '-1', 4), 4) === 0
+            && bccomp((string) $outbound->unit_cost, (string) $inbound->unit_cost, 4) === 0
+            && bccomp((string) $outbound->total_cost, bcmul((string) $inbound->total_cost, '-1', 4), 4) === 0;
+        if (! $exact) {
+            throw new RuntimeException('CC_P01E_TRANSFER_PAIR_EVIDENCE_CONFLICT');
+        }
+    }
+
+    private function priorSequence(CostAvcoState $state): ?ValuationSequence
+    {
+        if ($state->last_valuation_sequence === null) {
+            if ($state->last_valuation_business_date !== null) {
+                throw new RuntimeException('CC_P01E_AVCO_SEQUENCE_DATE_DIVERGENCE');
+            }
+
+            return null;
+        }
+        if ($state->last_valuation_business_date === null) {
+            throw new RuntimeException('CC_P01E_AVCO_SEQUENCE_DATE_DIVERGENCE');
+        }
+
+        return new ValuationSequence(
+            propertyId: $state->property_id,
+            itemId: $state->item_id,
+            valuationScope: $state->valuation_scope,
+            businessDate: $state->last_valuation_business_date->format('Y-m-d'),
+            ledgerSequence: $state->last_valuation_sequence,
+        );
+    }
+
+    private function deferredTransferLedgerIntent(InventoryTransaction $source): ControlledValuationCostLedgerIntent
+    {
+        $idempotencyKey = trim((string) $source->idempotency_key);
+        if ($idempotencyKey === '') {
+            throw new RuntimeException('CC_P01E_SOURCE_IDEMPOTENCY_KEY_MISSING');
+        }
+
+        return new ControlledValuationCostLedgerIntent(
+            propertyId: $source->property_id,
+            sourceInventoryTransactionId: $source->id,
+            priorCostLedgerEntryId: null,
+            entryType: 'transfer',
+            idempotencyKey: $idempotencyKey,
+            entrySequence: $source->valuation_sequence,
+            currencyCode: $source->currency_code,
+            quantityDelta: new AvcoDecimal((string) $source->quantity_change),
+            unitCost: new AvcoDecimal((string) $source->unit_cost),
+            valueDelta: new AvcoDecimal((string) $source->total_cost),
+            businessDate: $source->business_date->format('Y-m-d'),
+            occurredAt: $source->occurred_at->format('Y-m-d H:i:s'),
+        );
     }
 }

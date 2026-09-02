@@ -2,22 +2,21 @@
 
 namespace Tests\Postgres\Finance\CostControl;
 
-use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
-use RuntimeException;
-use Tests\PostgresTestCase;
-use Modules\Finance\CostControl\Services\ControlledValuationApplyCoordinator;
-use Modules\Finance\CostControl\ValueObjects\ControlledValuationCostLedgerIntent;
-use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
-use Modules\Finance\CostControl\ValueObjects\ControlledValuationStateTransitionPlan;
 use Modules\Finance\CostControl\Models\CostAvcoState;
+use Modules\Finance\CostControl\Services\ControlledValuationApplyCoordinator;
+use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
+use Modules\Finance\CostControl\ValueObjects\ControlledValuationCostLedgerIntent;
+use Modules\Finance\CostControl\ValueObjects\ControlledValuationStateTransitionPlan;
+use Modules\Foundation\Property\Models\Property;
 use Modules\Operations\Inventory\Models\InventoryCategory;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
-use Modules\Foundation\Property\Models\Property;
+use RuntimeException;
+use Tests\PostgresTestCase;
 
 class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
 {
@@ -26,11 +25,17 @@ class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
     protected $seed = true;
 
     private ControlledValuationApplyCoordinator $coordinator;
+
     private Property $property;
+
     private InventoryCategory $category;
+
     private InventoryItem $item;
+
     private InventoryLocation $location;
+
     private string $businessDate;
+
     private string $occurredAt;
 
     protected function setUp(): void
@@ -43,27 +48,27 @@ class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
 
         $this->category = InventoryCategory::firstOrCreate([
             'property_id' => $this->property->id,
-            'name'        => 'General',
+            'name' => 'General',
         ]);
 
         $this->item = InventoryItem::create([
-            'property_id'           => $this->property->id,
-            'category_id'           => $this->category->id,
-            'sku'                   => 'COORDINATOR-001',
-            'name'                  => 'Coordinator Test Item',
-            'inventory_type'        => 'goods',
+            'property_id' => $this->property->id,
+            'category_id' => $this->category->id,
+            'sku' => 'COORDINATOR-001',
+            'name' => 'Coordinator Test Item',
+            'inventory_type' => 'goods',
             'weighted_average_cost' => 10.00,
-            'is_active'             => true,
+            'is_active' => true,
         ]);
 
         $this->location = InventoryLocation::create([
             'property_id' => $this->property->id,
-            'name'        => 'Coordinator Test Warehouse',
-            'type'        => 'internal',
+            'name' => 'Coordinator Test Warehouse',
+            'type' => 'internal',
         ]);
 
         $this->businessDate = '2026-06-28';
-        $this->occurredAt   = '2026-06-28 12:00:00';
+        $this->occurredAt = '2026-06-28 12:00:00';
     }
 
     private function seedGroup(string $status = 'enrolled'): string
@@ -77,6 +82,7 @@ class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
         return $id;
     }
 
@@ -98,6 +104,7 @@ class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
         return $id;
     }
 
@@ -432,7 +439,7 @@ class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
                 'last_valuation_sequence' => 1,
                 'on_hand_quantity' => '10.0000',
                 'carrying_value' => '100.0000',
-                'weighted_average_unit_cost' => '10.0000'
+                'weighted_average_unit_cost' => '10.0000',
             ]);
 
         $txId2 = (string) Str::ulid();
@@ -507,7 +514,7 @@ class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
             'journal_candidates',
             'gl_journal_entries',
             'gl_journal_entry_lines',
-            'gl_ledger_balances'
+            'gl_ledger_balances',
         ];
 
         $countsBefore = [];
@@ -571,9 +578,9 @@ class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
     }
 
     /**
-     * 9. No production service references the coordinator.
+     * 9. Only approved synchronous invocation services and the deferred handler reference the coordinator.
      */
-    public function test_no_production_service_references_coordinator(): void
+    public function test_only_approved_services_reference_coordinator(): void
     {
         $modulePath = base_path('Modules');
         $callers = [];
@@ -595,6 +602,13 @@ class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
             }
         }
 
-        $this->assertEmpty($callers, 'Coordinator has production callers!');
+        sort($callers, SORT_STRING);
+        $expected = [
+            realpath(base_path('Modules/Finance/CostControl/Services/ControlledIssueValuationInvocationService.php')),
+            realpath(base_path('Modules/Finance/CostControl/Services/ControlledReceiptValuationInvocationService.php')),
+            realpath(base_path('Modules/Finance/CostControl/Services/DeferredSingleTransactionValuationHandler.php')),
+        ];
+        sort($expected, SORT_STRING);
+        $this->assertSame($expected, $callers, 'Coordinator has an unauthorized production caller.');
     }
 }
