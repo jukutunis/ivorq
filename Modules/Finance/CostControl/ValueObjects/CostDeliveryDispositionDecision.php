@@ -12,6 +12,8 @@ final readonly class CostDeliveryDispositionDecision
 
     public const PROVENANCE_SOURCE_TYPE_NON_ELIGIBLE = 'SOURCE_TRANSACTION_TYPE_NOT_COSTCONTROL_ELIGIBLE';
 
+    public const PROVENANCE_DEFERRED_SOURCE_STAMP_AND_CUTOVER_PROOF = 'DEFERRED_SOURCE_STAMP_AND_CUTOVER_PROOF';
+
     private function __construct(
         public string $outboxMessageId,
         public string $sourceInventoryTransactionId,
@@ -92,6 +94,40 @@ final readonly class CostDeliveryDispositionDecision
             null,
             $classifiedBy,
             self::PROVENANCE_SOURCE_TYPE_NON_ELIGIBLE,
+            $classifiedAt,
+        );
+    }
+
+    public static function deferredOwnedAfterCutover(
+        string $outboxMessageId,
+        string $sourceInventoryTransactionId,
+        string $propertyId,
+        string $locationId,
+        string $itemId,
+        string $valuationScope,
+        int $valuationSequence,
+        string $costDeliveryOwnershipId,
+        int $costDeliveryOwnershipVersion,
+        string $costDeliveryCutoverId,
+        string $classifiedBy,
+        DateTimeInterface $classifiedAt,
+    ): self {
+        return new self(
+            $outboxMessageId,
+            $sourceInventoryTransactionId,
+            $propertyId,
+            $locationId,
+            $itemId,
+            $valuationScope,
+            $valuationSequence,
+            CostDeliveryDispositionClass::DeferredOwnedAfterCutover,
+            CostDeliveryProcessingState::Pending,
+            $costDeliveryOwnershipId,
+            $costDeliveryOwnershipVersion,
+            $costDeliveryCutoverId,
+            null,
+            $classifiedBy,
+            self::PROVENANCE_DEFERRED_SOURCE_STAMP_AND_CUTOVER_PROOF,
             $classifiedAt,
         );
     }

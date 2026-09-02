@@ -478,8 +478,19 @@ class DeferredCostDeliveryEligibilityTest extends PostgresTestCase
         return [
             'opening balance' => [TransactionTypeEnum::OpeningBalance->value, 'OPENING_BALANCE_UNSUPPORTED'],
             'return' => [TransactionTypeEnum::Return->value, 'RETURN_UNSUPPORTED'],
-            'reversal' => [TransactionTypeEnum::Reversal->value, 'REVERSAL_HANDLER_NOT_AVAILABLE'],
         ];
+    }
+
+    public function test_reversal_type_is_available_to_the_deferred_handler_boundary(): void
+    {
+        $this->rawUpdate('inventory_transactions', $this->source->id, [
+            'transaction_type' => TransactionTypeEnum::Reversal->value,
+        ]);
+
+        $result = $this->service->evaluate($this->outbox->id);
+
+        $this->assertInstanceOf(DeferredCostDeliveryEligibleContext::class, $result);
+        $this->assertFalse($result->requiresPairedApplication);
     }
 
     public function test_transfer_partner_outside_enrollment_snapshot_fails_closed(): void
@@ -862,7 +873,7 @@ class DeferredCostDeliveryEligibilityTest extends PostgresTestCase
             'cost_delivery_ownership_version' => $this->evidence['ownership_version'],
             'cost_delivery_cutover_id' => $this->evidence['cutover_id'],
             'business_date' => '2026-08-25',
-            'occurred_at' => now()->startOfSecond(),
+            'occurred_at' => '2026-08-25 10:00:00',
             'source_document_type' => 'inventory_receipt',
             'source_document_id' => (string) Str::ulid(),
             'source_line_type' => 'inventory_receipt_line',
@@ -876,7 +887,7 @@ class DeferredCostDeliveryEligibilityTest extends PostgresTestCase
             'unit_cost' => '7.5000',
             'total_cost' => '15.0000',
             'posted_by' => $this->actor->id,
-            'posted_at' => now(),
+            'posted_at' => '2026-08-25 10:00:00',
             'created_at' => now(),
         ], $overrides);
 

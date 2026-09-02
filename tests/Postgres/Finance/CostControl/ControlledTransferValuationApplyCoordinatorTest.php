@@ -6,18 +6,17 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
-use RuntimeException;
-use Tests\PostgresTestCase;
-use Modules\Finance\CostControl\Services\ControlledTransferValuationApplyCoordinator;
-use Modules\Finance\CostControl\Repositories\CostAvcoStateRepository;
 use Modules\Finance\CostControl\Models\CostAvcoState;
+use Modules\Finance\CostControl\Repositories\CostAvcoStateRepository;
+use Modules\Finance\CostControl\Services\ControlledTransferValuationApplyCoordinator;
+use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
 use Modules\Finance\CostControl\ValueObjects\ControlledTransferValuationIntent;
 use Modules\Finance\CostControl\ValueObjects\ControlledValuationCostLedgerIntent;
-use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Operations\Inventory\Models\InventoryCategory;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
+use Tests\PostgresTestCase;
 
 class ControlledTransferValuationApplyCoordinatorTest extends PostgresTestCase
 {
@@ -26,13 +25,19 @@ class ControlledTransferValuationApplyCoordinatorTest extends PostgresTestCase
     protected $seed = true;
 
     private ControlledTransferValuationApplyCoordinator $coordinator;
+
     private CostAvcoStateRepository $stateRepository;
 
     private Property $property;
+
     private InventoryItem $item;
+
     private InventoryLocation $locationSrc;
+
     private InventoryLocation $locationDest;
+
     private string $businessDate;
+
     private string $occurredAt;
 
     protected function setUp(): void
@@ -46,17 +51,17 @@ class ControlledTransferValuationApplyCoordinatorTest extends PostgresTestCase
 
         $category = InventoryCategory::firstOrCreate([
             'property_id' => $this->property->id,
-            'name'        => 'Transfer Test Category',
+            'name' => 'Transfer Test Category',
         ]);
 
         $this->item = InventoryItem::create([
-            'property_id'           => $this->property->id,
-            'category_id'           => $category->id,
-            'sku'                   => 'XFER-ITEM-001',
-            'name'                  => 'Transfer Test Item',
-            'inventory_type'        => 'goods',
+            'property_id' => $this->property->id,
+            'category_id' => $category->id,
+            'sku' => 'XFER-ITEM-001',
+            'name' => 'Transfer Test Item',
+            'inventory_type' => 'goods',
             'weighted_average_cost' => '10.0000',
-            'is_active'             => true,
+            'is_active' => true,
         ]);
 
         // Lexicographically: 'loc_src' sorts AFTER 'loc_dest', proving sorting role-mapping safety
@@ -107,6 +112,7 @@ class ControlledTransferValuationApplyCoordinatorTest extends PostgresTestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
         return $id;
     }
 
@@ -128,6 +134,7 @@ class ControlledTransferValuationApplyCoordinatorTest extends PostgresTestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
         return $snapshotId;
     }
 
@@ -185,9 +192,9 @@ class ControlledTransferValuationApplyCoordinatorTest extends PostgresTestCase
             'business_date' => $this->businessDate,
             'occurred_at' => $this->occurredAt,
             'currency_code' => 'USD',
-            'idempotency_key' => 'idem_' . $txId,
+            'idempotency_key' => 'idem_'.$txId,
             'valuation_approval_status' => 'approved',
-            'valuation_approval_reference' => 'ref_' . $txId,
+            'valuation_approval_reference' => 'ref_'.$txId,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -206,7 +213,7 @@ class ControlledTransferValuationApplyCoordinatorTest extends PostgresTestCase
             sourceInventoryTransactionId: $txId,
             priorCostLedgerEntryId: null,
             entryType: $entryType,
-            idempotencyKey: 'idem_' . $txId,
+            idempotencyKey: 'idem_'.$txId,
             entrySequence: $entrySequence,
             currencyCode: 'USD',
             quantityDelta: new AvcoDecimal($qtyDelta),
@@ -450,9 +457,9 @@ class ControlledTransferValuationApplyCoordinatorTest extends PostgresTestCase
     }
 
     /**
-     * 6. No production service references the coordinator.
+     * 6. Only the synchronous transfer invocation service and deferred handler reference the coordinator.
      */
-    public function test_no_production_service_references_coordinator(): void
+    public function test_only_approved_services_reference_coordinator(): void
     {
         $modulePath = base_path('Modules');
         $callers = [];
@@ -474,6 +481,12 @@ class ControlledTransferValuationApplyCoordinatorTest extends PostgresTestCase
             }
         }
 
-        $this->assertEmpty($callers, 'Coordinator has production callers!');
+        sort($callers, SORT_STRING);
+        $expected = [
+            realpath(base_path('Modules/Finance/CostControl/Services/ControlledTransferValuationInvocationService.php')),
+            realpath(base_path('Modules/Finance/CostControl/Services/DeferredTransferValuationHandler.php')),
+        ];
+        sort($expected, SORT_STRING);
+        $this->assertSame($expected, $callers, 'Coordinator has an unauthorized production caller.');
     }
 }

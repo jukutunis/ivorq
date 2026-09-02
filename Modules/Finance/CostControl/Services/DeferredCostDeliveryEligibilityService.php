@@ -82,8 +82,14 @@ final class DeferredCostDeliveryEligibilityService
             return $typeResult;
         }
 
-        /** @var array<string, array{source:InventoryTransaction,is_partner:bool}> $initialLegs */
-        $initialLegs = ['source' => ['source' => $initialSource, 'is_partner' => false]];
+        /** @var array<string, array{source:InventoryTransaction,outbox:OutboxMessage,is_partner:bool}> $initialLegs */
+        $initialLegs = [
+            'source' => [
+                'source' => $initialSource,
+                'outbox' => $initialOutbox,
+                'is_partner' => false,
+            ],
+        ];
         if ($typeResult) {
             $partner = $this->resolveTransferPartnerCandidate($initialSource);
             if ($partner instanceof DeferredCostDeliveryFailure) {
@@ -93,10 +99,29 @@ final class DeferredCostDeliveryEligibilityService
             if ($partnerModeFailure !== null) {
                 return $partnerModeFailure;
             }
-            $initialLegs['partner'] = ['source' => $partner, 'is_partner' => true];
+            $initialLegs['partner'] = [
+                'source' => $partner,
+                'outbox' => null,
+                'is_partner' => true,
+            ];
         }
 
         // Canonical serialization latch and lock order starts here.
+        $initialOwnership = CostDeliveryModeOwnership::find($initialSource->cost_delivery_ownership_id);
+        if ($initialOwnership !== null
+            && ($initialOwnership->property_id !== $initialSource->property_id
+                || $initialOwnership->item_id !== $initialSource->item_id)) {
+            return $this->failure('OWNERSHIP_IDENTITY_MISMATCH');
+        }
+
+        $pilot = CostDeliveryPilotProperty::where('pilot_slot', 1)
+            ->where('property_id', $initialSource->property_id)
+            ->lockForUpdate()
+            ->first();
+        if ($pilot === null) {
+            return $this->failure('PILOT_NOT_AUTHORIZED');
+        }
+
         $ownership = CostDeliveryModeOwnership::whereKey($initialSource->cost_delivery_ownership_id)
             ->lockForUpdate()
             ->first();
@@ -182,17 +207,20 @@ final class DeferredCostDeliveryEligibilityService
             $cutoverScopes[$legName] = $cutoverScope;
         }
 
-        // Lock both Outbox/source/disposition evidence sets in the same scope order.
-        $lockedLegs = [];
-        foreach ($orderedInitialLegs as $legName => $leg) {
-            $outbox = $leg['is_partner']
-                ? $this->lockPartnerOutbox($leg['source']->id)
-                : OutboxMessage::whereKey($outboxMessageId)->lockForUpdate()->first();
-            if ($outbox instanceof DeferredCostDeliveryFailure) {
-                return $outbox;
+        if (isset($initialLegs['partner'])) {
+            $partnerOutbox = $this->resolvePartnerOutboxCandidate($initialLegs['partner']['source']->id);
+            if ($partnerOutbox instanceof DeferredCostDeliveryFailure) {
+                return $partnerOutbox;
             }
+            $initialLegs['partner']['outbox'] = $partnerOutbox;
+        }
+
+        // Lock both Outbox/source/disposition evidence sets in Outbox ULID order.
+        $lockedLegs = [];
+        foreach ($this->orderLegsByOutbox($initialLegs) as $legName => $leg) {
+            $outbox = OutboxMessage::whereKey($leg['outbox']->id)->lockForUpdate()->first();
             if ($outbox === null) {
-                return $this->failure('OUTBOX_NOT_FOUND');
+                return $this->failure($leg['is_partner'] ? 'TRANSFER_PAIR_OUTBOX_MISSING' : 'OUTBOX_NOT_FOUND');
             }
 
             $lockedSourceId = $this->validatedOutboxSourceId($outbox, $leg['is_partner']);
@@ -258,12 +286,6 @@ final class DeferredCostDeliveryEligibilityService
             }
         }
 
-        if (! CostDeliveryPilotProperty::where('pilot_slot', 1)
-            ->where('property_id', $initialSource->property_id)
-            ->exists()) {
-            return $this->failure('PILOT_NOT_AUTHORIZED');
-        }
-
         foreach ($lockedLegs as $legName => $leg) {
             $cutoverScope = $cutoverScopes[$legName];
             if ($leg['source']->valuation_sequence < $cutoverScope->first_deferred_owned_sequence) {
@@ -284,8 +306,10 @@ final class DeferredCostDeliveryEligibilityService
         }
 
         // Lock both AVCO rows in canonical scope order.
+        $avcoStates = [];
         $expectedSequences = [];
-        foreach ($lockedLegs as $legName => $leg) {
+        foreach ($orderedInitialLegs as $legName => $initialLeg) {
+            $leg = $lockedLegs[$legName];
             $avcoState = CostAvcoState::where('property_id', $leg['source']->property_id)
                 ->where('location_id', $leg['source']->location_id)
                 ->where('item_id', $leg['source']->item_id)
@@ -296,6 +320,7 @@ final class DeferredCostDeliveryEligibilityService
                     $leg['is_partner'] ? 'TRANSFER_PAIR_AVCO_STATE_MISSING' : 'AVCO_STATE_MISSING',
                 );
             }
+            $avcoStates[$legName] = $avcoState;
             $expectedSequences[$legName] = $avcoState->last_valuation_sequence === null
                 ? 1
                 : $avcoState->last_valuation_sequence + 1;
@@ -324,6 +349,42 @@ final class DeferredCostDeliveryEligibilityService
                 );
             }
             $equivalences[$legName] = $equivalence;
+        }
+
+        foreach ($lockedLegs as $legName => $leg) {
+            $equivalence = $equivalences[$legName];
+            $avcoState = $avcoStates[$legName];
+            if ($equivalence->status === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT
+                && ($avcoState->last_valuation_sequence === null
+                    || $avcoState->last_valuation_sequence < $leg['source']->valuation_sequence)) {
+                return $this->failure('COST_LEDGER_AVCO_STATE_DIVERGENCE', [
+                    'affected_source_inventory_transaction_id' => $leg['source']->id,
+                    'affected_scope' => $leg['source']->valuation_scope,
+                    'exact_cost_ledger_entry_id' => (string) $equivalence->costLedgerEntryId,
+                    'source_valuation_sequence' => $leg['source']->valuation_sequence,
+                    'current_avco_sequence' => $avcoState->last_valuation_sequence,
+                ]);
+            }
+        }
+
+        if (isset($lockedLegs['partner'])) {
+            $sourceExact = $equivalences['source']->status
+                === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT;
+            $partnerExact = $equivalences['partner']->status
+                === CostLedgerSourceEquivalence::EXACT_EQUIVALENT_EFFECT;
+            if ($sourceExact !== $partnerExact) {
+                $exactLegName = $sourceExact ? 'source' : 'partner';
+                $missingLegName = $sourceExact ? 'partner' : 'source';
+                if ($equivalences[$missingLegName]->status !== CostLedgerSourceEquivalence::NO_EXISTING_EFFECT) {
+                    return $this->failure('CC_P01E_PARTIAL_MONETARY_EQUIVALENCE_PROOF_CONTRADICTION');
+                }
+
+                return $this->failure('TRANSFER_PARTIAL_MONETARY_EFFECT_CONTRADICTION', [
+                    'exact_source_inventory_transaction_id' => $lockedLegs[$exactLegName]['source']->id,
+                    'exact_cost_ledger_entry_id' => (string) $equivalences[$exactLegName]->costLedgerEntryId,
+                    'missing_source_inventory_transaction_id' => $lockedLegs[$missingLegName]['source']->id,
+                ]);
+            }
         }
 
         $alreadySatisfied = [];
@@ -404,7 +465,7 @@ final class DeferredCostDeliveryEligibilityService
         );
     }
 
-    /** @param array<string, array{source:InventoryTransaction,is_partner:bool}> $legs */
+    /** @param array<string, array{source:InventoryTransaction,outbox:?OutboxMessage,is_partner:bool}> $legs */
     private function orderLegsByScope(array $legs): array
     {
         uasort($legs, function (array $left, array $right): int {
@@ -414,6 +475,14 @@ final class DeferredCostDeliveryEligibilityService
                 ? $scopeOrder
                 : $left['source']->id <=> $right['source']->id;
         });
+
+        return $legs;
+    }
+
+    /** @param array<string, array{source:InventoryTransaction,outbox:OutboxMessage,is_partner:bool}> $legs */
+    private function orderLegsByOutbox(array $legs): array
+    {
+        uasort($legs, fn (array $left, array $right): int => $left['outbox']->id <=> $right['outbox']->id);
 
         return $legs;
     }
@@ -501,11 +570,10 @@ final class DeferredCostDeliveryEligibilityService
         return $snapshot;
     }
 
-    private function lockPartnerOutbox(string $sourceId): OutboxMessage|DeferredCostDeliveryFailure
+    private function resolvePartnerOutboxCandidate(string $sourceId): OutboxMessage|DeferredCostDeliveryFailure
     {
         $outboxes = OutboxMessage::where('source_inventory_transaction_id', $sourceId)
             ->orderBy('id')
-            ->lockForUpdate()
             ->get();
         if ($outboxes->count() !== 1) {
             return $this->failure('TRANSFER_PAIR_OUTBOX_MISSING');
@@ -742,14 +810,12 @@ final class DeferredCostDeliveryEligibilityService
         if ($transactionType === TransactionTypeEnum::Return) {
             return $this->failure('RETURN_UNSUPPORTED');
         }
-        if ($transactionType === TransactionTypeEnum::Reversal) {
-            return $this->failure('REVERSAL_HANDLER_NOT_AVAILABLE');
-        }
         if (! in_array($transactionType, [
             TransactionTypeEnum::PurchaseReceipt,
             TransactionTypeEnum::Issue,
             TransactionTypeEnum::AdjustmentIn,
             TransactionTypeEnum::AdjustmentOut,
+            TransactionTypeEnum::Reversal,
             TransactionTypeEnum::TransferOut,
             TransactionTypeEnum::TransferIn,
         ], true)) {
