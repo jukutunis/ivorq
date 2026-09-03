@@ -21,6 +21,48 @@ class InventoryCostDeliveryModeAdapter implements CostDeliveryModePort
         private readonly CostDeliveryCutoverRepository $cutoverRepository,
     ) {}
 
+    public function isEnrolled(string $propertyId, string $itemId): bool
+    {
+        return CostAuthorityEnrollmentGroup::where('property_id', $propertyId)
+            ->where('item_id', $itemId)
+            ->where('status', CostAuthorityEnrollmentStatusEnum::Enrolled->value)
+            ->exists();
+    }
+
+    public function lockForDocumentMutation(string $propertyId, string $itemId): void
+    {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException(__METHOD__.' requires an active outer transaction.');
+        }
+
+        $candidateGroup = CostAuthorityEnrollmentGroup::where('property_id', $propertyId)
+            ->where('item_id', $itemId)
+            ->where('status', CostAuthorityEnrollmentStatusEnum::Enrolled->value)
+            ->first();
+        if ($candidateGroup === null) {
+            return;
+        }
+
+        $ownership = $this->ownershipRepository->findForUpdateByEnrollmentGroup($candidateGroup->id);
+        $group = CostAuthorityEnrollmentGroup::whereKey($candidateGroup->id)
+            ->lockForUpdate()
+            ->first();
+        if ($group === null
+            || $group->property_id !== $propertyId
+            || $group->item_id !== $itemId
+            || $group->status !== CostAuthorityEnrollmentStatusEnum::Enrolled) {
+            throw new RuntimeException('ENROLLED_DELIVERY_ENROLLMENT_CHANGED');
+        }
+        if ($ownership === null) {
+            throw new RuntimeException('ENROLLED_DELIVERY_OWNERSHIP_MISSING');
+        }
+        if ($ownership->property_id !== $propertyId
+            || $ownership->item_id !== $itemId
+            || $ownership->enrollment_group_id !== $group->id) {
+            throw new RuntimeException('ENROLLED_DELIVERY_OWNERSHIP_MISMATCH');
+        }
+    }
+
     public function resolveForPosting(
         string $propertyId,
         string $itemId,

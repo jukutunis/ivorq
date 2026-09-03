@@ -275,7 +275,7 @@ class InventoryCostDeliveryModeGateTest extends PostgresTestCase
         $this->assertSame($quantityAfterOriginal, $this->stock->fresh()->physical_quantity);
     }
 
-    public function test_deferred_decision_is_prohibited_before_sequence_source_outbox_or_stock_mutation(): void
+    public function test_deferred_decision_stamps_source_and_outbox_without_cost_application(): void
     {
         $decision = CostDeliveryPostingDecision::deferred(
             $this->property->id,
@@ -289,17 +289,20 @@ class InventoryCostDeliveryModeGateTest extends PostgresTestCase
             1,
         );
 
-        try {
-            $this->coordinatorWith($this->fakePort(fn () => $decision))->post(
-                $this->makeIntent('a4-deferred-prohibited'),
-                $this->actor->id,
-            );
-            $this->fail('CC-P01A A4 must never stamp or downgrade a DEFERRED decision.');
-        } catch (RuntimeException $exception) {
-            $this->assertSame('CC_P01A_A4_DEFERRED_SOURCE_STAMP_PROHIBITED', $exception->getMessage());
-        }
+        $transaction = $this->coordinatorWith($this->fakePort(fn () => $decision))->post(
+            $this->makeIntent('p01f-deferred-owned'),
+            $this->actor->id,
+        );
 
-        $this->assertNoPostingSideEffects();
+        $this->assertSame('DEFERRED', $transaction->cost_delivery_mode);
+        $this->assertSame($decision->ownershipId, $transaction->cost_delivery_ownership_id);
+        $this->assertSame($decision->ownershipVersion, $transaction->cost_delivery_ownership_version);
+        $this->assertSame($decision->cutoverId, $transaction->cost_delivery_cutover_id);
+        $this->assertDatabaseCount('inventory_transactions', 1);
+        $this->assertDatabaseCount('inventory_valuation_sequences', 1);
+        $this->assertDatabaseCount('outbox_messages', 1);
+        $this->assertDatabaseCount('cost_ledger_entries', 0);
+        $this->assertSame('110.0000', $this->stock->fresh()->physical_quantity);
     }
 
     public function test_mode_resolution_occurs_inside_outer_transaction_before_context_stock_and_sequence_locks(): void
@@ -507,6 +510,13 @@ final class A4TestCostDeliveryModePort implements CostDeliveryModePort
     public array $transactionLevels = [];
 
     public function __construct(private readonly Closure $resolver) {}
+
+    public function isEnrolled(string $propertyId, string $itemId): bool
+    {
+        return true;
+    }
+
+    public function lockForDocumentMutation(string $propertyId, string $itemId): void {}
 
     public function resolveForPosting(
         string $propertyId,

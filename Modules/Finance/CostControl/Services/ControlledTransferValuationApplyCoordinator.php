@@ -2,6 +2,7 @@
 
 namespace Modules\Finance\CostControl\Services;
 
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Modules\Finance\CostControl\Models\CostAvcoState;
@@ -254,7 +255,7 @@ final class ControlledTransferValuationApplyCoordinator
         }
 
         if ($outboundTx->business_date->format('Y-m-d') !== $requestedIntent->outboundIntent->businessDate ||
-            $outboundTx->occurred_at->format('Y-m-d H:i:s') !== $requestedIntent->outboundIntent->occurredAt ||
+            ! $this->sameInstant($outboundTx, $requestedIntent->outboundIntent->occurredAt) ||
             $outboundTx->currency_code !== $requestedIntent->outboundIntent->currencyCode) {
             throw new InvalidArgumentException('Outbound metadata mismatch.');
         }
@@ -285,7 +286,7 @@ final class ControlledTransferValuationApplyCoordinator
         }
 
         if ($inboundTx->business_date->format('Y-m-d') !== $requestedIntent->inboundIntent->businessDate ||
-            $inboundTx->occurred_at->format('Y-m-d H:i:s') !== $requestedIntent->inboundIntent->occurredAt ||
+            ! $this->sameInstant($inboundTx, $requestedIntent->inboundIntent->occurredAt) ||
             $inboundTx->currency_code !== $requestedIntent->inboundIntent->currencyCode) {
             throw new InvalidArgumentException('Inbound metadata mismatch.');
         }
@@ -421,5 +422,11 @@ final class ControlledTransferValuationApplyCoordinator
             businessDate: $source->business_date->format('Y-m-d'),
             occurredAt: $source->occurred_at->format('Y-m-d H:i:s'),
         );
+    }
+
+    private function sameInstant(InventoryTransaction $source, string $occurredAt): bool
+    {
+        return $source->occurred_at->getTimestamp()
+            === Carbon::parse($occurredAt, $source->occurred_at->getTimezone())->getTimestamp();
     }
 }

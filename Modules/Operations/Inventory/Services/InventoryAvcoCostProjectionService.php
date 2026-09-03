@@ -3,20 +3,16 @@
 namespace Modules\Operations\Inventory\Services;
 
 use Carbon\Carbon;
-use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Inventory\Enums\InventoryCostEligibilityStatusEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
-use Modules\Operations\Inventory\Models\GoodsReceipt;
-use Modules\Operations\Inventory\Models\GoodsReceiptLineCommercialEvidence;
 use Modules\Operations\Inventory\Models\GoodsReceiptLine;
+use Modules\Operations\Inventory\Models\GoodsReceiptLineCommercialEvidence;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryStockMovement;
-use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
-use Modules\Operations\Purchasing\Models\PurchaseOrder;
-use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
+use Modules\Operations\Inventory\ValueObjects\InventoryProjectionDecimal as AvcoDecimal;
 
 class InventoryAvcoCostProjectionService
 {
@@ -62,12 +58,13 @@ class InventoryAvcoCostProjectionService
                 ? $movement->direction
                 : InventoryMovementDirectionEnum::tryFrom((string) $movement->direction);
 
-            if (!$type || !$direction) {
+            if (! $type || ! $direction) {
                 if ($eligibilityStatus === InventoryCostEligibilityStatusEnum::CostingReady) {
                     $eligibilityStatus = InventoryCostEligibilityStatusEnum::CostingBlockedInconsistentMovementEvidence;
                     $blockingReason = 'Unrecognized movement type or direction.';
                     $blockingMovementId = $movement->id;
                 }
+
                 continue;
             }
 
@@ -123,7 +120,7 @@ class InventoryAvcoCostProjectionService
                     $costedQuantity = $costedQuantity->sub($quantityDecimal);
                     $derivedControlledValue = $derivedControlledValue->sub($issueCostEvidence);
 
-                    if (!$costedQuantity->isZero()) {
+                    if (! $costedQuantity->isZero()) {
                         $derivedAvco = $derivedControlledValue->div($costedQuantity);
                     } else {
                         $derivedAvco = null;
@@ -163,7 +160,7 @@ class InventoryAvcoCostProjectionService
                             $pair['out'], $pair['in'], $propertyId
                         );
 
-                        if (!$pairResult['valid']) {
+                        if (! $pairResult['valid']) {
                             $eligibilityStatus = InventoryCostEligibilityStatusEnum::CostingBlockedInconsistentMovementEvidence;
                             $blockingReason = $pairResult['reason'];
                             $blockingMovementId = $pairResult['movement_id'];
@@ -186,7 +183,7 @@ class InventoryAvcoCostProjectionService
         }
 
         foreach ($transferPairs as $correlationId => $pair) {
-            if (isset($pair['out']) && !isset($pair['in'])) {
+            if (isset($pair['out']) && ! isset($pair['in'])) {
                 if ($eligibilityStatus === InventoryCostEligibilityStatusEnum::CostingReady) {
                     $eligibilityStatus = InventoryCostEligibilityStatusEnum::CostingBlockedInconsistentMovementEvidence;
                     $blockingReason = sprintf(
@@ -195,7 +192,7 @@ class InventoryAvcoCostProjectionService
                     );
                     $blockingMovementId = $pair['out']->id;
                 }
-            } elseif (!isset($pair['out']) && isset($pair['in'])) {
+            } elseif (! isset($pair['out']) && isset($pair['in'])) {
                 if ($eligibilityStatus === InventoryCostEligibilityStatusEnum::CostingReady) {
                     $eligibilityStatus = InventoryCostEligibilityStatusEnum::CostingBlockedInconsistentMovementEvidence;
                     $blockingReason = sprintf(
@@ -238,7 +235,7 @@ class InventoryAvcoCostProjectionService
         $goodsReceiptLine = GoodsReceiptLine::with('goodsReceipt')
             ->find($movement->source_id);
 
-        if (!$goodsReceiptLine) {
+        if (! $goodsReceiptLine) {
             return [
                 'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence,
                 'reason' => 'Goods Receipt Line source not found.',
@@ -247,7 +244,7 @@ class InventoryAvcoCostProjectionService
 
         $receipt = $goodsReceiptLine->goodsReceipt;
 
-        if (!$receipt || $receipt->status !== GoodsReceiptStatusEnum::Posted) {
+        if (! $receipt || $receipt->status !== GoodsReceiptStatusEnum::Posted) {
             return [
                 'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence,
                 'reason' => 'Goods Receipt is not posted.',
@@ -259,7 +256,7 @@ class InventoryAvcoCostProjectionService
             $goodsReceiptLine->id
         )->first();
 
-        if (!$evidence) {
+        if (! $evidence) {
             return [
                 'status' => InventoryCostEligibilityStatusEnum::CostingBlockedInsufficientCostEvidence,
                 'reason' => 'No immutable receipt commercial evidence snapshot exists for this receipt line.',

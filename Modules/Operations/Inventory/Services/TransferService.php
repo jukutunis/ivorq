@@ -2,17 +2,22 @@
 
 namespace Modules\Operations\Inventory\Services;
 
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
+use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Operations\Inventory\Contracts\AuthoritativeInventoryCostPort;
+use Modules\Operations\Inventory\Contracts\CostDeliveryModePort;
+use Modules\Operations\Inventory\Contracts\SynchronousCostValuationPort;
+use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Modules\Operations\Inventory\Enums\TransferStatusEnum;
 use Modules\Operations\Inventory\Models\InventoryTransfer;
 use Modules\Operations\Inventory\Repositories\InventoryItemRepository;
 use Modules\Operations\Inventory\Repositories\InventoryTransferRepository;
-use Modules\Operations\Inventory\Services\InventoryPostingControlCoordinator;
+use Modules\Operations\Inventory\ValueObjects\CostDeliveryPostingDecision;
 use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
-use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
-use Modules\Foundation\Property\Models\PropertyBusinessDate;
-use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
+use RuntimeException;
 use Shared\Exceptions\BusinessLogicException;
 
 class TransferService
@@ -20,13 +25,20 @@ class TransferService
     public function __construct(
         private InventoryTransferRepository $transferRepository,
         private InventoryPostingControlCoordinator $coordinator,
-        private InventoryItemRepository $itemRepository
+        private InventoryItemRepository $itemRepository,
+        private CostDeliveryModePort $costDeliveryMode,
+        private AuthoritativeInventoryCostPort $authoritativeCost,
+        private SynchronousCostValuationPort $synchronousValuation,
     ) {}
 
     public function create(array $data): InventoryTransfer
     {
-        $data['status'] = TransferStatusEnum::Draft->value;
-        return $this->transferRepository->create($data);
+        return DB::transaction(function () use ($data): InventoryTransfer {
+            $this->lockMutationItems((string) $data['property_id'], collect($data['lines'] ?? [])->pluck('item_id')->all());
+            $data['status'] = TransferStatusEnum::Draft->value;
+
+            return $this->transferRepository->create($data);
+        });
     }
 
     public function complete(string $id, ?string $userId = null): InventoryTransfer
@@ -51,54 +63,54 @@ class TransferService
             ->where('is_open', true)
             ->first();
 
-        if (!$businessDate) {
-            throw new BusinessLogicException("No open business date found for property.");
+        if (! $businessDate) {
+            throw new BusinessLogicException('No open business date found for property.');
         }
 
         $authId = auth()->id();
         $actorId = $userId ?? $authId;
 
-        if (!$actorId) {
-            throw new BusinessLogicException("Authenticated posting operator is required.");
+        if (! $actorId) {
+            throw new BusinessLogicException('Authenticated posting operator is required.');
         }
 
         if ($authId !== null && $userId !== null && $userId !== $authId) {
-            throw new BusinessLogicException("The supplied user ID does not match the authenticated posting operator.");
+            throw new BusinessLogicException('The supplied user ID does not match the authenticated posting operator.');
         }
 
         // Deterministic multi-line order: item_id ASC -> id ASC
         $sortedLines = $transfer->lines->map(function ($line) {
-            if (!$line->item_id) {
-                throw new BusinessLogicException("Transfer line is missing item.");
+            if (! $line->item_id) {
+                throw new BusinessLogicException('Transfer line is missing item.');
             }
+
             return $line;
         })->sortBy([
             ['item_id', 'asc'],
             ['id', 'asc'],
         ]);
 
-        $enrollmentRepo = app(\Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository::class);
         $enrolledCount = 0;
         $totalLines = $sortedLines->count();
         foreach ($sortedLines as $line) {
-            if ($enrollmentRepo->hasEnrolledGroupForPropertyItem($transfer->property_id, (string) $line->item_id)) {
+            if ($this->costDeliveryMode->isEnrolled($transfer->property_id, (string) $line->item_id)) {
                 $enrolledCount++;
             }
         }
 
         if ($enrolledCount > 0 && $enrolledCount < $totalLines) {
-            throw new \RuntimeException("Mixed enrollment status detected across transfer lines. Fail closed.");
+            throw new RuntimeException('Mixed enrollment status detected across transfer lines. Fail closed.');
         }
 
         $allEnrolled = ($enrolledCount === $totalLines);
-        $occurredAt = \Illuminate\Support\Carbon::parse($transfer->created_at ?? now());
+        $occurredAt = Carbon::parse($transfer->created_at ?? now());
 
-        if (!$allEnrolled) {
+        if (! $allEnrolled) {
             $intents = [];
 
             foreach ($sortedLines as $line) {
                 $item = $this->itemRepository->find($line->item_id);
-                if (!$item) {
+                if (! $item) {
                     throw new BusinessLogicException("Item not found: {$line->item_id}");
                 }
 
@@ -162,6 +174,7 @@ class TransferService
                 if ($a->itemId !== $b->itemId) {
                     return strcmp($a->itemId, $b->itemId);
                 }
+
                 return strcmp($a->locationId, $b->locationId);
             });
 
@@ -176,56 +189,118 @@ class TransferService
 
                 // Update transfer header
                 $this->transferRepository->update($transfer->id, [
-                    'status'       => TransferStatusEnum::Completed->value,
+                    'status' => TransferStatusEnum::Completed->value,
                     'completed_at' => now(),
                     'completed_by' => $actorId,
-                ]);
+                ], true);
             });
         } else {
             // All ENROLLED loop
             DB::transaction(function () use ($transfer, $sortedLines, $businessDate, $occurredAt, $actorId) {
-                // Lock context first
-                $this->coordinator->lockContext($transfer->property_id, $businessDate->business_date, $occurredAt);
-
-                $invocationService = app(\Modules\Finance\CostControl\Services\ControlledTransferValuationInvocationService::class);
-
-                $linesData = [];
+                $sources = [];
                 foreach ($sortedLines as $line) {
-                    $linesData[] = [
-                        'itemId'                  => $line->item_id,
-                        'quantityRequested'       => (string) $line->quantity_requested,
-                        'lineId'                  => $line->id,
-                        'outboundIdempotencyKey'  => "trf_{$transfer->id}_{$line->id}_out",
-                        'inboundIdempotencyKey'   => "trf_{$transfer->id}_{$line->id}_in",
+                    $sources[] = [
+                        'propertyId' => (string) $transfer->property_id,
+                        'itemId' => (string) $line->item_id,
+                        'locationId' => (string) $transfer->from_location_id,
+                        'idempotencyKey' => "trf_{$transfer->id}_{$line->id}_out",
+                        'sourceDocumentType' => 'inventory_transfer',
+                        'sourceDocumentId' => $transfer->id,
+                        'sourceLineType' => 'inventory_transfer_line',
+                        'sourceLineId' => $line->id,
+                        'movementRole' => TransactionTypeEnum::TransferOut->value,
+                        'quantityChange' => bcmul((string) abs((float) $line->quantity_requested), '-1', 4),
+                    ];
+                    $sources[] = [
+                        'propertyId' => (string) $transfer->property_id,
+                        'itemId' => (string) $line->item_id,
+                        'locationId' => (string) $transfer->to_location_id,
+                        'idempotencyKey' => "trf_{$transfer->id}_{$line->id}_in",
+                        'sourceDocumentType' => 'inventory_transfer',
+                        'sourceDocumentId' => $transfer->id,
+                        'sourceLineType' => 'inventory_transfer_line',
+                        'sourceLineId' => $line->id,
+                        'movementRole' => TransactionTypeEnum::TransferIn->value,
+                        'quantityChange' => (string) abs((float) $line->quantity_requested),
                     ];
                 }
+                $resolved = $this->coordinator->resolveDocumentDeliveryModes($sources);
 
-                $documentData = [
-                    'businessDate' => $businessDate->business_date,
-                    'occurredAt'   => $occurredAt->format('Y-m-d H:i:s'),
-                    'documentId'   => $transfer->id,
-                    'reference'    => $transfer->transfer_number,
-                    'notes'        => $transfer->notes ?? 'Inventory Transfer Posting'
-                ];
-
-                $invocationService->invokeTransferDocument(
-                    $transfer->property_id,
-                    $transfer->from_location_id,
-                    $transfer->to_location_id,
-                    $documentData,
-                    $linesData,
-                    $actorId
-                );
+                foreach ($sortedLines as $line) {
+                    $outKey = "trf_{$transfer->id}_{$line->id}_out";
+                    $inKey = "trf_{$transfer->id}_{$line->id}_in";
+                    $outResolution = $resolved[$outKey];
+                    $inResolution = $resolved[$inKey];
+                    if (($outResolution['existing'] === null) !== ($inResolution['existing'] === null)) {
+                        throw new RuntimeException('CC_P01F_TRANSFER_PARTIAL_SOURCE_REPLAY');
+                    }
+                    $unitCost = $outResolution['existing'] !== null
+                        ? (string) $outResolution['existing']->unit_cost
+                        : $this->authoritativeCost->resolveUnitCostForPosting($outResolution['decision']);
+                    $quantity = (string) abs((float) $line->quantity_requested);
+                    $negativeQuantity = bcmul($quantity, '-1', 4);
+                    $common = [
+                        'propertyId' => $transfer->property_id,
+                        'itemId' => $line->item_id,
+                        'businessDate' => $businessDate->business_date,
+                        'occurredAt' => $occurredAt,
+                        'sourceDocumentType' => 'inventory_transfer',
+                        'sourceDocumentId' => $transfer->id,
+                        'sourceLineType' => 'inventory_transfer_line',
+                        'sourceLineId' => $line->id,
+                        'reference' => $transfer->transfer_number,
+                        'notes' => $transfer->notes ?? 'Inventory Transfer Posting',
+                    ];
+                    $outIntent = new InventoryLedgerPostingIntent(
+                        ...$common,
+                        locationId: $transfer->from_location_id,
+                        movementRole: TransactionTypeEnum::TransferOut->value,
+                        idempotencyKey: $outKey,
+                        transactionType: TransactionTypeEnum::TransferOut,
+                        quantityChange: $negativeQuantity,
+                        unitCost: $unitCost,
+                        totalCost: bcmul($negativeQuantity, $unitCost, 4),
+                    );
+                    $inIntent = new InventoryLedgerPostingIntent(
+                        ...$common,
+                        locationId: $transfer->to_location_id,
+                        movementRole: TransactionTypeEnum::TransferIn->value,
+                        idempotencyKey: $inKey,
+                        transactionType: TransactionTypeEnum::TransferIn,
+                        quantityChange: $quantity,
+                        unitCost: $unitCost,
+                        totalCost: bcmul($quantity, $unitCost, 4),
+                    );
+                    $outTx = $this->coordinator->post($outIntent, $actorId, $outResolution['decision']);
+                    $inTx = $this->coordinator->post($inIntent, $actorId, $inResolution['decision']);
+                    if ($outResolution['existing'] === null) {
+                        if ($outResolution['decision']->outcome !== $inResolution['decision']->outcome) {
+                            throw new RuntimeException('CC_P01F_TRANSFER_DELIVERY_MODE_MISMATCH');
+                        }
+                        if ($outResolution['decision']->outcome === CostDeliveryPostingDecision::SYNCHRONOUS) {
+                            $this->synchronousValuation->applyTransfer($outTx->id, $inTx->id);
+                        }
+                    }
+                }
 
                 // Update transfer header
                 $this->transferRepository->update($transfer->id, [
-                    'status'       => TransferStatusEnum::Completed->value,
+                    'status' => TransferStatusEnum::Completed->value,
                     'completed_at' => now(),
                     'completed_by' => $actorId,
-                ]);
+                ], true);
             });
         }
 
         return $this->transferRepository->find($id);
+    }
+
+    private function lockMutationItems(string $propertyId, array $itemIds): void
+    {
+        $itemIds = array_values(array_unique(array_filter(array_map('strval', $itemIds))));
+        sort($itemIds, SORT_STRING);
+        foreach ($itemIds as $itemId) {
+            $this->costDeliveryMode->lockForDocumentMutation($propertyId, $itemId);
+        }
     }
 }

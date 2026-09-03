@@ -604,6 +604,7 @@ class ControlledValuationApplyCoordinatorTest extends PostgresTestCase
 
         sort($callers, SORT_STRING);
         $expected = [
+            realpath(base_path('Modules/Finance/CostControl/Adapters/InventorySynchronousCostValuationAdapter.php')),
             realpath(base_path('Modules/Finance/CostControl/Services/ControlledIssueValuationInvocationService.php')),
             realpath(base_path('Modules/Finance/CostControl/Services/ControlledReceiptValuationInvocationService.php')),
             realpath(base_path('Modules/Finance/CostControl/Services/DeferredSingleTransactionValuationHandler.php')),

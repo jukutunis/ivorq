@@ -3,25 +3,27 @@
 namespace Modules\Operations\Receiving\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
+use Modules\Foundation\Approval\Contracts\ApprovableContract;
 use Modules\Foundation\Property\Models\Property;
-use Modules\Operations\Purchasing\Models\Vendor;
-use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Foundation\User\Models\User;
-use Shared\Traits\HasUlid;
+use Modules\Operations\Inventory\Services\InventoryDocumentMutationGate;
+use Modules\Operations\Purchasing\Models\PurchaseOrder;
+use Modules\Operations\Purchasing\Models\Vendor;
+use Modules\Operations\Receiving\Enums\ReceivingDocumentStatusEnum;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
+use Shared\Traits\HasUlid;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
-use Modules\Operations\Receiving\Enums\ReceivingDocumentStatusEnum;
-use Modules\Foundation\Approval\Contracts\ApprovableContract;
 
 class ReceivingDocument extends Model implements ApprovableContract
 {
-    use HasUlid, BelongsToProperty, HasAuditColumns, SoftDeletes, LogsActivity;
+    use BelongsToProperty, HasAuditColumns, HasUlid, LogsActivity, SoftDeletes;
 
     protected $table = 'receiving_documents';
 
@@ -97,12 +99,24 @@ class ReceivingDocument extends Model implements ApprovableContract
 
     public function markAsApproved(): void
     {
-        $this->update(['status' => ReceivingDocumentStatusEnum::Approved]);
+        DB::transaction(function (): void {
+            app(InventoryDocumentMutationGate::class)->lock(
+                (string) $this->property_id,
+                $this->lines()->pluck('inventory_item_id')->all(),
+            );
+            $this->update(['status' => ReceivingDocumentStatusEnum::Approved]);
+        });
     }
 
     public function markAsRejected(?string $reason = null): void
     {
-        $this->update(['status' => ReceivingDocumentStatusEnum::Rejected]);
+        DB::transaction(function (): void {
+            app(InventoryDocumentMutationGate::class)->lock(
+                (string) $this->property_id,
+                $this->lines()->pluck('inventory_item_id')->all(),
+            );
+            $this->update(['status' => ReceivingDocumentStatusEnum::Rejected]);
+        });
     }
 
     public function getApprovableType(): string

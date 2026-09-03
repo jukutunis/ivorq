@@ -4,12 +4,16 @@ namespace Modules\Operations\Inventory\Repositories;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 use Modules\Operations\Inventory\Enums\TransferStatusEnum;
 use Modules\Operations\Inventory\Models\InventoryTransfer;
+use Modules\Operations\Inventory\Services\InventoryDocumentMutationGate;
 use Shared\Exceptions\NotFoundException;
 
 class InventoryTransferRepository
 {
+    public function __construct(private readonly InventoryDocumentMutationGate $mutationGate) {}
+
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         $query = InventoryTransfer::with(['fromLocation', 'toLocation'])->latest();
@@ -53,20 +57,40 @@ class InventoryTransferRepository
 
     public function create(array $data): InventoryTransfer
     {
-        return InventoryTransfer::create($data)->fresh();
+        return DB::transaction(function () use ($data): InventoryTransfer {
+            $this->mutationGate->lock(
+                (string) $data['property_id'],
+                collect($data['lines'] ?? [])->pluck('item_id')->all(),
+            );
+
+            return InventoryTransfer::create($data)->fresh();
+        });
     }
 
-    public function update(string $id, array $data): InventoryTransfer
+    public function update(string $id, array $data, bool $ownershipAlreadyLocked = false): InventoryTransfer
     {
-        $transfer = $this->find($id);
-        $transfer->update($data);
+        return DB::transaction(function () use ($id, $data, $ownershipAlreadyLocked): InventoryTransfer {
+            $candidate = $this->find($id);
+            $itemIds = $candidate->lines->pluck('item_id')
+                ->merge(collect($data['lines'] ?? [])->pluck('item_id'))->all();
+            if (! $ownershipAlreadyLocked) {
+                $this->mutationGate->lock((string) $candidate->property_id, $itemIds);
+            }
+            $transfer = InventoryTransfer::whereKey($id)->lockForUpdate()->firstOrFail();
+            $transfer->update($data);
 
-        return $transfer->fresh();
+            return $transfer->fresh();
+        });
     }
 
     public function delete(string $id): bool
     {
-        return $this->find($id)->delete();
+        return DB::transaction(function () use ($id): bool {
+            $candidate = $this->find($id);
+            $this->mutationGate->lock((string) $candidate->property_id, $candidate->lines->pluck('item_id')->all());
+
+            return (bool) InventoryTransfer::whereKey($id)->lockForUpdate()->firstOrFail()->delete();
+        });
     }
 
     public function pending(): Collection

@@ -2,6 +2,7 @@
 
 namespace Tests\Postgres\Operations\Inventory;
 
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -28,6 +29,8 @@ class InventoryTransactionIdempotencyTest extends PostgresTestCase
             'total_cost' => 0,
             'posted_at' => now(),
             'idempotency_key' => 'idemp-789',
+            'valuation_approval_status' => 'approved',
+            'valuation_approval_reference' => 'inventory_receipt:test:posted',
             'business_date' => now()->toDateString(),
             'occurred_at' => now(),
             'source_document_type' => 'receipt',
@@ -44,7 +47,7 @@ class InventoryTransactionIdempotencyTest extends PostgresTestCase
         $duplicateData = $validData;
         $duplicateData['id'] = (string) Str::ulid(); // New UUID but same idempotency_key
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessageMatches('/idx_inventory_transactions_idempotency/');
 
         DB::table('inventory_transactions')->insert($duplicateData);
