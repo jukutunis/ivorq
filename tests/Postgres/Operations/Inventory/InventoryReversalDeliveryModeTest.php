@@ -108,6 +108,31 @@ class InventoryReversalDeliveryModeTest extends InventoryReversalPostingServiceT
         {
             public int $calls = 0;
 
+            public function resolveUnitCostForPosting(string $propertyId, string $locationId, string $itemId): string
+            {
+                return '1.0000';
+            }
+
+            public function applyReceipt(string $sourceInventoryTransactionId): string
+            {
+                return 'unexpected';
+            }
+
+            public function applyIssue(string $sourceInventoryTransactionId): string
+            {
+                return 'unexpected';
+            }
+
+            public function applyAdjustment(string $sourceInventoryTransactionId): string
+            {
+                return 'unexpected';
+            }
+
+            public function applyTransfer(string $outboundInventoryTransactionId, string $inboundInventoryTransactionId): array
+            {
+                return [];
+            }
+
             public function applyReversal(
                 string $reversalInventoryTransactionId,
                 string $originalInventoryTransactionId,

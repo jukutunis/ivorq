@@ -4,12 +4,16 @@ namespace Modules\Operations\Inventory\Repositories;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 use Modules\Operations\Inventory\Enums\ReceiptStatusEnum;
 use Modules\Operations\Inventory\Models\InventoryReceipt;
+use Modules\Operations\Inventory\Services\InventoryDocumentMutationGate;
 use Shared\Exceptions\NotFoundException;
 
 class InventoryReceiptRepository
 {
+    public function __construct(private readonly InventoryDocumentMutationGate $mutationGate) {}
+
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         $query = InventoryReceipt::latest();
@@ -19,7 +23,7 @@ class InventoryReceiptRepository
         }
 
         if (! empty($filters['supplier_name'])) {
-            $query->where('supplier_name', 'like', '%' . $filters['supplier_name'] . '%');
+            $query->where('supplier_name', 'like', '%'.$filters['supplier_name'].'%');
         }
 
         if (! empty($filters['date_from'])) {
@@ -54,20 +58,40 @@ class InventoryReceiptRepository
 
     public function create(array $data): InventoryReceipt
     {
-        return InventoryReceipt::create($data)->fresh();
+        return DB::transaction(function () use ($data): InventoryReceipt {
+            $this->mutationGate->lock(
+                (string) $data['property_id'],
+                collect($data['lines'] ?? [])->pluck('item_id')->all(),
+            );
+
+            return InventoryReceipt::create($data)->fresh();
+        });
     }
 
-    public function update(string $id, array $data): InventoryReceipt
+    public function update(string $id, array $data, bool $ownershipAlreadyLocked = false): InventoryReceipt
     {
-        $receipt = $this->find($id);
-        $receipt->update($data);
+        return DB::transaction(function () use ($id, $data, $ownershipAlreadyLocked): InventoryReceipt {
+            $candidate = $this->find($id);
+            $itemIds = $candidate->lines->pluck('item_id')
+                ->merge(collect($data['lines'] ?? [])->pluck('item_id'))->all();
+            if (! $ownershipAlreadyLocked) {
+                $this->mutationGate->lock((string) $candidate->property_id, $itemIds);
+            }
+            $receipt = InventoryReceipt::whereKey($id)->lockForUpdate()->firstOrFail();
+            $receipt->update($data);
 
-        return $receipt->fresh();
+            return $receipt->fresh();
+        });
     }
 
     public function delete(string $id): bool
     {
-        return $this->find($id)->delete();
+        return DB::transaction(function () use ($id): bool {
+            $candidate = $this->find($id);
+            $this->mutationGate->lock((string) $candidate->property_id, $candidate->lines->pluck('item_id')->all());
+
+            return (bool) InventoryReceipt::whereKey($id)->lockForUpdate()->firstOrFail()->delete();
+        });
     }
 
     public function byStatus(ReceiptStatusEnum $status): Collection

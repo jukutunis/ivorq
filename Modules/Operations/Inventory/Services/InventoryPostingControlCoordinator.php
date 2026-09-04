@@ -43,12 +43,13 @@ class InventoryPostingControlCoordinator
 
     public function post(
         InventoryLedgerPostingIntent $intent,
-        ?string $actorId = null
+        ?string $actorId = null,
+        ?CostDeliveryPostingDecision $prelockedDecision = null,
     ): InventoryTransaction {
-        return $this->executeOnce(function () use ($intent, $actorId) {
+        return $this->executeOnce(function () use ($intent, $actorId, $prelockedDecision) {
             [$valuationApprovalStatus, $valuationApprovalReference] = $this->resolveValuationAuthorizationEvidence($intent);
 
-            return DB::transaction(function () use ($intent, $actorId, $valuationApprovalStatus, $valuationApprovalReference) {
+            return DB::transaction(function () use ($intent, $actorId, $prelockedDecision, $valuationApprovalStatus, $valuationApprovalReference) {
                 $existing = InventoryTransaction::where('property_id', $intent->propertyId)
                     ->where('idempotency_key', $intent->idempotencyKey)
                     ->lockForUpdate()
@@ -61,8 +62,11 @@ class InventoryPostingControlCoordinator
                                $existing->source_line_type === $intent->sourceLineType &&
                                $existing->source_line_id === $intent->sourceLineId &&
                                $existing->movement_role === $intent->movementRole &&
+                               $existing->transaction_type === $intent->transactionType &&
                                $existing->item_id === $intent->itemId &&
                                $existing->location_id === $intent->locationId &&
+                               $existing->reverses_inventory_transaction_id === $intent->reversesInventoryTransactionId &&
+                               $existing->corrects_inventory_transaction_id === $intent->correctsInventoryTransactionId &&
                                bccomp((string) $existing->quantity_change, (string) $intent->quantityChange, 4) === 0 &&
                                bccomp((string) $existing->unit_cost, (string) $intent->unitCost, 4) === 0 &&
                                bccomp((string) $existing->total_cost, (string) $intent->totalCost, 4) === 0;
@@ -76,15 +80,12 @@ class InventoryPostingControlCoordinator
                     );
                 }
 
-                $costDeliveryDecision = $this->costDeliveryModePort->resolveForPosting(
-                    $intent->propertyId,
-                    $intent->itemId,
-                    $intent->locationId,
-                );
-
-                if ($costDeliveryDecision->outcome === CostDeliveryPostingDecision::DEFERRED) {
-                    throw new RuntimeException('CC_P01A_A4_DEFERRED_SOURCE_STAMP_PROHIBITED');
-                }
+                $costDeliveryDecision = $prelockedDecision
+                    ?? $this->costDeliveryModePort->resolveForPosting(
+                        $intent->propertyId,
+                        $intent->itemId,
+                        $intent->locationId,
+                    );
 
                 [$businessDate, $period] = $this->lockContext($intent->propertyId, $intent->businessDate, $intent->occurredAt);
 
@@ -115,6 +116,10 @@ class InventoryPostingControlCoordinator
 
                 $valuationScope = "property:{$intent->propertyId}:location:{$intent->locationId}:item:{$intent->itemId}";
                 $valuationSequence = $this->sequenceRepo->allocateNext($intent->propertyId, $intent->locationId, $intent->itemId);
+                if ($costDeliveryDecision->outcome === CostDeliveryPostingDecision::DEFERRED
+                    && $valuationSequence < $costDeliveryDecision->firstDeferredOwnedSequence) {
+                    throw new RuntimeException('DEFERRED_DELIVERY_SEQUENCE_BELOW_CUTOVER_WATERMARK');
+                }
 
                 $transaction = $this->transactionRepo->appendControlled(
                     $intent,
@@ -243,6 +248,91 @@ class InventoryPostingControlCoordinator
         }
 
         return $this->costDeliveryModePort->resolveForPosting($propertyId, $itemId, $locationId);
+    }
+
+    /**
+     * Resolve a whole producer document before any caller acquires Business Date,
+     * stock, sequence, or AVCO locks. Existing idempotency keys deliberately do
+     * not consult current ownership, which keeps cross-cutover replay stable.
+     *
+     * @param  array<int,array{propertyId:string,itemId:string,locationId:string,idempotencyKey:string}>  $sources
+     * @return array<string,array{existing:?InventoryTransaction,decision:?CostDeliveryPostingDecision}>
+     */
+    public function resolveDocumentDeliveryModes(array $sources): array
+    {
+        if (DB::transactionLevel() < 1) {
+            throw new RuntimeException('Document delivery mode resolution requires an active outer transaction.');
+        }
+
+        usort($sources, static fn (array $a, array $b): int => [
+            $a['propertyId'], $a['itemId'], $a['locationId'], $a['idempotencyKey'],
+        ] <=> [
+            $b['propertyId'], $b['itemId'], $b['locationId'], $b['idempotencyKey'],
+        ]);
+
+        $resolved = [];
+        $new = [];
+        foreach ($sources as $source) {
+            $key = $source['idempotencyKey'];
+            if (isset($resolved[$key])) {
+                throw new RuntimeException('CC_P01F_DUPLICATE_DOCUMENT_IDEMPOTENCY_KEY');
+            }
+
+            $existing = InventoryTransaction::where('property_id', $source['propertyId'])
+                ->where('idempotency_key', $key)
+                ->lockForUpdate()
+                ->first();
+            if ($existing !== null && ! $this->matchesDocumentSourceResolution($existing, $source)) {
+                throw new RuntimeException("Idempotency collision: same key with different intent. Key: {$key}");
+            }
+            $resolved[$key] = ['existing' => $existing, 'decision' => null];
+            if ($existing === null) {
+                $new[] = $source;
+            }
+        }
+
+        // Every genuinely-new ownership latch is acquired before the caller is
+        // allowed to proceed to any AVCO-sensitive work.
+        foreach ($new as $source) {
+            $resolved[$source['idempotencyKey']]['decision'] = $this->costDeliveryModePort->resolveForPosting(
+                $source['propertyId'],
+                $source['itemId'],
+                $source['locationId'],
+            );
+        }
+
+        return $resolved;
+    }
+
+    private function matchesDocumentSourceResolution(InventoryTransaction $existing, array $source): bool
+    {
+        foreach ([
+            'itemId' => 'item_id',
+            'locationId' => 'location_id',
+            'sourceDocumentType' => 'source_document_type',
+            'sourceDocumentId' => 'source_document_id',
+            'sourceLineType' => 'source_line_type',
+            'sourceLineId' => 'source_line_id',
+            'movementRole' => 'movement_role',
+        ] as $input => $column) {
+            if (array_key_exists($input, $source) && (string) $existing->{$column} !== (string) $source[$input]) {
+                return false;
+            }
+        }
+        if (array_key_exists('quantityChange', $source)
+            && bccomp((string) $existing->quantity_change, (string) $source['quantityChange'], 4) !== 0) {
+            return false;
+        }
+        if (array_key_exists('unitCost', $source)
+            && bccomp((string) $existing->unit_cost, (string) $source['unitCost'], 4) !== 0) {
+            return false;
+        }
+        if (array_key_exists('totalCost', $source)
+            && bccomp((string) $existing->total_cost, (string) $source['totalCost'], 4) !== 0) {
+            return false;
+        }
+
+        return true;
     }
 
     public function executeOnce(callable $operation): mixed

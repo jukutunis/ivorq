@@ -2,9 +2,12 @@
 
 namespace Modules\Operations\Receiving\Services;
 
-use Modules\Operations\Receiving\Repositories\ReceivingRepository;
-use Modules\Operations\Receiving\Repositories\ReceivingLineRepository;
 use Illuminate\Support\Facades\DB;
+use Modules\Operations\Inventory\Contracts\CostDeliveryModePort;
+use Modules\Operations\Receiving\Enums\ReceivingDocumentStatusEnum;
+use Modules\Operations\Receiving\Models\ReceivingDocument;
+use Modules\Operations\Receiving\Repositories\ReceivingLineRepository;
+use Modules\Operations\Receiving\Repositories\ReceivingRepository;
 use Shared\Exceptions\BusinessLogicException;
 
 class ReceivingService
@@ -13,17 +16,19 @@ class ReceivingService
         protected ReceivingRepository $receivingRepository,
         protected ReceivingLineRepository $receivingLineRepository,
         protected ReceivingValidationService $validationService,
-        protected ReceivingApprovalIntegrationService $approvalIntegrationService
+        protected ReceivingApprovalIntegrationService $approvalIntegrationService,
+        protected CostDeliveryModePort $costDeliveryMode,
     ) {}
 
-    public function createDraft(array $data): \Modules\Operations\Receiving\Models\ReceivingDocument
+    public function createDraft(array $data): ReceivingDocument
     {
         return DB::transaction(function () use ($data) {
             $this->validationService->validateCreation($data);
+            $this->lockMutationItems((string) $data['property_id'], collect($data['lines'] ?? [])->pluck('inventory_item_id')->all());
 
             // In real app, generate GRN Number based on sequence.
-            $data['grn_number'] = 'GRN-' . date('Y') . '-' . str_pad(mt_rand(1, 999999), 6, '0', STR_PAD_LEFT);
-            $data['status'] = \Modules\Operations\Receiving\Enums\ReceivingDocumentStatusEnum::Draft->value;
+            $data['grn_number'] = 'GRN-'.date('Y').'-'.str_pad(mt_rand(1, 999999), 6, '0', STR_PAD_LEFT);
+            $data['status'] = ReceivingDocumentStatusEnum::Draft->value;
 
             $document = $this->receivingRepository->create($data);
 
@@ -42,23 +47,35 @@ class ReceivingService
     {
         DB::transaction(function () use ($documentId) {
             $document = $this->receivingRepository->findById($documentId);
-            if (!$document) {
-                throw new BusinessLogicException("Document not found");
+            if (! $document) {
+                throw new BusinessLogicException('Document not found');
             }
-            
-            $document->update(['status' => \Modules\Operations\Receiving\Enums\ReceivingDocumentStatusEnum::Submitted->value]);
-            
+            $this->lockMutationItems((string) $document->property_id, $document->lines()->pluck('inventory_item_id')->all());
+
+            $document->update(['status' => ReceivingDocumentStatusEnum::Submitted->value]);
+
             $this->approvalIntegrationService->submitForApproval($document);
         });
     }
 
     public function cancel(string $documentId): void
     {
-        $document = $this->receivingRepository->findById($documentId);
-        if (!$document) {
-            throw new BusinessLogicException("Document not found");
+        DB::transaction(function () use ($documentId): void {
+            $document = $this->receivingRepository->findById($documentId);
+            if (! $document) {
+                throw new BusinessLogicException('Document not found');
+            }
+            $this->lockMutationItems((string) $document->property_id, $document->lines()->pluck('inventory_item_id')->all());
+            $document->update(['status' => ReceivingDocumentStatusEnum::Cancelled->value]);
+        });
+    }
+
+    private function lockMutationItems(string $propertyId, array $itemIds): void
+    {
+        $itemIds = array_values(array_unique(array_filter(array_map('strval', $itemIds))));
+        sort($itemIds, SORT_STRING);
+        foreach ($itemIds as $itemId) {
+            $this->costDeliveryMode->lockForDocumentMutation($propertyId, $itemId);
         }
-        
-        $document->update(['status' => \Modules\Operations\Receiving\Enums\ReceivingDocumentStatusEnum::Cancelled->value]);
     }
 }

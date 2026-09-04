@@ -4,12 +4,16 @@ namespace Modules\Operations\Inventory\Repositories;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 use Modules\Operations\Inventory\Enums\AdjustmentStatusEnum;
 use Modules\Operations\Inventory\Models\InventoryAdjustment;
+use Modules\Operations\Inventory\Services\InventoryDocumentMutationGate;
 use Shared\Exceptions\NotFoundException;
 
 class InventoryAdjustmentRepository
 {
+    public function __construct(private readonly InventoryDocumentMutationGate $mutationGate) {}
+
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         $query = InventoryAdjustment::with('location')->latest();
@@ -51,20 +55,40 @@ class InventoryAdjustmentRepository
 
     public function create(array $data): InventoryAdjustment
     {
-        return InventoryAdjustment::create($data)->fresh();
+        return DB::transaction(function () use ($data): InventoryAdjustment {
+            $this->mutationGate->lock(
+                (string) $data['property_id'],
+                collect($data['lines'] ?? [])->pluck('item_id')->all(),
+            );
+
+            return InventoryAdjustment::create($data)->fresh();
+        });
     }
 
-    public function update(string $id, array $data): InventoryAdjustment
+    public function update(string $id, array $data, bool $ownershipAlreadyLocked = false): InventoryAdjustment
     {
-        $adjustment = $this->find($id);
-        $adjustment->update($data);
+        return DB::transaction(function () use ($id, $data, $ownershipAlreadyLocked): InventoryAdjustment {
+            $candidate = $this->find($id);
+            $itemIds = $candidate->lines->pluck('item_id')
+                ->merge(collect($data['lines'] ?? [])->pluck('item_id'))->all();
+            if (! $ownershipAlreadyLocked) {
+                $this->mutationGate->lock((string) $candidate->property_id, $itemIds);
+            }
+            $adjustment = InventoryAdjustment::whereKey($id)->lockForUpdate()->firstOrFail();
+            $adjustment->update($data);
 
-        return $adjustment->fresh();
+            return $adjustment->fresh();
+        });
     }
 
     public function delete(string $id): bool
     {
-        return $this->find($id)->delete();
+        return DB::transaction(function () use ($id): bool {
+            $candidate = $this->find($id);
+            $this->mutationGate->lock((string) $candidate->property_id, $candidate->lines->pluck('item_id')->all());
+
+            return (bool) InventoryAdjustment::whereKey($id)->lockForUpdate()->firstOrFail()->delete();
+        });
     }
 
     public function byStatus(AdjustmentStatusEnum $status): Collection

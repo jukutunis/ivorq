@@ -3,15 +3,15 @@
 namespace Modules\Operations\Purchasing\Services;
 
 use Illuminate\Support\Facades\DB;
+use Modules\Operations\Inventory\Models\InventoryReceipt;
+use Modules\Operations\Inventory\Models\InventoryReceiptLine;
+use Modules\Operations\Inventory\Services\InventoryDocumentMutationGate;
+use Modules\Operations\Inventory\Services\ReceiptService as InventoryReceiptService;
 use Modules\Operations\Purchasing\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Models\GoodsReceipt;
-use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Repositories\GoodsReceiptRepository;
 use Modules\Operations\Purchasing\Repositories\PurchaseOrderRepository;
-use Modules\Operations\Inventory\Services\ReceiptService as InventoryReceiptService;
-use Modules\Operations\Inventory\Models\InventoryReceiptLine;
-use Modules\Operations\Inventory\Models\InventoryReceipt;
 use Modules\Operations\Receiving\Models\ReceivingDocument;
 use Modules\Operations\Receiving\Models\ReceivingLine;
 use Shared\Exceptions\BusinessLogicException;
@@ -21,7 +21,8 @@ class ReceivingService
     public function __construct(
         private GoodsReceiptRepository $goodsReceiptRepository,
         private PurchaseOrderRepository $purchaseOrderRepository,
-        private InventoryReceiptService $inventoryReceiptService
+        private InventoryReceiptService $inventoryReceiptService,
+        private InventoryDocumentMutationGate $inventoryDocumentMutationGate,
     ) {}
 
     public function receive(string $purchaseOrderId, array $data): GoodsReceipt
@@ -34,17 +35,23 @@ class ReceivingService
         }
 
         return DB::transaction(function () use ($po, $data) {
+            $itemIds = $po->lines()->whereIn(
+                'id',
+                collect($data['lines'])->pluck('purchase_order_line_id')->all(),
+            )->pluck('inventory_item_id')->all();
+            $this->inventoryDocumentMutationGate->lock((string) $po->property_id, $itemIds);
+
             // Create Goods Receipt
             $grnData = [
                 'property_id' => $po->property_id,
-                'grn_no' => 'GRN-' . now()->format('Y') . '-' . str_pad(mt_rand(1, 999999), 6, '0', STR_PAD_LEFT),
+                'grn_no' => 'GRN-'.now()->format('Y').'-'.str_pad(mt_rand(1, 999999), 6, '0', STR_PAD_LEFT),
                 'purchase_order_id' => $po->id,
                 'vendor_id' => $po->vendor_id,
                 'received_date' => $data['received_date'] ?? now()->format('Y-m-d'),
                 'status' => GoodsReceiptStatusEnum::Posted->value,
                 'remarks' => $data['remarks'] ?? null,
             ];
-            
+
             $grn = $this->goodsReceiptRepository->create($grnData);
 
             $receivingDocument = ReceivingDocument::create([
@@ -64,7 +71,7 @@ class ReceivingService
                 'external_reference' => $grn->grn_no,
                 'receiving_document_id' => $receivingDocument->id,
                 'received_at' => $grn->received_date,
-                'remarks' => 'Auto-generated from ' . $grn->grn_no,
+                'remarks' => 'Auto-generated from '.$grn->grn_no,
             ];
 
             // Create InventoryReceipt via InventoryReceiptService
@@ -72,13 +79,13 @@ class ReceivingService
 
             $allLinesFullyReceived = true;
             $hasPartialReceiving = false;
-            
+
             $totalReceivedValue = 0;
 
             foreach ($data['lines'] as $lineData) {
                 $poLine = $po->lines()->where('id', $lineData['purchase_order_line_id'])->first();
-                
-                if (!$poLine) {
+
+                if (! $poLine) {
                     throw new BusinessLogicException('Invalid purchase order line.');
                 }
 
@@ -132,7 +139,7 @@ class ReceivingService
                 if ($poLine->quantity_received < $poLine->ordered_quantity) {
                     $allLinesFullyReceived = false;
                 }
-                
+
                 $hasPartialReceiving = true;
             }
 
