@@ -80,7 +80,7 @@ final class CostDeliveryCutoverPreflightRepository
         return DB::table('inventory_transactions')->where('property_id', $propertyId)
             ->where('item_id', $itemId)
             ->where(fn ($q) => $q->where('financial_period_id', $periodId)->orWhereDate('business_date', '>=', $date))
-            ->lockForUpdate()->exists();
+            ->exists();
     }
 
     public function hasInFlightDocuments(string $propertyId, string $itemId): bool
@@ -234,7 +234,7 @@ final class CostDeliveryCutoverPreflightRepository
             ->where('item_id', $itemId)->lockForUpdate()->first();
         $positiveSource = DB::table('inventory_transactions')->where('property_id', $propertyId)
             ->where('location_id', $locationId)->where('item_id', $itemId)
-            ->where('valuation_sequence', '>', 0)->lockForUpdate()->exists();
+            ->where('valuation_sequence', '>', 0)->exists();
 
         return [$allocator, $positiveSource];
     }

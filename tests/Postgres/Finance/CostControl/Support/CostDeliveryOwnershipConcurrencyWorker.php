@@ -13,6 +13,7 @@ use Modules\Operations\Inventory\Contracts\CostDeliveryModePort;
 use Modules\Operations\Inventory\Contracts\SynchronousCostValuationPort;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Modules\Operations\Inventory\Services\InventoryPostingControlCoordinator;
+use Modules\Operations\Inventory\Services\TransferService;
 use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
 
 $config = json_decode((string) file_get_contents($argv[1]), true);
@@ -23,7 +24,16 @@ config(['database.connections.pgsql.database' => $config['db_name']]);
 DB::purge('pgsql');
 DB::reconnect('pgsql');
 
-$result = ['error' => null, 'transaction_id' => null, 'ledger_id' => null, 'cutover_id' => null];
+$result = [
+    'error' => null,
+    'transaction_id' => null,
+    'ledger_id' => null,
+    'cutover_id' => null,
+    'existing_resolution_id' => null,
+    'existing_decision_is_null' => null,
+    'new_decision' => null,
+    'partial_replay_failed_closed' => null,
+];
 try {
     touch($config['ready_file']);
     for ($attempt = 0; $attempt < 12000 && ! is_file($config['start_file']); $attempt++) {
@@ -70,6 +80,76 @@ try {
             $result['ledger_id'] = app(SynchronousCostValuationPort::class)->applyReceipt(
                 $config['source_inventory_transaction_id'],
             );
+        });
+    } elseif ($config['action'] === 'resolve_mixed_existing_and_new_after_cutover') {
+        DB::transaction(function () use ($config, &$result): void {
+            DB::statement("SET LOCAL lock_timeout = '3s'");
+            $existing = DB::table('inventory_transactions')
+                ->where('property_id', $config['property_id'])
+                ->where('idempotency_key', $config['existing_idempotency_key'])
+                ->lockForUpdate()
+                ->first();
+            if ($existing === null) {
+                throw new RuntimeException('P01F_WORKER_EXISTING_SOURCE_MISSING');
+            }
+
+            touch($config['locked_file']);
+            for ($attempt = 0; $attempt < 12000 && ! is_file($config['continue_file']); $attempt++) {
+                usleep(10000);
+            }
+            if (! is_file($config['continue_file'])) {
+                throw new RuntimeException('P01F_WORKER_CUTOVER_RELEASE_TIMEOUT');
+            }
+
+            $resolved = app(InventoryPostingControlCoordinator::class)
+                ->resolveDocumentDeliveryModes($config['sources']);
+            $existingResolution = $resolved[$config['existing_idempotency_key']];
+            $newDecision = $resolved[$config['new_idempotency_key']]['decision'];
+            if ($newDecision === null) {
+                throw new RuntimeException('P01F_WORKER_NEW_SOURCE_DECISION_MISSING');
+            }
+
+            $result['existing_resolution_id'] = $existingResolution['existing']?->id;
+            $result['existing_decision_is_null'] = $existingResolution['decision'] === null;
+            $result['new_decision'] = [
+                'outcome' => $newDecision->outcome,
+                'ownership_id' => $newDecision->ownershipId,
+                'ownership_version' => $newDecision->ownershipVersion,
+                'cutover_id' => $newDecision->cutoverId,
+                'last_synchronously_owned_sequence' => $newDecision->lastSynchronouslyOwnedSequence,
+                'first_deferred_owned_sequence' => $newDecision->firstDeferredOwnedSequence,
+            ];
+        });
+    } elseif ($config['action'] === 'complete_partial_transfer_after_cutover') {
+        DB::transaction(function () use ($config, &$result): void {
+            DB::statement("SET LOCAL lock_timeout = '3s'");
+            $existing = DB::table('inventory_transactions')
+                ->where('id', $config['source_inventory_transaction_id'])
+                ->lockForUpdate()
+                ->first();
+            if ($existing === null) {
+                throw new RuntimeException('P01F_WORKER_EXISTING_TRANSFER_SOURCE_MISSING');
+            }
+
+            touch($config['locked_file']);
+            for ($attempt = 0; $attempt < 12000 && ! is_file($config['continue_file']); $attempt++) {
+                usleep(10000);
+            }
+            if (! is_file($config['continue_file'])) {
+                throw new RuntimeException('P01F_WORKER_CUTOVER_RELEASE_TIMEOUT');
+            }
+
+            DB::table('inventory_transfers')->insert($config['transfer']);
+            DB::table('inventory_transfer_lines')->insert($config['line']);
+            try {
+                app(TransferService::class)->complete($config['transfer']['id'], $config['actor_id']);
+                throw new RuntimeException('P01F_WORKER_PARTIAL_TRANSFER_REPLAY_ACCEPTED');
+            } catch (RuntimeException $exception) {
+                if ($exception->getMessage() !== 'CC_P01F_TRANSFER_PARTIAL_SOURCE_REPLAY') {
+                    throw $exception;
+                }
+                $result['partial_replay_failed_closed'] = true;
+            }
         });
     } else {
         throw new RuntimeException('P01F_WORKER_ACTION_INVALID');

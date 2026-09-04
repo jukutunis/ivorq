@@ -22,6 +22,7 @@ use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
 use RuntimeException;
 use Tests\Postgres\Finance\CostControl\Support\CostDeliveryCutoverFixture;
 use Tests\PostgresTestCase;
+use Throwable;
 
 class CostDeliveryConcurrencyProofTest extends PostgresTestCase
 {
@@ -295,6 +296,185 @@ class CostDeliveryConcurrencyProofTest extends PostgresTestCase
         ]);
     }
 
+    public function test_mixed_existing_and_new_document_resolution_does_not_deadlock_with_cutover(): void
+    {
+        $this->resetDatabase();
+        [$request, $ownershipId, $actorId] = $this->makeCutoverFixture();
+        $locationId = $this->fixtureLocationId($request->enrollmentGroupId);
+        [$source, $existingIntent, $outboxId] = $this->seedSynchronousHistoricalSource(
+            $request,
+            $ownershipId,
+            $actorId,
+            $locationId,
+        );
+        DB::transaction(fn () => app(SynchronousCostValuationPort::class)->applyReceipt($source->id));
+        app(CostDeliveryHistoricalDispositionService::class)->classify($outboxId, $actorId);
+
+        $newIntent = new InventoryLedgerPostingIntent(
+            propertyId: $existingIntent->propertyId,
+            itemId: $existingIntent->itemId,
+            locationId: $existingIntent->locationId,
+            businessDate: $existingIntent->businessDate,
+            occurredAt: $existingIntent->occurredAt,
+            sourceDocumentType: $existingIntent->sourceDocumentType,
+            sourceDocumentId: $existingIntent->sourceDocumentId,
+            sourceLineType: $existingIntent->sourceLineType,
+            sourceLineId: (string) Str::ulid(),
+            movementRole: $existingIntent->movementRole,
+            idempotencyKey: 'zz-p01f-new-'.Str::random(12),
+            transactionType: $existingIntent->transactionType,
+            quantityChange: '1.0000',
+            unitCost: '10.0000',
+            totalCost: '10.0000',
+            notes: 'P01F mixed existing and new race proof',
+        );
+        $before = $this->effectCounts();
+        $existingBefore = $source->fresh()->only([
+            'id',
+            'valuation_sequence',
+            'cost_delivery_mode',
+            'cost_delivery_ownership_id',
+            'cost_delivery_ownership_version',
+            'cost_delivery_cutover_id',
+        ]);
+        [$process, $pipes, $config] = $this->startOwnershipWorker(
+            'resolve_mixed_existing_and_new_after_cutover',
+            [
+                'property_id' => $request->propertyId,
+                'existing_idempotency_key' => $existingIntent->idempotencyKey,
+                'new_idempotency_key' => $newIntent->idempotencyKey,
+                'sources' => [
+                    $this->documentResolutionSource($existingIntent),
+                    $this->documentResolutionSource($newIntent),
+                ],
+            ],
+        );
+
+        $cutover = null;
+        $cutoverFailure = null;
+        DB::statement("SET lock_timeout = '1500ms'");
+        try {
+            $cutover = app(CostDeliveryCutoverService::class)->activateGroup($request);
+        } catch (Throwable $failure) {
+            $cutoverFailure = $failure;
+        } finally {
+            DB::statement("SET lock_timeout = '0'");
+            touch($config['continue_file']);
+            $worker = $this->finishOwnershipWorker($process, $pipes, $config);
+        }
+
+        $this->assertNull($cutoverFailure, $cutoverFailure?->getMessage() ?? '');
+        $this->assertNotNull($cutover);
+        $this->assertNull($worker['error'], json_encode($worker));
+        $this->assertSame($source->id, $worker['existing_resolution_id']);
+        $this->assertTrue($worker['existing_decision_is_null']);
+        $this->assertSame('DEFERRED', $worker['new_decision']['outcome']);
+        $this->assertSame($ownershipId, $worker['new_decision']['ownership_id']);
+        $this->assertSame(2, $worker['new_decision']['ownership_version']);
+        $this->assertSame($cutover->id, $worker['new_decision']['cutover_id']);
+        $this->assertSame(1, $worker['new_decision']['last_synchronously_owned_sequence']);
+        $this->assertSame(2, $worker['new_decision']['first_deferred_owned_sequence']);
+        $this->assertSame($existingBefore, $source->fresh()->only(array_keys($existingBefore)));
+        $this->assertSame($before, $this->effectCounts());
+        $this->assertDatabaseHas('cost_delivery_mode_ownerships', [
+            'id' => $ownershipId,
+            'delivery_mode' => 'DEFERRED',
+            'ownership_version' => 2,
+            'activated_cutover_id' => $cutover->id,
+        ]);
+    }
+
+    public function test_partial_transfer_source_replay_fails_closed_without_deadlocking_cutover(): void
+    {
+        $this->resetDatabase();
+        [$request, $ownershipId, $actorId] = $this->makeCutoverFixture(2);
+        $locationIds = DB::table('cost_authority_enrollment_scope_snapshots')
+            ->where('enrollment_group_id', $request->enrollmentGroupId)
+            ->orderBy('location_id')
+            ->pluck('location_id')
+            ->all();
+        [$locationId, $targetLocationId] = $locationIds;
+        [$receiptSource, , $receiptOutboxId] = $this->seedSynchronousHistoricalSource(
+            $request,
+            $ownershipId,
+            $actorId,
+            $locationId,
+        );
+        DB::transaction(fn () => app(SynchronousCostValuationPort::class)->applyReceipt($receiptSource->id));
+        app(CostDeliveryHistoricalDispositionService::class)->classify($receiptOutboxId, $actorId);
+
+        $transferId = (string) Str::ulid();
+        $lineId = (string) Str::ulid();
+        $source = $this->seedSynchronousTransferOutSource(
+            $request,
+            $ownershipId,
+            $actorId,
+            $locationId,
+            $transferId,
+            $lineId,
+        );
+        $before = $this->effectCounts();
+        $sourceBefore = $source->fresh()->getAttributes();
+        $timestamp = now()->toIso8601String();
+        [$process, $pipes, $config] = $this->startOwnershipWorker(
+            'complete_partial_transfer_after_cutover',
+            [
+                'actor_id' => $actorId,
+                'source_inventory_transaction_id' => $source->id,
+                'transfer' => [
+                    'id' => $transferId,
+                    'property_id' => $request->propertyId,
+                    'transfer_number' => 'P01F-PARTIAL-'.Str::random(8),
+                    'from_location_id' => $locationId,
+                    'to_location_id' => $targetLocationId,
+                    'status' => 'submitted',
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ],
+                'line' => [
+                    'id' => $lineId,
+                    'property_id' => $request->propertyId,
+                    'transfer_id' => $transferId,
+                    'item_id' => $request->itemId,
+                    'quantity_requested' => '1.0000',
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ],
+            ],
+        );
+
+        $cutover = null;
+        $cutoverFailure = null;
+        DB::statement("SET lock_timeout = '1500ms'");
+        try {
+            $cutover = app(CostDeliveryCutoverService::class)->activateGroup($request);
+        } catch (Throwable $failure) {
+            $cutoverFailure = $failure;
+        } finally {
+            DB::statement("SET lock_timeout = '0'");
+            touch($config['continue_file']);
+            $worker = $this->finishOwnershipWorker($process, $pipes, $config);
+        }
+
+        $this->assertNull($cutoverFailure, $cutoverFailure?->getMessage() ?? '');
+        $this->assertNotNull($cutover);
+        $this->assertNull($worker['error'], json_encode($worker));
+        $this->assertTrue($worker['partial_replay_failed_closed']);
+        $this->assertSame($sourceBefore, $source->fresh()->getAttributes());
+        $this->assertSame($before, $this->effectCounts());
+        $this->assertDatabaseHas('cost_delivery_mode_ownerships', [
+            'id' => $ownershipId,
+            'delivery_mode' => 'DEFERRED',
+            'ownership_version' => 2,
+            'activated_cutover_id' => $cutover->id,
+        ]);
+        $this->assertDatabaseHas('inventory_transfers', [
+            'id' => $transferId,
+            'status' => 'submitted',
+        ]);
+        $this->assertDatabaseCount('inventory_transfer_lines', 1);
+    }
+
     public function test_synchronous_adapter_first_holds_ownership_until_apply_finishes(): void
     {
         $this->resetDatabase();
@@ -465,6 +645,24 @@ class CostDeliveryConcurrencyProofTest extends PostgresTestCase
         ];
     }
 
+    private function documentResolutionSource(InventoryLedgerPostingIntent $intent): array
+    {
+        return [
+            'propertyId' => $intent->propertyId,
+            'itemId' => $intent->itemId,
+            'locationId' => $intent->locationId,
+            'idempotencyKey' => $intent->idempotencyKey,
+            'sourceDocumentType' => $intent->sourceDocumentType,
+            'sourceDocumentId' => $intent->sourceDocumentId,
+            'sourceLineType' => $intent->sourceLineType,
+            'sourceLineId' => $intent->sourceLineId,
+            'movementRole' => $intent->movementRole,
+            'quantityChange' => $intent->quantityChange,
+            'unitCost' => $intent->unitCost,
+            'totalCost' => $intent->totalCost,
+        ];
+    }
+
     private function startOwnershipWorker(string $action, array $extra): array
     {
         $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'cc-p01f-'.strtolower(Str::random(10));
@@ -476,6 +674,7 @@ class CostDeliveryConcurrencyProofTest extends PostgresTestCase
             'ready_file' => $directory.DIRECTORY_SEPARATOR.'ready',
             'start_file' => $directory.DIRECTORY_SEPARATOR.'start',
             'locked_file' => $directory.DIRECTORY_SEPARATOR.'locked',
+            'continue_file' => $directory.DIRECTORY_SEPARATOR.'continue',
             'result_file' => $directory.DIRECTORY_SEPARATOR.'result.json',
             'config_file' => $directory.DIRECTORY_SEPARATOR.'config.json',
             'directory' => $directory,
@@ -593,6 +792,96 @@ class CostDeliveryConcurrencyProofTest extends PostgresTestCase
         ]);
 
         return [$source, $intent, $outbox->id];
+    }
+
+    private function seedSynchronousTransferOutSource(
+        $request,
+        string $ownershipId,
+        string $actorId,
+        string $locationId,
+        string $transferId,
+        string $lineId,
+    ): InventoryTransaction {
+        $occurredAt = Carbon::parse('2026-08-31 11:00:00', 'UTC');
+        $idempotencyKey = "trf_{$transferId}_{$lineId}_out";
+        $periodId = FinancialPeriod::where('property_id', $request->propertyId)
+            ->where('period_year', 2026)->where('period_month', 8)->value('id');
+        $source = InventoryTransaction::create([
+            'property_id' => $request->propertyId,
+            'item_id' => $request->itemId,
+            'location_id' => $locationId,
+            'currency_code' => 'USD',
+            'financial_period_id' => $periodId,
+            'valuation_scope' => "property:{$request->propertyId}:location:{$locationId}:item:{$request->itemId}",
+            'valuation_sequence' => 2,
+            'valuation_approval_status' => 'approved',
+            'valuation_approval_reference' => "inventory_transfer:{$transferId}:completed",
+            'cost_delivery_mode' => 'SYNCHRONOUS',
+            'cost_delivery_ownership_id' => $ownershipId,
+            'cost_delivery_ownership_version' => 1,
+            'cost_delivery_cutover_id' => null,
+            'business_date' => '2026-08-31',
+            'occurred_at' => $occurredAt,
+            'source_document_type' => 'inventory_transfer',
+            'source_document_id' => $transferId,
+            'source_line_type' => 'inventory_transfer_line',
+            'source_line_id' => $lineId,
+            'movement_role' => TransactionTypeEnum::TransferOut->value,
+            'idempotency_key' => $idempotencyKey,
+            'transaction_type' => TransactionTypeEnum::TransferOut,
+            'quantity_before' => '1.0000',
+            'quantity_change' => '-1.0000',
+            'quantity_after' => '0.0000',
+            'unit_cost' => '10.0000',
+            'total_cost' => '-10.0000',
+            'notes' => 'P01F historical partial-transfer race proof',
+            'posted_by' => $actorId,
+            'posted_at' => $occurredAt,
+        ]);
+        DB::table('inventory_valuation_sequences')
+            ->where('property_id', $request->propertyId)
+            ->where('location_id', $locationId)
+            ->where('item_id', $request->itemId)
+            ->update(['last_sequence' => 2, 'updated_at' => now()]);
+        CostAvcoState::where('property_id', $request->propertyId)
+            ->where('location_id', $locationId)
+            ->where('item_id', $request->itemId)
+            ->update([
+                'on_hand_quantity' => '0.0000',
+                'carrying_value' => '0.0000',
+                'weighted_average_unit_cost' => '0.0000',
+                'last_valuation_sequence' => 2,
+                'last_valuation_business_date' => '2026-08-31',
+                'updated_at' => now(),
+            ]);
+        $ledgerId = (string) Str::ulid();
+        DB::table('cost_ledger_entries')->insert([
+            'id' => $ledgerId,
+            'property_id' => $request->propertyId,
+            'source_inventory_transaction_id' => $source->id,
+            'prior_cost_ledger_entry_id' => null,
+            'entry_type' => 'transfer',
+            'idempotency_key' => $idempotencyKey,
+            'entry_sequence' => 2,
+            'currency_code' => 'USD',
+            'quantity_delta' => '-1.0000',
+            'unit_cost' => '10.0000',
+            'value_delta' => '-10.0000',
+            'business_date' => '2026-08-31',
+            'occurred_at' => $occurredAt,
+            'original_business_date' => null,
+            'metadata' => null,
+            'created_at' => now(),
+        ]);
+        $outbox = app(OutboxRepository::class)->createPending([
+            'topic' => 'inventory.transaction.posted',
+            'source_inventory_transaction_id' => $source->id,
+            'payload' => ['transactionId' => $source->id],
+            'idempotency_key' => "inventory_transaction:{$source->id}:cost_ledger",
+        ]);
+        app(CostDeliveryHistoricalDispositionService::class)->classify($outbox->id, $actorId);
+
+        return $source;
     }
 
     private function effectCounts(): array

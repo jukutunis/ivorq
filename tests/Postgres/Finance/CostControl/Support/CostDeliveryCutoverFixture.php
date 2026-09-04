@@ -21,7 +21,7 @@ use Modules\Operations\Inventory\Models\InventoryLocation;
 trait CostDeliveryCutoverFixture
 {
     /** @return array{CostDeliveryCutoverRequest,string,string} request, ownership id, actor id */
-    protected function makeCutoverFixture(): array
+    protected function makeCutoverFixture(int $scopeCount = 1): array
     {
         $property = Property::where('currency', 'USD')->firstOrFail();
         $requester = User::firstOrFail();
@@ -34,9 +34,11 @@ trait CostDeliveryCutoverFixture
             'sku' => 'P01F-C-'.Str::random(8), 'name' => 'P01F Concurrency',
             'inventory_type' => 'goods', 'weighted_average_cost' => 0, 'is_active' => true,
         ]);
-        $location = InventoryLocation::create([
-            'property_id' => $property->id, 'name' => 'P01F Race '.Str::random(8), 'type' => 'internal',
-        ]);
+        $locations = collect(range(1, $scopeCount))->map(fn (int $position): InventoryLocation => InventoryLocation::create([
+            'property_id' => $property->id,
+            'name' => "P01F Race {$position} ".Str::random(8),
+            'type' => 'internal',
+        ]));
         $prior = FinancialPeriod::updateOrCreate(
             ['property_id' => $property->id, 'period_year' => 2026, 'period_month' => 8],
             ['status' => FinancialPeriodStatusEnum::Closed, 'closed_at' => now(), 'closed_by' => $approver->id],
@@ -56,14 +58,14 @@ trait CostDeliveryCutoverFixture
         $repository = app(CostAuthorityEnrollmentRepository::class);
         $group = $repository->createDraft(
             ['property_id' => $property->id, 'item_id' => $item->id],
-            [[
+            $locations->map(fn (InventoryLocation $location): array => [
                 'location_id' => $location->id,
                 'valuation_scope' => "property:{$property->id}:location:{$location->id}:item:{$item->id}",
                 'opening_quantity' => '0.0000', 'opening_carrying_value' => '0.0000',
                 'currency_code' => 'USD', 'business_date' => '2026-08-31',
                 'financial_period_id' => $prior->id, 'source_reference' => 'P01F-RACE',
                 'evidence_timestamp' => now(),
-            ]],
+            ])->all(),
         );
         DB::transaction(fn () => $repository->approve($group->id, $approver->id, now()));
         app(CostAuthorityEnrollmentBaselineSeedService::class)->seedApprovedGroup($group->id, $requester->id);
