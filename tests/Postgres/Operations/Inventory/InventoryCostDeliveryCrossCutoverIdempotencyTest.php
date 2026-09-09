@@ -19,6 +19,7 @@ use Modules\Operations\Inventory\Models\InventoryLocation;
 use Modules\Operations\Inventory\Models\InventoryStock;
 use Modules\Operations\Inventory\Services\InventoryPostingControlCoordinator;
 use Modules\Operations\Inventory\ValueObjects\CostDeliveryPostingDecision;
+use Modules\Operations\Inventory\ValueObjects\InventoryAdjustmentIdempotencyKey;
 use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
 use RuntimeException;
 use Tests\PostgresTestCase;
@@ -57,13 +58,16 @@ final class InventoryCostDeliveryCrossCutoverIdempotencyTest extends PostgresTes
             'property_id' => $property->id, 'item_id' => $item->id, 'location_id' => $location->id,
             'physical_quantity' => '10.0000', 'status' => ItemStatusEnum::InStock,
         ]);
+        $documentId = (string) Str::ulid();
+        $lineId = (string) Str::ulid();
+        $key = InventoryAdjustmentIdempotencyKey::approval($documentId, $lineId);
         $intent = new InventoryLedgerPostingIntent(
             propertyId: $property->id, itemId: $item->id, locationId: $location->id,
             businessDate: now()->toDateString(), occurredAt: now(),
-            sourceDocumentType: 'inventory_adjustment', sourceDocumentId: (string) Str::ulid(),
-            sourceLineType: 'inventory_adjustment_line', sourceLineId: (string) Str::ulid(),
+            sourceDocumentType: 'inventory_adjustment', sourceDocumentId: $documentId,
+            sourceLineType: 'inventory_adjustment_line', sourceLineId: $lineId,
             movementRole: TransactionTypeEnum::AdjustmentIn->value,
-            idempotencyKey: 'p01f-replay-'.Str::random(12),
+            idempotencyKey: $key,
             transactionType: TransactionTypeEnum::AdjustmentIn,
             quantityChange: '1.0000', unitCost: '10.0000', totalCost: '10.0000',
         );
@@ -81,6 +85,8 @@ final class InventoryCostDeliveryCrossCutoverIdempotencyTest extends PostgresTes
         $replayed = app(InventoryPostingControlCoordinator::class)->post($intent, $actor->id);
 
         $this->assertSame($first->id, $replayed->id);
+        $this->assertSame($key, $replayed->idempotency_key);
+        $this->assertSame(60, strlen($replayed->idempotency_key));
         $this->assertSame($ownershipId, $replayed->cost_delivery_ownership_id);
         $this->assertSame(0, $rejectingPort->calls);
         $this->assertDatabaseCount('inventory_transactions', 1);

@@ -2,15 +2,17 @@
 
 namespace Modules\Finance\CostControl\Services;
 
+use Illuminate\Support\Carbon;
 use Modules\Finance\CostControl\Repositories\CostAvcoStateRepository;
-use Modules\Operations\Inventory\Services\InventoryPostingControlCoordinator;
-use Modules\Finance\CostControl\Services\ControlledAdjustmentValuationApplyCoordinator;
-use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
-use Modules\Finance\CostControl\ValueObjects\ControlledValuationCostLedgerIntent;
-use Modules\Finance\CostControl\ValueObjects\ControlledAdjustmentValuationIntent;
-use Modules\Finance\CostControl\ValueObjects\ValuationSequence;
 use Modules\Finance\CostControl\ValueObjects\AvcoDecimal;
+use Modules\Finance\CostControl\ValueObjects\ControlledAdjustmentValuationIntent;
+use Modules\Finance\CostControl\ValueObjects\ControlledValuationCostLedgerIntent;
+use Modules\Finance\CostControl\ValueObjects\ValuationSequence;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
+use Modules\Operations\Inventory\Events\InventoryAdjustmentPosted;
+use Modules\Operations\Inventory\Services\InventoryPostingControlCoordinator;
+use Modules\Operations\Inventory\ValueObjects\InventoryAdjustmentIdempotencyKey;
+use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
 
 /**
  * Invocation service for multi-line adjustments under controlled valuation.
@@ -31,7 +33,7 @@ final class ControlledAdjustmentValuationInvocationService
         iterable $sortedLines,
         string $locationId,
         string $businessDate,
-        \Illuminate\Support\Carbon $occurredAt,
+        Carbon $occurredAt,
         string $actorId,
         string $adjustmentId,
         string $adjustmentNumber
@@ -63,7 +65,7 @@ final class ControlledAdjustmentValuationInvocationService
 
             $canonicalKey = "property:{$propertyId}:location:{$locationId}:item:{$itemId}";
             $lockedState = $lockedStatesMap[$canonicalKey] ?? null;
-            if (!$lockedState) {
+            if (! $lockedState) {
                 throw new \RuntimeException("Locked state not found for scope {$canonicalKey}.");
             }
 
@@ -72,16 +74,16 @@ final class ControlledAdjustmentValuationInvocationService
                 // AdjustmentIn
                 $type = TransactionTypeEnum::AdjustmentIn;
                 $costToUse = $line->unit_cost;
-                if ($costToUse === null || (float)$costToUse <= 0) {
-                    throw new \RuntimeException("Unit cost is required and must be positive for positive adjustment.");
+                if ($costToUse === null || (float) $costToUse <= 0) {
+                    throw new \RuntimeException('Unit cost is required and must be positive for positive adjustment.');
                 }
                 $qtyChange = (string) $variance;
-                $totalCost = bcmul($qtyChange, (string)$costToUse, 4);
+                $totalCost = bcmul($qtyChange, (string) $costToUse, 4);
             } else {
                 // AdjustmentOut
                 $type = TransactionTypeEnum::AdjustmentOut;
-                if ($lockedState->weighted_average_unit_cost === null || (float)$lockedState->weighted_average_unit_cost <= 0) {
-                    throw new \RuntimeException("Locked state WAUC is missing or non-positive on AdjustmentOut.");
+                if ($lockedState->weighted_average_unit_cost === null || (float) $lockedState->weighted_average_unit_cost <= 0) {
+                    throw new \RuntimeException('Locked state WAUC is missing or non-positive on AdjustmentOut.');
                 }
                 $costToUse = (string) $lockedState->weighted_average_unit_cost;
                 $qtyChange = (string) $variance;
@@ -100,7 +102,7 @@ final class ControlledAdjustmentValuationInvocationService
                 sourceLineType: 'inventory_adjustment_line',
                 sourceLineId: $line->id,
                 movementRole: $type->value,
-                idempotencyKey: "adj_{$adjustmentId}_{$line->id}_approve",
+                idempotencyKey: InventoryAdjustmentIdempotencyKey::approval($adjustmentId, $line->id),
                 transactionType: $type,
                 quantityChange: $qtyChange,
                 unitCost: $costToUse,
@@ -120,9 +122,9 @@ final class ControlledAdjustmentValuationInvocationService
                 idempotencyKey: $transaction->idempotency_key,
                 entrySequence: $transaction->valuation_sequence,
                 currencyCode: $transaction->currency_code,
-                quantityDelta: new AvcoDecimal((string)$transaction->quantity_change),
-                unitCost: new AvcoDecimal((string)$transaction->unit_cost),
-                valueDelta: new AvcoDecimal((string)$transaction->total_cost),
+                quantityDelta: new AvcoDecimal((string) $transaction->quantity_change),
+                unitCost: new AvcoDecimal((string) $transaction->unit_cost),
+                valueDelta: new AvcoDecimal((string) $transaction->total_cost),
                 businessDate: $transaction->business_date->format('Y-m-d'),
                 occurredAt: $transaction->occurred_at->format('Y-m-d H:i:s')
             );
@@ -135,7 +137,7 @@ final class ControlledAdjustmentValuationInvocationService
                     itemId: $itemId,
                     valuationScope: $lockedState->valuation_scope,
                     businessDate: $lockedState->last_valuation_business_date->format('Y-m-d'),
-                    ledgerSequence: (int)$lockedState->last_valuation_sequence
+                    ledgerSequence: (int) $lockedState->last_valuation_sequence
                 );
             }
 
@@ -144,8 +146,8 @@ final class ControlledAdjustmentValuationInvocationService
                 locationId: $locationId,
                 itemId: $itemId,
                 currentLastAppliedValuationSequence: $priorSequence,
-                currentQuantity: new AvcoDecimal((string)$lockedState->on_hand_quantity),
-                currentCarryingValue: new AvcoDecimal((string)$lockedState->carrying_value),
+                currentQuantity: new AvcoDecimal((string) $lockedState->on_hand_quantity),
+                currentCarryingValue: new AvcoDecimal((string) $lockedState->carrying_value),
                 costLedgerIntent: $costLedgerIntent
             );
 
@@ -153,7 +155,7 @@ final class ControlledAdjustmentValuationInvocationService
             $this->applyCoordinator->applyUsingLockedState($lockedState, $authoritativeIntent);
 
             // Fire operational completion events
-            \Modules\Operations\Inventory\Events\InventoryAdjustmentPosted::dispatch($transaction);
+            InventoryAdjustmentPosted::dispatch($transaction);
         }
     }
 }

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap-cc-p01f-adjustment-key-pg.php"
+         colors="true"
+>
+    <testsuites>
+        <testsuite name="CC-P01F adjustment key correction PostgreSQL proof">
+            <directory>tests/Postgres</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+            <directory>Modules</directory>
+            <directory>Shared</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing" force="true"/>
+        <env name="DB_CONNECTION" value="pgsql" force="true"/>
+        <env name="DB_DATABASE" value="ivorq_cc_p01f_adjustment_key_fix_20260907_8af9813b" force="true"/>
+        <env name="IVORQ_PG_TEST_DATABASE" value="ivorq_cc_p01f_adjustment_key_fix_20260907_8af9813b" force="true"/>
+        <env name="CACHE_STORE" value="array" force="true"/>
+        <env name="SESSION_DRIVER" value="array" force="true"/>
+        <env name="QUEUE_CONNECTION" value="sync" force="true"/>
+    </php>
+</phpunit>

@@ -19,6 +19,7 @@ use Modules\Operations\Inventory\Repositories\InventoryAdjustmentRepository;
 use Modules\Operations\Inventory\Repositories\InventoryItemRepository;
 use Modules\Operations\Inventory\Repositories\InventoryStockRepository;
 use Modules\Operations\Inventory\ValueObjects\CostDeliveryPostingDecision;
+use Modules\Operations\Inventory\ValueObjects\InventoryAdjustmentIdempotencyKey;
 use Modules\Operations\Inventory\ValueObjects\InventoryLedgerPostingIntent;
 use Shared\Exceptions\BusinessLogicException;
 
@@ -143,7 +144,7 @@ class AdjustmentService
                         'propertyId' => (string) $adjustment->property_id,
                         'itemId' => (string) $line->item_id,
                         'locationId' => (string) $adjustment->location_id,
-                        'idempotencyKey' => "adj_{$adjustment->id}_{$line->id}_approve",
+                        'idempotencyKey' => InventoryAdjustmentIdempotencyKey::approval($adjustment->id, $line->id),
                         'sourceDocumentType' => 'inventory_adjustment',
                         'sourceDocumentId' => $adjustment->id,
                         'sourceLineType' => 'inventory_adjustment_line',
@@ -158,7 +159,7 @@ class AdjustmentService
 
                 // Run validation for each line before any writes
                 foreach ($sortedLines as $line) {
-                    $idemKey = "adj_{$adjustment->id}_{$line->id}_approve";
+                    $idemKey = InventoryAdjustmentIdempotencyKey::approval($adjustment->id, $line->id);
                     // BR-065: staleness check
                     $balance = $this->stockRepository->createOrLockControlled($adjustment->property_id, $line->item_id, $adjustment->location_id);
                     $currentQty = (float) $balance->physical_quantity;
@@ -230,7 +231,7 @@ class AdjustmentService
 
                 foreach ($sortedLines as $line) {
                     // Check idempotency first to allow re-post replay
-                    $idemKey = "adj_{$adjustment->id}_{$line->id}_approve";
+                    $idemKey = InventoryAdjustmentIdempotencyKey::approval($adjustment->id, $line->id);
                     $existingTx = InventoryTransaction::where('property_id', $adjustment->property_id)
                         ->where('idempotency_key', $idemKey)
                         ->lockForUpdate()
@@ -291,7 +292,7 @@ class AdjustmentService
                         sourceLineType: 'inventory_adjustment_line',
                         sourceLineId: $line->id,
                         movementRole: $type->value,
-                        idempotencyKey: "adj_{$adjustment->id}_{$line->id}_approve",
+                        idempotencyKey: InventoryAdjustmentIdempotencyKey::approval($adjustment->id, $line->id),
                         transactionType: $type,
                         quantityChange: $qtyChange,
                         unitCost: $costToUse,

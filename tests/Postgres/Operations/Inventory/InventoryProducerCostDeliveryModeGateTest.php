@@ -37,6 +37,7 @@ use Modules\Operations\Inventory\Services\IssueService;
 use Modules\Operations\Inventory\Services\ReceiptService;
 use Modules\Operations\Inventory\Services\TransferService;
 use Modules\Operations\Inventory\ValueObjects\CostDeliveryPostingDecision;
+use Modules\Operations\Inventory\ValueObjects\InventoryAdjustmentIdempotencyKey;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
 use Modules\Operations\Receiving\Models\ReceivingDocument;
@@ -134,6 +135,9 @@ class InventoryProducerCostDeliveryModeGateTest extends PostgresTestCase
                     ->where('cost_delivery_mode', CostDeliveryPostingDecision::SYNCHRONOUS)
                     ->count(),
             );
+            if ($producer === 'adjustment') {
+                $this->assertAdjustmentSourceKey($documentId, CostDeliveryPostingDecision::SYNCHRONOUS);
+            }
 
             $sync = $this->bindMode(CostDeliveryPostingDecision::DEFERRED);
             $documentId = $this->runProducer($producer);
@@ -145,7 +149,25 @@ class InventoryProducerCostDeliveryModeGateTest extends PostgresTestCase
                     ->where('cost_delivery_mode', CostDeliveryPostingDecision::DEFERRED)
                     ->count(),
             );
+            if ($producer === 'adjustment') {
+                $this->assertAdjustmentSourceKey($documentId, CostDeliveryPostingDecision::DEFERRED);
+            }
         }
+    }
+
+    private function assertAdjustmentSourceKey(string $documentId, string $deliveryMode): void
+    {
+        $source = InventoryTransaction::query()
+            ->where('source_document_id', $documentId)
+            ->where('cost_delivery_mode', $deliveryMode)
+            ->firstOrFail();
+        $expected = InventoryAdjustmentIdempotencyKey::approval($documentId, $source->source_line_id);
+
+        $this->assertSame($expected, $source->idempotency_key);
+        $this->assertSame(60, strlen($source->idempotency_key));
+        $this->assertDatabaseHas('outbox_messages', [
+            'source_inventory_transaction_id' => $source->id,
+        ]);
     }
 
     private function bindMode(string $mode): RecordingSynchronousCostValuationPort
