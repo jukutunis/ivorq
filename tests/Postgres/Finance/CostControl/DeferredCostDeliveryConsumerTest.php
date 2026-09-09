@@ -4,17 +4,27 @@ namespace Tests\Postgres\Finance\CostControl;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Finance\CostControl\Enums\CostDeliveryProcessingState;
 use Modules\Finance\CostControl\Models\CostDeliveryOutboxDisposition;
 use Modules\Finance\CostControl\Models\CostLedgerEntry;
 use Modules\Finance\CostControl\Services\DeferredCostDeliveryConsumer;
 use Modules\Finance\CostControl\ValueObjects\DeferredCostDeliveryResult;
 use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
 use Modules\Foundation\Audit\Services\AuditService;
 use Modules\Foundation\Outbox\Enums\OutboxStatusEnum;
+use Modules\Foundation\Outbox\Models\OutboxMessage;
 use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
+use Modules\Operations\Inventory\Enums\AdjustmentStatusEnum;
+use Modules\Operations\Inventory\Enums\ItemStatusEnum;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
+use Modules\Operations\Inventory\Models\InventoryAdjustment;
+use Modules\Operations\Inventory\Models\InventoryAdjustmentLine;
+use Modules\Operations\Inventory\Models\InventoryStock;
 use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\Services\AdjustmentService;
+use Modules\Operations\Inventory\ValueObjects\InventoryAdjustmentIdempotencyKey;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Postgres\Finance\CostControl\Support\DeferredCostDeliveryFixture;
 use Tests\PostgresTestCase;
@@ -90,6 +100,88 @@ class DeferredCostDeliveryConsumerTest extends PostgresTestCase
         $this->assertSame(DeferredCostDeliveryResult::ALREADY_DELIVERED, $second->status);
         $this->assertSame(1, CostLedgerEntry::where('source_inventory_transaction_id', $source->id)->count());
         $this->assertSame(1, $disposition->fresh()->attempt_count);
+    }
+
+    #[DataProvider('deferredAdjustmentProvider')]
+    public function test_adjustment_producer_and_deferred_consumer_share_the_exact_bounded_key(
+        string $actualQuantity,
+        string $variance,
+        TransactionTypeEnum $transactionType,
+        string $expectedQuantity,
+        string $expectedValue,
+    ): void {
+        FinancialPeriod::updateOrCreate(
+            [
+                'property_id' => $this->property->id,
+                'period_year' => now()->year,
+                'period_month' => now()->month,
+            ],
+            ['status' => FinancialPeriodStatusEnum::Open],
+        );
+        InventoryStock::create([
+            'property_id' => $this->property->id,
+            'item_id' => $this->item->id,
+            'location_id' => $this->location->id,
+            'physical_quantity' => '10.0000',
+            'status' => ItemStatusEnum::InStock,
+        ]);
+        $adjustment = InventoryAdjustment::create([
+            'property_id' => $this->property->id,
+            'location_id' => $this->location->id,
+            'adjustment_number' => 'CCP01F-ADJ-'.Str::random(8),
+            'status' => AdjustmentStatusEnum::Submitted,
+        ]);
+        $line = InventoryAdjustmentLine::create([
+            'property_id' => $this->property->id,
+            'adjustment_id' => $adjustment->id,
+            'item_id' => $this->item->id,
+            'quantity_system' => '10.0000',
+            'quantity_actual' => $actualQuantity,
+            'quantity_variance' => $variance,
+            'unit_cost' => '7.5000',
+        ]);
+
+        app(AdjustmentService::class)->approve($adjustment->id, $this->actor->id);
+
+        $source = InventoryTransaction::query()
+            ->where('source_document_id', $adjustment->id)
+            ->firstOrFail();
+        $outbox = OutboxMessage::query()
+            ->where('source_inventory_transaction_id', $source->id)
+            ->firstOrFail();
+        $expectedKey = InventoryAdjustmentIdempotencyKey::approval($adjustment->id, $line->id);
+
+        $this->assertSame('DEFERRED', $source->cost_delivery_mode);
+        $this->assertSame($transactionType, $source->transaction_type);
+        $this->assertSame($expectedKey, $source->idempotency_key);
+        $this->assertSame(60, strlen($source->idempotency_key));
+        $this->assertSame(0, CostLedgerEntry::where('source_inventory_transaction_id', $source->id)->count());
+        $this->assertSame('10.0000', (string) $this->state($this->location)->on_hand_quantity);
+        $this->assertSame('75.0000', (string) $this->state($this->location)->carrying_value);
+        $this->assertNull($this->state($this->location)->last_valuation_sequence);
+
+        $first = $this->consumer->consume($outbox->id);
+
+        $this->assertSame(DeferredCostDeliveryResult::DELIVERED, $first->status, $first->code);
+        $this->assertSame(
+            $expectedKey,
+            CostLedgerEntry::where('source_inventory_transaction_id', $source->id)->value('idempotency_key')
+        );
+        $this->assertSame($expectedQuantity, (string) $this->state($this->location)->on_hand_quantity);
+        $this->assertSame($expectedValue, (string) $this->state($this->location)->carrying_value);
+
+        $second = $this->consumer->consume($outbox->id);
+
+        $this->assertSame(DeferredCostDeliveryResult::ALREADY_DELIVERED, $second->status);
+        $this->assertSame(1, CostLedgerEntry::where('source_inventory_transaction_id', $source->id)->count());
+    }
+
+    public static function deferredAdjustmentProvider(): array
+    {
+        return [
+            'AdjustmentIn' => ['12.0000', '2.0000', TransactionTypeEnum::AdjustmentIn, '12.0000', '90.0000'],
+            'AdjustmentOut' => ['8.0000', '-2.0000', TransactionTypeEnum::AdjustmentOut, '8.0000', '60.0000'],
+        ];
     }
 
     #[DataProvider('singleMovementProvider')]
