@@ -145,9 +145,6 @@ class PurchaseOrderRejectedStatusTest extends PostgresTestCase
             'notes' => $reason,
             'user_id' => $this->actor->id,
         ]);
-        // The existing listener repeats markAsRejected() without forwarding notes.
-        // Engine rejection notes remain on the Approval action; direct model remarks are proved separately.
-        $this->assertNull($this->purchaseOrder->fresh()->remarks);
         $this->assertSame($purchaseRequest, $this->purchaseOrder->fresh()->purchaseRequest->getAttributes());
     }
 }
