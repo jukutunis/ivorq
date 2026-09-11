@@ -2,27 +2,29 @@
 
 namespace Tests\Postgres\Operations\Inventory;
 
-use Tests\PostgresTestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Modules\Operations\Inventory\Services\InventoryReversalApprovalRequestService;
+use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
+use Modules\Foundation\Approval\Models\ApprovalRequest;
+use Modules\Foundation\Notification\Models\AppNotification;
+use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Foundation\Task\Models\Task;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Modules\Operations\Inventory\Exceptions\InventoryReversalApprovalRequestRejectedException;
 use Modules\Operations\Inventory\Exceptions\InventoryReversalCandidateRejectedException;
-use Modules\Operations\Inventory\ValueObjects\InventoryReversalApprovalRequestIntent;
-use Modules\Operations\Inventory\ValueObjects\InventoryReversalApprovalRequestResult;
-use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
-use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\Models\InventoryCategory;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
-use Modules\Operations\Inventory\Models\InventoryCategory;
-use Modules\Foundation\Property\Models\Property;
-use Modules\Foundation\User\Models\User;
-use Modules\Foundation\Property\Models\PropertyBusinessDate;
-use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
-use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
-use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
-use Modules\Foundation\Approval\Models\ApprovalRequest;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\Services\InventoryReversalApprovalRequestService;
+use Modules\Operations\Inventory\ValueObjects\InventoryReversalApprovalRequestIntent;
+use Shared\Services\CurrentPropertyService;
+use Tests\PostgresTestCase;
 
 class InventoryReversalApprovalRequestServiceTest extends PostgresTestCase
 {
@@ -31,12 +33,19 @@ class InventoryReversalApprovalRequestServiceTest extends PostgresTestCase
     protected $seed = true;
 
     private InventoryReversalApprovalRequestService $service;
+
     private Property $property;
+
     private User $user;
+
     private InventoryItem $item;
+
     private InventoryLocation $location;
+
     private InventoryCategory $category;
+
     private PropertyBusinessDate $businessDate;
+
     private FinancialPeriod $period;
 
     protected function setUp(): void
@@ -44,20 +53,17 @@ class InventoryReversalApprovalRequestServiceTest extends PostgresTestCase
         parent::setUp();
 
         $this->service = app(InventoryReversalApprovalRequestService::class);
-        $this->property = Property::first();
+        $this->property = Property::where('currency', 'USD')->firstOrFail();
         $this->user = User::first();
         $this->actingAs($this->user);
 
-        $this->property->currency = 'USD';
-        $this->property->save();
-
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
 
         $this->businessDate = PropertyBusinessDate::updateOrCreate(
             ['property_id' => $this->property->id, 'business_date' => now()->toDateString()],
             [
-                'status'    => PropertyBusinessDateStatusEnum::Open,
-                'is_open'   => true,
+                'status' => PropertyBusinessDateStatusEnum::Open,
+                'is_open' => true,
                 'opened_at' => now(),
                 'opened_by' => $this->user->id,
             ]
@@ -66,37 +72,37 @@ class InventoryReversalApprovalRequestServiceTest extends PostgresTestCase
         $this->period = FinancialPeriod::updateOrCreate(
             ['property_id' => $this->property->id, 'period_year' => now()->year, 'period_month' => now()->month],
             [
-                'status'     => FinancialPeriodStatusEnum::Open,
+                'status' => FinancialPeriodStatusEnum::Open,
                 'start_date' => now()->startOfMonth(),
-                'end_date'   => now()->endOfMonth(),
+                'end_date' => now()->endOfMonth(),
             ]
         );
 
         $this->category = InventoryCategory::firstOrCreate([
             'property_id' => $this->property->id,
-            'name'        => 'General',
+            'name' => 'General',
         ]);
 
         $this->item = InventoryItem::create([
-            'property_id'           => $this->property->id,
-            'category_id'           => $this->category->id,
-            'sku'                   => 'ITM-REQ-999',
-            'name'                  => 'Request Reversal Item',
-            'inventory_type'        => 'goods',
+            'property_id' => $this->property->id,
+            'category_id' => $this->category->id,
+            'sku' => 'ITM-REQ-999',
+            'name' => 'Request Reversal Item',
+            'inventory_type' => 'goods',
             'weighted_average_cost' => 10.00,
-            'is_active'             => true,
+            'is_active' => true,
         ]);
 
         $this->location = InventoryLocation::create([
             'property_id' => $this->property->id,
-            'name'        => 'Request Reversal Warehouse',
-            'type'        => 'internal',
+            'name' => 'Request Reversal Warehouse',
+            'type' => 'internal',
         ]);
     }
 
     private function seedWorkflow(): void
     {
-        $txMorph = (new InventoryTransaction())->getMorphClass();
+        $txMorph = (new InventoryTransaction)->getMorphClass();
 
         DB::table('approval_workflows')->insertOrIgnore([
             'id' => 'exec-reversal-wf',
@@ -126,7 +132,7 @@ class InventoryReversalApprovalRequestServiceTest extends PostgresTestCase
         string $unitCost = '10.0000',
         string $totalCost = '50.0000'
     ): InventoryTransaction {
-        $tx = new InventoryTransaction();
+        $tx = new InventoryTransaction;
         $tx->id = (string) Str::ulid();
         $tx->property_id = $this->property->id;
         $tx->item_id = $this->item->id;
@@ -152,6 +158,8 @@ class InventoryReversalApprovalRequestServiceTest extends PostgresTestCase
     public function test_purchase_receipt_reversal_approval_request_succeeds_once(): void
     {
         $this->seedWorkflow();
+        $purchasingTasks = Task::withoutGlobalScopes()->where('source_module', 'purchasing')->count();
+        $purchasingNotifications = AppNotification::withoutGlobalScopes()->where('type', 'like', 'purchasing.%')->count();
         $tx = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
 
         $intent = new InventoryReversalApprovalRequestIntent(
@@ -175,6 +183,8 @@ class InventoryReversalApprovalRequestServiceTest extends PostgresTestCase
         $this->assertEquals($result->approvalRequest->id, $replayResult->approvalRequest->id);
 
         $this->assertEquals(1, ApprovalRequest::count());
+        $this->assertSame($purchasingTasks, Task::withoutGlobalScopes()->where('source_module', 'purchasing')->count());
+        $this->assertSame($purchasingNotifications, AppNotification::withoutGlobalScopes()->where('type', 'like', 'purchasing.%')->count());
     }
 
     public function test_issue_reversal_approval_request_succeeds(): void
@@ -199,7 +209,7 @@ class InventoryReversalApprovalRequestServiceTest extends PostgresTestCase
     {
         $this->seedWorkflow();
         $tx1 = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '5.0000', '10.0000', '50.0000');
-        $tx2 = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 1, '2.0000', '10.0000', '20.0000');
+        $tx2 = $this->createTransaction(TransactionTypeEnum::PurchaseReceipt, 2, '2.0000', '10.0000', '20.0000');
 
         $intent1 = new InventoryReversalApprovalRequestIntent(
             originalTransactionId: $tx1->id,
@@ -217,10 +227,14 @@ class InventoryReversalApprovalRequestServiceTest extends PostgresTestCase
             idempotencyKey: 'req-idem-conflict'
         );
 
-        $this->expectException(InventoryReversalApprovalRequestRejectedException::class);
-        $this->expectExceptionMessage('Idempotency key is in use by a different request.');
+        try {
+            $this->service->request($intent2);
+            $this->fail('Conflicting idempotency reuse must fail closed.');
+        } catch (InventoryReversalApprovalRequestRejectedException $exception) {
+            $this->assertSame('Idempotency key is in use by a different request.', $exception->getMessage());
+        }
 
-        $this->service->request($intent2);
+        $this->assertSame(1, ApprovalRequest::count());
     }
 
     public function test_missing_workflow_fails(): void
