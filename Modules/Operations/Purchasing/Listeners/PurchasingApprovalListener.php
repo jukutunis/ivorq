@@ -68,6 +68,7 @@ class PurchasingApprovalListener
                 'source_module' => 'purchasing',
                 'taskable_type' => get_class($approvable),
                 'taskable_id' => $approvable->id,
+                'approval_request_id' => $event->approvalRequest->id,
                 'title' => $title,
                 'description' => 'Please review and approve this document.',
                 'priority' => PriorityEnum::High->value,
