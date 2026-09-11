@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
 use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
 use Modules\Foundation\Approval\Events\ApprovalApproved;
+use Modules\Foundation\Approval\Events\ApprovalCancelled;
 use Modules\Foundation\Approval\Events\ApprovalRejected;
 use Modules\Foundation\Approval\Events\ApprovalRequested;
 use Modules\Foundation\Approval\Models\ApprovalRequest;
@@ -94,6 +95,13 @@ class PurchasingApprovalListenerIsolationTest extends PostgresTestCase
         );
     }
 
+    public function test_cancelled_foreign_approvable_is_ignored(): void
+    {
+        $this->assertForeignEventHasNoPurchasingSideEffects(
+            fn () => event(new ApprovalCancelled($this->inventoryApprovalRequest)),
+        );
+    }
+
     public function test_classifier_recognizes_only_purchasing_models(): void
     {
         $classifier = new ReflectionMethod($this->listener, 'isPurchasingDocument');
@@ -116,6 +124,7 @@ class PurchasingApprovalListenerIsolationTest extends PostgresTestCase
                 $this->listener->handleRequested(new ApprovalRequested($this->inventoryApprovalRequest));
                 $this->listener->handleApproved(new ApprovalApproved($this->inventoryApprovalRequest));
                 $this->listener->handleRejected(new ApprovalRejected($this->inventoryApprovalRequest));
+                $this->listener->handleCancelled(new ApprovalCancelled($this->inventoryApprovalRequest));
             });
         }
     }
@@ -204,6 +213,47 @@ class PurchasingApprovalListenerIsolationTest extends PostgresTestCase
         } else {
             $this->assertSame($reason, $document->fresh()->rejection_reason);
         }
+    }
+
+    #[DataProvider('purchasingDocuments')]
+    public function test_real_cancellation_does_not_reject_or_mutate_purchasing_document(
+        string $documentProperty,
+    ): void {
+        $document = $this->{$documentProperty};
+        $documentBefore = $document->fresh()->getAttributes();
+        $this->createWorkflowFor($document);
+        $engine = app(ApprovalEngineService::class);
+        $reason = '  Purchasing request withdrawn.  ';
+
+        $request = $engine->submitForApproval($document, $this->actor->id);
+        $tasksAfterSubmit = $this->purchasingTaskCount();
+        $notificationsAfterSubmit = $this->purchasingNotificationCount();
+
+        $engine->cancel($request, $this->actor->id, $reason);
+
+        $cancelled = $request->fresh();
+        $this->assertSame('Cancelled', $cancelled->status);
+        $this->assertNotNull($cancelled->completed_at);
+        $this->assertNull($cancelled->current_step_id);
+        $this->assertSame($documentBefore, $document->fresh()->getAttributes());
+        $this->assertNotSame('REJECTED', $document->fresh()->status->value);
+        $this->assertDatabaseHas('approval_actions', [
+            'approval_request_id' => $request->id,
+            'user_id' => $this->actor->id,
+            'action_type' => 'cancel',
+            'notes' => trim($reason),
+        ]);
+        $this->assertSame($tasksAfterSubmit, $this->purchasingTaskCount());
+        $this->assertSame($notificationsAfterSubmit, $this->purchasingNotificationCount());
+        $this->assertSame(1, Task::withoutGlobalScopes()
+            ->where('source_module', 'purchasing')
+            ->where('taskable_type', $document::class)
+            ->where('taskable_id', $document->id)
+            ->count());
+        $this->assertSame(1, AppNotification::withoutGlobalScopes()
+            ->where('user_id', $this->actor->id)
+            ->where('type', 'ApprovalCancelled')
+            ->count());
     }
 
     private function assertForeignEventHasNoPurchasingSideEffects(callable $invoke): void

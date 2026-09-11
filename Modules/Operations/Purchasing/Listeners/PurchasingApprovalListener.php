@@ -102,8 +102,7 @@ class PurchasingApprovalListener
         $approvable = $event->approvalRequest->approvable;
 
         if ($this->isPurchasingDocument($approvable)) {
-            $approvable->markAsRejected('Approval Cancelled');
-            Log::info('Purchasing document cancelled: '.get_class($approvable).' ID: '.$approvable->getApprovableId());
+            Log::info('Purchasing approval request cancelled: '.get_class($approvable).' ID: '.$approvable->getApprovableId());
         }
     }
 
