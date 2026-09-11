@@ -3,23 +3,22 @@
 namespace Modules\Foundation\Task\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\MorphTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\Task\Enums\TaskStatusEnum;
-use Modules\Foundation\User\Models\User;
 use Shared\Enums\PriorityEnum;
 use Shared\Traits\BelongsToProperty;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
-use Spatie\Activitylog\Support\LogOptions;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
 
 class Task extends Model
 {
-    use HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes, LogsActivity;
+    use BelongsToProperty, HasAuditColumns, HasUlid, LogsActivity, SoftDeletes;
 
     protected $fillable = [
         'property_id',
@@ -28,6 +27,7 @@ class Task extends Model
         'parent_task_id',
         'taskable_type',
         'taskable_id',
+        'approval_request_id',
         'title',
         'description',
         'priority',
@@ -39,7 +39,7 @@ class Task extends Model
     protected $casts = [
         'due_date' => 'datetime',
         'priority' => PriorityEnum::class,
-        'status'   => TaskStatusEnum::class,
+        'status' => TaskStatusEnum::class,
     ];
 
     public function getActivitylogOptions(): LogOptions

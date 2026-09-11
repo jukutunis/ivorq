@@ -3,12 +3,14 @@
 namespace Modules\Foundation\Task\Services;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
+use Modules\Foundation\Task\Enums\TaskStatusEnum;
+use Modules\Foundation\Task\Events\TaskAssigned;
+use Modules\Foundation\Task\Events\TaskCancelled;
+use Modules\Foundation\Task\Events\TaskCompleted;
 use Modules\Foundation\Task\Models\Task;
 use Modules\Foundation\Task\Models\TaskAssignment;
 use Modules\Foundation\Task\Repositories\TaskRepository;
-use Modules\Foundation\Task\Events\TaskAssigned;
-use Modules\Foundation\Task\Events\TaskCompleted;
-use Modules\Foundation\Task\Events\TaskCancelled;
 
 class TaskService
 {
@@ -49,9 +51,9 @@ class TaskService
             'assignee_type' => $assigneeType,
             'assignee_id' => $assigneeId,
         ]);
-        
+
         TaskAssigned::dispatch($task, $assignment);
-        
+
         return $assignment;
     }
 
@@ -60,9 +62,9 @@ class TaskService
         $task = $this->find($taskId);
         $this->update($taskId, ['status' => 'completed']);
         $task->refresh();
-        
+
         TaskCompleted::dispatch($task);
-        
+
         return $task;
     }
 
@@ -71,9 +73,38 @@ class TaskService
         $task = $this->find($taskId);
         $this->update($taskId, ['status' => 'cancelled']);
         $task->refresh();
-        
+
         TaskCancelled::dispatch($task);
-        
+
         return $task;
+    }
+
+    public function cancelActiveApprovalTasks(string $approvalRequestId, string $propertyId): int
+    {
+        return DB::transaction(function () use ($approvalRequestId, $propertyId): int {
+            $activeStatuses = [
+                TaskStatusEnum::Draft->value,
+                TaskStatusEnum::Open->value,
+                TaskStatusEnum::Assigned->value,
+                TaskStatusEnum::InProgress->value,
+                TaskStatusEnum::OnHold->value,
+            ];
+
+            $tasks = Task::withoutGlobalScopes()
+                ->where('property_id', $propertyId)
+                ->where('approval_request_id', $approvalRequestId)
+                ->whereIn('status', $activeStatuses)
+                ->whereNull('deleted_at')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($tasks as $task) {
+                $task->update(['status' => TaskStatusEnum::Cancelled->value]);
+                TaskCancelled::dispatch($task);
+            }
+
+            return $tasks->count();
+        });
     }
 }

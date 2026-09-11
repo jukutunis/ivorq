@@ -13,6 +13,7 @@ use Modules\Foundation\Approval\Events\ApprovalRejected;
 use Modules\Foundation\Approval\Events\ApprovalRequested;
 use Modules\Foundation\Approval\Listeners\ApprovalNotificationListener;
 use Modules\Foundation\Notification\Listeners\TaskEventListener;
+use Modules\Foundation\Task\Listeners\ApprovalTaskLifecycleListener;
 use Modules\SalesAndEventManagement\Events\DistributionAcknowledgedEvent;
 use Modules\SalesAndEventManagement\Events\DistributionAcknowledgementRejectedEvent;
 use Modules\SalesAndEventManagement\Events\DistributionCancelledEvent;
@@ -66,6 +67,10 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(
             ApprovalCancelled::class,
             [ApprovalNotificationListener::class, 'handleApprovalCancelled']
+        );
+        Event::listen(
+            ApprovalCancelled::class,
+            [ApprovalTaskLifecycleListener::class, 'handleApprovalCancelled']
         );
 
         // BEO Distribution audit trail — Sprint 14.8.5.1 §3
