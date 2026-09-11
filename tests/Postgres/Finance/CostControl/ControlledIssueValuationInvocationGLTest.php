@@ -3,29 +3,35 @@
 namespace Tests\Postgres\Finance\CostControl;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use InvalidArgumentException;
-use RuntimeException;
-use Tests\PostgresTestCase;
-use Modules\Operations\Inventory\Services\IssueService;
-use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
 use Modules\Finance\CostControl\Models\CostAvcoState;
 use Modules\Finance\CostControl\Models\CostLedgerEntry;
-use Modules\Operations\Inventory\Models\InventoryIssue;
-use Modules\Operations\Inventory\Models\InventoryIssueLine;
-use Modules\Operations\Inventory\Models\InventoryCategory;
-use Modules\Operations\Inventory\Models\InventoryItem;
-use Modules\Operations\Inventory\Models\InventoryLocation;
-use Modules\Foundation\Property\Models\Property;
+use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
+use Modules\Finance\CostControl\Services\CostDeliveryModeOwnershipBootstrapService;
+use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
+use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
+use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
+use Modules\Finance\GeneralLedger\Exceptions\OperationalIdentityMappingNotFoundException;
 use Modules\Finance\GeneralLedger\Models\Account;
-use Modules\Finance\GeneralLedger\Models\OperationalIdentityMapping;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
-use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
-use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
-use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
-use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
+use Modules\Finance\GeneralLedger\Models\OperationalIdentityMapping;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Models\InventoryCategory;
+use Modules\Operations\Inventory\Models\InventoryIssue;
+use Modules\Operations\Inventory\Models\InventoryIssueLine;
+use Modules\Operations\Inventory\Models\InventoryItem;
+use Modules\Operations\Inventory\Models\InventoryLocation;
+use Modules\Operations\Inventory\Services\IssueService;
+use RuntimeException;
+use Shared\Exceptions\BusinessLogicException;
+use Shared\Services\CurrentPropertyService;
+use Tests\PostgresTestCase;
 
 class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
 {
@@ -34,26 +40,35 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
     protected $seed = true;
 
     private IssueService $issueService;
+
     private CostAuthorityEnrollmentRepository $enrollmentRepo;
 
     private Property $property;
+
     private InventoryItem $itemEnrolled;
+
     private InventoryLocation $location;
+
     private string $actorId;
+
     private string $businessDate;
+
     private string $assetAccountId;
+
     private string $expenseAccountId;
 
     protected function setUp(): void
     {
         parent::setUp();
 
+        $this->travelTo(Carbon::parse('2026-06-28 10:00:00+00'));
+
         $this->issueService = app(IssueService::class);
         $this->enrollmentRepo = app(CostAuthorityEnrollmentRepository::class);
         $this->property = Property::first();
 
         // Mock authentication for IssueService::post
-        $user = \Modules\Foundation\User\Models\User::firstOrCreate(
+        $user = User::firstOrCreate(
             ['email' => 'operator@ivorq.test'],
             [
                 'name' => 'Operator',
@@ -75,21 +90,21 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
         ]);
 
         // Explicitly override CurrentPropertyService context
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
 
         $category = InventoryCategory::firstOrCreate([
             'property_id' => $this->property->id,
-            'name'        => 'Invocation GL Test Category',
+            'name' => 'Invocation GL Test Category',
         ]);
 
         $this->itemEnrolled = InventoryItem::create([
-            'property_id'           => $this->property->id,
-            'category_id'           => $category->id,
-            'sku'                   => 'GL-ISS-ENR-001',
-            'name'                  => 'Invocation Enrolled GL Issue Item',
-            'inventory_type'        => 'goods',
+            'property_id' => $this->property->id,
+            'category_id' => $category->id,
+            'sku' => 'GL-ISS-ENR-001',
+            'name' => 'Invocation Enrolled GL Issue Item',
+            'inventory_type' => 'goods',
             'weighted_average_cost' => '10.0000',
-            'is_active'             => true,
+            'is_active' => true,
         ]);
 
         $this->location = InventoryLocation::firstOrCreate(
@@ -240,6 +255,9 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
                 'enrolled_at' => now(),
             ]);
 
+        app(CostDeliveryModeOwnershipBootstrapService::class)
+            ->bootstrap($id, $this->actorId);
+
         return $id;
     }
 
@@ -253,22 +271,22 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
         DB::table('cost_avco_states')
             ->where('item_id', $this->itemEnrolled->id)
             ->update([
-                'on_hand_quantity'           => '10.0000',
-                'carrying_value'             => '125.0000',
+                'on_hand_quantity' => '10.0000',
+                'carrying_value' => '125.0000',
                 'weighted_average_unit_cost' => '12.5000',
             ]);
 
         $issue = InventoryIssue::create([
-            'property_id'  => $this->property->id,
-            'issue_number' => 'ISS-GLTEST-' . substr(Str::ulid(), 0, 15),
-            'status'       => 'draft',
+            'property_id' => $this->property->id,
+            'issue_number' => 'ISS-GLTEST-'.substr(Str::ulid(), 0, 15),
+            'status' => 'draft',
         ]);
 
         InventoryIssueLine::create([
-            'issue_id'    => $issue->id,
-            'item_id'     => $this->itemEnrolled->id,
+            'issue_id' => $issue->id,
+            'item_id' => $this->itemEnrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '3.000',
+            'quantity' => '3.000',
         ]);
 
         $posted = $this->issueService->post($issue->id, $this->actorId);
@@ -315,17 +333,17 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
 
         $issueId = (string) Str::ulid();
         $issue = InventoryIssue::create([
-            'id'           => $issueId,
-            'property_id'  => $this->property->id,
+            'id' => $issueId,
+            'property_id' => $this->property->id,
             'issue_number' => 'ISS-IDEMPOTENT',
-            'status'       => 'draft',
+            'status' => 'draft',
         ]);
 
         InventoryIssueLine::create([
-            'issue_id'    => $issue->id,
-            'item_id'     => $this->itemEnrolled->id,
+            'issue_id' => $issue->id,
+            'item_id' => $this->itemEnrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '3.000',
+            'quantity' => '3.000',
         ]);
 
         $posted1 = $this->issueService->post($issue->id, $this->actorId);
@@ -356,19 +374,19 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
         OperationalIdentityMapping::where('operational_identity', OperationalIdentityEnum::COST_OF_CONSUMPTION->value)->delete();
 
         $issue = InventoryIssue::create([
-            'property_id'  => $this->property->id,
-            'issue_number' => 'ISS-FAILCLOSED-' . substr(Str::ulid(), 0, 11),
-            'status'       => 'draft',
+            'property_id' => $this->property->id,
+            'issue_number' => 'ISS-FAILCLOSED-'.substr(Str::ulid(), 0, 11),
+            'status' => 'draft',
         ]);
 
         InventoryIssueLine::create([
-            'issue_id'    => $issue->id,
-            'item_id'     => $this->itemEnrolled->id,
+            'issue_id' => $issue->id,
+            'item_id' => $this->itemEnrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '3.000',
+            'quantity' => '3.000',
         ]);
 
-        $this->expectException(\Modules\Finance\GeneralLedger\Exceptions\OperationalIdentityMappingNotFoundException::class);
+        $this->expectException(OperationalIdentityMappingNotFoundException::class);
 
         try {
             $this->issueService->post($issue->id, $this->actorId);
@@ -394,19 +412,19 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
             ->update(['status' => 'Closed', 'is_open' => null]);
 
         $issue = InventoryIssue::create([
-            'property_id'  => $this->property->id,
-            'issue_number' => 'ISS-BDGUARD-' . substr(Str::ulid(), 0, 14),
-            'status'       => 'draft',
+            'property_id' => $this->property->id,
+            'issue_number' => 'ISS-BDGUARD-'.substr(Str::ulid(), 0, 14),
+            'status' => 'draft',
         ]);
 
         InventoryIssueLine::create([
-            'issue_id'    => $issue->id,
-            'item_id'     => $this->itemEnrolled->id,
+            'issue_id' => $issue->id,
+            'item_id' => $this->itemEnrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '3.000',
+            'quantity' => '3.000',
         ]);
 
-        $this->expectException(\Shared\Exceptions\BusinessLogicException::class);
+        $this->expectException(BusinessLogicException::class);
         $this->expectExceptionMessage('No open business date found for property.');
 
         try {
@@ -437,20 +455,20 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
             ->where('period_year', 2026)
             ->where('period_month', 6)
             ->update([
-                'status' => \Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum::Closed->value,
+                'status' => FinancialPeriodStatusEnum::Closed->value,
             ]);
 
         $issue = InventoryIssue::create([
-            'property_id'  => $this->property->id,
-            'issue_number' => 'ISS-FPGUARD-' . substr(Str::ulid(), 0, 14),
-            'status'       => 'draft',
+            'property_id' => $this->property->id,
+            'issue_number' => 'ISS-FPGUARD-'.substr(Str::ulid(), 0, 14),
+            'status' => 'draft',
         ]);
 
         InventoryIssueLine::create([
-            'issue_id'    => $issue->id,
-            'item_id'     => $this->itemEnrolled->id,
+            'issue_id' => $issue->id,
+            'item_id' => $this->itemEnrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '3.000',
+            'quantity' => '3.000',
         ]);
 
         $this->expectException(RuntimeException::class);
@@ -474,16 +492,16 @@ class ControlledIssueValuationInvocationGLTest extends PostgresTestCase
         $this->createEnrolledGroup($this->itemEnrolled->id);
 
         $issue = InventoryIssue::create([
-            'property_id'  => $this->property->id,
-            'issue_number' => 'ISS-NONGOAL-' . substr(Str::ulid(), 0, 14),
-            'status'       => 'draft',
+            'property_id' => $this->property->id,
+            'issue_number' => 'ISS-NONGOAL-'.substr(Str::ulid(), 0, 14),
+            'status' => 'draft',
         ]);
 
         InventoryIssueLine::create([
-            'issue_id'    => $issue->id,
-            'item_id'     => $this->itemEnrolled->id,
+            'issue_id' => $issue->id,
+            'item_id' => $this->itemEnrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '3.000',
+            'quantity' => '3.000',
         ]);
 
         $posted = $this->issueService->post($issue->id, $this->actorId);

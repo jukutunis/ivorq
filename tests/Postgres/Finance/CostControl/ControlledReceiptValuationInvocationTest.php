@@ -3,43 +3,55 @@
 namespace Tests\Postgres\Finance\CostControl;
 
 use Carbon\Carbon;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia as Assert;
 use InvalidArgumentException;
-use RuntimeException;
-use Tests\PostgresTestCase;
-use Modules\Operations\Inventory\Services\ReceiptService;
-use Modules\Operations\Receiving\Services\InventoryReceiptIntegrationService;
-use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
 use Modules\Finance\CostControl\Models\CostAvcoState;
-use Modules\Operations\Inventory\Models\InventoryReceipt;
-use Modules\Operations\Inventory\Models\InventoryReceiptLine;
-use Modules\Operations\Receiving\Models\ReceivingDocument;
-use Modules\Operations\Receiving\Models\ReceivingLine;
-use Modules\Operations\Inventory\Models\InventoryCategory;
-use Modules\Operations\Inventory\Models\InventoryItem;
-use Modules\Operations\Inventory\Models\InventoryLocation;
-use Modules\Foundation\Property\Models\Property;
+use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
+use Modules\Finance\CostControl\Services\CostDeliveryModeOwnershipBootstrapService;
+use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
+use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
+use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
 use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\GeneralLedger\Models\OperationalIdentityMapping;
-use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
-use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
-use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
-use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
-use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
 use Modules\Finance\GeneralLedger\Services\GrniPostingEngine;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationService;
+use Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService;
 use Modules\Finance\GeneralLedger\Services\JournalEntryControlledPostingService;
 use Modules\Finance\GeneralLedger\Services\JournalEntryDraftFinalizationAuthorizationService;
+use Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
+use Modules\Foundation\Department\Models\Department;
+use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Models\InventoryCategory;
+use Modules\Operations\Inventory\Models\InventoryItem;
+use Modules\Operations\Inventory\Models\InventoryLocation;
+use Modules\Operations\Inventory\Models\InventoryReceipt;
+use Modules\Operations\Inventory\Models\InventoryReceiptLine;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\Services\ReceiptService;
+use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
+use Modules\Operations\Purchasing\Models\PurchaseRequest;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
-use Modules\Foundation\User\Models\User;
+use Modules\Operations\Receiving\Models\ReceivingDocument;
+use Modules\Operations\Receiving\Models\ReceivingLine;
+use Modules\Operations\Receiving\Services\InventoryReceiptIntegrationService;
+use RuntimeException;
 use Shared\Services\CurrentPropertyService;
+use Spatie\Permission\PermissionRegistrar;
+use Tests\PostgresTestCase;
 
 class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 {
@@ -48,57 +60,80 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     protected $seed = true;
 
     private ReceiptService $receiptService;
+
     private InventoryReceiptIntegrationService $integrationService;
+
     private CostAuthorityEnrollmentRepository $enrollmentRepo;
 
     private Property $property;
+
     private InventoryItem $itemEnrolled;
+
     private InventoryItem $itemUnenrolled;
+
     private InventoryLocation $location;
+
     private Vendor $vendor;
+
     private string $actorId;
+
     private string $businessDate;
 
     protected function setUp(): void
     {
         parent::setUp();
 
+        $this->travelTo(Carbon::parse('2026-06-28 10:00:00+00'));
+
         config(['database.connections.pgsql.timezone' => 'UTC']);
-        DB::purge('pgsql');
 
         date_default_timezone_set('UTC');
         config(['app.timezone' => 'UTC']);
 
-        $this->receiptService     = app(ReceiptService::class);
+        $this->receiptService = app(ReceiptService::class);
         $this->integrationService = app(InventoryReceiptIntegrationService::class);
-        $this->enrollmentRepo     = app(CostAuthorityEnrollmentRepository::class);
+        $this->enrollmentRepo = app(CostAuthorityEnrollmentRepository::class);
 
         $this->property = Property::first();
-        $this->actorId  = (string) Str::ulid();
+        $this->actorId = (string) Str::ulid();
+
+        setPermissionsTeamId($this->property->id);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        User::created(function (User $user): void {
+            DB::table('property_user')->insertOrIgnore([
+                'property_id' => $this->property->id,
+                'user_id' => $user->id,
+                'is_default' => true,
+                'status' => 'active',
+                'joined_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
 
         $category = InventoryCategory::firstOrCreate([
             'property_id' => $this->property->id,
-            'name'        => 'Invocation Test Category',
+            'name' => 'Invocation Test Category',
         ]);
 
         $this->itemEnrolled = InventoryItem::create([
-            'property_id'           => $this->property->id,
-            'category_id'           => $category->id,
-            'sku'                   => 'INVOC-ENR-001',
-            'name'                  => 'Invocation Enrolled Item',
-            'inventory_type'        => 'goods',
+            'property_id' => $this->property->id,
+            'category_id' => $category->id,
+            'sku' => 'INVOC-ENR-001',
+            'name' => 'Invocation Enrolled Item',
+            'inventory_type' => 'goods',
             'weighted_average_cost' => '10.0000',
-            'is_active'             => true,
+            'is_active' => true,
         ]);
 
         $this->itemUnenrolled = InventoryItem::create([
-            'property_id'           => $this->property->id,
-            'category_id'           => $category->id,
-            'sku'                   => 'INVOC-UNENR-001',
-            'name'                  => 'Invocation Unenrolled Item',
-            'inventory_type'        => 'goods',
+            'property_id' => $this->property->id,
+            'category_id' => $category->id,
+            'sku' => 'INVOC-UNENR-001',
+            'name' => 'Invocation Unenrolled Item',
+            'inventory_type' => 'goods',
             'weighted_average_cost' => '10.0000',
-            'is_active'             => true,
+            'is_active' => true,
         ]);
 
         $this->location = InventoryLocation::firstOrCreate(
@@ -123,7 +158,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'id' => (string) Str::ulid(),
             'property_id' => $this->property->id,
             'business_date' => $this->businessDate,
-            'status' => \Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum::Open->value,
+            'status' => PropertyBusinessDateStatusEnum::Open->value,
             'is_open' => true,
             'created_at' => now(),
             'updated_at' => now(),
@@ -138,7 +173,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             ],
             [
                 'id' => (string) Str::ulid(),
-                'status' => \Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum::Open->value,
+                'status' => FinancialPeriodStatusEnum::Open->value,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]
@@ -192,6 +227,9 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
                 'updated_at' => now(),
             ]);
 
+        app(CostDeliveryModeOwnershipBootstrapService::class)
+            ->bootstrap($id, $this->actorId);
+
         // Seed CostAvcoState
         DB::table('cost_avco_states')->insert([
             'id' => (string) Str::ulid(),
@@ -218,7 +256,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     {
         $assetAccount = Account::create([
             'property_id' => $this->property->id,
-            'code' => '1200-' . substr(Str::ulid(), 0, 6),
+            'code' => '1200-'.substr(Str::ulid(), 0, 6),
             'name' => 'Inventory Asset GRNI Test',
             'account_type' => AccountTypeEnum::Asset->value,
             'account_category' => 'CurrentAsset',
@@ -228,7 +266,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         $grniAccount = Account::create([
             'property_id' => $this->property->id,
-            'code' => '2200-' . substr(Str::ulid(), 0, 6),
+            'code' => '2200-'.substr(Str::ulid(), 0, 6),
             'name' => 'GRNI Receipt Clearing Test',
             'account_type' => AccountTypeEnum::Liability->value,
             'account_category' => 'CurrentLiability',
@@ -257,8 +295,8 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     {
         $user = User::create([
             'id' => (string) Str::ulid(),
-            'name' => 'Journal Materialization User ' . substr(Str::ulid(), 0, 8),
-            'email' => 'materializer-' . uniqid() . '@example.com',
+            'name' => 'Journal Materialization User '.substr(Str::ulid(), 0, 8),
+            'email' => 'materializer-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
             'is_active' => $active,
         ]);
@@ -274,8 +312,8 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     {
         $user = User::create([
             'id' => (string) Str::ulid(),
-            'name' => 'Journal Draft Authorization User ' . substr(Str::ulid(), 0, 8),
-            'email' => 'draft-authorizer-' . uniqid() . '@example.com',
+            'name' => 'Journal Draft Authorization User '.substr(Str::ulid(), 0, 8),
+            'email' => 'draft-authorizer-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
             'is_active' => $active,
         ]);
@@ -291,8 +329,8 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     {
         $user = User::create([
             'id' => (string) Str::ulid(),
-            'name' => 'Journal Posting User ' . substr(Str::ulid(), 0, 8),
-            'email' => 'journal-poster-' . uniqid() . '@example.com',
+            'name' => 'Journal Posting User '.substr(Str::ulid(), 0, 8),
+            'email' => 'journal-poster-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
             'is_active' => $active,
         ]);
@@ -308,8 +346,8 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     {
         $user = User::create([
             'id' => (string) Str::ulid(),
-            'name' => 'GRNI Workspace User ' . substr(Str::ulid(), 0, 8),
-            'email' => 'grni-workspace-' . uniqid() . '@example.com',
+            'name' => 'GRNI Workspace User '.substr(Str::ulid(), 0, 8),
+            'email' => 'grni-workspace-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
             'is_active' => true,
         ]);
@@ -330,7 +368,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         if ($permissions !== []) {
             setPermissionsTeamId($this->property->id);
-            app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
+            app(PermissionRegistrar::class)->forgetCachedPermissions();
 
             foreach ($permissions as $permission) {
                 $user->givePermissionTo($permission);
@@ -348,6 +386,26 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'active_property_id' => $this->property->id,
             'active_company_id' => $this->property->company_id,
         ];
+    }
+
+    private function confirmedPropertySession(User $user): array
+    {
+        $now = Carbon::now();
+
+        return array_merge($this->activePropertySession(), [
+            'sensitive_action_confirmation' => [
+                'finance-approval' => [
+                    'actor_id' => $user->id,
+                    'intent' => 'finance-approval',
+                    'company_id' => $this->property->company_id,
+                    'property_id' => $this->property->id,
+                    'confirmed_at' => $now->toISOString(),
+                    'expires_at' => $now->copy()->addMinutes(
+                        SensitiveActionConfirmationService::CONFIRMATION_TTL_MINUTES,
+                    )->toISOString(),
+                ],
+            ],
+        ]);
     }
 
     /**
@@ -435,7 +493,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             ->pluck('account_id')
             ->all();
 
-        if (!$journal || $accountIds === []) {
+        if (! $journal || $accountIds === []) {
             return [];
         }
 
@@ -461,8 +519,8 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     {
         $reviewer = User::create([
             'id' => (string) Str::ulid(),
-            'name' => 'GRNI Reviewer ' . substr(Str::ulid(), 0, 8),
-            'email' => 'grni-reviewer-' . uniqid() . '@example.com',
+            'name' => 'GRNI Reviewer '.substr(Str::ulid(), 0, 8),
+            'email' => 'grni-reviewer-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
         ]);
 
@@ -480,12 +538,12 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         if ($status === JournalCandidateStatusEnum::APPROVED) {
             $attributes['approved_by'] = $reviewer->id;
-            $attributes['approved_at'] = Carbon::parse($this->businessDate . ' 10:00:00', 'UTC');
+            $attributes['approved_at'] = Carbon::parse($this->businessDate.' 10:00:00', 'UTC');
         }
 
         if ($status === JournalCandidateStatusEnum::REJECTED) {
             $attributes['rejected_by'] = $reviewer->id;
-            $attributes['rejected_at'] = Carbon::parse($this->businessDate . ' 10:00:00', 'UTC');
+            $attributes['rejected_at'] = Carbon::parse($this->businessDate.' 10:00:00', 'UTC');
             $attributes['rejection_reason'] = 'Rejected during review';
         }
 
@@ -512,7 +570,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
     public function test_grni_control_workspace_exposes_property_scoped_lifecycle_queues(): void
     {
-        $this->withoutMiddleware(\Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware::class);
+        $this->withoutMiddleware(SetPermissionTeamIdMiddleware::class);
         setPermissionsTeamId($this->property->id);
 
         $this->seedGrniMappings();
@@ -535,8 +593,8 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $otherProperty = Property::create([
             'company_id' => $this->property->company_id,
             'name' => 'Other GRNI Property',
-            'slug' => 'other-grni-' . strtolower((string) Str::ulid()),
-            'code' => 'OG' . substr((string) Str::ulid(), 0, 6),
+            'slug' => 'other-grni-'.strtolower((string) Str::ulid()),
+            'code' => 'OG'.substr((string) Str::ulid(), 0, 6),
             'timezone' => 'UTC',
             'currency' => 'USD',
             'is_active' => true,
@@ -554,7 +612,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         ]);
 
         $response = $this
-            ->withSession($this->activePropertySession())
+            ->withSession($this->confirmedPropertySession($user))
             ->actingAs($user)
             ->get(route('finance.general-ledger.grni-control'));
 
@@ -580,7 +638,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
     public function test_grni_control_workspace_actions_delegate_to_existing_lifecycle_services(): void
     {
-        $this->withoutMiddleware(\Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware::class);
+        $this->withoutMiddleware(SetPermissionTeamIdMiddleware::class);
         setPermissionsTeamId($this->property->id);
 
         $this->seedGrniMappings();
@@ -595,8 +653,8 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $otherProperty = Property::create([
             'company_id' => $this->property->company_id,
             'name' => 'Cross Property GRNI',
-            'slug' => 'cross-grni-' . strtolower((string) Str::ulid()),
-            'code' => 'CG' . substr((string) Str::ulid(), 0, 6),
+            'slug' => 'cross-grni-'.strtolower((string) Str::ulid()),
+            'code' => 'CG'.substr((string) Str::ulid(), 0, 6),
             'timezone' => 'UTC',
             'currency' => 'USD',
             'is_active' => true,
@@ -613,7 +671,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'description' => 'Cross-property candidate',
         ]);
 
-        $this->withSession($this->activePropertySession())
+        $this->withSession($this->confirmedPropertySession($user))
             ->actingAs($user)
             ->post(route('finance.general-ledger.grni-control.candidates.approve', ['candidate' => $crossPropertyCandidate->id]))
             ->assertNotFound();
@@ -623,7 +681,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         $candidate = $this->createGrniCandidate(JournalCandidateStatusEnum::PENDING_REVIEW);
 
-        $this->withSession($this->activePropertySession())
+        $this->withSession($this->confirmedPropertySession($user))
             ->actingAs($user)
             ->post(route('finance.general-ledger.grni-control.candidates.approve', ['candidate' => $candidate->id]))
             ->assertRedirect(route('finance.general-ledger.grni-control'));
@@ -632,7 +690,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->status);
         $this->assertSame($user->id, $candidate->approved_by);
 
-        $this->withSession($this->activePropertySession())
+        $this->withSession($this->confirmedPropertySession($user))
             ->actingAs($user)
             ->post(route('finance.general-ledger.grni-control.candidates.materialize', ['candidate' => $candidate->id]))
             ->assertRedirect(route('finance.general-ledger.grni-control'));
@@ -642,7 +700,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertSame($user->id, $journal->created_by);
         $this->assertNull($journal->posting_date);
 
-        $this->withSession($this->activePropertySession())
+        $this->withSession($this->confirmedPropertySession($user))
             ->actingAs($user)
             ->post(route('finance.general-ledger.grni-control.journals.authorize-finalization', ['journalEntry' => $journal->id]))
             ->assertRedirect(route('finance.general-ledger.grni-control'));
@@ -652,7 +710,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertNotNull($journal->draft_finalization_authorized_at);
         $this->assertNull($journal->posting_date);
 
-        $this->withSession($this->activePropertySession())
+        $this->withSession($this->confirmedPropertySession($user))
             ->actingAs($user)
             ->post(route('finance.general-ledger.grni-control.journals.post', ['journalEntry' => $journal->id]))
             ->assertRedirect(route('finance.general-ledger.grni-control'));
@@ -664,7 +722,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertNotNull($journal->posting_date);
 
         $rejectedCandidate = $this->createGrniCandidate(JournalCandidateStatusEnum::PENDING_REVIEW);
-        $this->withSession($this->activePropertySession())
+        $this->withSession($this->confirmedPropertySession($user))
             ->actingAs($user)
             ->post(route('finance.general-ledger.grni-control.candidates.reject', ['candidate' => $rejectedCandidate->id]), [
                 'rejection_reason' => 'Receipt source evidence is incomplete.',
@@ -685,20 +743,20 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $groupId = $this->createEnrolledGroup($this->itemEnrolled->id);
 
         $receipt = InventoryReceipt::create([
-            'property_id'    => $this->property->id,
-            'receipt_number' => 'RCP-TEST-' . Str::ulid(),
-            'supplier_name'  => 'Test Supplier',
-            'status'         => 'draft',
+            'property_id' => $this->property->id,
+            'receipt_number' => 'RCP-TEST-'.Str::ulid(),
+            'supplier_name' => 'Test Supplier',
+            'status' => 'draft',
         ]);
 
         $line = InventoryReceiptLine::create([
             'property_id' => $this->property->id,
-            'receipt_id'  => $receipt->id,
-            'item_id'     => $this->itemEnrolled->id,
+            'receipt_id' => $receipt->id,
+            'item_id' => $this->itemEnrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '5.000',
-            'unit_cost'   => '12.00',
-            'line_total'  => '60.00',
+            'quantity' => '5.000',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
         ]);
 
         $posted = $this->receiptService->post($receipt->id, $this->actorId);
@@ -709,7 +767,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertDatabaseCount('cost_ledger_entries', 1);
         $this->assertDatabaseCount('inventory_transactions', 1);
 
-        $transaction = \Modules\Operations\Inventory\Models\InventoryTransaction::where('source_line_id', $line->id)->firstOrFail();
+        $transaction = InventoryTransaction::where('source_line_id', $line->id)->firstOrFail();
         $this->assertSame($line->id, $transaction->idempotency_key);
         $this->assertLessThanOrEqual(26, strlen($transaction->idempotency_key));
         $this->assertSame($receipt->id, $transaction->reference_id);
@@ -739,19 +797,19 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         $doc = ReceivingDocument::create([
             'property_id' => $this->property->id,
-            'vendor_id'   => $this->vendor->id,
-            'grn_number'  => 'GRN-BUSINESS-LONG-TEST-2026-0000000001',
-            'status'      => 'submitted',
+            'vendor_id' => $this->vendor->id,
+            'grn_number' => 'GRN-BUSINESS-LONG-TEST-2026-0000000001',
+            'status' => 'submitted',
         ]);
 
         $line = ReceivingLine::create([
-            'receiving_document_id'   => $doc->id,
-            'inventory_item_id'       => $this->itemEnrolled->id,
+            'receiving_document_id' => $doc->id,
+            'inventory_item_id' => $this->itemEnrolled->id,
             'destination_location_id' => $this->location->id,
-            'description'             => 'Receiving line test',
-            'received_quantity'       => '5.00',
-            'unit_cost'               => '12.00',
-            'line_total'              => '60.00',
+            'description' => 'Receiving line test',
+            'received_quantity' => '5.00',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
         ]);
 
         $this->integrationService->syncToInventory($doc, $this->actorId);
@@ -760,7 +818,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertDatabaseCount('cost_ledger_entries', 1);
         $this->assertDatabaseCount('inventory_transactions', 1);
 
-        $transaction = \Modules\Operations\Inventory\Models\InventoryTransaction::where('source_line_id', $line->id)->firstOrFail();
+        $transaction = InventoryTransaction::where('source_line_id', $line->id)->firstOrFail();
         $this->assertSame($line->id, $transaction->idempotency_key);
         $this->assertSame($doc->id, $transaction->reference_id);
 
@@ -780,20 +838,20 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     public function test_unlinked_inventory_receipt_does_not_create_grni_candidate_or_journal_entry(): void
     {
         $receipt = InventoryReceipt::create([
-            'property_id'    => $this->property->id,
-            'receipt_number' => 'RCP-UNLINKED-' . Str::ulid(),
-            'supplier_name'  => 'Ad Hoc Supplier',
-            'status'         => 'draft',
+            'property_id' => $this->property->id,
+            'receipt_number' => 'RCP-UNLINKED-'.Str::ulid(),
+            'supplier_name' => 'Ad Hoc Supplier',
+            'status' => 'draft',
         ]);
 
         InventoryReceiptLine::create([
             'property_id' => $this->property->id,
-            'receipt_id'  => $receipt->id,
-            'item_id'     => $this->itemUnenrolled->id,
+            'receipt_id' => $receipt->id,
+            'item_id' => $this->itemUnenrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '5.000',
-            'unit_cost'   => '12.00',
-            'line_total'  => '60.00',
+            'quantity' => '5.000',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
         ]);
 
         $journalCandidateCount = DB::table('journal_candidates')->count();
@@ -814,14 +872,14 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     {
         $this->seedGrniMappings();
 
-        $user = \Modules\Foundation\User\Models\User::first();
-        if (!$user) {
-            $user = \Modules\Foundation\User\Models\User::factory()->create([
+        $user = User::first();
+        if (! $user) {
+            $user = User::factory()->create([
                 'id' => $this->actorId,
             ]);
         }
 
-        $department = \Modules\Foundation\Department\Models\Department::firstOrCreate([
+        $department = Department::firstOrCreate([
             'property_id' => $this->property->id,
             'code' => 'TEST-DEPT',
         ], [
@@ -830,17 +888,17 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'is_active' => true,
         ]);
 
-        $purchaseRequest = \Modules\Operations\Purchasing\Models\PurchaseRequest::create([
+        $purchaseRequest = PurchaseRequest::create([
             'id' => (string) Str::ulid(),
             'property_id' => $this->property->id,
-            'request_no' => 'PR-GRNI-' . substr(Str::ulid(), 0, 8),
+            'request_no' => 'PR-GRNI-'.substr(Str::ulid(), 0, 8),
             'department_id' => $department->id,
             'requester_id' => $user->id,
             'required_date' => now()->addDays(7)->format('Y-m-d'),
             'currency_code' => 'IDR',
             'exchange_rate' => 1,
             'estimated_total' => 60.00,
-            'status' => \Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum::Approved->value ?? 'APPROVED',
+            'status' => PurchaseRequestStatusEnum::Approved->value ?? 'APPROVED',
         ]);
 
         $purchaseOrder = PurchaseOrder::factory()->create([
@@ -860,7 +918,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         $receipt = InventoryReceipt::create([
             'property_id' => $this->property->id,
-            'receipt_number' => 'RCP-GRNI-' . Str::ulid(),
+            'receipt_number' => 'RCP-GRNI-'.Str::ulid(),
             'supplier_name' => 'Linked Supplier',
             'receiving_document_id' => $document->id,
             'status' => 'posted',
@@ -913,20 +971,20 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
     public function test_all_unenrolled_preserve_legacy(): void
     {
         $receipt = InventoryReceipt::create([
-            'property_id'    => $this->property->id,
-            'receipt_number' => 'RCP-TEST-2-' . Str::ulid(),
-            'supplier_name'  => 'Test Supplier',
-            'status'         => 'draft',
+            'property_id' => $this->property->id,
+            'receipt_number' => 'RCP-TEST-2-'.Str::ulid(),
+            'supplier_name' => 'Test Supplier',
+            'status' => 'draft',
         ]);
 
         InventoryReceiptLine::create([
             'property_id' => $this->property->id,
-            'receipt_id'  => $receipt->id,
-            'item_id'     => $this->itemUnenrolled->id,
+            'receipt_id' => $receipt->id,
+            'item_id' => $this->itemUnenrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '5.000',
-            'unit_cost'   => '12.00',
-            'line_total'  => '60.00',
+            'quantity' => '5.000',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
         ]);
 
         $posted = $this->receiptService->post($receipt->id, $this->actorId);
@@ -948,32 +1006,32 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         // itemUnenrolled remains unenrolled
 
         $receipt = InventoryReceipt::create([
-            'property_id'    => $this->property->id,
-            'receipt_number' => 'RCP-TEST-MIXED-' . Str::ulid(),
-            'supplier_name'  => 'Test Supplier',
-            'status'         => 'draft',
+            'property_id' => $this->property->id,
+            'receipt_number' => 'RCP-TEST-MIXED-'.Str::ulid(),
+            'supplier_name' => 'Test Supplier',
+            'status' => 'draft',
         ]);
 
         // Line 1: Enrolled
         InventoryReceiptLine::create([
             'property_id' => $this->property->id,
-            'receipt_id'  => $receipt->id,
-            'item_id'     => $this->itemEnrolled->id,
+            'receipt_id' => $receipt->id,
+            'item_id' => $this->itemEnrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '5.000',
-            'unit_cost'   => '12.00',
-            'line_total'  => '60.00',
+            'quantity' => '5.000',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
         ]);
 
         // Line 2: Unenrolled
         InventoryReceiptLine::create([
             'property_id' => $this->property->id,
-            'receipt_id'  => $receipt->id,
-            'item_id'     => $this->itemUnenrolled->id,
+            'receipt_id' => $receipt->id,
+            'item_id' => $this->itemUnenrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '10.000',
-            'unit_cost'   => '8.00',
-            'line_total'  => '80.00',
+            'quantity' => '10.000',
+            'unit_cost' => '8.00',
+            'line_total' => '80.00',
         ]);
 
         $this->expectException(RuntimeException::class);
@@ -996,20 +1054,20 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->createEnrolledGroup($this->itemEnrolled->id);
 
         $receipt = InventoryReceipt::create([
-            'property_id'    => $this->property->id,
-            'receipt_number' => 'RCP-TEST-ROLLBACK-' . Str::ulid(),
-            'supplier_name'  => 'Test Supplier',
-            'status'         => 'draft',
+            'property_id' => $this->property->id,
+            'receipt_number' => 'RCP-TEST-ROLLBACK-'.Str::ulid(),
+            'supplier_name' => 'Test Supplier',
+            'status' => 'draft',
         ]);
 
         InventoryReceiptLine::create([
             'property_id' => $this->property->id,
-            'receipt_id'  => $receipt->id,
-            'item_id'     => $this->itemEnrolled->id,
+            'receipt_id' => $receipt->id,
+            'item_id' => $this->itemEnrolled->id,
             'location_id' => $this->location->id,
-            'quantity'    => '5.000',
-            'unit_cost'   => '12.00',
-            'line_total'  => '60.00',
+            'quantity' => '5.000',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
         ]);
 
         // Force sequence error by setting last sequence to 10 in CostAvcoState
@@ -1033,7 +1091,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             $this->receiptService->post($receipt->id, $this->actorId);
             $this->fail('Expected exception from sequence mismatch.');
         } catch (\Throwable $e) {
-            $this->assertStringContainsString('Sequence gap detected', $e->getMessage());
+            $this->assertSame('CC_P01F_SYNCHRONOUS_SEQUENCE_STATE_DIVERGENCE', $e->getMessage());
         }
 
         // Verify rollback: no transaction posted, status remains draft, state untouched
@@ -1058,10 +1116,10 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'description' => 'Test Candidate',
         ]);
 
-        $user = \Modules\Foundation\User\Models\User::create([
+        $user = User::create([
             'id' => (string) Str::ulid(),
             'name' => 'Reviewer User 1',
-            'email' => 'reviewer1-' . uniqid() . '@example.com',
+            'email' => 'reviewer1-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
         ]);
 
@@ -1073,7 +1131,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
 
         $user->givePermissionTo('finance.journal-candidate.review');
 
-        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $reviewService = app(JournalCandidateReviewService::class);
         $updated = $reviewService->approve($candidate->id, $user->id);
 
         $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $updated->status);
@@ -1101,15 +1159,15 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'description' => 'Test Candidate',
         ]);
 
-        $user = \Modules\Foundation\User\Models\User::create([
+        $user = User::create([
             'id' => (string) Str::ulid(),
             'name' => 'Reviewer User 2',
-            'email' => 'reviewer2-' . uniqid() . '@example.com',
+            'email' => 'reviewer2-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
         ]);
         $user->givePermissionTo('finance.journal-candidate.review');
 
-        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $reviewService = app(JournalCandidateReviewService::class);
         $updated = $reviewService->reject($candidate->id, 'Invalid account mapping', $user->id);
 
         $this->assertEquals(JournalCandidateStatusEnum::REJECTED, $updated->status);
@@ -1137,21 +1195,21 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'description' => 'Test Candidate',
         ]);
 
-        $user = \Modules\Foundation\User\Models\User::create([
+        $user = User::create([
             'id' => (string) Str::ulid(),
             'name' => 'Reviewer User 3',
-            'email' => 'reviewer3-' . uniqid() . '@example.com',
+            'email' => 'reviewer3-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
         ]);
         $user->givePermissionTo('finance.journal-candidate.review');
 
-        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $reviewService = app(JournalCandidateReviewService::class);
 
         try {
             $reviewService->reject($candidate->id, ' ', $user->id);
-            $this->fail("Expected rejection without a reason to fail.");
-        } catch (\InvalidArgumentException $e) {
-            $this->assertStringContainsString("rejection reason is mandatory", $e->getMessage());
+            $this->fail('Expected rejection without a reason to fail.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('rejection reason is mandatory', $e->getMessage());
         }
 
         $candidate = $candidate->fresh();
@@ -1176,36 +1234,36 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'description' => 'Test Candidate',
         ]);
 
-        $user1 = \Modules\Foundation\User\Models\User::create([
+        $user1 = User::create([
             'id' => (string) Str::ulid(),
             'name' => 'Reviewer User 4a',
-            'email' => 'reviewer4a-' . uniqid() . '@example.com',
+            'email' => 'reviewer4a-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
         ]);
-        $user2 = \Modules\Foundation\User\Models\User::create([
+        $user2 = User::create([
             'id' => (string) Str::ulid(),
             'name' => 'Reviewer User 4b',
-            'email' => 'reviewer4b-' . uniqid() . '@example.com',
+            'email' => 'reviewer4b-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
         ]);
         $user1->givePermissionTo('finance.journal-candidate.review');
         $user2->givePermissionTo('finance.journal-candidate.review');
 
-        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $reviewService = app(JournalCandidateReviewService::class);
         $reviewService->approve($candidate->id, $user1->id);
 
         try {
             $reviewService->reject($candidate->id, 'Should be rejected now', $user2->id);
-            $this->fail("Expected conflicting review decision to fail.");
-        } catch (\RuntimeException $e) {
-            $this->assertStringContainsString("Conflicting review payload", $e->getMessage());
+            $this->fail('Expected conflicting review decision to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Conflicting review payload', $e->getMessage());
         }
 
         try {
             $reviewService->approve($candidate->id, $user2->id);
-            $this->fail("Expected conflicting review actor to fail.");
-        } catch (\RuntimeException $e) {
-            $this->assertStringContainsString("Conflicting review payload", $e->getMessage());
+            $this->fail('Expected conflicting review actor to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Conflicting review payload', $e->getMessage());
         }
 
         $candidate = $candidate->fresh();
@@ -1228,15 +1286,15 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'description' => 'Test Candidate',
         ]);
 
-        $user = \Modules\Foundation\User\Models\User::create([
+        $user = User::create([
             'id' => (string) Str::ulid(),
             'name' => 'Reviewer User 5',
-            'email' => 'reviewer5-' . uniqid() . '@example.com',
+            'email' => 'reviewer5-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
         ]);
         $user->givePermissionTo('finance.journal-candidate.review');
 
-        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $reviewService = app(JournalCandidateReviewService::class);
         $first = $reviewService->approve($candidate->id, $user->id);
         $approvedAt = $first->approved_at->toIso8601String();
 
@@ -1263,27 +1321,27 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             'description' => 'Test Candidate',
         ]);
 
-        $user = \Modules\Foundation\User\Models\User::create([
+        $user = User::create([
             'id' => (string) Str::ulid(),
             'name' => 'Unauthorized User',
-            'email' => 'unauth-' . uniqid() . '@example.com',
+            'email' => 'unauth-'.uniqid().'@example.com',
             'password' => bcrypt('password'),
         ]);
 
-        $reviewService = app(\Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService::class);
+        $reviewService = app(JournalCandidateReviewService::class);
 
         try {
             $reviewService->approve($candidate->id, $user->id);
-            $this->fail("Expected unauthorized actor to fail.");
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            $this->assertStringContainsString("Unauthorized", $e->getMessage());
+            $this->fail('Expected unauthorized actor to fail.');
+        } catch (AuthorizationException $e) {
+            $this->assertStringContainsString('Unauthorized', $e->getMessage());
         }
 
         try {
             $reviewService->reject($candidate->id, 'Rejected reason', $user->id);
-            $this->fail("Expected unauthorized actor to fail.");
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            $this->assertStringContainsString("Unauthorized", $e->getMessage());
+            $this->fail('Expected unauthorized actor to fail.');
+        } catch (AuthorizationException $e) {
+            $this->assertStringContainsString('Unauthorized', $e->getMessage());
         }
 
         $candidate = $candidate->fresh();
@@ -1464,7 +1522,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             try {
                 $service->materialize($candidate->id, $actorId);
                 $this->fail('Expected unauthorized materialization actor to fail.');
-            } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            } catch (AuthorizationException $e) {
                 $this->assertStringContainsString('Unauthorized', $e->getMessage());
             }
         }
@@ -1676,7 +1734,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             try {
                 $service->authorize($journal->id, $actorId);
                 $this->fail('Expected unauthorized draft finalization authorization actor to fail.');
-            } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            } catch (AuthorizationException $e) {
                 $this->assertStringContainsString('Unauthorized', $e->getMessage());
             }
         }
@@ -1892,7 +1950,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             try {
                 $service->post($journal->id, $actorId);
                 $this->fail('Expected unauthorized controlled posting actor to fail.');
-            } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            } catch (AuthorizationException $e) {
                 $this->assertStringContainsString('Unauthorized', $e->getMessage());
             }
         }
@@ -1917,7 +1975,7 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             ->where('property_id', $this->property->id)
             ->where('period_year', 2026)
             ->where('period_month', 6)
-            ->update(['status' => \Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum::Closed->value, 'updated_at' => now()]);
+            ->update(['status' => FinancialPeriodStatusEnum::Closed->value, 'updated_at' => now()]);
 
         $periodEntryBefore = $this->journalEntrySnapshot($periodJournal->id);
         $periodLinesBefore = $this->journalLineSnapshot($periodJournal->id);
@@ -1938,14 +1996,14 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
             ->where('property_id', $this->property->id)
             ->where('period_year', 2026)
             ->where('period_month', 6)
-            ->update(['status' => \Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum::Open->value, 'updated_at' => now()]);
+            ->update(['status' => FinancialPeriodStatusEnum::Open->value, 'updated_at' => now()]);
 
         [, $businessDateJournal] = $this->authorizeApprovedGrniDraft();
         DB::table('property_business_dates')
             ->where('property_id', $this->property->id)
             ->where('business_date', $this->businessDate)
             ->update([
-                'status' => \Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum::Closed->value,
+                'status' => PropertyBusinessDateStatusEnum::Closed->value,
                 'is_open' => null,
                 'updated_at' => now(),
             ]);

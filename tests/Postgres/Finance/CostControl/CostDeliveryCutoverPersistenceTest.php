@@ -467,6 +467,8 @@ class CostDeliveryCutoverPersistenceTest extends PostgresTestCase
         }
         $ownership = DB::transaction(fn () => app(CostDeliveryModeOwnershipBootstrapService::class)
             ->bootstrap($group->id, $this->actor->id));
+        DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
+        DB::statement('SET CONSTRAINTS ALL DEFERRED');
         CostDeliveryPilotProperty::create([
             'pilot_slot' => 1,
             'property_id' => $this->property->id,

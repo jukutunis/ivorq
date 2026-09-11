@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Finance\CostControl\Models\CostAuthorityEnrollmentGroup;
 use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
+use Modules\Finance\CostControl\Services\CostDeliveryModeOwnershipBootstrapService;
 use Modules\Finance\GeneralLedger\Services\VariancePostingEngine;
 use Modules\Operations\Inventory\Enums\TransactionTypeEnum;
 use Modules\Operations\Inventory\Models\InventoryTransaction;
@@ -24,30 +25,37 @@ class VariancePostingEngineEnrollmentGuardTest extends PostgresTestCase
         return [];
     }
 
-    private VariancePostingEngine              $engine;
-    private CostAuthorityEnrollmentRepository  $enrollmentRepository;
+    private VariancePostingEngine $engine;
+
+    private CostAuthorityEnrollmentRepository $enrollmentRepository;
 
     private string $propertyId;
+
     private string $itemId;
+
     private string $locationId;
+
     private string $actorId;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->engine                = app(VariancePostingEngine::class);
-        $this->enrollmentRepository  = app(CostAuthorityEnrollmentRepository::class);
+        $this->engine = app(VariancePostingEngine::class);
+        $this->enrollmentRepository = app(CostAuthorityEnrollmentRepository::class);
 
-        $this->propertyId  = (string) Str::ulid();
-        $this->itemId      = (string) Str::ulid();
-        $this->locationId  = (string) Str::ulid();
-        $this->actorId     = (string) Str::ulid();
+        $this->propertyId = (string) Str::ulid();
+        $this->itemId = (string) Str::ulid();
+        $this->locationId = (string) Str::ulid();
+        $this->actorId = (string) Str::ulid();
 
         // Insert a real property so JournalCandidate FK is satisfied on non-ENROLLED paths.
         DB::table('properties')->insert([
-            'id'         => $this->propertyId,
-            'name'       => 'Enrollment Guard Test Property',
+            'id' => $this->propertyId,
+            'company_id' => DB::table('companies')->value('id'),
+            'name' => 'Enrollment Guard Test Property',
+            'slug' => 'enrollment-guard-'.strtolower($this->propertyId),
+            'code' => 'EG'.substr($this->propertyId, -6),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -158,15 +166,15 @@ class VariancePostingEngineEnrollmentGuardTest extends PostgresTestCase
         $tx = $this->makeTransaction($this->propertyId, $this->itemId);
 
         // Snapshot counts before guard fires.
-        $candidatesBefore    = DB::table('journal_candidates')->count();
+        $candidatesBefore = DB::table('journal_candidates')->count();
         $candidateLinesBefore = DB::table('journal_candidate_lines')->count();
-        $journalsBefore      = DB::table('gl_journal_entries')
+        $journalsBefore = DB::table('gl_journal_entries')
             ->where('property_id', $this->propertyId)->count();
-        $ledgerBefore        = DB::table('gl_ledger_balances')
+        $ledgerBefore = DB::table('gl_ledger_balances')
             ->where('property_id', $this->propertyId)->count();
-        $avcoStatesBefore    = DB::table('cost_avco_states')
+        $avcoStatesBefore = DB::table('cost_avco_states')
             ->where('property_id', $this->propertyId)->count();
-        $inventoryTxBefore   = DB::table('inventory_transactions')
+        $inventoryTxBefore = DB::table('inventory_transactions')
             ->where('property_id', $this->propertyId)->count();
 
         // Enrollment group count before (must remain unchanged).
@@ -189,8 +197,8 @@ class VariancePostingEngineEnrollmentGuardTest extends PostgresTestCase
         );
 
         // Total counts unchanged.
-        $this->assertEquals($candidatesBefore,     DB::table('journal_candidates')->count());
-        $this->assertEquals($candidateLinesBefore,  DB::table('journal_candidate_lines')->count());
+        $this->assertEquals($candidatesBefore, DB::table('journal_candidates')->count());
+        $this->assertEquals($candidateLinesBefore, DB::table('journal_candidate_lines')->count());
         $this->assertEquals($journalsBefore,
             DB::table('gl_journal_entries')->where('property_id', $this->propertyId)->count()
         );
@@ -228,40 +236,43 @@ class VariancePostingEngineEnrollmentGuardTest extends PostgresTestCase
 
     private function makeTransaction(string $propertyId, string $itemId): InventoryTransaction
     {
-        $tx = new InventoryTransaction();
-        $tx->id               = (string) Str::ulid();
-        $tx->property_id      = $propertyId;
-        $tx->item_id          = $itemId;
-        $tx->location_id      = $this->locationId;
+        $tx = new InventoryTransaction;
+        $tx->id = (string) Str::ulid();
+        $tx->property_id = $propertyId;
+        $tx->item_id = $itemId;
+        $tx->location_id = $this->locationId;
         $tx->transaction_type = TransactionTypeEnum::AdjustmentIn;
-        $tx->quantity_before  = '10.0000';
-        $tx->quantity_change  = '5.0000';
-        $tx->quantity_after   = '15.0000';
-        $tx->total_cost       = '50.00';
-        $tx->posted_at        = now();
-        $tx->posted_by        = null;
-        $tx->reference_id     = null;
-        $tx->unit_cost        = '10.00';
+        $tx->quantity_before = '10.0000';
+        $tx->quantity_change = '5.0000';
+        $tx->quantity_after = '15.0000';
+        $tx->total_cost = '50.00';
+        $tx->posted_at = now();
+        $tx->posted_by = null;
+        $tx->reference_id = null;
+        $tx->unit_cost = '10.00';
+
         return $tx;
     }
 
     private function makeSnapshot(string $propertyId, string $locationId, string $itemId): array
     {
         return [
-            'location_id'            => $locationId,
-            'valuation_scope'        => "property:{$propertyId}:location:{$locationId}:item:{$itemId}",
-            'opening_quantity'       => '100.0000',
+            'location_id' => $locationId,
+            'valuation_scope' => "property:{$propertyId}:location:{$locationId}:item:{$itemId}",
+            'opening_quantity' => '100.0000',
             'opening_carrying_value' => '1500.0000',
-            'currency_code'          => 'USD',
-            'business_date'          => '2026-07-01',
-            'financial_period_id'    => (string) Str::ulid(),
-            'evidence_timestamp'     => now(),
+            'currency_code' => 'USD',
+            'business_date' => '2026-07-01',
+            'financial_period_id' => (string) Str::ulid(),
+            'evidence_timestamp' => now(),
         ];
     }
 
     private function createEnrolledGroup(string $propertyId, string $itemId): CostAuthorityEnrollmentGroup
     {
         $locationId = (string) Str::ulid();
+
+        $this->ensureAuthorityScopeExists($propertyId, $itemId);
 
         $group = $this->enrollmentRepository->createDraft(
             ['property_id' => $propertyId, 'item_id' => $itemId],
@@ -272,14 +283,58 @@ class VariancePostingEngineEnrollmentGuardTest extends PostgresTestCase
             fn () => $this->enrollmentRepository->approve($group->id, $this->actorId, now())
         );
 
-        DB::table('cost_authority_enrollment_groups')
-            ->where('id', $group->id)
-            ->update([
-                'status'      => 'enrolled',
-                'enrolled_at' => now(),
-                'updated_at'  => now(),
-            ]);
+        DB::transaction(function () use ($group): void {
+            DB::table('cost_authority_enrollment_groups')
+                ->where('id', $group->id)
+                ->update([
+                    'status' => 'enrolled',
+                    'enrolled_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+            app(CostDeliveryModeOwnershipBootstrapService::class)
+                ->bootstrap($group->id, $this->actorId);
+        });
 
         return CostAuthorityEnrollmentGroup::find($group->id);
+    }
+
+    private function ensureAuthorityScopeExists(string $propertyId, string $itemId): void
+    {
+        if (! DB::table('properties')->where('id', $propertyId)->exists()) {
+            DB::table('properties')->insert([
+                'id' => $propertyId,
+                'company_id' => DB::table('companies')->value('id'),
+                'name' => 'Enrollment Guard Property '.substr($propertyId, -6),
+                'slug' => 'enrollment-guard-'.strtolower($propertyId),
+                'code' => 'EG'.substr($propertyId, -6),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        if (DB::table('inventory_items')->where('id', $itemId)->exists()) {
+            return;
+        }
+
+        $categoryId = (string) Str::ulid();
+        DB::table('inventory_categories')->insert([
+            'id' => $categoryId,
+            'property_id' => $propertyId,
+            'name' => 'Enrollment Guard Category '.substr($itemId, -6),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('inventory_items')->insert([
+            'id' => $itemId,
+            'property_id' => $propertyId,
+            'sku' => 'EG-'.substr($itemId, -12),
+            'name' => 'Enrollment Guard Item '.substr($itemId, -6),
+            'category_id' => $categoryId,
+            'inventory_type' => 'goods',
+            'weighted_average_cost' => '10.0000',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 }
