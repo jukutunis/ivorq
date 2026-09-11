@@ -2,13 +2,17 @@
 
 namespace Modules\Foundation\Approval\Services;
 
-use Modules\Foundation\Approval\Models\ApprovalRequest;
-use Modules\Foundation\Approval\Models\ApprovalAction;
-use Modules\Foundation\Approval\Models\ApprovalWorkflow;
-use Modules\Foundation\Approval\Contracts\ApprovableContract;
-use Modules\Foundation\Approval\Repositories\ApprovalWorkflowRepository;
-use Illuminate\Support\Facades\DB;
 use Exception;
+use Illuminate\Support\Facades\DB;
+use Modules\Foundation\Approval\Contracts\ApprovableContract;
+use Modules\Foundation\Approval\Events\ApprovalApproved;
+use Modules\Foundation\Approval\Events\ApprovalCancelled;
+use Modules\Foundation\Approval\Events\ApprovalRejected;
+use Modules\Foundation\Approval\Events\ApprovalRequested;
+use Modules\Foundation\Approval\Models\ApprovalAction;
+use Modules\Foundation\Approval\Models\ApprovalRequest;
+use Modules\Foundation\Approval\Repositories\ApprovalWorkflowRepository;
+use Modules\Foundation\User\Models\User;
 
 class ApprovalEngineService
 {
@@ -25,13 +29,13 @@ class ApprovalEngineService
     {
         return DB::transaction(function () use ($document, $requesterId) {
             $workflow = $this->workflowRepo->getActiveForApprovableType($document->getApprovableType());
-            
-            if (!$workflow) {
-                throw new Exception("No active approval workflow found for " . $document->getApprovableType());
+
+            if (! $workflow) {
+                throw new Exception('No active approval workflow found for '.$document->getApprovableType());
             }
 
             if ($workflow->steps->isEmpty()) {
-                throw new Exception("Approval workflow has no steps.");
+                throw new Exception('Approval workflow has no steps.');
             }
 
             $request = ApprovalRequest::create([
@@ -45,14 +49,14 @@ class ApprovalEngineService
             ]);
 
             $this->snapshotService->createSnapshot($request, $workflow);
-            
+
             // Initiate the first step
             $firstStep = $workflow->steps->first();
             $request->update(['current_step_id' => $firstStep->id]);
-            
+
             // Dispatch Events (which triggers Notifications)
-            event(new \Modules\Foundation\Approval\Events\ApprovalRequested($request));
-            
+            event(new ApprovalRequested($request));
+
             return $request;
         });
     }
@@ -65,14 +69,14 @@ class ApprovalEngineService
         DB::transaction(function () use ($request, $userId, $notes) {
             // Pessimistic Locking
             $request = ApprovalRequest::where('id', $request->id)->lockForUpdate()->first();
-            
-            if (!in_array($request->status, ['Pending', 'In Progress'])) {
-                throw new Exception("Approval request is not pending.");
+
+            if (! in_array($request->status, ['Pending', 'In Progress'])) {
+                throw new Exception('Approval request is not pending.');
             }
 
-            $user = \Modules\Foundation\User\Models\User::find($userId);
-            if (!$user || !$user->properties()->where('property_id', $request->property_id)->exists()) {
-                throw new Exception("User does not belong to the requested property");
+            $user = User::find($userId);
+            if (! $user || ! $user->properties()->where('property_id', $request->property_id)->exists()) {
+                throw new Exception('User does not belong to the requested property');
             }
 
             ApprovalAction::create([
@@ -106,9 +110,9 @@ class ApprovalEngineService
     {
         DB::transaction(function () use ($request, $userId, $notes) {
             $request = ApprovalRequest::where('id', $request->id)->lockForUpdate()->first();
-            
-            if (!in_array($request->status, ['Pending', 'In Progress'])) {
-                throw new Exception("Approval request is not pending.");
+
+            if (! in_array($request->status, ['Pending', 'In Progress'])) {
+                throw new Exception('Approval request is not pending.');
             }
 
             ApprovalAction::create([
@@ -126,7 +130,61 @@ class ApprovalEngineService
             ]);
 
             $request->approvable->markAsRejected($notes);
-            event(new \Modules\Foundation\Approval\Events\ApprovalRejected($request));
+            event(new ApprovalRejected($request));
+        });
+    }
+
+    public function cancel(ApprovalRequest $request, string $userId, string $reason): void
+    {
+        DB::transaction(function () use ($request, $userId, $reason) {
+            $lockedRequest = ApprovalRequest::where('id', $request->id)->lockForUpdate()->first();
+
+            if (! $lockedRequest) {
+                throw new Exception('Approval request not found.');
+            }
+
+            if (! in_array($lockedRequest->status, ['Pending', 'In Progress'], true)) {
+                throw new Exception('Approval request is not active.');
+            }
+
+            if (! $lockedRequest->current_step_id) {
+                throw new Exception('Approval request has no active step.');
+            }
+
+            $actor = User::find($userId);
+
+            if (! $actor) {
+                throw new Exception('Cancellation actor not found.');
+            }
+
+            if ($actor->id !== $lockedRequest->requester_id && ! $actor->isSuperAdmin()) {
+                throw new Exception('User is not authorized to cancel this approval request.');
+            }
+
+            $normalizedReason = trim($reason);
+
+            if ($normalizedReason === '') {
+                throw new Exception('Cancellation reason is required.');
+            }
+
+            $activeStepId = $lockedRequest->current_step_id;
+
+            ApprovalAction::create([
+                'approval_request_id' => $lockedRequest->id,
+                'approval_step_id' => $activeStepId,
+                'user_id' => $actor->id,
+                'action_type' => 'cancel',
+                'notes' => $normalizedReason,
+                'ip_address' => request()->ip(),
+            ]);
+
+            $lockedRequest->update([
+                'status' => 'Cancelled',
+                'completed_at' => now(),
+                'current_step_id' => null,
+            ]);
+
+            event(new ApprovalCancelled($lockedRequest));
         });
     }
 
@@ -144,7 +202,7 @@ class ApprovalEngineService
                 'current_step_id' => $nextStep['id'],
                 'status' => 'Pending',
             ]);
-            event(new \Modules\Foundation\Approval\Events\ApprovalRequested($request));
+            event(new ApprovalRequested($request));
         } else {
             $request->update([
                 'status' => 'Approved',
@@ -152,7 +210,7 @@ class ApprovalEngineService
                 'current_step_id' => null,
             ]);
             $request->approvable->markAsApproved();
-            event(new \Modules\Foundation\Approval\Events\ApprovalApproved($request));
+            event(new ApprovalApproved($request));
         }
     }
 }

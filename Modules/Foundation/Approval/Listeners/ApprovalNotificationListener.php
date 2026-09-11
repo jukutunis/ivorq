@@ -2,15 +2,16 @@
 
 namespace Modules\Foundation\Approval\Listeners;
 
-use Modules\Foundation\Approval\Events\ApprovalRequested;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Modules\Foundation\Approval\Events\ApprovalApproved;
-use Modules\Foundation\Approval\Events\ApprovalRejected;
-use Modules\Foundation\Notification\Models\AppNotification;
-use Modules\Foundation\Notification\Models\NotificationPreference;
+use Modules\Foundation\Approval\Events\ApprovalCancelled;
 use Modules\Foundation\Approval\Events\ApprovalDelegated;
 use Modules\Foundation\Approval\Events\ApprovalEscalated;
 use Modules\Foundation\Approval\Events\ApprovalExpired;
-use Illuminate\Contracts\Queue\ShouldQueue;
+use Modules\Foundation\Approval\Events\ApprovalRejected;
+use Modules\Foundation\Approval\Events\ApprovalRequested;
+use Modules\Foundation\Notification\Models\AppNotification;
+use Modules\Foundation\Notification\Models\NotificationPreference;
 
 class ApprovalNotificationListener implements ShouldQueue
 {
@@ -19,22 +20,22 @@ class ApprovalNotificationListener implements ShouldQueue
         // Get step assignees from the snapshot and current step id
         $request = $event->approvalRequest;
         $stepSnapshot = collect($request->step_snapshot)->firstWhere('id', $request->current_step_id);
-        
+
         if ($stepSnapshot && isset($stepSnapshot['assignees'])) {
             // Simplified foundation demo: assume users are explicitly in assignees or resolved
             foreach ($stepSnapshot['assignees'] as $assignee) {
-                if ($assignee['assignee_type'] === 'USER' && !empty($assignee['user_id'])) {
+                if ($assignee['assignee_type'] === 'USER' && ! empty($assignee['user_id'])) {
                     if ($this->canSendNotification($assignee['user_id'], $request->property_id)) {
                         AppNotification::create([
                             'property_id' => $request->property_id,
                             'user_id' => $assignee['user_id'],
                             'type' => 'ApprovalRequest',
-                            'title' => 'Approval Required: ' . $request->approvable_type,
+                            'title' => 'Approval Required: '.$request->approvable_type,
                             'body' => 'You have a pending approval request.',
                             'priority' => 'high',
                             'data' => [
                                 'approval_request_id' => $request->id,
-                            ]
+                            ],
                         ]);
                     }
                 }
@@ -72,6 +73,22 @@ class ApprovalNotificationListener implements ShouldQueue
         }
     }
 
+    public function handleApprovalCancelled(ApprovalCancelled $event): void
+    {
+        $request = $event->approvalRequest;
+
+        if ($this->canSendNotification($request->requester_id, $request->property_id)) {
+            AppNotification::create([
+                'property_id' => $request->property_id,
+                'user_id' => $request->requester_id,
+                'type' => 'ApprovalCancelled',
+                'title' => 'Request Cancelled',
+                'body' => 'Your approval request was cancelled.',
+                'priority' => 'normal',
+            ]);
+        }
+    }
+
     public function handleApprovalDelegated(ApprovalDelegated $event): void
     {
         $request = $event->approvalRequest;
@@ -82,7 +99,7 @@ class ApprovalNotificationListener implements ShouldQueue
                 'user_id' => $event->delegatedFrom->id,
                 'type' => 'ApprovalDelegated',
                 'title' => 'Approval Delegated',
-                'body' => 'Your approval request was delegated to ' . $event->delegatedTo->name,
+                'body' => 'Your approval request was delegated to '.$event->delegatedTo->name,
                 'priority' => 'normal',
             ]);
         }
@@ -95,7 +112,7 @@ class ApprovalNotificationListener implements ShouldQueue
                 'title' => 'Approval Delegated To You',
                 'body' => 'You have been delegated an approval request.',
                 'priority' => 'high',
-                'data' => ['approval_request_id' => $request->id]
+                'data' => ['approval_request_id' => $request->id],
             ]);
         }
     }
@@ -104,7 +121,7 @@ class ApprovalNotificationListener implements ShouldQueue
     {
         $request = $event->approvalRequest;
         $step = $event->approvalStep;
-        
+
         // Notify requester
         if ($this->canSendNotification($request->requester_id, $request->property_id)) {
             AppNotification::create([
@@ -114,7 +131,7 @@ class ApprovalNotificationListener implements ShouldQueue
                 'title' => 'Approval Escalated',
                 'body' => 'Your approval request has been escalated due to SLA timeout.',
                 'priority' => 'high',
-                'data' => ['approval_request_id' => $request->id]
+                'data' => ['approval_request_id' => $request->id],
             ]);
         }
     }
@@ -122,7 +139,7 @@ class ApprovalNotificationListener implements ShouldQueue
     public function handleApprovalExpired(ApprovalExpired $event): void
     {
         $request = $event->approvalRequest;
-        
+
         if ($this->canSendNotification($request->requester_id, $request->property_id)) {
             AppNotification::create([
                 'property_id' => $request->property_id,
@@ -146,7 +163,7 @@ class ApprovalNotificationListener implements ShouldQueue
             return false;
         }
 
-        if ($pref && !$pref->in_app_enabled) {
+        if ($pref && ! $pref->in_app_enabled) {
             return false;
         }
 
