@@ -3,10 +3,14 @@
 namespace Tests\Postgres\Operations\Inventory;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Finance\CostControl\Models\CostAuthorityEnrollmentGroup;
 use Modules\Finance\CostControl\Repositories\CostAuthorityEnrollmentRepository;
+use Modules\Finance\CostControl\Services\CostDeliveryModeOwnershipBootstrapService;
+use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Operations\Inventory\Models\InventoryCategory;
 use Modules\Operations\Inventory\Models\InventoryItem;
@@ -19,7 +23,6 @@ use Modules\Operations\Purchasing\Models\VendorCategory;
 use Modules\Operations\Receiving\Models\ReceivingDocument;
 use Modules\Operations\Receiving\Models\ReceivingLine;
 use Modules\Operations\Receiving\Services\InventoryReceiptIntegrationService;
-use RuntimeException;
 use Tests\PostgresTestCase;
 
 class ReceiptEnrollmentGuardTest extends PostgresTestCase
@@ -28,43 +31,73 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
 
     protected $seed = true;
 
-    protected function connectionsToTransact(): array
-    {
-        return [];
-    }
-
     private ReceiptService $receiptService;
+
     private InventoryReceiptIntegrationService $integrationService;
+
     private CostAuthorityEnrollmentRepository $enrollmentRepo;
 
     private Property $property;
+
     private InventoryItem $item;
+
     private InventoryLocation $location;
+
     private Vendor $vendor;
+
     private string $actorId;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->receiptService     = app(ReceiptService::class);
+        $this->travelTo(Carbon::parse('2026-06-28 10:00:00+00'));
+
+        $this->receiptService = app(ReceiptService::class);
         $this->integrationService = app(InventoryReceiptIntegrationService::class);
-        $this->enrollmentRepo     = app(CostAuthorityEnrollmentRepository::class);
+        $this->enrollmentRepo = app(CostAuthorityEnrollmentRepository::class);
 
         $this->property = Property::first();
-        $this->actorId  = (string) Str::ulid();
+        $this->actorId = (string) Str::ulid();
+
+        DB::table('property_business_dates')->updateOrInsert(
+            [
+                'property_id' => $this->property->id,
+                'business_date' => '2026-06-28',
+            ],
+            [
+                'id' => (string) Str::ulid(),
+                'status' => PropertyBusinessDateStatusEnum::Open->value,
+                'is_open' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        );
+        DB::table('gl_financial_periods')->updateOrInsert(
+            [
+                'property_id' => $this->property->id,
+                'period_year' => 2026,
+                'period_month' => 6,
+            ],
+            [
+                'id' => (string) Str::ulid(),
+                'status' => FinancialPeriodStatusEnum::Open->value,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        );
 
         $category = InventoryCategory::firstOrCreate([
             'property_id' => $this->property->id,
-            'name'        => 'Receipt Guard Test Category',
+            'name' => 'Receipt Guard Test Category',
         ]);
 
         $this->item = InventoryItem::firstOrCreate(
             ['property_id' => $this->property->id, 'sku' => 'GUARD-RCPT-001'],
             [
-                'category_id'           => $category->id,
-                'name'                  => 'Guard Receipt Test Item',
-                'inventory_type'        => 'goods',
+                'category_id' => $category->id,
+                'name' => 'Guard Receipt Test Item',
+                'inventory_type' => 'goods',
                 'weighted_average_cost' => '10.00',
             ]
         );
@@ -125,63 +158,42 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
     }
 
     // -------------------------------------------------------------------------
-    // Proof 3 + 6a: ENROLLED matching group — ReceiptService::post() fails closed
-    //               before any mutation occurs
+    // Proof 3 + 6a: ENROLLED matching group — ReceiptService::post() follows the
+    //               synchronously owned CostControl path exactly once
     // -------------------------------------------------------------------------
-    public function test_receipt_service_blocks_before_mutation_for_enrolled_matching_group(): void
+    public function test_receipt_service_posts_once_through_synchronous_cost_control_for_enrolled_matching_group(): void
     {
-        $this->createEnrolledGroup($this->property->id, $this->item->id);
+        $this->createEnrolledGroup($this->property->id, $this->item->id, $this->location->id);
 
         $receipt = $this->makeDraftReceipt();
 
-        $txBefore          = DB::table('inventory_transactions')->where('reference_id', $receipt->id)->count();
-        $stockBefore       = DB::table('inventory_stocks')->where('item_id', $this->item->id)->count();
-        $wacBefore         = (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost');
-        $avcoStatesBefore  = DB::table('cost_avco_states')->where('property_id', $this->property->id)->count();
-        $outboxBefore      = DB::table('outbox_messages')->count();
-        $ledgerBefore      = DB::table('cost_ledger_entries')->where('property_id', $this->property->id)->count();
-        $candidatesBefore  = DB::table('journal_candidates')->count();
-        $enrollsBefore     = DB::table('cost_authority_enrollment_groups')
+        $txBefore = DB::table('inventory_transactions')->where('reference_id', $receipt->id)->count();
+        $stockBefore = DB::table('inventory_stocks')->where('item_id', $this->item->id)->count();
+        $wacBefore = (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost');
+        $avcoStatesBefore = DB::table('cost_avco_states')->where('property_id', $this->property->id)->count();
+        $outboxBefore = DB::table('outbox_messages')->count();
+        $ledgerBefore = DB::table('cost_ledger_entries')->where('property_id', $this->property->id)->count();
+        $candidatesBefore = DB::table('journal_candidates')->count();
+        $enrollsBefore = DB::table('cost_authority_enrollment_groups')
             ->where('property_id', $this->property->id)
             ->where('item_id', $this->item->id)
             ->where('status', 'enrolled')
             ->count();
 
-        try {
-            $this->receiptService->post($receipt->id);
-            $this->fail('Expected RuntimeException from enrollment guard; none thrown.');
-        } catch (RuntimeException $e) {
-            $this->assertStringContainsString('CostControl authority is enrolled', $e->getMessage());
-        }
+        $posted = $this->receiptService->post($receipt->id);
+        $transaction = DB::table('inventory_transactions')->where('reference_id', $receipt->id)->sole();
 
-        // Receipt status unchanged — still draft
-        $this->assertEquals('draft', DB::table('inventory_receipts')->where('id', $receipt->id)->value('status'));
-
-        // No InventoryTransaction created
-        $this->assertEquals($txBefore, DB::table('inventory_transactions')->where('reference_id', $receipt->id)->count());
-
-        // No InventoryStock mutation
-        $this->assertEquals($stockBefore, DB::table('inventory_stocks')->where('item_id', $this->item->id)->count());
-
-        // No WAC mutation
-        $this->assertEquals(
-            $wacBefore,
-            (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost')
-        );
-
-        // No CostAvcoState
+        $this->assertEquals('posted', $posted->status->value);
+        $this->assertEquals($txBefore + 1, DB::table('inventory_transactions')->where('reference_id', $receipt->id)->count());
+        $this->assertSame('SYNCHRONOUS', $transaction->cost_delivery_mode);
+        $this->assertSame(1, (int) $transaction->cost_delivery_ownership_version);
+        $this->assertEquals($stockBefore + 1, DB::table('inventory_stocks')->where('item_id', $this->item->id)->count());
+        $this->assertEquals($wacBefore, (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost'));
         $this->assertEquals($avcoStatesBefore, DB::table('cost_avco_states')->where('property_id', $this->property->id)->count());
-
-        // No Outbox message
-        $this->assertEquals($outboxBefore, DB::table('outbox_messages')->count());
-
-        // No Cost Ledger entry
-        $this->assertEquals($ledgerBefore, DB::table('cost_ledger_entries')->where('property_id', $this->property->id)->count());
-
-        // No JournalCandidate
-        $this->assertEquals($candidatesBefore, DB::table('journal_candidates')->count());
-
-        // Enrollment group state unchanged — still enrolled
+        $this->assertEquals($outboxBefore + 1, DB::table('outbox_messages')->count());
+        $this->assertEquals($ledgerBefore + 1, DB::table('cost_ledger_entries')->where('property_id', $this->property->id)->count());
+        $this->assertEquals(1, DB::table('cost_ledger_entries')->where('source_inventory_transaction_id', $transaction->id)->count());
+        $this->assertGreaterThanOrEqual($candidatesBefore, DB::table('journal_candidates')->count());
         $this->assertEquals(
             $enrollsBefore,
             DB::table('cost_authority_enrollment_groups')
@@ -194,55 +206,36 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
 
     // -------------------------------------------------------------------------
     // Proof 4 + 6b: ENROLLED matching group — InventoryReceiptIntegrationService
-    //               fails closed before coordinator lock or any mutation
+    //               follows the synchronously owned CostControl path exactly once
     // -------------------------------------------------------------------------
-    public function test_integration_service_blocks_before_mutation_for_enrolled_matching_group(): void
+    public function test_integration_service_posts_once_through_synchronous_cost_control_for_enrolled_matching_group(): void
     {
-        $this->createEnrolledGroup($this->property->id, $this->item->id);
+        $this->createEnrolledGroup($this->property->id, $this->item->id, $this->location->id);
 
         $doc = $this->makeReceivingDocument();
         $this->makeReceivingLine($doc, $this->item->id, $this->location->id);
 
-        $txBefore         = DB::table('inventory_transactions')->where('source_document_id', $doc->id)->count();
-        $stockBefore      = DB::table('inventory_stocks')->where('item_id', $this->item->id)->count();
-        $wacBefore        = (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost');
+        $txBefore = DB::table('inventory_transactions')->where('source_document_id', $doc->id)->count();
+        $stockBefore = DB::table('inventory_stocks')->where('item_id', $this->item->id)->count();
+        $wacBefore = (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost');
         $avcoStatesBefore = DB::table('cost_avco_states')->where('property_id', $this->property->id)->count();
-        $outboxBefore     = DB::table('outbox_messages')->count();
-        $ledgerBefore     = DB::table('cost_ledger_entries')->where('property_id', $this->property->id)->count();
+        $outboxBefore = DB::table('outbox_messages')->count();
+        $ledgerBefore = DB::table('cost_ledger_entries')->where('property_id', $this->property->id)->count();
         $candidatesBefore = DB::table('journal_candidates')->count();
 
-        try {
-            $this->integrationService->syncToInventory($doc, $this->actorId);
-            $this->fail('Expected RuntimeException from enrollment guard; none thrown.');
-        } catch (RuntimeException $e) {
-            $this->assertStringContainsString('CostControl authority is enrolled', $e->getMessage());
-        }
+        $this->integrationService->syncToInventory($doc, $this->actorId);
+        $transaction = DB::table('inventory_transactions')->where('source_document_id', $doc->id)->sole();
 
-        // No InventoryTransaction
-        $this->assertEquals($txBefore, DB::table('inventory_transactions')->where('source_document_id', $doc->id)->count());
-
-        // No InventoryStock mutation
-        $this->assertEquals($stockBefore, DB::table('inventory_stocks')->where('item_id', $this->item->id)->count());
-
-        // No WAC mutation
-        $this->assertEquals(
-            $wacBefore,
-            (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost')
-        );
-
-        // No CostAvcoState
+        $this->assertEquals($txBefore + 1, DB::table('inventory_transactions')->where('source_document_id', $doc->id)->count());
+        $this->assertSame('SYNCHRONOUS', $transaction->cost_delivery_mode);
+        $this->assertSame(1, (int) $transaction->cost_delivery_ownership_version);
+        $this->assertEquals($stockBefore + 1, DB::table('inventory_stocks')->where('item_id', $this->item->id)->count());
+        $this->assertEquals($wacBefore, (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost'));
         $this->assertEquals($avcoStatesBefore, DB::table('cost_avco_states')->where('property_id', $this->property->id)->count());
-
-        // No Outbox message
-        $this->assertEquals($outboxBefore, DB::table('outbox_messages')->count());
-
-        // No Cost Ledger entry
-        $this->assertEquals($ledgerBefore, DB::table('cost_ledger_entries')->where('property_id', $this->property->id)->count());
-
-        // No JournalCandidate
-        $this->assertEquals($candidatesBefore, DB::table('journal_candidates')->count());
-
-        // Enrollment group unchanged — still enrolled
+        $this->assertEquals($outboxBefore + 1, DB::table('outbox_messages')->count());
+        $this->assertEquals($ledgerBefore + 1, DB::table('cost_ledger_entries')->where('property_id', $this->property->id)->count());
+        $this->assertEquals(1, DB::table('cost_ledger_entries')->where('source_inventory_transaction_id', $transaction->id)->count());
+        $this->assertGreaterThanOrEqual($candidatesBefore, DB::table('journal_candidates')->count());
         $this->assertEquals(
             1,
             DB::table('cost_authority_enrollment_groups')
@@ -281,7 +274,8 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
     public function test_enrolled_group_for_different_property_does_not_block(): void
     {
         $differentPropertyId = (string) Str::ulid();
-        $this->createEnrolledGroup($differentPropertyId, $this->item->id);
+        $differentItemId = (string) Str::ulid();
+        $this->createEnrolledGroup($differentPropertyId, $differentItemId);
 
         $receipt = $this->makeDraftReceipt();
 
@@ -307,18 +301,18 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
 
         // Line has destination_location_id but NO inventory_item_id.
         ReceivingLine::create([
-            'receiving_document_id'   => $doc->id,
-            'inventory_item_id'       => null,
+            'receiving_document_id' => $doc->id,
+            'inventory_item_id' => null,
             'destination_location_id' => $this->location->id,
-            'description'             => 'Missing item guard test line',
-            'received_quantity'       => '5.00',
-            'unit_cost'               => '12.00',
-            'line_total'              => '60.00',
+            'description' => 'Missing item guard test line',
+            'received_quantity' => '5.00',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
         ]);
 
-        $txBefore      = DB::table('inventory_transactions')->where('source_document_id', $doc->id)->count();
-        $stockBefore   = DB::table('inventory_stocks')->where('property_id', $this->property->id)->count();
-        $wacBefore     = (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost');
+        $txBefore = DB::table('inventory_transactions')->where('source_document_id', $doc->id)->count();
+        $stockBefore = DB::table('inventory_stocks')->where('property_id', $this->property->id)->count();
+        $wacBefore = (float) DB::table('inventory_items')->where('id', $this->item->id)->value('weighted_average_cost');
         $enrollsBefore = DB::table('cost_authority_enrollment_groups')
             ->where('property_id', $this->property->id)
             ->count();
@@ -371,20 +365,20 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
     private function makeDraftReceipt(): InventoryReceipt
     {
         $receipt = InventoryReceipt::create([
-            'property_id'    => $this->property->id,
-            'receipt_number' => 'RCP-GUARD-' . Str::ulid(),
-            'supplier_name'  => 'Guard Test Supplier',
-            'status'         => 'draft',
+            'property_id' => $this->property->id,
+            'receipt_number' => 'RCP-GUARD-'.Str::ulid(),
+            'supplier_name' => 'Guard Test Supplier',
+            'status' => 'draft',
         ]);
 
         InventoryReceiptLine::create([
             'property_id' => $this->property->id,
-            'receipt_id'  => $receipt->id,
-            'item_id'     => $this->item->id,
+            'receipt_id' => $receipt->id,
+            'item_id' => $this->item->id,
             'location_id' => $this->location->id,
-            'quantity'    => '5.000',
-            'unit_cost'   => '12.00',
-            'line_total'  => '60.00',
+            'quantity' => '5.000',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
         ]);
 
         return $receipt;
@@ -394,9 +388,9 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
     {
         return ReceivingDocument::create([
             'property_id' => $this->property->id,
-            'vendor_id'   => $this->vendor->id,
-            'grn_number'  => 'GRN-GUARD-' . Str::ulid(),
-            'status'      => 'submitted',
+            'vendor_id' => $this->vendor->id,
+            'grn_number' => 'GRN-GUARD-'.Str::ulid(),
+            'status' => 'submitted',
         ]);
     }
 
@@ -406,27 +400,27 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
         string $locationId
     ): ReceivingLine {
         return ReceivingLine::create([
-            'receiving_document_id'   => $doc->id,
-            'inventory_item_id'       => $itemId,
+            'receiving_document_id' => $doc->id,
+            'inventory_item_id' => $itemId,
             'destination_location_id' => $locationId,
-            'description'             => 'Guard test receiving line',
-            'received_quantity'       => '5.00',
-            'unit_cost'               => '12.00',
-            'line_total'              => '60.00',
+            'description' => 'Guard test receiving line',
+            'received_quantity' => '5.00',
+            'unit_cost' => '12.00',
+            'line_total' => '60.00',
         ]);
     }
 
     private function makeSnapshot(string $propertyId, string $locationId, string $itemId): array
     {
         return [
-            'location_id'            => $locationId,
-            'valuation_scope'        => "property:{$propertyId}:location:{$locationId}:item:{$itemId}",
-            'opening_quantity'       => '100.0000',
+            'location_id' => $locationId,
+            'valuation_scope' => "property:{$propertyId}:location:{$locationId}:item:{$itemId}",
+            'opening_quantity' => '100.0000',
             'opening_carrying_value' => '1000.0000',
-            'currency_code'          => 'USD',
-            'business_date'          => '2026-07-01',
-            'financial_period_id'    => (string) Str::ulid(),
-            'evidence_timestamp'     => now(),
+            'currency_code' => 'USD',
+            'business_date' => '2026-07-01',
+            'financial_period_id' => (string) Str::ulid(),
+            'evidence_timestamp' => now(),
         ];
     }
 
@@ -446,9 +440,14 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
         return CostAuthorityEnrollmentGroup::find($group->id);
     }
 
-    private function createEnrolledGroup(string $propertyId, string $itemId): CostAuthorityEnrollmentGroup
-    {
-        $locationId = (string) Str::ulid();
+    private function createEnrolledGroup(
+        string $propertyId,
+        string $itemId,
+        ?string $locationId = null
+    ): CostAuthorityEnrollmentGroup {
+        $locationId ??= (string) Str::ulid();
+
+        $this->ensureAuthorityScopeExists($propertyId, $itemId);
 
         $group = $this->enrollmentRepo->createDraft(
             ['property_id' => $propertyId, 'item_id' => $itemId],
@@ -459,14 +458,80 @@ class ReceiptEnrollmentGuardTest extends PostgresTestCase
             fn () => $this->enrollmentRepo->approve($group->id, $this->actorId, now())
         );
 
-        DB::table('cost_authority_enrollment_groups')
-            ->where('id', $group->id)
-            ->update([
-                'status'      => 'enrolled',
-                'enrolled_at' => now(),
-                'updated_at'  => now(),
-            ]);
+        DB::transaction(function () use ($group): void {
+            DB::table('cost_authority_enrollment_groups')
+                ->where('id', $group->id)
+                ->update([
+                    'status' => 'enrolled',
+                    'enrolled_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+            app(CostDeliveryModeOwnershipBootstrapService::class)
+                ->bootstrap($group->id, $this->actorId);
+        });
+
+        $snapshot = DB::table('cost_authority_enrollment_scope_snapshots')
+            ->where('enrollment_group_id', $group->id)
+            ->where('location_id', $locationId)
+            ->first();
+        DB::table('cost_avco_states')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $propertyId,
+            'location_id' => $locationId,
+            'item_id' => $itemId,
+            'valuation_scope' => $snapshot->valuation_scope,
+            'on_hand_quantity' => $snapshot->opening_quantity,
+            'carrying_value' => $snapshot->opening_carrying_value,
+            'weighted_average_unit_cost' => '10.0000',
+            'unresolved_provisional_quantity' => '0.0000',
+            'last_valuation_sequence' => null,
+            'last_valuation_business_date' => null,
+            'enrollment_group_id' => $group->id,
+            'enrollment_scope_snapshot_id' => $snapshot->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         return CostAuthorityEnrollmentGroup::find($group->id);
+    }
+
+    private function ensureAuthorityScopeExists(string $propertyId, string $itemId): void
+    {
+        if (! DB::table('properties')->where('id', $propertyId)->exists()) {
+            DB::table('properties')->insert([
+                'id' => $propertyId,
+                'company_id' => DB::table('companies')->value('id'),
+                'name' => 'Receipt Guard Property '.substr($propertyId, -6),
+                'slug' => 'receipt-guard-'.strtolower($propertyId),
+                'code' => 'RG'.substr($propertyId, -6),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        if (DB::table('inventory_items')->where('id', $itemId)->exists()) {
+            return;
+        }
+
+        $categoryId = (string) Str::ulid();
+        DB::table('inventory_categories')->insert([
+            'id' => $categoryId,
+            'property_id' => $propertyId,
+            'name' => 'Receipt Guard Category '.substr($itemId, -6),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('inventory_items')->insert([
+            'id' => $itemId,
+            'property_id' => $propertyId,
+            'sku' => 'RG-'.substr($itemId, -12),
+            'name' => 'Receipt Guard Item '.substr($itemId, -6),
+            'category_id' => $categoryId,
+            'inventory_type' => 'goods',
+            'weighted_average_cost' => '10.0000',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 }

@@ -207,7 +207,11 @@ class CostDeliveryModeOwnershipPersistenceTest extends PostgresTestCase
         $migration100 = require base_path('Modules/Finance/CostControl/database/migrations/2026_08_21_000100_create_cost_delivery_pilot_properties_table.php');
         $migration200 = require base_path('Modules/Finance/CostControl/database/migrations/2026_08_21_000200_create_cost_delivery_mode_ownerships_table.php');
         $migration300 = require base_path('Modules/Finance/CostControl/database/migrations/2026_08_21_000300_create_cost_delivery_cutover_evidence_tables.php');
+        $migration500 = require base_path('Modules/Finance/CostControl/database/migrations/2026_08_21_000500_enforce_atomic_cost_delivery_ownership_on_cost_authority_enrollment.php');
+        $migration10100 = require base_path('Modules/Finance/CostControl/database/migrations/2026_08_21_010100_create_cost_delivery_outbox_dispositions_table.php');
 
+        $migration10100->down();
+        $migration500->down();
         $migration300->down();
         $migration200->down();
         $migration100->down();
@@ -215,14 +219,18 @@ class CostDeliveryModeOwnershipPersistenceTest extends PostgresTestCase
         $this->assertFalse(Schema::hasTable('cost_delivery_pilot_properties'));
         $this->assertFalse(Schema::hasTable('cost_delivery_mode_ownerships'));
         $this->assertFalse(Schema::hasTable('cost_delivery_cutovers'));
+        $this->assertFalse(Schema::hasTable('cost_delivery_outbox_dispositions'));
 
         $migration100->up();
         $migration200->up();
         $migration300->up();
+        $migration500->up();
+        $migration10100->up();
 
         $this->assertTrue(Schema::hasTable('cost_delivery_pilot_properties'));
         $this->assertTrue(Schema::hasTable('cost_delivery_mode_ownerships'));
         $this->assertTrue(Schema::hasTable('cost_delivery_cutovers'));
+        $this->assertTrue(Schema::hasTable('cost_delivery_outbox_dispositions'));
         $this->assertDatabaseCount('cost_delivery_pilot_properties', 0);
         $this->assertDatabaseCount('cost_delivery_mode_ownerships', 0);
     }

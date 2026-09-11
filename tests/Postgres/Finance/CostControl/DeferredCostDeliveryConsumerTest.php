@@ -244,7 +244,7 @@ class DeferredCostDeliveryConsumerTest extends PostgresTestCase
         ];
     }
 
-    public function test_sequence_gap_records_exact_blocked_sequence_and_never_auto_retries(): void
+    public function test_sequence_gap_blocks_without_effect_then_explicit_recovery_applies_after_missing_sequence(): void
     {
         $source = $this->makeDeferredSource(overrides: ['valuation_sequence' => 2]);
         $outbox = $this->makeOutbox($source);
@@ -263,6 +263,36 @@ class DeferredCostDeliveryConsumerTest extends PostgresTestCase
         $second = $this->consumer->consume($outbox->id);
         $this->assertSame(DeferredCostDeliveryResult::RECOVERY_REQUIRED, $second->status);
         $this->assertSame(1, $disposition->fresh()->attempt_count);
+
+        $sequenceOne = $this->makeDeferredSource();
+        $sequenceOneOutbox = $this->makeOutbox($sequenceOne);
+        $sequenceOneResult = $this->consumer->consume($sequenceOneOutbox->id);
+
+        $this->assertSame(DeferredCostDeliveryResult::DELIVERED, $sequenceOneResult->status, $sequenceOneResult->code);
+        $this->assertSame(1, $this->state($this->location)->last_valuation_sequence);
+        $this->assertDatabaseCount('cost_ledger_entries', 1);
+
+        DB::table('cost_delivery_outbox_dispositions')
+            ->where('id', $disposition->id)
+            ->update([
+                'processing_state' => CostDeliveryProcessingState::Pending->value,
+                'last_failure_code' => null,
+                'is_recoverable' => null,
+                'expected_sequence' => null,
+                'updated_at' => now(),
+            ]);
+        $this->travel(1)->seconds();
+
+        $sequenceTwoResult = $this->consumer->consume($outbox->id);
+        $recoveredDisposition = $disposition->fresh();
+
+        $this->assertSame(DeferredCostDeliveryResult::DELIVERED, $sequenceTwoResult->status, $sequenceTwoResult->code);
+        $this->assertSame(CostDeliveryProcessingState::Delivered, $recoveredDisposition->processing_state);
+        $this->assertSame(2, $recoveredDisposition->attempt_count);
+        $this->assertSame(OutboxStatusEnum::Delivered, $outbox->fresh()->status);
+        $this->assertSame(2, $this->state($this->location)->last_valuation_sequence);
+        $this->assertDatabaseCount('cost_ledger_entries', 2);
+        $this->assertSame(1, CostLedgerEntry::where('source_inventory_transaction_id', $source->id)->count());
     }
 
     public function test_closed_business_date_and_closed_period_fail_without_monetary_effect(): void
