@@ -37,7 +37,7 @@ class InventoryAdjustmentRepository
     {
         $adjustment = InventoryAdjustment::with([
             'location',
-            'lines.item.unit',
+            'lines.item.category',
             'submittedBy',
             'approvedBy',
             'rejectedBy',

@@ -544,10 +544,9 @@ export interface Folio {
 export interface InventoryCategory {
     id: string;
     property_id: string;
-    category_code: string;
     name: string;
     description: string | null;
-    is_active: boolean;
+    parent_id: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -555,10 +554,8 @@ export interface InventoryCategory {
 export interface InventoryUnit {
     id: string;
     property_id: string;
-    unit_code: string;
+    code: string;
     name: string;
-    abbreviation: string;
-    is_active: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -566,11 +563,9 @@ export interface InventoryUnit {
 export interface InventoryLocation {
     id: string;
     property_id: string;
-    location_code: string;
     name: string;
-    location_type: EnumOption;
-    description: string | null;
-    is_active: boolean;
+    type: string;
+    parent_id: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -578,19 +573,19 @@ export interface InventoryLocation {
 export interface InventoryItem {
     id: string;
     property_id: string;
-    item_code: string;
+    sku: string;
     name: string;
-    description: string | null;
     category_id: string;
-    unit_id: string;
-    average_cost: number;
+    inventory_type: string;
+    criticality: string;
+    is_batch_tracked: boolean;
+    is_expiry_tracked: boolean;
+    weighted_average_cost: number;
     reorder_point: number;
     is_active: boolean;
-    item_status: EnumOption;
     created_at: string;
     updated_at: string;
     category?: InventoryCategory;
-    unit?: InventoryUnit;
     stock_balances?: InventoryStockBalance[];
 }
 

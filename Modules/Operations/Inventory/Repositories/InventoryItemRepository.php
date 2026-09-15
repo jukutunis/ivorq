@@ -12,14 +12,21 @@ class InventoryItemRepository
 {
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = InventoryItem::with(['category', 'unit'])->latest();
+        $query = InventoryItem::with('category')->latest();
 
         if (! empty($filters['name'])) {
-            $query->where('name', 'like', '%' . $filters['name'] . '%');
+            $query->where(function ($query) use ($filters) {
+                $query->where('name', 'like', '%'.$filters['name'].'%')
+                    ->orWhere('sku', 'like', '%'.$filters['name'].'%');
+            });
         }
 
         if (! empty($filters['category_id'])) {
             $query->where('category_id', $filters['category_id']);
+        }
+
+        if (! empty($filters['inventory_type'])) {
+            $query->where('inventory_type', $filters['inventory_type']);
         }
 
         if (isset($filters['is_active'])) {
@@ -33,7 +40,6 @@ class InventoryItemRepository
     {
         $item = InventoryItem::with([
             'category',
-            'unit',
             'stockBalances.location',
         ])->find($id);
 
@@ -67,7 +73,7 @@ class InventoryItemRepository
 
     public function active(): Collection
     {
-        return InventoryItem::with(['category', 'unit'])
+        return InventoryItem::with('category')
             ->where('is_active', true)
             ->orderBy('name')
             ->get();
@@ -79,7 +85,7 @@ class InventoryItemRepository
             ->whereHas('stockBalances', function ($q) {
                 $q->where('status', ItemStatusEnum::LowStock);
             })
-            ->with(['category', 'unit', 'stockBalances.location'])
+            ->with(['category', 'stockBalances.location'])
             ->orderBy('name')
             ->get();
     }
@@ -91,7 +97,7 @@ class InventoryItemRepository
             ->whereDoesntHave('stockBalances', function ($q) {
                 $q->where('quantity', '>', 0);
             })
-            ->with(['category', 'unit'])
+            ->with('category')
             ->orderBy('name')
             ->get();
     }

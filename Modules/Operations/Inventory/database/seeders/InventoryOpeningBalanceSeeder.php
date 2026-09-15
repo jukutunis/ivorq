@@ -19,8 +19,8 @@ class InventoryOpeningBalanceSeeder extends Seeder
             return;
         }
 
-        $admin = User::whereHas('roles', fn($q) => $q->where('name', 'super-admin'))
-            ->orWhereHas('roles', fn($q) => $q->where('name', 'property-admin'))
+        $admin = User::whereHas('roles', fn ($q) => $q->where('name', 'super-admin'))
+            ->orWhereHas('roles', fn ($q) => $q->where('name', 'property-admin'))
             ->first();
 
         // Map location codes → IDs
@@ -34,10 +34,11 @@ class InventoryOpeningBalanceSeeder extends Seeder
 
         if ($locations->isEmpty() || $items->isEmpty()) {
             $this->command->warn('InventoryOpeningBalanceSeeder: locations or items missing — run location/item seeders first.');
+
             return;
         }
 
-        // Opening stock: [sku, name, quantity, average_cost]
+        // Opening stock: [sku, location name, quantity, weighted average cost]
         $openingStock = [
             // Main Storeroom bulk stock
             ['HK-SOAP-001',    'MAIN-STR',   2000, '1200.0000'],
@@ -86,8 +87,8 @@ class InventoryOpeningBalanceSeeder extends Seeder
         ];
 
         foreach ($openingStock as [$itemCode, $locationCode, $qty, $cost]) {
-            $item     = $items[$itemCode] ?? null;
-            $locId    = $locations[$locationCode] ?? null;
+            $item = $items[$itemCode] ?? null;
+            $locId = $locations[$locationCode] ?? null;
 
             if (! $item || ! $locId) {
                 continue;
@@ -97,20 +98,20 @@ class InventoryOpeningBalanceSeeder extends Seeder
             $balance = InventoryStockBalance::firstOrCreate(
                 [
                     'property_id' => $property->id,
-                    'item_id'     => $item->id,
+                    'item_id' => $item->id,
                     'location_id' => $locId,
                 ],
                 [
                     'property_id' => $property->id,
-                    'item_id'     => $item->id,
+                    'item_id' => $item->id,
                     'location_id' => $locId,
-                    'quantity'    => $qty,
+                    'quantity' => $qty,
                 ]
             );
 
-            // If just created, also update the item's average_cost if not set
+            // If just created, initialize the canonical weighted-average cost.
             if ($balance->wasRecentlyCreated) {
-                $item->updateQuietly(['average_cost' => $cost]);
+                $item->updateQuietly(['weighted_average_cost' => $cost]);
             }
         }
     }

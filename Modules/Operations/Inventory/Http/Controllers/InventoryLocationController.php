@@ -18,19 +18,20 @@ class InventoryLocationController extends Controller
 {
     public function __construct(
         private InventoryMasterDataService $masterDataService,
+        private CurrentPropertyService $currentProperty,
     ) {}
 
     public function index(): Response
     {
         $this->authorize('viewAny', InventoryLocation::class);
 
-        $filters   = request()->only(['name', 'location_type', 'is_active']);
+        $filters = request()->only(['name', 'type']);
         $locations = $this->masterDataService->paginateLocations($filters);
 
         return Inertia::render('Operations/Inventory/Locations/Index', [
-            'locations'      => InventoryLocationResource::collection($locations),
-            'location_types' => array_map(
-                fn(LocationTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
+            'locations' => InventoryLocationResource::collection($locations),
+            'type_options' => array_map(
+                fn (LocationTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 LocationTypeEnum::cases()
             ),
             'filters' => $filters,
@@ -42,17 +43,18 @@ class InventoryLocationController extends Controller
         $this->authorize('create', InventoryLocation::class);
 
         return Inertia::render('Operations/Inventory/Locations/Create', [
-            'location_types' => array_map(
-                fn(LocationTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
+            'type_options' => array_map(
+                fn (LocationTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 LocationTypeEnum::cases()
             ),
+            'parent_locations' => $this->masterDataService->paginateLocations([], 500)->items(),
         ]);
     }
 
     public function store(StoreLocationRequest $request): RedirectResponse
     {
         $data = array_merge($request->validated(), [
-            'property_id' => app(CurrentPropertyService::class)->getId(),
+            'property_id' => $this->currentProperty->resolveOrFail(),
         ]);
 
         $location = $this->masterDataService->createLocation($data);
@@ -77,11 +79,15 @@ class InventoryLocationController extends Controller
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/Inventory/Locations/Edit', [
-            'location'       => new InventoryLocationResource($model),
-            'location_types' => array_map(
-                fn(LocationTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
+            'location' => new InventoryLocationResource($model),
+            'type_options' => array_map(
+                fn (LocationTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 LocationTypeEnum::cases()
             ),
+            'parent_locations' => array_values(array_filter(
+                $this->masterDataService->paginateLocations([], 500)->items(),
+                fn (InventoryLocation $candidate) => $candidate->id !== $model->id,
+            )),
         ]);
     }
 

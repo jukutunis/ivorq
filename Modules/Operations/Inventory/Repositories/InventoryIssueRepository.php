@@ -40,7 +40,7 @@ class InventoryIssueRepository
     public function find(string $id): InventoryIssue
     {
         $issue = InventoryIssue::with([
-            'lines.item.unit',
+            'lines.item.category',
             'lines.location',
             'department',
             'postedBy',

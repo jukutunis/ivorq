@@ -4,6 +4,7 @@ namespace Modules\Operations\Inventory\Repositories;
 
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Str;
 use Modules\Operations\Inventory\Enums\ItemStatusEnum;
 use Modules\Operations\Inventory\Models\InventoryStock;
 
@@ -19,7 +20,7 @@ class InventoryStockRepository
     public function forLocation(string $locationId): Collection
     {
         return InventoryStock::where('location_id', $locationId)
-            ->with(['item.category', 'item.unit'])
+            ->with('item.category')
             ->get();
     }
 
@@ -27,14 +28,14 @@ class InventoryStockRepository
     {
         // Ensure the row exists (no-op if already present)
         InventoryStock::firstOrCreate(
-                ['item_id' => $itemId, 'location_id' => $locationId],
-                [
-                    'property_id'       => $propertyId,
-                    'physical_quantity' => 0,
-                    'reserved_quantity' => 0,
-                    'status'            => ItemStatusEnum::OutOfStock->value,
-                ]
-            );
+            ['item_id' => $itemId, 'location_id' => $locationId],
+            [
+                'property_id' => $propertyId,
+                'physical_quantity' => 0,
+                'reserved_quantity' => 0,
+                'status' => ItemStatusEnum::OutOfStock->value,
+            ]
+        );
 
         // Acquire the exclusive lock on the now-guaranteed-existing row
         return InventoryStock::where('item_id', $itemId)
@@ -51,10 +52,10 @@ class InventoryStockRepository
         return InventoryStock::firstOrCreate(
             ['item_id' => $itemId, 'location_id' => $locationId],
             [
-                'property_id'       => $propertyId,
+                'property_id' => $propertyId,
                 'physical_quantity' => 0,
                 'reserved_quantity' => 0,
-                'status'            => ItemStatusEnum::OutOfStock->value,
+                'status' => ItemStatusEnum::OutOfStock->value,
             ]
         );
     }
@@ -62,15 +63,15 @@ class InventoryStockRepository
     public function createOrLockControlled(string $propertyId, string $itemId, string $locationId): InventoryStock
     {
         InventoryStock::insertOrIgnore([
-            'id'                => (string) \Illuminate\Support\Str::ulid(),
-            'property_id'       => $propertyId,
-            'item_id'           => $itemId,
-            'location_id'       => $locationId,
+            'id' => (string) Str::ulid(),
+            'property_id' => $propertyId,
+            'item_id' => $itemId,
+            'location_id' => $locationId,
             'physical_quantity' => 0,
             'reserved_quantity' => 0,
-            'status'            => ItemStatusEnum::OutOfStock->value,
-            'created_at'        => now(),
-            'updated_at'        => now(),
+            'status' => ItemStatusEnum::OutOfStock->value,
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
         return InventoryStock::where('property_id', $propertyId)
@@ -81,15 +82,15 @@ class InventoryStockRepository
     }
 
     public function updateBalance(
-        string            $id,
-        string            $physicalQuantity,
-        ItemStatusEnum    $status,
+        string $id,
+        string $physicalQuantity,
+        ItemStatusEnum $status,
         ?DateTimeInterface $lastMovementAt = null
     ): void {
         InventoryStock::where('id', $id)->update([
             'physical_quantity' => $physicalQuantity,
-            'status'            => $status->value,
-            'last_movement_at'  => $lastMovementAt ?? now(),
+            'status' => $status->value,
+            'last_movement_at' => $lastMovementAt ?? now(),
         ]);
     }
 

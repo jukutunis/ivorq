@@ -20,20 +20,26 @@ class UpdateLocationRequest extends FormRequest
     public function rules(): array
     {
         $locationId = $this->route('location');
-        $propertyId = app(CurrentPropertyService::class)->getId();
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
 
         return [
-            'location_code' => ['sometimes', 'string', 'max:20',
-                "unique:inventory_locations,location_code,{$locationId},id,property_id,{$propertyId},deleted_at,NULL",
+            'name' => [
+                'sometimes', 'required', 'string', 'max:255',
+                Rule::unique('inventory_locations', 'name')
+                    ->ignore($locationId)
+                    ->where('property_id', $propertyId)
+                    ->whereNull('deleted_at'),
             ],
-            'name'          => ['sometimes', 'string', 'max:255'],
-            'description'   => ['nullable', 'string'],
-            'location_type' => ['sometimes', Rule::enum(LocationTypeEnum::class)],
-            'is_active'     => ['sometimes', 'boolean'],
-
-            // Server-managed
-            'created_by'    => ['prohibited'],
-            'updated_by'    => ['prohibited'],
+            'type' => ['sometimes', 'required', Rule::enum(LocationTypeEnum::class)],
+            'parent_id' => [
+                'sometimes', 'nullable', 'string', 'size:26', Rule::notIn([$locationId]),
+                Rule::exists('inventory_locations', 'id')
+                    ->where('property_id', $propertyId)
+                    ->whereNull('deleted_at'),
+            ],
+            'property_id' => ['prohibited'],
+            'created_by' => ['prohibited'],
+            'updated_by' => ['prohibited'],
         ];
     }
 }

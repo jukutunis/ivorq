@@ -5,8 +5,8 @@ import { EnumOption, PageProps } from '@/Types';
 interface IssueLine {
     id: string; item_id: string; location_id: string;
     quantity: number; remarks: string | null;
-    item?: { id: string; item_code: string; name: string } | null;
-    location?: { id: string; location_code: string; name: string } | null;
+    item?: { id: string; sku: string; name: string } | null;
+    location?: { id: string; name: string } | null;
 }
 interface Issue {
     id: string; issue_number: string; department_id: string | null;
@@ -108,7 +108,7 @@ export default function IssueShow({ issue }: Props) {
                                     <tr key={l.id} className="hover:bg-gray-50">
                                         <td className="px-6 py-3">
                                             <p className="font-medium text-gray-900">{l.item?.name ?? l.item_id}</p>
-                                            <p className="text-xs font-mono text-gray-400">{l.item?.item_code}</p>
+                                            <p className="text-xs font-mono text-gray-400">{l.item?.sku}</p>
                                         </td>
                                         <td className="px-6 py-3 text-gray-600 text-xs">{l.location?.name ?? l.location_id}</td>
                                         <td className="px-6 py-3 text-right font-mono">{l.quantity}</td>

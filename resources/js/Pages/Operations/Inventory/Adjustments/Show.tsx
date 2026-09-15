@@ -6,7 +6,7 @@ import { useState } from 'react';
 interface AdjustmentLine {
     id: string; item_id: string; quantity_system: number; quantity_actual: number; quantity_variance: number;
     unit_cost: number | null; notes: string | null;
-    item?: { id: string; item_code: string; name: string } | null;
+    item?: { id: string; sku: string; name: string } | null;
 }
 interface Adjustment {
     id: string; adjustment_number: string; location_id: string;
@@ -173,7 +173,7 @@ export default function AdjustmentShow({ adjustment }: Props) {
                                     <tr key={l.id} className="hover:bg-gray-50">
                                         <td className="px-6 py-3">
                                             <p className="font-medium text-gray-900">{l.item?.name ?? l.item_id}</p>
-                                            <p className="text-xs font-mono text-gray-400">{l.item?.item_code}</p>
+                                            <p className="text-xs font-mono text-gray-400">{l.item?.sku}</p>
                                         </td>
                                         <td className="px-6 py-3 text-right font-mono text-gray-500">{l.quantity_system}</td>
                                         <td className="px-6 py-3 text-right font-mono font-medium">{l.quantity_actual}</td>

@@ -10,19 +10,19 @@ class InventoryTransferResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'          => $this->id,
+            'id' => $this->id,
             'property_id' => $this->property_id,
 
-            'transfer_number'  => $this->transfer_number,
+            'transfer_number' => $this->transfer_number,
             'from_location_id' => $this->from_location_id,
-            'to_location_id'   => $this->to_location_id,
+            'to_location_id' => $this->to_location_id,
 
             'status' => [
                 'value' => $this->status->value,
                 'label' => $this->status->label(),
             ],
 
-            'notes'        => $this->notes,
+            'notes' => $this->notes,
             'requested_by' => $this->requested_by,
 
             'approved_by' => $this->approved_by,
@@ -39,38 +39,38 @@ class InventoryTransferResource extends JsonResource
 
             // created_by, updated_by, deleted_at intentionally omitted
 
-            'from_location' => $this->whenLoaded('fromLocation', fn() => $this->fromLocation
-                ? ['id' => $this->fromLocation->id, 'location_code' => $this->fromLocation->location_code, 'name' => $this->fromLocation->name]
+            'from_location' => $this->whenLoaded('fromLocation', fn () => $this->fromLocation
+                ? ['id' => $this->fromLocation->id, 'name' => $this->fromLocation->name]
                 : null
             ),
 
-            'to_location' => $this->whenLoaded('toLocation', fn() => $this->toLocation
-                ? ['id' => $this->toLocation->id, 'location_code' => $this->toLocation->location_code, 'name' => $this->toLocation->name]
+            'to_location' => $this->whenLoaded('toLocation', fn () => $this->toLocation
+                ? ['id' => $this->toLocation->id, 'name' => $this->toLocation->name]
                 : null
             ),
 
-            'requested_by_user' => $this->whenLoaded('requestedBy', fn() => $this->requestedBy
+            'requested_by_user' => $this->whenLoaded('requestedBy', fn () => $this->requestedBy
                 ? ['id' => $this->requestedBy->id, 'name' => $this->requestedBy->name]
                 : null
             ),
 
-            'approved_by_user' => $this->whenLoaded('approvedBy', fn() => $this->approvedBy
+            'approved_by_user' => $this->whenLoaded('approvedBy', fn () => $this->approvedBy
                 ? ['id' => $this->approvedBy->id, 'name' => $this->approvedBy->name]
                 : null
             ),
 
-            'completed_by_user' => $this->whenLoaded('completedBy', fn() => $this->completedBy
+            'completed_by_user' => $this->whenLoaded('completedBy', fn () => $this->completedBy
                 ? ['id' => $this->completedBy->id, 'name' => $this->completedBy->name]
                 : null
             ),
 
-            'cancelled_by_user' => $this->whenLoaded('cancelledBy', fn() => $this->cancelledBy
+            'cancelled_by_user' => $this->whenLoaded('cancelledBy', fn () => $this->cancelledBy
                 ? ['id' => $this->cancelledBy->id, 'name' => $this->cancelledBy->name]
                 : null
             ),
 
             'lines_count' => $this->whenCounted('lines'),
-            'lines'       => InventoryTransferLineResource::collection($this->whenLoaded('lines')),
+            'lines' => InventoryTransferLineResource::collection($this->whenLoaded('lines')),
         ];
     }
 }

@@ -40,7 +40,7 @@ class InventoryReceiptRepository
     public function find(string $id): InventoryReceipt
     {
         $receipt = InventoryReceipt::with([
-            'lines.item.unit',
+            'lines.item.category',
             'lines.location',
             'postedBy',
             'cancelledBy',

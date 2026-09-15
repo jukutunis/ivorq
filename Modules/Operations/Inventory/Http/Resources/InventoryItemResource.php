@@ -10,46 +10,25 @@ class InventoryItemResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'          => $this->id,
+            'id' => $this->id,
             'property_id' => $this->property_id,
-
-            'item_code'   => $this->item_code,
-            'name'        => $this->name,
-            'description' => $this->description,
-            'sku'         => $this->sku,
-            'barcode'     => $this->barcode,
-
+            'sku' => $this->sku,
+            'name' => $this->name,
             'category_id' => $this->category_id,
-            'unit_id'     => $this->unit_id,
-
-            'min_stock'        => $this->min_stock        !== null ? (float) $this->min_stock        : null,
-            'max_stock'        => $this->max_stock        !== null ? (float) $this->max_stock        : null,
-            'reorder_point'    => $this->reorder_point    !== null ? (float) $this->reorder_point    : null,
-            'reorder_quantity' => $this->reorder_quantity !== null ? (float) $this->reorder_quantity : null,
-
-            // average_cost is WAC-managed — exposed read-only so consumers can display cost
-            'average_cost' => (float) $this->average_cost,
-
+            'inventory_type' => $this->inventory_type,
+            'criticality' => $this->criticality,
+            'is_batch_tracked' => (bool) $this->is_batch_tracked,
+            'is_expiry_tracked' => (bool) $this->is_expiry_tracked,
+            'weighted_average_cost' => (float) $this->weighted_average_cost,
             'is_active' => (bool) $this->is_active,
-            'notes'     => $this->notes,
-
+            'reorder_point' => (float) $this->reorder_point,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
-
-            // created_by, updated_by, deleted_at intentionally omitted
-
-            'category' => $this->whenLoaded('category', fn() => $this->category
-                ? ['id' => $this->category->id, 'category_code' => $this->category->category_code, 'name' => $this->category->name]
-                : null
-            ),
-
-            'unit' => $this->whenLoaded('unit', fn() => $this->unit
-                ? ['id' => $this->unit->id, 'unit_code' => $this->unit->unit_code, 'name' => $this->unit->name, 'abbreviation' => $this->unit->abbreviation]
-                : null
-            ),
-
+            'category' => $this->whenLoaded('category', fn () => $this->category
+                ? ['id' => $this->category->id, 'name' => $this->category->name]
+                : null),
             'stock_balances_count' => $this->whenCounted('stockBalances'),
-            'stock_balances'       => InventoryStockBalanceResource::collection($this->whenLoaded('stockBalances')),
+            'stock_balances' => InventoryStockBalanceResource::collection($this->whenLoaded('stockBalances')),
         ];
     }
 }

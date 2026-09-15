@@ -14,11 +14,10 @@ class InventoryCategoryRepository
         $query = InventoryCategory::latest();
 
         if (! empty($filters['name'])) {
-            $query->where('name', 'like', '%' . $filters['name'] . '%');
-        }
-
-        if (isset($filters['is_active'])) {
-            $query->where('is_active', $filters['is_active']);
+            $query->where(function ($query) use ($filters) {
+                $query->where('name', 'like', '%'.$filters['name'].'%')
+                    ->orWhere('description', 'like', '%'.$filters['name'].'%');
+            });
         }
 
         return $query->paginate($perPage);
@@ -58,6 +57,6 @@ class InventoryCategoryRepository
 
     public function active(): Collection
     {
-        return InventoryCategory::where('is_active', true)->orderBy('name')->get();
+        return InventoryCategory::orderBy('name')->get();
     }
 }

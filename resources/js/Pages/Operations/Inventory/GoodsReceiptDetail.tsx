@@ -17,7 +17,7 @@ interface GoodsReceipt {
         received_quantity: number;
         inventory_item: { id: string; name: string; sku: string | null } | null;
         inventory_location: { id: string; name: string } | null;
-        inventory_unit: { id: string; name: string; abbreviation: string | null } | null;
+        inventory_unit: { id: string; name: string; code: string } | null;
         purchase_order_line: {
             id: string;
             ordered_quantity: number;

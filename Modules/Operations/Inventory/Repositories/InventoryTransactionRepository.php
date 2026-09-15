@@ -16,7 +16,7 @@ class InventoryTransactionRepository
 {
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = InventoryTransaction::with(['item.unit', 'location'])
+        $query = InventoryTransaction::with(['item.category', 'location'])
             ->orderBy('posted_at', 'desc');
 
         if (! empty($filters['item_id'])) {
@@ -53,7 +53,7 @@ class InventoryTransactionRepository
 
     public function recent(int $limit = 20): Collection
     {
-        return InventoryTransaction::with(['item.unit', 'location', 'postedBy'])
+        return InventoryTransaction::with(['item.category', 'location', 'postedBy'])
             ->orderBy('posted_at', 'desc')
             ->limit($limit)
             ->get();

@@ -10,22 +10,13 @@ class InventoryLocationResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'          => $this->id,
+            'id' => $this->id,
             'property_id' => $this->property_id,
-
-            'location_code' => $this->location_code,
-            'name'          => $this->name,
-            'description'   => $this->description,
-            'location_type' => [
-                'value' => $this->location_type->value,
-                'label' => $this->location_type->label(),
-            ],
-            'is_active' => (bool) $this->is_active,
-
+            'name' => $this->name,
+            'type' => $this->type,
+            'parent_id' => $this->parent_id,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
-
-            // created_by, updated_by, deleted_at intentionally omitted
         ];
     }
 }
