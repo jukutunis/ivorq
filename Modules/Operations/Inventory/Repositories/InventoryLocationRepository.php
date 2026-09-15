@@ -14,12 +14,12 @@ class InventoryLocationRepository
     {
         $query = InventoryLocation::latest();
 
-        if (! empty($filters['location_type'])) {
-            $query->where('location_type', $filters['location_type']);
+        if (! empty($filters['name'])) {
+            $query->where('name', 'like', '%'.$filters['name'].'%');
         }
 
-        if (isset($filters['is_active'])) {
-            $query->where('is_active', $filters['is_active']);
+        if (! empty($filters['type'])) {
+            $query->where('type', $filters['type']);
         }
 
         return $query->paginate($perPage);
@@ -28,7 +28,7 @@ class InventoryLocationRepository
     public function find(string $id): InventoryLocation
     {
         $location = InventoryLocation::with([
-            'stockBalances.item.unit',
+            'stockBalances.item',
             'stockBalances.item.category',
         ])->find($id);
 
@@ -62,13 +62,12 @@ class InventoryLocationRepository
 
     public function active(): Collection
     {
-        return InventoryLocation::where('is_active', true)->orderBy('name')->get();
+        return InventoryLocation::orderBy('name')->get();
     }
 
     public function byType(LocationTypeEnum $type): Collection
     {
-        return InventoryLocation::where('location_type', $type)
-            ->where('is_active', true)
+        return InventoryLocation::where('type', $type->value)
             ->orderBy('name')
             ->get();
     }

@@ -5,8 +5,8 @@ import { PaginatedData, EnumOption, PageProps } from '@/Types';
 interface ReceiptLine {
     id: string; item_id: string; location_id: string;
     quantity: number; unit_cost: number; total_value: number; notes: string | null;
-    item?: { id: string; item_code: string; name: string } | null;
-    location?: { id: string; location_code: string; name: string } | null;
+    item?: { id: string; sku: string; name: string } | null;
+    location?: { id: string; name: string } | null;
 }
 interface Receipt {
     id: string; receipt_number: string; supplier_name: string | null;

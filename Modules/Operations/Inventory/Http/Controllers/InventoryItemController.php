@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
 use Inertia\Response;
+use Modules\Operations\Inventory\Enums\InventoryCriticalityEnum;
+use Modules\Operations\Inventory\Enums\InventoryTypeEnum;
 use Modules\Operations\Inventory\Http\Requests\StoreItemRequest;
 use Modules\Operations\Inventory\Http\Requests\UpdateItemRequest;
 use Modules\Operations\Inventory\Http\Resources\InventoryItemResource;
@@ -17,17 +19,18 @@ class InventoryItemController extends Controller
 {
     public function __construct(
         private InventoryMasterDataService $masterDataService,
+        private CurrentPropertyService $currentProperty,
     ) {}
 
     public function index(): Response
     {
         $this->authorize('viewAny', InventoryItem::class);
 
-        $filters = request()->only(['category_id', 'unit_id', 'is_active', 'name']);
-        $items   = $this->masterDataService->paginateItems($filters);
+        $filters = request()->only(['category_id', 'inventory_type', 'is_active', 'name']);
+        $items = $this->masterDataService->paginateItems($filters);
 
         return Inertia::render('Operations/Inventory/Items/Index', [
-            'items'   => InventoryItemResource::collection($items),
+            'items' => InventoryItemResource::collection($items),
             'filters' => $filters,
         ]);
     }
@@ -38,14 +41,21 @@ class InventoryItemController extends Controller
 
         return Inertia::render('Operations/Inventory/Items/Create', [
             'categories' => $this->masterDataService->paginateCategories([], 500)->items(),
-            'units'      => $this->masterDataService->paginateUnits([], 500)->items(),
+            'inventory_types' => array_map(
+                fn (InventoryTypeEnum $type) => $type->value,
+                InventoryTypeEnum::cases(),
+            ),
+            'criticalities' => array_map(
+                fn (InventoryCriticalityEnum $criticality) => $criticality->value,
+                InventoryCriticalityEnum::cases(),
+            ),
         ]);
     }
 
     public function store(StoreItemRequest $request): RedirectResponse
     {
         $data = array_merge($request->validated(), [
-            'property_id' => app(CurrentPropertyService::class)->getId(),
+            'property_id' => $this->currentProperty->resolveOrFail(),
         ]);
 
         $item = $this->masterDataService->createItem($data);
@@ -70,9 +80,16 @@ class InventoryItemController extends Controller
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/Inventory/Items/Edit', [
-            'item'       => new InventoryItemResource($model),
+            'item' => new InventoryItemResource($model),
             'categories' => $this->masterDataService->paginateCategories([], 500)->items(),
-            'units'      => $this->masterDataService->paginateUnits([], 500)->items(),
+            'inventory_types' => array_map(
+                fn (InventoryTypeEnum $type) => $type->value,
+                InventoryTypeEnum::cases(),
+            ),
+            'criticalities' => array_map(
+                fn (InventoryCriticalityEnum $criticality) => $criticality->value,
+                InventoryCriticalityEnum::cases(),
+            ),
         ]);
     }
 

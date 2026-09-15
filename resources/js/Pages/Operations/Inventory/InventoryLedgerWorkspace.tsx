@@ -20,7 +20,7 @@ interface InventoryLocation {
 interface InventoryUnit {
     id: string;
     name: string;
-    abbreviation: string | null;
+    code: string;
 }
 
 interface User {
@@ -153,7 +153,7 @@ export default function InventoryLedgerWorkspace({ movements, stockOnHand }: Pro
                                             {row.location?.name ?? row.inventory_location_id}
                                         </td>
                                         <td className="px-6 py-3 text-gray-600">
-                                            {row.unit?.abbreviation ?? row.unit?.name ?? row.inventory_unit_id}
+                                            {row.unit?.code ?? row.unit?.name ?? row.inventory_unit_id}
                                         </td>
                                         <td className="px-6 py-3 text-right font-mono text-gray-700">
                                             {row.controlled_quantity}

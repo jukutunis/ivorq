@@ -16,7 +16,7 @@ interface InventoryItem {
 interface InventoryUnit {
     id: string;
     name: string;
-    abbreviation: string | null;
+    code: string;
 }
 
 interface PurchaseOrderLine {

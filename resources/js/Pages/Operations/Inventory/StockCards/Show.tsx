@@ -18,8 +18,8 @@ interface StockCard {
     notes:           string | null;
     posted_by:       string | null;
     posted_at:       string | null;
-    item?:    { id: string; item_code: string; name: string } | null;
-    location?: { id: string; location_code: string; name: string } | null;
+    item?:    { id: string; sku: string; name: string } | null;
+    location?: { id: string; name: string } | null;
     posted_by_user?: { id: string; name: string } | null;
 }
 
@@ -57,7 +57,7 @@ export default function StockCardShow({ stock_card: sc }: Props) {
                         {sc.item ? (
                             <Link href={`/operations/inventory/items/${sc.item_id}`} className="text-sm text-blue-600 hover:text-blue-800 font-medium">
                                 {sc.item.name}
-                                <span className="block font-mono text-xs text-gray-400">{sc.item.item_code}</span>
+                                <span className="block font-mono text-xs text-gray-400">{sc.item.sku}</span>
                             </Link>
                         ) : <p className="text-sm font-mono text-gray-700">{sc.item_id}</p>}
                     </div>

@@ -19,8 +19,8 @@ interface StockCard {
     notes:           string | null;
     posted_by:       string | null;
     posted_at:       string | null;
-    item?:    { id: string; item_code: string; name: string } | null;
-    location?: { id: string; location_code: string; name: string } | null;
+    item?:    { id: string; sku: string; name: string } | null;
+    location?: { id: string; name: string } | null;
 }
 
 interface Props {
@@ -93,7 +93,7 @@ export default function StockCardIndex({ stock_cards, movement_types, filters }:
                                         <td className="px-6 py-3 font-medium text-gray-900 max-w-xs">
                                             {card.item ? (
                                                 <Link href={`/operations/inventory/items/${card.item_id}`} className="hover:text-blue-600">
-                                                    <span className="block text-xs font-mono text-gray-400">{card.item.item_code}</span>
+                                                    <span className="block text-xs font-mono text-gray-400">{card.item.sku}</span>
                                                     {card.item.name}
                                                 </Link>
                                             ) : card.item_id}

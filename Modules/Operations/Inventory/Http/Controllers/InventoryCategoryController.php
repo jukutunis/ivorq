@@ -17,18 +17,19 @@ class InventoryCategoryController extends Controller
 {
     public function __construct(
         private InventoryMasterDataService $masterDataService,
+        private CurrentPropertyService $currentProperty,
     ) {}
 
     public function index(): Response
     {
         $this->authorize('viewAny', InventoryCategory::class);
 
-        $filters    = request()->only(['name', 'is_active']);
+        $filters = request()->only('name');
         $categories = $this->masterDataService->paginateCategories($filters);
 
         return Inertia::render('Operations/Inventory/Categories/Index', [
             'categories' => InventoryCategoryResource::collection($categories),
-            'filters'    => $filters,
+            'filters' => $filters,
         ]);
     }
 
@@ -36,13 +37,15 @@ class InventoryCategoryController extends Controller
     {
         $this->authorize('create', InventoryCategory::class);
 
-        return Inertia::render('Operations/Inventory/Categories/Create');
+        return Inertia::render('Operations/Inventory/Categories/Create', [
+            'parent_categories' => $this->masterDataService->paginateCategories([], 500)->items(),
+        ]);
     }
 
     public function store(StoreCategoryRequest $request): RedirectResponse
     {
         $data = array_merge($request->validated(), [
-            'property_id' => app(CurrentPropertyService::class)->getId(),
+            'property_id' => $this->currentProperty->resolveOrFail(),
         ]);
 
         $category = $this->masterDataService->createCategory($data);
@@ -68,6 +71,10 @@ class InventoryCategoryController extends Controller
 
         return Inertia::render('Operations/Inventory/Categories/Edit', [
             'category' => new InventoryCategoryResource($model),
+            'parent_categories' => array_values(array_filter(
+                $this->masterDataService->paginateCategories([], 500)->items(),
+                fn (InventoryCategory $candidate) => $candidate->id !== $model->id,
+            )),
         ]);
     }
 

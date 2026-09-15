@@ -17,17 +17,18 @@ class InventoryUnitController extends Controller
 {
     public function __construct(
         private InventoryMasterDataService $masterDataService,
+        private CurrentPropertyService $currentProperty,
     ) {}
 
     public function index(): Response
     {
         $this->authorize('viewAny', InventoryUnit::class);
 
-        $filters = request()->only(['name', 'is_active']);
-        $units   = $this->masterDataService->paginateUnits($filters);
+        $filters = request()->only('name');
+        $units = $this->masterDataService->paginateUnits($filters);
 
         return Inertia::render('Operations/Inventory/Units/Index', [
-            'units'   => InventoryUnitResource::collection($units),
+            'units' => InventoryUnitResource::collection($units),
             'filters' => $filters,
         ]);
     }
@@ -42,7 +43,7 @@ class InventoryUnitController extends Controller
     public function store(StoreUnitRequest $request): RedirectResponse
     {
         $data = array_merge($request->validated(), [
-            'property_id' => app(CurrentPropertyService::class)->getId(),
+            'property_id' => $this->currentProperty->resolveOrFail(),
         ]);
 
         $unit = $this->masterDataService->createUnit($data);

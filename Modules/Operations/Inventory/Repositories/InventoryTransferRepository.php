@@ -38,7 +38,7 @@ class InventoryTransferRepository
         $transfer = InventoryTransfer::with([
             'fromLocation',
             'toLocation',
-            'lines.item.unit',
+            'lines.item.category',
             'requestedBy',
             'approvedBy',
             'completedBy',

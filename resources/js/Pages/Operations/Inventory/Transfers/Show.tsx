@@ -4,7 +4,7 @@ import { EnumOption, PageProps } from '@/Types';
 
 interface TransferLine {
     id: string; item_id: string; quantity_requested: number; notes: string | null;
-    item?: { id: string; item_code: string; name: string } | null;
+    item?: { id: string; sku: string; name: string } | null;
 }
 interface Transfer {
     id: string; transfer_number: string;
@@ -113,7 +113,7 @@ export default function TransferShow({ transfer }: Props) {
                                     <tr key={l.id} className="hover:bg-gray-50">
                                         <td className="px-6 py-3">
                                             <p className="font-medium text-gray-900">{l.item?.name ?? l.item_id}</p>
-                                            <p className="text-xs font-mono text-gray-400">{l.item?.item_code}</p>
+                                            <p className="text-xs font-mono text-gray-400">{l.item?.sku}</p>
                                         </td>
                                         <td className="px-6 py-3 text-right font-mono">{l.quantity_requested}</td>
                                         <td className="px-6 py-3 text-gray-500 text-xs">{l.notes ?? '—'}</td>

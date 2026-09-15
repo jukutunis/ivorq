@@ -3,13 +3,31 @@
 namespace Modules\Operations\Inventory\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Shared\Traits\HasUlid;
 use Shared\Traits\BelongsToProperty;
+use Shared\Traits\HasAuditColumns;
+use Shared\Traits\HasUlid;
 
 class InventoryLocation extends Model
 {
-    use HasUlid, BelongsToProperty, SoftDeletes;
+    use BelongsToProperty, HasAuditColumns, HasUlid, SoftDeletes;
 
-    protected $guarded = [];
+    protected $fillable = [
+        'property_id',
+        'name',
+        'type',
+        'parent_id',
+    ];
+
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'parent_id');
+    }
+
+    public function children(): HasMany
+    {
+        return $this->hasMany(self::class, 'parent_id');
+    }
 }

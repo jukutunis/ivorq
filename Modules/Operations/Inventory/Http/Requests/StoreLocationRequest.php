@@ -17,20 +17,25 @@ class StoreLocationRequest extends FormRequest
 
     public function rules(): array
     {
-        $propertyId = app(CurrentPropertyService::class)->getId();
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
 
         return [
-            'location_code' => ['required', 'string', 'max:20',
-                "unique:inventory_locations,location_code,NULL,id,property_id,{$propertyId},deleted_at,NULL",
+            'name' => [
+                'required', 'string', 'max:255',
+                Rule::unique('inventory_locations', 'name')
+                    ->where('property_id', $propertyId)
+                    ->whereNull('deleted_at'),
             ],
-            'name'          => ['required', 'string', 'max:255'],
-            'description'   => ['nullable', 'string'],
-            'location_type' => ['required', Rule::enum(LocationTypeEnum::class)],
-            'is_active'     => ['sometimes', 'boolean'],
-
-            // Server-managed
-            'created_by'    => ['prohibited'],
-            'updated_by'    => ['prohibited'],
+            'type' => ['required', Rule::enum(LocationTypeEnum::class)],
+            'parent_id' => [
+                'nullable', 'string', 'size:26',
+                Rule::exists('inventory_locations', 'id')
+                    ->where('property_id', $propertyId)
+                    ->whereNull('deleted_at'),
+            ],
+            'property_id' => ['prohibited'],
+            'created_by' => ['prohibited'],
+            'updated_by' => ['prohibited'],
         ];
     }
 }

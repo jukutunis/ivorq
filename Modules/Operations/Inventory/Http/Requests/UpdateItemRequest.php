@@ -4,6 +4,8 @@ namespace Modules\Operations\Inventory\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Operations\Inventory\Enums\InventoryCriticalityEnum;
+use Modules\Operations\Inventory\Enums\InventoryTypeEnum;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Shared\Services\CurrentPropertyService;
 
@@ -18,38 +20,34 @@ class UpdateItemRequest extends FormRequest
 
     public function rules(): array
     {
-        $itemId     = $this->route('item');
-        $propertyId = app(CurrentPropertyService::class)->getId();
+        $itemId = $this->route('item');
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
 
         return [
-            'item_code'        => ['sometimes', 'string', 'max:20',
-                "unique:inventory_items,item_code,{$itemId},id,property_id,{$propertyId},deleted_at,NULL",
+            'sku' => [
+                'sometimes', 'required', 'string', 'max:255',
+                Rule::unique('inventory_items', 'sku')
+                    ->ignore($itemId)
+                    ->where('property_id', $propertyId)
+                    ->whereNull('deleted_at'),
             ],
-            'name'             => ['sometimes', 'string', 'max:255'],
-            'description'      => ['nullable', 'string'],
-            'category_id'      => ['sometimes', 'string', 'size:26',
+            'name' => ['sometimes', 'required', 'string', 'max:255'],
+            'category_id' => [
+                'sometimes', 'required', 'string', 'size:26',
                 Rule::exists('inventory_categories', 'id')
                     ->where('property_id', $propertyId)
                     ->whereNull('deleted_at'),
             ],
-            'unit_id'          => ['sometimes', 'string', 'size:26',
-                Rule::exists('inventory_units', 'id')
-                    ->where('property_id', $propertyId)
-                    ->whereNull('deleted_at'),
-            ],
-            'sku'              => ['nullable', 'string', 'max:100'],
-            'barcode'          => ['nullable', 'string', 'max:100'],
-            'min_stock'        => ['nullable', 'numeric', 'min:0'],
-            'max_stock'        => ['nullable', 'numeric', 'min:0'],
-            'reorder_point'    => ['nullable', 'numeric', 'min:0'],
-            'reorder_quantity' => ['nullable', 'numeric', 'min:0'],
-            'notes'            => ['nullable', 'string'],
-            'is_active'        => ['sometimes', 'boolean'],
-
-            // Server-managed — WAC is computed by ReceiptService, never from client
-            'average_cost'     => ['prohibited'],
-            'created_by'       => ['prohibited'],
-            'updated_by'       => ['prohibited'],
+            'inventory_type' => ['sometimes', 'required', Rule::enum(InventoryTypeEnum::class)],
+            'criticality' => ['sometimes', 'required', Rule::enum(InventoryCriticalityEnum::class)],
+            'is_batch_tracked' => ['sometimes', 'boolean'],
+            'is_expiry_tracked' => ['sometimes', 'boolean'],
+            'is_active' => ['sometimes', 'boolean'],
+            'reorder_point' => ['sometimes', 'numeric', 'min:0'],
+            'property_id' => ['prohibited'],
+            'weighted_average_cost' => ['prohibited'],
+            'created_by' => ['prohibited'],
+            'updated_by' => ['prohibited'],
         ];
     }
 }

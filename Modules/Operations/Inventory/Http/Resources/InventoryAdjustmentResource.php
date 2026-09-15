@@ -10,11 +10,11 @@ class InventoryAdjustmentResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'          => $this->id,
+            'id' => $this->id,
             'property_id' => $this->property_id,
 
             'adjustment_number' => $this->adjustment_number,
-            'location_id'       => $this->location_id,
+            'location_id' => $this->location_id,
 
             'adjustment_type' => [
                 'value' => $this->adjustment_type->value,
@@ -26,7 +26,7 @@ class InventoryAdjustmentResource extends JsonResource
                 'label' => $this->status->label(),
             ],
 
-            'reason'           => $this->reason,
+            'reason' => $this->reason,
             'rejection_reason' => $this->rejection_reason,
 
             'submitted_by' => $this->submitted_by,
@@ -43,28 +43,28 @@ class InventoryAdjustmentResource extends JsonResource
 
             // created_by, updated_by, deleted_at intentionally omitted
 
-            'location' => $this->whenLoaded('location', fn() => $this->location
-                ? ['id' => $this->location->id, 'location_code' => $this->location->location_code, 'name' => $this->location->name]
+            'location' => $this->whenLoaded('location', fn () => $this->location
+                ? ['id' => $this->location->id, 'name' => $this->location->name]
                 : null
             ),
 
-            'submitted_by_user' => $this->whenLoaded('submittedBy', fn() => $this->submittedBy
+            'submitted_by_user' => $this->whenLoaded('submittedBy', fn () => $this->submittedBy
                 ? ['id' => $this->submittedBy->id, 'name' => $this->submittedBy->name]
                 : null
             ),
 
-            'approved_by_user' => $this->whenLoaded('approvedBy', fn() => $this->approvedBy
+            'approved_by_user' => $this->whenLoaded('approvedBy', fn () => $this->approvedBy
                 ? ['id' => $this->approvedBy->id, 'name' => $this->approvedBy->name]
                 : null
             ),
 
-            'rejected_by_user' => $this->whenLoaded('rejectedBy', fn() => $this->rejectedBy
+            'rejected_by_user' => $this->whenLoaded('rejectedBy', fn () => $this->rejectedBy
                 ? ['id' => $this->rejectedBy->id, 'name' => $this->rejectedBy->name]
                 : null
             ),
 
             'lines_count' => $this->whenCounted('lines'),
-            'lines'       => InventoryAdjustmentLineResource::collection($this->whenLoaded('lines')),
+            'lines' => InventoryAdjustmentLineResource::collection($this->whenLoaded('lines')),
         ];
     }
 }
