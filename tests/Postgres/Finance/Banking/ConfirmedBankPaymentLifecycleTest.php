@@ -2,6 +2,7 @@
 
 namespace Tests\Postgres\Finance\Banking;
 
+use Carbon\Carbon;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -32,22 +33,36 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
     use RefreshDatabase;
 
     private int $sequence = 1;
+
     private Property $property;
+
     private User $actor;
+
     private string $apAccountId;
+
     private string $bankAccountId;
+
     private BankingSourceEvidenceService $bankingService;
+
     private GeneralCashierOperationalFoundationService $cashierService;
+
     private PaymentExecutionService $paymentExecutionService;
+
     private SupplierPaymentJournalCandidateService $candidateService;
+
     private JournalCandidateReviewService $reviewService;
+
     private JournalCandidateDraftMaterializationService $draftService;
+
     private JournalEntryDraftFinalizationAuthorizationService $authorizationService;
+
     private JournalEntryControlledPostingService $postingService;
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->travelTo(Carbon::parse('2026-07-01 10:00:00+00'));
 
         $this->property = $this->makeProperty();
         $this->actor = $this->makeUser();
@@ -55,8 +70,8 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
         app(CurrentPropertyService::class)->setPropertyId($this->property->id);
         $this->actingAs($this->actor);
 
-        $this->apAccountId = $this->makeAccount('AP-BANK-' . $this->sequence++, 'Liability', 'CurrentLiability', 'Credit', false);
-        $this->bankAccountId = $this->makeAccount('BANK-' . $this->sequence++, 'Asset', 'CurrentAsset', 'Debit', true);
+        $this->apAccountId = $this->makeAccount('AP-BANK-'.$this->sequence++, 'Liability', 'CurrentLiability', 'Credit', false);
+        $this->bankAccountId = $this->makeAccount('BANK-'.$this->sequence++, 'Asset', 'CurrentAsset', 'Debit', true);
         $this->makeOperationalIdentityMapping('AP_CONTROL', $this->apAccountId);
         $this->makeOperationalIdentityMapping('CASH_AND_BANK', $this->bankAccountId);
         $this->makeOpenPostingBoundaries();
@@ -88,15 +103,15 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
             $this->bankAccountId,
             'Controlled Bank',
             'Operating Account',
-            'BANK-EXT-' . $this->sequence++,
+            'BANK-EXT-'.$this->sequence++,
             'IDR',
-            'BANK-ACCOUNT-SOURCE-' . $this->sequence++,
+            'BANK-ACCOUNT-SOURCE-'.$this->sequence++,
             $this->actor
         );
         $statement = $this->bankingService->registerStatementLine(
             $bank->id,
-            'STATEMENT-SOURCE-' . $this->sequence++,
-            'BANK-LINE-' . $this->sequence++,
+            'STATEMENT-SOURCE-'.$this->sequence++,
+            'BANK-LINE-'.$this->sequence++,
             '2026-07-01',
             ControlledBankStatementLineDirectionEnum::OUTFLOW,
             '125.00',
@@ -169,15 +184,15 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
             $this->bankAccountId,
             'Controlled Bank',
             'Operating Account',
-            'BANK-EXT-' . $this->sequence++,
+            'BANK-EXT-'.$this->sequence++,
             'IDR',
-            'BANK-ACCOUNT-SOURCE-' . $this->sequence++,
+            'BANK-ACCOUNT-SOURCE-'.$this->sequence++,
             $this->actor
         );
         $statement = $this->bankingService->registerStatementLine(
             $bank->id,
-            'STATEMENT-SOURCE-' . $this->sequence++,
-            'BANK-LINE-' . $this->sequence++,
+            'STATEMENT-SOURCE-'.$this->sequence++,
+            'BANK-LINE-'.$this->sequence++,
             '2026-07-01',
             ControlledBankStatementLineDirectionEnum::OUTFLOW,
             '125.00',
@@ -205,8 +220,8 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
 
         $conflicting = $this->bankingService->registerStatementLine(
             $bank->id,
-            'STATEMENT-SOURCE-' . $this->sequence++,
-            'BANK-LINE-' . $this->sequence++,
+            'STATEMENT-SOURCE-'.$this->sequence++,
+            'BANK-LINE-'.$this->sequence++,
             '2026-07-01',
             ControlledBankStatementLineDirectionEnum::OUTFLOW,
             '126.00',
@@ -264,7 +279,7 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
             'property_id' => $this->property->id,
             'transaction_date' => '2026-07-01',
             'posting_date' => null,
-            'reference' => 'AP-BANK-SOURCE-' . $suffix,
+            'reference' => 'AP-BANK-SOURCE-'.$suffix,
             'description' => 'Posted AP liability source for confirmed BANK payment',
             'status' => JournalStatusEnum::Draft->value,
             'source_module' => 'Payables',
@@ -285,7 +300,7 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
                 'id' => (string) Str::ulid(),
                 'property_id' => $this->property->id,
                 'journal_entry_id' => $sourceJournalEntryId,
-                'account_id' => $this->makeAccount('INV-BANK-' . $this->sequence++, 'Asset', 'CurrentAsset', 'Debit', false),
+                'account_id' => $this->makeAccount('INV-BANK-'.$this->sequence++, 'Asset', 'CurrentAsset', 'Debit', false),
                 'debit_amount' => $amount,
                 'credit_amount' => '0.00',
                 'memo' => 'Debit source inventory fixture',
@@ -324,7 +339,7 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
             'id' => $proposalId,
             'property_id' => $this->property->id,
             'vendor_id' => $vendorId,
-            'proposal_number' => 'BANK-PAY-' . $suffix,
+            'proposal_number' => 'BANK-PAY-'.$suffix,
             'currency_code' => 'IDR',
             'status' => 'APPROVED',
             'source_fingerprint' => hash('sha256', $sourceJournalEntryId),
@@ -373,7 +388,7 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
         DB::table('cashier_payment_instruments')->insert([
             'id' => $instrumentId,
             'property_id' => $this->property->id,
-            'name' => 'BANK Instrument ' . $this->sequence++,
+            'name' => 'BANK Instrument '.$this->sequence++,
             'type' => CashierPaymentInstrumentTypeEnum::BANK->value,
             'operational_gl_account_id' => $this->bankAccountId,
             'is_active' => true,
@@ -499,7 +514,7 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
             'id' => $accountId,
             'property_id' => $this->property->id,
             'code' => $code,
-            'name' => $code . ' Account',
+            'name' => $code.' Account',
             'normal_balance' => $normalBalance,
             'account_type' => $type,
             'account_category' => $category,
@@ -534,8 +549,8 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
 
         DB::table('companies')->insert([
             'id' => $companyId,
-            'name' => 'Confirmed Bank Payment Company ' . $suffix,
-            'slug' => 'confirmed-bank-payment-company-' . $suffix,
+            'name' => 'Confirmed Bank Payment Company '.$suffix,
+            'slug' => 'confirmed-bank-payment-company-'.$suffix,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -544,9 +559,9 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
         DB::table('properties')->insert([
             'id' => $propertyId,
             'company_id' => $companyId,
-            'name' => 'Confirmed Bank Payment Property ' . $suffix,
-            'slug' => 'confirmed-bank-payment-property-' . $suffix,
-            'code' => 'BP' . $suffix,
+            'name' => 'Confirmed Bank Payment Property '.$suffix,
+            'slug' => 'confirmed-bank-payment-property-'.$suffix,
+            'code' => 'BP'.$suffix,
             'timezone' => 'UTC',
             'currency' => 'IDR',
             'is_active' => true,
@@ -566,8 +581,8 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $userId,
             'is_system_admin' => false,
-            'name' => 'Confirmed Bank Payment User ' . $suffix,
-            'email' => 'confirmed-bank-payment-user-' . $suffix . '@example.test',
+            'name' => 'Confirmed Bank Payment User '.$suffix,
+            'email' => 'confirmed-bank-payment-user-'.$suffix.'@example.test',
             'password' => 'not-used',
             'is_active' => true,
             'created_at' => $timestamp,
