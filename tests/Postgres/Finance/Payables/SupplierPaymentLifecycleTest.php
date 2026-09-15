@@ -21,6 +21,7 @@ use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
 use Modules\Finance\Payables\Services\SupplierInvoiceRegistrationService;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\Property\Services\BusinessDateCloseService;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierOperationalFoundationService;
 use Modules\Operations\GeneralCashier\Services\PaymentExecutionService;
@@ -502,7 +503,14 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         $secondContext = $this->makeSupplierPaymentDraftContext();
         $secondDraft = $secondContext['payment_draft'];
         $this->draftAuthorizationService->authorize($secondDraft->id, $this->actor->id);
-        $this->closeBusinessDate($this->property, $secondDraft->transaction_date->toDateString());
+
+        $session = app('session')->driver();
+        $session->put('active_property_id', $this->property->id);
+        request()->setLaravelSession($session);
+        $closedBusinessDate = app(BusinessDateCloseService::class)->closeCurrentBusinessDate();
+
+        $this->assertSame('Closed', $closedBusinessDate->status->value);
+        $this->assertSame($this->actor->id, $closedBusinessDate->closed_by);
 
         try {
             $this->postingService->post($secondDraft->id, $this->actor->id);
@@ -832,19 +840,6 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             ->where('period_month', (int) date('m', strtotime($date)))
             ->update([
                 'status' => 'Closed',
-                'closed_at' => now(),
-                'updated_at' => now(),
-            ]);
-    }
-
-    private function closeBusinessDate(Property $property, string $date): void
-    {
-        DB::table('property_business_dates')
-            ->where('property_id', $property->id)
-            ->where('business_date', $date)
-            ->update([
-                'status' => 'Closed',
-                'is_open' => null,
                 'closed_at' => now(),
                 'updated_at' => now(),
             ]);
