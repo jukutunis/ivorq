@@ -2,29 +2,31 @@
 
 namespace Tests\Feature\Finance;
 
-use Tests\TestCase;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Shared\Services\CurrentPropertyService;
-use Modules\Foundation\Property\Models\PropertyBusinessDate;
-use Modules\Foundation\Property\Models\Property;
-use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
-use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
-use Modules\Finance\GeneralLedger\Services\PostingPeriodGuard;
-use Modules\Finance\GeneralLedger\Exceptions\FinancialPeriodMissingException;
-use Modules\Finance\GeneralLedger\Exceptions\FinancialPeriodNotOpenException;
 use Modules\Finance\GeneralLedger\Exceptions\FinancialPeriodAmbiguousException;
 use Modules\Finance\GeneralLedger\Exceptions\FinancialPeriodInvalidStateException;
-use Shared\Exceptions\PropertyNotResolvedException;
-use Shared\Exceptions\BusinessLogicException;
-use Carbon\Carbon;
+use Modules\Finance\GeneralLedger\Exceptions\FinancialPeriodMissingException;
+use Modules\Finance\GeneralLedger\Exceptions\FinancialPeriodNotOpenException;
+use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
+use Modules\Finance\GeneralLedger\Services\PostingPeriodGuard;
+use Modules\Foundation\Property\Models\Company;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Modules\Foundation\Property\Services\CurrentBusinessDateService;
 use ReflectionMethod;
+use RuntimeException;
+use Shared\Exceptions\PropertyNotResolvedException;
+use Shared\Services\CurrentPropertyService;
+use Tests\TestCase;
 
 class PostingPeriodGuardTest extends TestCase
 {
     use RefreshDatabase;
 
     private CurrentPropertyService $currentPropertyService;
+
     private PostingPeriodGuard $guard;
 
     protected function setUp(): void
@@ -36,28 +38,30 @@ class PostingPeriodGuardTest extends TestCase
 
     private function createProperty(): Property
     {
-        $company = \Modules\Foundation\Property\Models\Company::first();
-        if (!$company) {
-            $company = new \Modules\Foundation\Property\Models\Company([
+        $company = Company::first();
+        if (! $company) {
+            $company = new Company([
                 'name' => 'Test Company',
-                'slug' => 'test-company-' . uniqid(),
+                'slug' => 'test-company-'.uniqid(),
             ]);
             $company->save();
         }
 
         $property = new Property([
-            'name' => 'Test Property ' . uniqid(),
-            'slug' => 'test-property-' . uniqid(),
-            'code' => 'TST' . rand(10, 99),
+            'name' => 'Test Property '.uniqid(),
+            'slug' => 'test-property-'.uniqid(),
+            'code' => 'TST'.rand(10, 99),
             'company_id' => $company->id,
         ]);
         $property->save();
+
         return $property;
     }
 
     private function setupBusinessDate(Property $property, string $status = 'Open', ?Carbon $date = null): PropertyBusinessDate
     {
         $date = $date ?? Carbon::parse('2026-06-21');
+
         return PropertyBusinessDate::factory()->create([
             'property_id' => $property->id,
             'business_date' => $date->format('Y-m-d'),
@@ -79,14 +83,15 @@ class PostingPeriodGuardTest extends TestCase
             'opened_by' => 'test-user',
         ]);
         $fp->save();
+
         return $fp;
     }
 
     private function executeGuardWithProofs(callable $action, Property $property, array $forbiddenPropertyIds = [], bool $expectDbQuery = true)
     {
         // Snapshot state
-        $fpsBefore = FinancialPeriod::withTrashed()->orderBy('id')->get()->map(fn($m) => $m->getAttributes())->toArray();
-        $bdsBefore = PropertyBusinessDate::orderBy('id')->get()->map(fn($m) => $m->getAttributes())->toArray();
+        $fpsBefore = FinancialPeriod::withTrashed()->orderBy('id')->get()->map(fn ($m) => $m->getAttributes())->toArray();
+        $bdsBefore = PropertyBusinessDate::orderBy('id')->get()->map(fn ($m) => $m->getAttributes())->toArray();
 
         DB::connection()->enableQueryLog();
         DB::connection()->flushQueryLog();
@@ -97,12 +102,12 @@ class PostingPeriodGuardTest extends TestCase
         } finally {
             $log = DB::connection()->getQueryLog();
             DB::connection()->disableQueryLog();
-            
+
             $fpQueried = false;
-            
+
             foreach ($log as $query) {
                 $sql = strtolower($query['query']);
-                
+
                 // Strong no-mutation assertion
                 $this->assertStringNotContainsString('insert into', $sql, "Guard executed INSERT: $sql");
                 $this->assertStringNotContainsString('update ', $sql, "Guard executed UPDATE: $sql");
@@ -112,34 +117,34 @@ class PostingPeriodGuardTest extends TestCase
                 // Isolation Proof
                 if (str_contains($sql, 'gl_financial_periods')) {
                     $fpQueried = true;
-                    
-                    $this->assertStringContainsString('deleted_at', $sql, "Query must use normal soft-delete scoping");
+
+                    $this->assertStringContainsString('deleted_at', $sql, 'Query must use normal soft-delete scoping');
                     $this->assertStringNotContainsString('withoutglobalscopes', str_replace(' ', '', $sql));
-                    
+
                     $hasPropertyBinding = false;
                     foreach ($query['bindings'] as $binding) {
-                        if ((string)$binding === (string)$property->id) {
+                        if ((string) $binding === (string) $property->id) {
                             $hasPropertyBinding = true;
                         }
                         foreach ($forbiddenPropertyIds as $forbiddenId) {
-                            $this->assertNotEquals((string)$forbiddenId, (string)$binding, "FinancialPeriod query binding contained FORBIDDEN Property ID {$forbiddenId}");
+                            $this->assertNotEquals((string) $forbiddenId, (string) $binding, "FinancialPeriod query binding contained FORBIDDEN Property ID {$forbiddenId}");
                         }
                     }
-                    $this->assertTrue($hasPropertyBinding, "FinancialPeriod query bindings must contain the current Property ID.");
+                    $this->assertTrue($hasPropertyBinding, 'FinancialPeriod query bindings must contain the current Property ID.');
                 }
             }
-            
+
             if ($expectDbQuery) {
-                $this->assertTrue($fpQueried, "Expected at least one gl_financial_periods query.");
+                $this->assertTrue($fpQueried, 'Expected at least one gl_financial_periods query.');
             }
 
-            $fpsAfter = FinancialPeriod::withTrashed()->orderBy('id')->get()->map(fn($m) => $m->getAttributes())->toArray();
-            $bdsAfter = PropertyBusinessDate::orderBy('id')->get()->map(fn($m) => $m->getAttributes())->toArray();
-            
-            $this->assertEquals($fpsBefore, $fpsAfter, "FinancialPeriod state mutated");
-            $this->assertEquals($bdsBefore, $bdsAfter, "PropertyBusinessDate state mutated");
+            $fpsAfter = FinancialPeriod::withTrashed()->orderBy('id')->get()->map(fn ($m) => $m->getAttributes())->toArray();
+            $bdsAfter = PropertyBusinessDate::orderBy('id')->get()->map(fn ($m) => $m->getAttributes())->toArray();
+
+            $this->assertEquals($fpsBefore, $fpsAfter, 'FinancialPeriod state mutated');
+            $this->assertEquals($bdsBefore, $bdsAfter, 'PropertyBusinessDate state mutated');
         }
-        
+
         return $log;
     }
 
@@ -152,12 +157,12 @@ class PostingPeriodGuardTest extends TestCase
     public function test_static_non_use_proof()
     {
         $content = file_get_contents(app_path('../Modules/Finance/GeneralLedger/Services/PostingPeriodGuard.php'));
-        
+
         // This proof applies ONLY to the primary posting guard source file (PostingPeriodGuard.php).
-        // It ensures the production guard does not use forbidden APIs or remove scopes, 
-        // which is strictly required for isolation. It does not apply to the rest of the repository 
+        // It ensures the production guard does not use forbidden APIs or remove scopes,
+        // which is strictly required for isolation. It does not apply to the rest of the repository
         // nor to test-only snapshot logic which safely uses withTrashed.
-        
+
         $this->assertStringNotContainsString('PeriodControlService', $content, 'PostingPeriodGuard must not use PeriodControlService');
         $this->assertStringNotContainsString('withTrashed', $content, 'PostingPeriodGuard must not use withTrashed');
         $this->assertStringNotContainsString('onlyTrashed', $content, 'PostingPeriodGuard must not use onlyTrashed');
@@ -183,7 +188,8 @@ class PostingPeriodGuardTest extends TestCase
         $this->currentPropertyService->setPropertyId($property->id);
 
         $this->executeGuardWithProofs(function () {
-            $this->expectException(\Shared\Exceptions\NotFoundException::class);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage(CurrentBusinessDateService::ERROR_NOT_INITIALIZED);
             $this->guard->assertPostingAllowed();
         }, $property, [], false);
     }
@@ -195,8 +201,8 @@ class PostingPeriodGuardTest extends TestCase
         $this->setupBusinessDate($property, 'Closed');
 
         $this->executeGuardWithProofs(function () {
-            $this->expectException(BusinessLogicException::class);
-            $this->expectExceptionMessage("Business Date history exists but no Open Business Date exists.");
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage(CurrentBusinessDateService::ERROR_OPEN_UNAVAILABLE);
             $this->guard->assertPostingAllowed();
         }, $property, [], false);
     }
@@ -275,7 +281,7 @@ class PostingPeriodGuardTest extends TestCase
     {
         $propertyA = $this->createProperty();
         $propertyB = $this->createProperty();
-        
+
         $bdA = $this->setupBusinessDate($propertyA, 'Open');
         $fpA = $this->createFinancialPeriod($propertyA, $bdA->business_date, 'Open');
 
@@ -328,17 +334,20 @@ class PostingPeriodGuardTest extends TestCase
             }
         }, $property);
     }
-    
+
     public function test_ambiguous_period_rejects_defensively()
     {
         $property = $this->createProperty();
         $this->currentPropertyService->setPropertyId($property->id);
         $bd = $this->setupBusinessDate($property, 'Open');
-        
-        $guard = new class($this->currentPropertyService, $this->app->make(\Modules\Foundation\Property\Services\CurrentBusinessDateService::class)) extends PostingPeriodGuard {
-            protected function resolveCandidates(string $propertyId, int $year, int $month) {
-                $fp1 = new \Modules\Finance\GeneralLedger\Models\FinancialPeriod();
-                $fp2 = new \Modules\Finance\GeneralLedger\Models\FinancialPeriod();
+
+        $guard = new class($this->currentPropertyService, $this->app->make(CurrentBusinessDateService::class)) extends PostingPeriodGuard
+        {
+            protected function resolveCandidates(string $propertyId, int $year, int $month)
+            {
+                $fp1 = new FinancialPeriod;
+                $fp2 = new FinancialPeriod;
+
                 return collect([$fp1, $fp2]);
             }
         };

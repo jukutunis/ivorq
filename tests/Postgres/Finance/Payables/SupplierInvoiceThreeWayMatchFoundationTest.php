@@ -5,16 +5,18 @@ namespace Tests\Postgres\Finance\Payables;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Finance\GeneralLedger\Services\GrniClearingApLiabilityCandidateService;
-use Modules\Finance\GeneralLedger\Services\JournalEntryControlledPostingService;
-use Modules\Finance\GeneralLedger\Services\JournalEntryDraftFinalizationAuthorizationService;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationService;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateReviewService;
+use Modules\Finance\GeneralLedger\Services\JournalEntryControlledPostingService;
+use Modules\Finance\GeneralLedger\Services\JournalEntryDraftFinalizationAuthorizationService;
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
+use Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController;
 use Modules\Finance\Payables\Services\ApGrniSettlementAgingProjectionService;
 use Modules\Finance\Payables\Services\GrniClearingAllocationEligibilityService;
 use Modules\Finance\Payables\Services\PaymentProposalApprovalService;
@@ -25,8 +27,11 @@ use Modules\Finance\Payables\Services\SupplierInvoiceRegistrationService;
 use Modules\Finance\Payables\Services\ThreeWayMatchingEngine;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\Property\Services\BusinessDateCloseService;
 use Modules\Foundation\User\Models\User;
+use Shared\Services\CurrentPropertyService;
 use Spatie\Permission\PermissionRegistrar;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\PostgresTestCase;
 
 class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
@@ -34,19 +39,33 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     use RefreshDatabase;
 
     private Property $property;
+
     private User $actor;
+
     private SupplierInvoiceRegistrationService $service;
+
     private SupplierInvoiceExceptionReviewService $exceptionReviewService;
+
     private SupplierInvoiceApprovalService $approvalService;
+
     private GrniClearingAllocationEligibilityService $grniEligibilityService;
+
     private GrniClearingApLiabilityCandidateService $grniCandidateService;
+
     private JournalCandidateReviewService $candidateReviewService;
+
     private JournalCandidateDraftMaterializationService $draftMaterializationService;
+
     private JournalEntryDraftFinalizationAuthorizationService $draftFinalizationAuthorizationService;
+
     private JournalEntryControlledPostingService $controlledPostingService;
+
     private ApGrniSettlementAgingProjectionService $settlementProjectionService;
+
     private PaymentProposalService $paymentProposalService;
+
     private PaymentProposalApprovalService $paymentProposalApprovalService;
+
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -187,7 +206,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     public function test_vendor_mismatch_creates_controlled_exception_without_source_mutation(): void
     {
         $fixture = $this->makePurchasingFixture($this->property);
-        $invoiceVendorId = $this->makeVendor($this->property, 'ALT-' . $this->sequence++);
+        $invoiceVendorId = $this->makeVendor($this->property, 'ALT-'.$this->sequence++);
         $payload = $this->invoicePayload($fixture, [
             'vendor_id' => $invoiceVendorId,
         ]);
@@ -712,7 +731,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $crossVendorInvoice = $this->approvalService->approve($crossVendorResult['invoice']->id, $this->actor);
         DB::table('receiving_documents')
             ->where('id', $crossVendorFixture['goods_receipt_id'])
-            ->update(['vendor_id' => $this->makeVendor($this->property, 'ALT-' . $this->sequence++)]);
+            ->update(['vendor_id' => $this->makeVendor($this->property, 'ALT-'.$this->sequence++)]);
         $this->makePostedGrniEvidence($crossVendorFixture);
 
         $ambiguousFixture = $this->makePurchasingFixture($this->property);
@@ -859,7 +878,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertSame($snapshot, $this->candidateSnapshot($candidate->id));
         $this->assertControlledSnapshotUnchanged($controlledBeforeRepeat);
 
-        $newApAccountId = $this->makeAccount($this->property, 'APX-' . $this->sequence++, 'Changed AP Control', 'Liability', 'CurrentLiability', 'Credit');
+        $newApAccountId = $this->makeAccount($this->property, 'APX-'.$this->sequence++, 'Changed AP Control', 'Liability', 'CurrentLiability', 'Credit');
         DB::table('gl_operational_identity_mappings')
             ->where('id', $accounts['ap_mapping_id'])
             ->update(['account_id' => $newApAccountId]);
@@ -1345,10 +1364,10 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $otherProperty = $this->makeProperty();
         $otherActor = $this->makeAuthorizedActor($otherProperty);
         $otherFixture = $this->makePurchasingFixture($otherProperty);
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($otherProperty->id);
+        app(CurrentPropertyService::class)->setPropertyId($otherProperty->id);
         $otherResult = $this->service->registerAndMatch($this->invoicePayload($otherFixture), $otherActor);
         $this->approvalService->approve($otherResult['invoice']->id, $otherActor);
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
 
         $before = $this->controlledSnapshot();
         $projection = $this->settlementProjectionService->project($this->property->id);
@@ -1378,16 +1397,18 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertSame('PENDING_REVIEW', $this->candidateSnapshot($heldContext['candidate']->id)['candidate']['status']);
     }
 
-    public function test_ap_grni_settlement_projection_uses_unavailable_age_when_current_business_date_is_missing(): void
+    public function test_ap_grni_settlement_projection_uses_unavailable_age_when_open_business_date_is_unavailable(): void
     {
         $context = $this->makeApprovedGrniApDraft();
         $draft = $context['draft'];
         $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
         $this->draftFinalizationAuthorizationService->authorize($draft->id, $this->actor->id);
         $this->controlledPostingService->post($draft->id, $this->actor->id);
-        DB::table('property_business_dates')
-            ->where('property_id', $this->property->id)
-            ->delete();
+
+        $session = app('session')->driver();
+        $session->put('active_property_id', $this->property->id);
+        request()->setLaravelSession($session);
+        app(BusinessDateCloseService::class)->closeCurrentBusinessDate();
 
         $before = $this->controlledSnapshot();
         $projection = $this->settlementProjectionService->project($this->property->id);
@@ -1402,13 +1423,13 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
     {
         $unauthorized = $this->makeUser();
         $this->attachActorToProperty($unauthorized, $this->property);
-        $request = \Illuminate\Http\Request::create('/finance/payables/ap-grni-settlement-control', 'GET');
+        $request = Request::create('/finance/payables/ap-grni-settlement-control', 'GET');
         $request->setUserResolver(fn () => $unauthorized);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(HttpException::class);
         $this->expectExceptionMessage('Unauthorized.');
 
-        app(\Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController::class)->index($request);
+        app(ApGrniSettlementControlWorkspaceController::class)->index($request);
     }
 
     public function test_authorized_actor_creates_draft_payment_proposal_from_posted_ap_liability(): void
@@ -1729,8 +1750,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
 
         DB::table('companies')->insert([
             'id' => $companyId,
-            'name' => 'Supplier Invoice Company ' . $suffix,
-            'slug' => 'supplier-invoice-company-' . $suffix,
+            'name' => 'Supplier Invoice Company '.$suffix,
+            'slug' => 'supplier-invoice-company-'.$suffix,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1739,9 +1760,9 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('properties')->insert([
             'id' => $propertyId,
             'company_id' => $companyId,
-            'name' => 'Supplier Invoice Property ' . $suffix,
-            'slug' => 'supplier-invoice-property-' . $suffix,
-            'code' => 'SIP' . $suffix,
+            'name' => 'Supplier Invoice Property '.$suffix,
+            'slug' => 'supplier-invoice-property-'.$suffix,
+            'code' => 'SIP'.$suffix,
             'timezone' => 'UTC',
             'currency' => 'IDR',
             'is_active' => true,
@@ -1761,8 +1782,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $userId,
             'is_system_admin' => false,
-            'name' => 'Supplier Invoice User ' . $suffix,
-            'email' => 'supplier-invoice-user-' . $suffix . '@example.test',
+            'name' => 'Supplier Invoice User '.$suffix,
+            'email' => 'supplier-invoice-user-'.$suffix.'@example.test',
             'password' => 'not-used',
             'is_active' => $active,
             'created_at' => $timestamp,
@@ -1774,7 +1795,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
 
     private function makePurchasingFixture(Property $property): array
     {
-        $vendorId = $this->makeVendor($property, 'SUP-' . $this->sequence++);
+        $vendorId = $this->makeVendor($property, 'SUP-'.$this->sequence++);
         $departmentId = (string) Str::ulid();
         $requestId = (string) Str::ulid();
         $purchaseOrderId = (string) Str::ulid();
@@ -1790,8 +1811,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('departments')->insert([
             'id' => $departmentId,
             'property_id' => $property->id,
-            'name' => 'Purchasing ' . $this->sequence,
-            'code' => 'PUR-' . $this->sequence++,
+            'name' => 'Purchasing '.$this->sequence,
+            'code' => 'PUR-'.$this->sequence++,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1800,7 +1821,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('purchase_requests')->insert([
             'id' => $requestId,
             'property_id' => $property->id,
-            'request_no' => 'PR-' . $this->sequence++,
+            'request_no' => 'PR-'.$this->sequence++,
             'department_id' => $departmentId,
             'requester_id' => $this->actor->id,
             'required_date' => '2026-07-05',
@@ -1815,7 +1836,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('purchase_orders')->insert([
             'id' => $purchaseOrderId,
             'property_id' => $property->id,
-            'po_no' => 'PO-' . $this->sequence++,
+            'po_no' => 'PO-'.$this->sequence++,
             'vendor_id' => $vendorId,
             'purchase_request_id' => $requestId,
             'issue_date' => '2026-06-29',
@@ -1836,7 +1857,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('inventory_categories')->insert([
             'id' => $categoryId,
             'property_id' => $property->id,
-            'name' => 'Food ' . $this->sequence++,
+            'name' => 'Food '.$this->sequence++,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
         ]);
@@ -1844,7 +1865,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('inventory_units')->insert([
             'id' => $unitId,
             'property_id' => $property->id,
-            'code' => 'EA-' . $this->sequence++,
+            'code' => 'EA-'.$this->sequence++,
             'name' => 'Each',
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1853,7 +1874,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('inventory_items')->insert([
             'id' => $itemId,
             'property_id' => $property->id,
-            'sku' => 'SKU-' . $this->sequence++,
+            'sku' => 'SKU-'.$this->sequence++,
             'name' => 'Supplier invoice test item',
             'category_id' => $categoryId,
             'inventory_type' => 'stock',
@@ -1868,7 +1889,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('inventory_locations')->insert([
             'id' => $locationId,
             'property_id' => $property->id,
-            'name' => 'Main Store ' . $this->sequence++,
+            'name' => 'Main Store '.$this->sequence++,
             'type' => 'storeroom',
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1897,7 +1918,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'property_id' => $property->id,
             'vendor_id' => $vendorId,
             'purchase_order_id' => $purchaseOrderId,
-            'grn_number' => 'GRN-' . $this->sequence++,
+            'grn_number' => 'GRN-'.$this->sequence++,
             'status' => 'approved',
             'received_at' => '2026-06-30 00:00:00',
             'received_by' => $this->actor->id,
@@ -1946,8 +1967,8 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('vendor_categories')->insert([
             'id' => $categoryId,
             'property_id' => $property->id,
-            'category_code' => 'VC-' . $code,
-            'name' => 'Vendor Category ' . $code,
+            'category_code' => 'VC-'.$code,
+            'name' => 'Vendor Category '.$code,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1958,7 +1979,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'property_id' => $property->id,
             'vendor_category_id' => $categoryId,
             'vendor_code' => $code,
-            'name' => 'Vendor ' . $code,
+            'name' => 'Vendor '.$code,
             'default_currency_code' => 'IDR',
             'is_active' => true,
             'is_approved' => true,
@@ -1985,7 +2006,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'vendor_id' => $fixture['vendor_id'],
             'purchase_order_id' => $fixture['purchase_order_id'],
             'goods_receipt_id' => $fixture['goods_receipt_id'],
-            'invoice_number' => 'SINV-' . $this->sequence++,
+            'invoice_number' => 'SINV-'.$this->sequence++,
             'invoice_date' => '2026-06-30',
             'currency_code' => $fixture['currency_code'],
             'tax_amount' => 0,
@@ -2127,9 +2148,9 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
 
     private function makeGrniClearingAccountMappings(Property $property): array
     {
-        $inventoryAccountId = $this->makeAccount($property, 'INV-' . $this->sequence++, 'Inventory Control', 'Asset', 'CurrentAsset', 'Debit');
-        $grniAccountId = $this->makeAccount($property, 'GRNI-' . $this->sequence++, 'GRNI Receipt Liability', 'Liability', 'CurrentLiability', 'Credit');
-        $apAccountId = $this->makeAccount($property, 'AP-' . $this->sequence++, 'AP Control Liability', 'Liability', 'CurrentLiability', 'Credit');
+        $inventoryAccountId = $this->makeAccount($property, 'INV-'.$this->sequence++, 'Inventory Control', 'Asset', 'CurrentAsset', 'Debit');
+        $grniAccountId = $this->makeAccount($property, 'GRNI-'.$this->sequence++, 'GRNI Receipt Liability', 'Liability', 'CurrentLiability', 'Credit');
+        $apAccountId = $this->makeAccount($property, 'AP-'.$this->sequence++, 'AP Control Liability', 'Liability', 'CurrentLiability', 'Credit');
 
         return [
             'inventory_account_id' => $inventoryAccountId,
@@ -2211,13 +2232,11 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             ]
         );
 
-        DB::table('property_business_dates')->updateOrInsert(
-            [
-                'property_id' => $property->id,
-                'business_date' => $date,
-            ],
+        DB::table('property_business_dates')->insertOrIgnore(
             [
                 'id' => (string) Str::ulid(),
+                'property_id' => $property->id,
+                'business_date' => $date,
                 'status' => 'Open',
                 'is_open' => true,
                 'opened_at' => $timestamp,
@@ -2385,7 +2404,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         DB::table('inventory_receipts')->insert([
             'id' => $receiptId,
             'property_id' => $receiptPropertyId,
-            'receipt_number' => 'IR-' . $this->sequence++,
+            'receipt_number' => 'IR-'.$this->sequence++,
             'supplier_name' => 'Vendor GRNI source',
             'external_reference' => $fixture['goods_receipt_id'],
             'receiving_document_id' => $fixture['goods_receipt_id'],
@@ -2430,7 +2449,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'posting_event' => 'InventoryReceiptAccrual',
             'status' => $overrides['candidate_status'] ?? 'APPROVED',
             'candidate_date' => '2026-06-30',
-            'description' => 'GRNI Accrual for Receipt ' . $receiptId,
+            'description' => 'GRNI Accrual for Receipt '.$receiptId,
             'created_by' => $this->actor->id,
             'updated_by' => $this->actor->id,
             'approved_by' => $this->actor->id,

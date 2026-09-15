@@ -21,6 +21,7 @@ use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
 use Modules\Finance\Payables\Services\SupplierInvoiceRegistrationService;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\Property\Services\BusinessDateCloseService;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierOperationalFoundationService;
 use Modules\Operations\GeneralCashier\Services\PaymentExecutionService;
@@ -33,19 +34,33 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
     use RefreshDatabase;
 
     private Property $property;
+
     private User $actor;
+
     private SupplierInvoiceRegistrationService $invoiceRegistrationService;
+
     private SupplierInvoiceApprovalService $invoiceApprovalService;
+
     private GrniClearingApLiabilityCandidateService $grniCandidateService;
+
     private JournalCandidateReviewService $candidateReviewService;
+
     private JournalCandidateDraftMaterializationService $draftMaterializationService;
+
     private JournalEntryDraftFinalizationAuthorizationService $draftAuthorizationService;
+
     private JournalEntryControlledPostingService $postingService;
+
     private SupplierPaymentJournalCandidateService $supplierPaymentCandidateService;
+
     private PaymentProposalService $proposalService;
+
     private PaymentProposalApprovalService $proposalApprovalService;
+
     private GeneralCashierOperationalFoundationService $cashierService;
+
     private PaymentExecutionService $paymentExecutionService;
+
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -409,7 +424,6 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
     {
         $context = $this->makeSupplierPaymentDraftContext();
         $draft = $context['payment_draft'];
-        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
         $beforeAuthorization = $this->controlledSnapshot();
 
         $authorized = $this->draftAuthorizationService->authorize($draft->id, $this->actor->id);
@@ -472,7 +486,6 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         }
 
         $this->draftAuthorizationService->authorize($draft->id, $this->actor->id);
-        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
         $this->closeFinancialPeriod($this->property, $draft->transaction_date->toDateString());
 
         try {
@@ -482,11 +495,22 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             $this->assertStringContainsString('FinancialPeriod', $exception->getMessage());
         }
 
-        $secondContext = $this->makeSupplierPaymentDraftContext($context['accounts']);
+        $this->property = $this->makeProperty();
+        $this->actor = $this->makeAuthorizedActor($this->property);
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
+        $this->actingAs($this->actor);
+
+        $secondContext = $this->makeSupplierPaymentDraftContext();
         $secondDraft = $secondContext['payment_draft'];
         $this->draftAuthorizationService->authorize($secondDraft->id, $this->actor->id);
-        $this->openPostingControls($this->property, $secondDraft->transaction_date->toDateString());
-        $this->closeBusinessDate($this->property, $secondDraft->transaction_date->toDateString());
+
+        $session = app('session')->driver();
+        $session->put('active_property_id', $this->property->id);
+        request()->setLaravelSession($session);
+        $closedBusinessDate = app(BusinessDateCloseService::class)->closeCurrentBusinessDate();
+
+        $this->assertSame('Closed', $closedBusinessDate->status->value);
+        $this->assertSame($this->actor->id, $closedBusinessDate->closed_by);
 
         try {
             $this->postingService->post($secondDraft->id, $this->actor->id);
@@ -500,7 +524,6 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
     {
         $context = $this->makeSupplierPaymentDraftContext();
         $draft = $context['payment_draft'];
-        $this->openPostingControls($this->property, $draft->transaction_date->toDateString());
         $this->draftAuthorizationService->authorize($draft->id, $this->actor->id);
         $before = $this->controlledSnapshot();
 
@@ -683,7 +706,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('cashier_payment_instruments')->insert([
             'id' => $instrumentId,
             'property_id' => $this->property->id,
-            'name' => $type . ' Instrument ' . $this->sequence++,
+            'name' => $type.' Instrument '.$this->sequence++,
             'type' => $type,
             'operational_gl_account_id' => $accountId,
             'is_active' => true,
@@ -701,10 +724,10 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
 
     private function makeAccountMappings(Property $property): array
     {
-        $inventoryAccountId = $this->makeAccount($property, 'INV-' . $this->sequence++, 'Inventory Control', 'Asset', 'CurrentAsset', 'Debit');
-        $grniAccountId = $this->makeAccount($property, 'GRNI-' . $this->sequence++, 'GRNI Receipt Liability', 'Liability', 'CurrentLiability', 'Credit');
-        $apAccountId = $this->makeAccount($property, 'AP-' . $this->sequence++, 'AP Control Liability', 'Liability', 'CurrentLiability', 'Credit');
-        $cashAccountId = $this->makeAccount($property, 'CASH-' . $this->sequence++, 'Cash on Hand', 'Asset', 'CurrentAsset', 'Debit', true, true);
+        $inventoryAccountId = $this->makeAccount($property, 'INV-'.$this->sequence++, 'Inventory Control', 'Asset', 'CurrentAsset', 'Debit');
+        $grniAccountId = $this->makeAccount($property, 'GRNI-'.$this->sequence++, 'GRNI Receipt Liability', 'Liability', 'CurrentLiability', 'Credit');
+        $apAccountId = $this->makeAccount($property, 'AP-'.$this->sequence++, 'AP Control Liability', 'Liability', 'CurrentLiability', 'Credit');
+        $cashAccountId = $this->makeAccount($property, 'CASH-'.$this->sequence++, 'Cash on Hand', 'Asset', 'CurrentAsset', 'Debit', true, true);
 
         return [
             'inventory_account_id' => $inventoryAccountId,
@@ -794,13 +817,11 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             ]
         );
 
-        DB::table('property_business_dates')->updateOrInsert(
-            [
-                'property_id' => $property->id,
-                'business_date' => $date,
-            ],
+        DB::table('property_business_dates')->insertOrIgnore(
             [
                 'id' => (string) Str::ulid(),
+                'property_id' => $property->id,
+                'business_date' => $date,
                 'status' => 'Open',
                 'is_open' => true,
                 'opened_at' => $timestamp,
@@ -824,19 +845,6 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             ]);
     }
 
-    private function closeBusinessDate(Property $property, string $date): void
-    {
-        DB::table('property_business_dates')
-            ->where('property_id', $property->id)
-            ->where('business_date', $date)
-            ->update([
-                'status' => 'Closed',
-                'is_open' => null,
-                'closed_at' => now(),
-                'updated_at' => now(),
-            ]);
-    }
-
     private function makePostedGrniEvidence(array $fixture, array $overrides): array
     {
         $timestamp = now();
@@ -848,7 +856,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('inventory_receipts')->insert([
             'id' => $receiptId,
             'property_id' => $fixture['property_id'],
-            'receipt_number' => 'IR-' . $this->sequence++,
+            'receipt_number' => 'IR-'.$this->sequence++,
             'supplier_name' => 'Vendor GRNI source',
             'external_reference' => $fixture['goods_receipt_id'],
             'receiving_document_id' => $fixture['goods_receipt_id'],
@@ -884,7 +892,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             'posting_event' => 'InventoryReceiptAccrual',
             'status' => 'APPROVED',
             'candidate_date' => '2026-06-30',
-            'description' => 'GRNI Accrual for Receipt ' . $receiptId,
+            'description' => 'GRNI Accrual for Receipt '.$receiptId,
             'created_by' => $this->actor->id,
             'updated_by' => $this->actor->id,
             'approved_by' => $this->actor->id,
@@ -980,7 +988,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
 
     private function makePurchasingFixture(Property $property): array
     {
-        $vendorId = $this->makeVendor($property, 'SUP-' . $this->sequence++);
+        $vendorId = $this->makeVendor($property, 'SUP-'.$this->sequence++);
         $departmentId = (string) Str::ulid();
         $requestId = (string) Str::ulid();
         $purchaseOrderId = (string) Str::ulid();
@@ -996,8 +1004,8 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('departments')->insert([
             'id' => $departmentId,
             'property_id' => $property->id,
-            'name' => 'Purchasing ' . $this->sequence,
-            'code' => 'PUR-' . $this->sequence++,
+            'name' => 'Purchasing '.$this->sequence,
+            'code' => 'PUR-'.$this->sequence++,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1006,7 +1014,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('purchase_requests')->insert([
             'id' => $requestId,
             'property_id' => $property->id,
-            'request_no' => 'PR-' . $this->sequence++,
+            'request_no' => 'PR-'.$this->sequence++,
             'department_id' => $departmentId,
             'requester_id' => $this->actor->id,
             'required_date' => '2026-07-05',
@@ -1021,7 +1029,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('purchase_orders')->insert([
             'id' => $purchaseOrderId,
             'property_id' => $property->id,
-            'po_no' => 'PO-' . $this->sequence++,
+            'po_no' => 'PO-'.$this->sequence++,
             'vendor_id' => $vendorId,
             'purchase_request_id' => $requestId,
             'issue_date' => '2026-06-29',
@@ -1042,7 +1050,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('inventory_categories')->insert([
             'id' => $categoryId,
             'property_id' => $property->id,
-            'name' => 'Food ' . $this->sequence++,
+            'name' => 'Food '.$this->sequence++,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
         ]);
@@ -1050,7 +1058,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('inventory_units')->insert([
             'id' => $unitId,
             'property_id' => $property->id,
-            'code' => 'EA-' . $this->sequence++,
+            'code' => 'EA-'.$this->sequence++,
             'name' => 'Each',
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1059,7 +1067,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('inventory_items')->insert([
             'id' => $itemId,
             'property_id' => $property->id,
-            'sku' => 'SKU-' . $this->sequence++,
+            'sku' => 'SKU-'.$this->sequence++,
             'name' => 'Supplier payment test item',
             'category_id' => $categoryId,
             'inventory_type' => 'stock',
@@ -1074,7 +1082,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('inventory_locations')->insert([
             'id' => $locationId,
             'property_id' => $property->id,
-            'name' => 'Main Store ' . $this->sequence++,
+            'name' => 'Main Store '.$this->sequence++,
             'type' => 'storeroom',
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1103,7 +1111,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             'property_id' => $property->id,
             'vendor_id' => $vendorId,
             'purchase_order_id' => $purchaseOrderId,
-            'grn_number' => 'GRN-' . $this->sequence++,
+            'grn_number' => 'GRN-'.$this->sequence++,
             'status' => 'approved',
             'received_at' => '2026-06-30 00:00:00',
             'received_by' => $this->actor->id,
@@ -1150,7 +1158,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             'vendor_id' => $fixture['vendor_id'],
             'purchase_order_id' => $fixture['purchase_order_id'],
             'goods_receipt_id' => $fixture['goods_receipt_id'],
-            'invoice_number' => 'SINV-PAY-' . $this->sequence++,
+            'invoice_number' => 'SINV-PAY-'.$this->sequence++,
             'invoice_date' => '2026-06-30',
             'currency_code' => $fixture['currency_code'],
             'tax_amount' => 0,
@@ -1177,8 +1185,8 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('vendor_categories')->insert([
             'id' => $categoryId,
             'property_id' => $property->id,
-            'category_code' => 'VC-' . $code,
-            'name' => 'Vendor Category ' . $code,
+            'category_code' => 'VC-'.$code,
+            'name' => 'Vendor Category '.$code,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1189,7 +1197,7 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
             'property_id' => $property->id,
             'vendor_category_id' => $categoryId,
             'vendor_code' => $code,
-            'name' => 'Vendor ' . $code,
+            'name' => 'Vendor '.$code,
             'default_currency_code' => 'IDR',
             'is_active' => true,
             'is_approved' => true,
@@ -1237,8 +1245,8 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
 
         DB::table('companies')->insert([
             'id' => $companyId,
-            'name' => 'Supplier Payment Company ' . $suffix,
-            'slug' => 'supplier-payment-company-' . $suffix,
+            'name' => 'Supplier Payment Company '.$suffix,
+            'slug' => 'supplier-payment-company-'.$suffix,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -1247,9 +1255,9 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('properties')->insert([
             'id' => $propertyId,
             'company_id' => $companyId,
-            'name' => 'Supplier Payment Property ' . $suffix,
-            'slug' => 'supplier-payment-property-' . $suffix,
-            'code' => 'SPP' . $suffix,
+            'name' => 'Supplier Payment Property '.$suffix,
+            'slug' => 'supplier-payment-property-'.$suffix,
+            'code' => 'SPP'.$suffix,
             'timezone' => 'UTC',
             'currency' => 'IDR',
             'is_active' => true,
@@ -1269,8 +1277,8 @@ class SupplierPaymentLifecycleTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $userId,
             'is_system_admin' => false,
-            'name' => 'Supplier Payment User ' . $suffix,
-            'email' => 'supplier-payment-user-' . $suffix . '@example.test',
+            'name' => 'Supplier Payment User '.$suffix,
+            'email' => 'supplier-payment-user-'.$suffix.'@example.test',
             'password' => 'not-used',
             'is_active' => $active,
             'created_at' => $timestamp,

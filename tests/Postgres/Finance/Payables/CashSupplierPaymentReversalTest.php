@@ -2,6 +2,7 @@
 
 namespace Tests\Postgres\Finance\Payables;
 
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -29,29 +30,42 @@ class CashSupplierPaymentReversalTest extends PostgresTestCase
     use RefreshDatabase;
 
     private int $sequence = 1;
+
     private Property $property;
+
     private User $actor;
+
     private string $apAccountId;
+
     private string $cashAccountId;
+
     private CashReturnEvidenceService $returnService;
+
     private CashSupplierPaymentReversalService $reversalService;
+
     private SupplierPaymentJournalCandidateService $candidateService;
+
     private JournalCandidateReviewService $reviewService;
+
     private JournalCandidateDraftMaterializationService $draftService;
+
     private JournalEntryDraftFinalizationAuthorizationService $authorizationService;
+
     private JournalEntryControlledPostingService $postingService;
 
     protected function setUp(): void
     {
         parent::setUp();
 
+        $this->travelTo(Carbon::parse('2026-07-01 10:00:00+00'));
+
         $this->property = $this->makeProperty();
         $this->actor = $this->makeUser();
         $this->attachActorToProperty($this->actor, $this->property);
         $this->actingAs($this->actor);
 
-        $this->apAccountId = $this->makeAccount('AP-REV-' . $this->sequence++, 'Liability', 'Credit', false);
-        $this->cashAccountId = $this->makeAccount('CASH-REV-' . $this->sequence++, 'Asset', 'Debit', true);
+        $this->apAccountId = $this->makeAccount('AP-REV-'.$this->sequence++, 'Liability', 'Credit', false);
+        $this->cashAccountId = $this->makeAccount('CASH-REV-'.$this->sequence++, 'Asset', 'Debit', true);
         $this->makeOperationalIdentityMapping(OperationalIdentityEnum::AP_CONTROL, $this->apAccountId);
         $this->makeOperationalIdentityMapping(OperationalIdentityEnum::CASH_AND_BANK, $this->cashAccountId);
         $this->makeOpenPostingBoundaries();
@@ -173,7 +187,7 @@ class CashSupplierPaymentReversalTest extends PostgresTestCase
         DB::table('cashier_payment_instruments')->insert([
             'id' => $instrumentId,
             'property_id' => $this->property->id,
-            'name' => 'Cash Reversal Instrument ' . $suffix,
+            'name' => 'Cash Reversal Instrument '.$suffix,
             'type' => CashierPaymentInstrumentTypeEnum::CASH->value,
             'operational_gl_account_id' => $this->cashAccountId,
             'is_active' => true,
@@ -187,10 +201,10 @@ class CashSupplierPaymentReversalTest extends PostgresTestCase
             'id' => $proposalId,
             'property_id' => $this->property->id,
             'vendor_id' => $vendorId,
-            'proposal_number' => 'CASH-REV-PROP-' . $suffix,
+            'proposal_number' => 'CASH-REV-PROP-'.$suffix,
             'currency_code' => 'IDR',
             'status' => 'APPROVED',
-            'source_fingerprint' => hash('sha256', 'cash-reversal-proposal-' . $suffix),
+            'source_fingerprint' => hash('sha256', 'cash-reversal-proposal-'.$suffix),
             'total_amount' => $amount,
             'created_by' => $this->actor->id,
             'updated_by' => $this->actor->id,
@@ -262,7 +276,7 @@ class CashSupplierPaymentReversalTest extends PostgresTestCase
             'property_id' => $this->property->id,
             'transaction_date' => '2026-07-01',
             'posting_date' => null,
-            'reference' => 'CASH-REV-JOURNAL-' . $suffix,
+            'reference' => 'CASH-REV-JOURNAL-'.$suffix,
             'description' => 'Original posted cash supplier payment fixture',
             'status' => JournalStatusEnum::Draft->value,
             'source_module' => 'GeneralCashier',
@@ -422,7 +436,7 @@ class CashSupplierPaymentReversalTest extends PostgresTestCase
         $account = Account::create([
             'property_id' => $this->property->id,
             'code' => $code,
-            'name' => $code . ' Account',
+            'name' => $code.' Account',
             'normal_balance' => $normalBalance,
             'account_type' => $type,
             'account_category' => $type === 'Asset' ? 'CurrentAsset' : 'CurrentLiability',
@@ -455,8 +469,8 @@ class CashSupplierPaymentReversalTest extends PostgresTestCase
 
         DB::table('companies')->insert([
             'id' => $companyId,
-            'name' => 'Cash Reversal Company ' . $suffix,
-            'slug' => 'cash-reversal-company-' . $suffix,
+            'name' => 'Cash Reversal Company '.$suffix,
+            'slug' => 'cash-reversal-company-'.$suffix,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -465,9 +479,9 @@ class CashSupplierPaymentReversalTest extends PostgresTestCase
         DB::table('properties')->insert([
             'id' => $propertyId,
             'company_id' => $companyId,
-            'name' => 'Cash Reversal Property ' . $suffix,
-            'slug' => 'cash-reversal-property-' . $suffix,
-            'code' => 'RV' . $suffix,
+            'name' => 'Cash Reversal Property '.$suffix,
+            'slug' => 'cash-reversal-property-'.$suffix,
+            'code' => 'RV'.$suffix,
             'timezone' => 'UTC',
             'currency' => 'IDR',
             'is_active' => true,
@@ -487,8 +501,8 @@ class CashSupplierPaymentReversalTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $userId,
             'is_system_admin' => false,
-            'name' => 'Cash Reversal User ' . $suffix,
-            'email' => 'cash-reversal-user-' . $suffix . '@example.test',
+            'name' => 'Cash Reversal User '.$suffix,
+            'email' => 'cash-reversal-user-'.$suffix.'@example.test',
             'password' => 'not-used',
             'is_active' => true,
             'created_at' => $timestamp,

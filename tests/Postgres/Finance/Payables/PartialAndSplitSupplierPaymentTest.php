@@ -2,6 +2,7 @@
 
 namespace Tests\Postgres\Finance\Payables;
 
+use Carbon\Carbon;
 use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -34,26 +35,44 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
     use RefreshDatabase;
 
     private int $sequence = 1;
+
     private Property $property;
+
     private User $actor;
+
     private User $approver;
+
     private string $apAccountId;
+
     private string $cashAccountId;
+
     private PaymentProposalService $proposalService;
+
     private PaymentProposalApprovalService $proposalApprovalService;
+
     private GeneralCashierOperationalFoundationService $cashierService;
+
     private PaymentExecutionService $paymentExecutionService;
+
     private SupplierPaymentJournalCandidateService $candidateService;
+
     private JournalCandidateReviewService $reviewService;
+
     private JournalCandidateDraftMaterializationService $draftService;
+
     private JournalEntryDraftFinalizationAuthorizationService $authorizationService;
+
     private JournalEntryControlledPostingService $postingService;
+
     private ApSettlementAllocationService $allocationService;
+
     private ApOutstandingProjectionService $outstandingService;
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->travelTo(Carbon::parse('2026-07-01 10:00:00+00'));
 
         $this->property = $this->makeProperty();
         $this->actor = $this->makeUser();
@@ -63,8 +82,8 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
         app(CurrentPropertyService::class)->setPropertyId($this->property->id);
         $this->actingAs($this->actor);
 
-        $this->apAccountId = $this->makeAccount('AP-PARTIAL-' . $this->sequence++, 'Liability', 'CurrentLiability', 'Credit', false);
-        $this->cashAccountId = $this->makeAccount('CASH-PARTIAL-' . $this->sequence++, 'Asset', 'CurrentAsset', 'Debit', true);
+        $this->apAccountId = $this->makeAccount('AP-PARTIAL-'.$this->sequence++, 'Liability', 'CurrentLiability', 'Credit', false);
+        $this->cashAccountId = $this->makeAccount('CASH-PARTIAL-'.$this->sequence++, 'Asset', 'CurrentAsset', 'Debit', true);
         $this->makeOperationalIdentityMapping('AP_CONTROL', $this->apAccountId);
         $this->makeOperationalIdentityMapping('CASH_AND_BANK', $this->cashAccountId);
         $this->makeOpenPostingBoundaries();
@@ -187,7 +206,7 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
             'reversal_amount' => '60.00',
             'reversed_by' => $this->actor->id,
             'reversed_at' => now(),
-            'source_identity_hash' => hash('sha256', 'reversal-linked-test-' . $this->sequence++),
+            'source_identity_hash' => hash('sha256', 'reversal-linked-test-'.$this->sequence++),
             'source_snapshot' => json_encode(['test_scope' => 'partial_payment_reversal_link']),
             'created_by' => $this->actor->id,
             'updated_by' => $this->actor->id,
@@ -271,7 +290,7 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
             'id' => $supplierInvoiceId,
             'property_id' => $this->property->id,
             'vendor_id' => $vendorId,
-            'invoice_number' => 'PARTIAL-INV-' . $suffix,
+            'invoice_number' => 'PARTIAL-INV-'.$suffix,
             'invoice_date' => '2026-07-01',
             'currency_code' => 'IDR',
             'due_date' => '2026-07-15',
@@ -313,7 +332,7 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
             'property_id' => $this->property->id,
             'transaction_date' => '2026-07-01',
             'posting_date' => null,
-            'reference' => 'AP-PARTIAL-' . $suffix,
+            'reference' => 'AP-PARTIAL-'.$suffix,
             'description' => 'Posted AP liability for partial supplier payment',
             'status' => JournalStatusEnum::Draft->value,
             'source_module' => 'Payables',
@@ -334,7 +353,7 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
                 'id' => (string) Str::ulid(),
                 'property_id' => $this->property->id,
                 'journal_entry_id' => $sourceJournalEntryId,
-                'account_id' => $this->makeAccount('INV-PARTIAL-' . $this->sequence++, 'Asset', 'CurrentAsset', 'Debit', false),
+                'account_id' => $this->makeAccount('INV-PARTIAL-'.$this->sequence++, 'Asset', 'CurrentAsset', 'Debit', false),
                 'debit_amount' => $amount,
                 'credit_amount' => '0.00',
                 'memo' => 'Debit source inventory fixture',
@@ -386,7 +405,7 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
         DB::table('cashier_payment_instruments')->insert([
             'id' => $instrumentId,
             'property_id' => $this->property->id,
-            'name' => 'Partial CASH Instrument ' . $this->sequence++,
+            'name' => 'Partial CASH Instrument '.$this->sequence++,
             'type' => CashierPaymentInstrumentTypeEnum::CASH->value,
             'operational_gl_account_id' => $this->cashAccountId,
             'is_active' => true,
@@ -513,7 +532,7 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
             'id' => $accountId,
             'property_id' => $this->property->id,
             'code' => $code,
-            'name' => $code . ' Account',
+            'name' => $code.' Account',
             'normal_balance' => $normalBalance,
             'account_type' => $type,
             'account_category' => $category,
@@ -548,8 +567,8 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
 
         DB::table('companies')->insert([
             'id' => $companyId,
-            'name' => 'Partial Supplier Payment Company ' . $suffix,
-            'slug' => 'partial-supplier-payment-company-' . $suffix,
+            'name' => 'Partial Supplier Payment Company '.$suffix,
+            'slug' => 'partial-supplier-payment-company-'.$suffix,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -558,9 +577,9 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
         DB::table('properties')->insert([
             'id' => $propertyId,
             'company_id' => $companyId,
-            'name' => 'Partial Supplier Payment Property ' . $suffix,
-            'slug' => 'partial-supplier-payment-property-' . $suffix,
-            'code' => 'PSP' . $suffix,
+            'name' => 'Partial Supplier Payment Property '.$suffix,
+            'slug' => 'partial-supplier-payment-property-'.$suffix,
+            'code' => 'PSP'.$suffix,
             'timezone' => 'UTC',
             'currency' => 'IDR',
             'is_active' => true,
@@ -580,8 +599,8 @@ class PartialAndSplitSupplierPaymentTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $userId,
             'is_system_admin' => false,
-            'name' => 'Partial Supplier Payment User ' . $suffix,
-            'email' => 'partial-supplier-payment-user-' . $suffix . '@example.test',
+            'name' => 'Partial Supplier Payment User '.$suffix,
+            'email' => 'partial-supplier-payment-user-'.$suffix.'@example.test',
             'password' => 'not-used',
             'is_active' => true,
             'created_at' => $timestamp,
