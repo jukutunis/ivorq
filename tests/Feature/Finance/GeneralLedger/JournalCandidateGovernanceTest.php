@@ -2,24 +2,26 @@
 
 namespace Tests\Feature\Finance\GeneralLedger;
 
-use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
-use Modules\Foundation\User\Models\User;
-use Modules\Foundation\Property\Models\Property;
+use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
+use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
+use Modules\Finance\GeneralLedger\Exceptions\JournalCandidateBalanceException;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalCandidateLine;
-use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
-use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
-use Modules\Finance\GeneralLedger\Enums\OperationalIdentityEnum;
+use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateService;
-use Modules\Finance\GeneralLedger\Exceptions\JournalCandidateBalanceException;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\User\Models\User;
+use Tests\TestCase;
 
 class JournalCandidateGovernanceTest extends TestCase
 {
     use RefreshDatabase;
 
     protected $service;
+
     protected $property;
 
     protected function setUp(): void
@@ -92,7 +94,7 @@ class JournalCandidateGovernanceTest extends TestCase
     public function test_approval_success()
     {
         $candidate = $this->createBalancedCandidate();
-        
+
         $approved = $this->service->approve($candidate->id);
 
         $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $approved->status);
@@ -111,8 +113,8 @@ class JournalCandidateGovernanceTest extends TestCase
     public function test_reject_success_and_audit_tracking()
     {
         $candidate = $this->createBalancedCandidate();
-        
-        $reason = "Missing documentation";
+
+        $reason = 'Missing documentation';
         $rejected = $this->service->reject($candidate->id, $reason);
 
         $this->assertEquals(JournalCandidateStatusEnum::REJECTED, $rejected->status);
@@ -124,37 +126,33 @@ class JournalCandidateGovernanceTest extends TestCase
     public function test_reject_missing_reason()
     {
         $candidate = $this->createBalancedCandidate();
-        
+
         $this->expectException(ValidationException::class);
-        $this->service->reject($candidate->id, "   "); // Empty reason
+        $this->service->reject($candidate->id, '   '); // Empty reason
     }
 
-    public function test_mark_posted_success()
+    public function test_direct_mark_posted_is_disabled_without_mutation_or_journal_evidence()
     {
         $candidate = $this->createBalancedCandidate(JournalCandidateStatusEnum::APPROVED);
-        
-        $posted = $this->service->markPosted($candidate->id);
 
-        $this->assertEquals(JournalCandidateStatusEnum::POSTED, $posted->status);
-    }
+        try {
+            $this->service->markPosted($candidate->id);
+            $this->fail('Directly marking a candidate as POSTED must remain disabled.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('controlled JournalCandidate review', $exception->getMessage());
+        }
 
-    public function test_mark_posted_failure_unbalanced()
-    {
-        // An approved candidate that somehow became unbalanced
-        $candidate = $this->createUnbalancedCandidate();
-        $candidate->update(['status' => JournalCandidateStatusEnum::APPROVED->value]);
-
-        $this->expectException(JournalCandidateBalanceException::class);
-        $this->service->markPosted($candidate->id);
+        $this->assertEquals(JournalCandidateStatusEnum::APPROVED, $candidate->fresh()->status);
+        $this->assertFalse(JournalEntry::query()->where('journal_candidate_id', $candidate->id)->exists());
     }
 
     public function test_posting_failed_status()
     {
         $candidate = $this->createBalancedCandidate(JournalCandidateStatusEnum::APPROVED);
-        
-        $failed = $this->service->markPostingFailed($candidate->id, "GL period is closed");
+
+        $failed = $this->service->markPostingFailed($candidate->id, 'GL period is closed');
 
         $this->assertEquals(JournalCandidateStatusEnum::POSTING_FAILED, $failed->status);
-        $this->assertEquals("GL period is closed", $failed->metadata['posting_error']);
+        $this->assertEquals('GL period is closed', $failed->metadata['posting_error']);
     }
 }

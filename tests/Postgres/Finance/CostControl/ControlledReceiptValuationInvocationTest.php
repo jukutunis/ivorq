@@ -1476,6 +1476,35 @@ class ControlledReceiptValuationInvocationTest extends PostgresTestCase
         $this->assertSame($ledgerBalanceCount, DB::table('gl_ledger_balances')->count());
     }
 
+    public function test_non_representable_candidate_amount_fails_materialization_without_mutation(): void
+    {
+        $this->seedGrniMappings();
+        $candidate = $this->createGrniCandidate();
+        $actor = $this->createMaterializationUser();
+
+        DB::table('journal_candidate_lines')
+            ->where('journal_candidate_id', $candidate->id)
+            ->update(['amount' => '60.1234']);
+
+        $journalCount = DB::table('gl_journal_entries')->count();
+        $journalLineCount = DB::table('gl_journal_entry_lines')->count();
+        $ledgerBalanceCount = DB::table('gl_ledger_balances')->count();
+        $candidateBefore = DB::table('journal_candidates')->where('id', $candidate->id)->first();
+
+        try {
+            app(JournalCandidateDraftMaterializationService::class)->materialize($candidate->id, $actor->id);
+            $this->fail('Non-representable candidate amounts must fail materialization.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('is not representable as a 2-decimal ledger amount', $exception->getMessage());
+        }
+
+        $this->assertSame($journalCount, DB::table('gl_journal_entries')->count());
+        $this->assertSame($journalLineCount, DB::table('gl_journal_entry_lines')->count());
+        $this->assertSame($ledgerBalanceCount, DB::table('gl_ledger_balances')->count());
+        $this->assertEquals($candidateBefore, DB::table('journal_candidates')->where('id', $candidate->id)->first());
+        $this->assertFalse(DB::table('gl_journal_entries')->where('journal_candidate_id', $candidate->id)->exists());
+    }
+
     public function test_pending_review_candidate_cannot_materialize_draft(): void
     {
         $this->seedGrniMappings();
