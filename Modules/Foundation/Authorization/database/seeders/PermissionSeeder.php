@@ -83,6 +83,7 @@ class PermissionSeeder extends Seeder
             'engineering.room-availability.release',
 
             // Finance & GL Review Lifecycle
+            'generalledger.period.manage',
             'finance.journal-candidate.review',
             'finance.journal-candidate.materialize-draft',
             'finance.journal-entry-draft.authorize-finalization',
