@@ -2,15 +2,14 @@
 
 namespace Modules\Finance\GeneralLedger\Services;
 
-use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
-use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
+use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
+use Modules\Finance\GeneralLedger\Exceptions\JournalCandidateBalanceException;
+use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Repositories\JournalCandidateLineRepository;
 use Modules\Finance\GeneralLedger\Repositories\JournalCandidateRepository;
-use Modules\Finance\GeneralLedger\Exceptions\JournalCandidateBalanceException;
 
 class JournalCandidateService
 {
@@ -24,7 +23,7 @@ class JournalCandidateService
         return DB::transaction(function () use ($data, $lines) {
             $data['status'] = JournalCandidateStatusEnum::DRAFT->value;
             $data['created_by'] = auth()->id();
-            
+
             $candidate = $this->candidateRepository->create($data);
 
             foreach ($lines as $lineData) {
@@ -42,7 +41,7 @@ class JournalCandidateService
 
         if ($candidate->status !== JournalCandidateStatusEnum::DRAFT) {
             throw ValidationException::withMessages([
-                'status' => ['Only DRAFT candidates can be submitted for review.']
+                'status' => ['Only DRAFT candidates can be submitted for review.'],
             ]);
         }
 
@@ -56,8 +55,8 @@ class JournalCandidateService
         $candidate = $this->candidateRepository->find($id);
 
         if ($candidate->status !== JournalCandidateStatusEnum::PENDING_REVIEW && $candidate->status !== JournalCandidateStatusEnum::DRAFT) {
-             throw ValidationException::withMessages([
-                'status' => ['Only DRAFT or PENDING_REVIEW candidates can be approved.']
+            throw ValidationException::withMessages([
+                'status' => ['Only DRAFT or PENDING_REVIEW candidates can be approved.'],
             ]);
         }
 
@@ -76,13 +75,13 @@ class JournalCandidateService
 
         if ($candidate->status === JournalCandidateStatusEnum::POSTED || $candidate->status === JournalCandidateStatusEnum::POSTED_LEGACY) {
             throw ValidationException::withMessages([
-                'status' => ['POSTED or POSTED_LEGACY candidates cannot be rejected.']
+                'status' => ['POSTED or POSTED_LEGACY candidates cannot be rejected.'],
             ]);
         }
 
         if (empty(trim($reason))) {
             throw ValidationException::withMessages([
-                'rejection_reason' => ['A rejection reason is mandatory.']
+                'rejection_reason' => ['A rejection reason is mandatory.'],
             ]);
         }
 
@@ -96,7 +95,7 @@ class JournalCandidateService
 
     public function markPosted(string $id): JournalCandidate
     {
-        throw new \RuntimeException('Directly marking a candidate as POSTED is disabled. Use JournalCandidateFinalizationService.');
+        throw new \RuntimeException('Directly marking a candidate as POSTED is disabled. Use the controlled JournalCandidate review, draft materialization, draft finalization authorization, and JournalEntry posting lifecycle.');
     }
 
     public function markPostingFailed(string $id, string $reason): JournalCandidate
@@ -104,8 +103,8 @@ class JournalCandidateService
         return $this->candidateRepository->update($id, [
             'status' => JournalCandidateStatusEnum::POSTING_FAILED->value,
             'metadata' => array_merge($this->candidateRepository->find($id)->metadata ?? [], [
-                'posting_error' => $reason
-            ])
+                'posting_error' => $reason,
+            ]),
         ]);
     }
 
