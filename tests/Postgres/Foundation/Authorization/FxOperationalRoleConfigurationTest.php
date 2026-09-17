@@ -26,10 +26,16 @@ class FxOperationalRoleConfigurationTest extends PostgresTestCase
             'finance.fx-adjustment.view',
             'finance.journal-candidate.review',
             'finance.journal-candidate.materialize-draft',
+            'finance.banking.migration.view',
+            'finance.banking.migration.mapping.review',
+            'finance.banking.migration.pilot.authorization.review',
         ],
         'finance-manager' => [
             'finance.fx-adjustment.view',
             'finance.journal-entry-draft.authorize-finalization',
+            'finance.banking.migration.view',
+            'finance.banking.migration.manage',
+            'finance.banking.migration.pilot.execution.execute',
         ],
         'general-ledger-accountant' => [
             'finance.fx-adjustment.view',
