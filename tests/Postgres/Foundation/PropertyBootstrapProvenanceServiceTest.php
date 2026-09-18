@@ -260,6 +260,55 @@ class PropertyBootstrapProvenanceServiceTest extends PostgresTestCase
         $this->service->bindCompany($propertyFirst, $actor, $companyB->id);
     }
 
+    public function test_prior_in_progress_property_history_blocks_a_different_same_environment_run(): void
+    {
+        $this->assertPropertyHistoryBlocksNewRun(
+            PropertyBootstrapProvisioningStatusEnum::InProgress,
+            'prior-in-progress',
+        );
+    }
+
+    public function test_prior_completed_property_history_blocks_a_different_same_environment_run(): void
+    {
+        $this->assertPropertyHistoryBlocksNewRun(
+            PropertyBootstrapProvisioningStatusEnum::Completed,
+            'prior-completed',
+        );
+    }
+
+    public function test_prior_failed_property_history_blocks_a_different_same_environment_run(): void
+    {
+        $this->assertPropertyHistoryBlocksNewRun(
+            PropertyBootstrapProvisioningStatusEnum::Failed,
+            'prior-failed',
+        );
+    }
+
+    public function test_same_property_may_be_bound_once_in_each_environment(): void
+    {
+        $actor = $this->actor();
+        $this->actingAs($actor);
+        [$company, $property] = $this->companyAndProperty();
+
+        $operational = $this->start($actor, 'cross-environment-operational');
+        $operational = $this->service->bindCompany($operational, $actor, $company->id);
+        $operational = $this->service->bindProperty($operational, $actor, $property->id);
+
+        $rehearsal = $this->start(
+            $actor,
+            'cross-environment-rehearsal',
+            PropertyBootstrapProvisioningEnvironmentEnum::Rehearsal,
+        );
+        $rehearsal = $this->service->bindCompany($rehearsal, $actor, $company->id);
+        $rehearsal = $this->service->bindProperty($rehearsal, $actor, $property->id);
+
+        $this->assertSame($property->id, $operational->property_id);
+        $this->assertSame($property->id, $rehearsal->property_id);
+        $this->assertSame(2, PropertyBootstrapProvisioningRun::query()
+            ->where('property_id', $property->id)
+            ->count());
+    }
+
     public function test_partial_unique_index_prevents_parallel_active_or_completed_property_universes(): void
     {
         $actor = $this->actor();
@@ -272,7 +321,9 @@ class PropertyBootstrapProvenanceServiceTest extends PostgresTestCase
         $second = $this->service->bindCompany($second, $actor, $company->id);
 
         $this->expectException(QueryException::class);
-        $this->service->bindProperty($second, $actor, $property->id);
+        DB::table('property_bootstrap_provisioning_runs')
+            ->where('id', $second->id)
+            ->update(['property_id' => $property->id]);
     }
 
     public function test_evidence_is_replaceable_only_while_in_progress_and_must_be_safe_json(): void
@@ -554,6 +605,42 @@ class PropertyBootstrapProvenanceServiceTest extends PostgresTestCase
         $property = PropertyFactory::new()->create(['company_id' => $company->id]);
 
         return [$company, $property];
+    }
+
+    private function assertPropertyHistoryBlocksNewRun(
+        PropertyBootstrapProvisioningStatusEnum $priorStatus,
+        string $keyPrefix,
+    ): void {
+        $actor = $this->actor();
+        $this->actingAs($actor);
+        [$company, $property] = $this->companyAndProperty();
+
+        $prior = $this->start($actor, "{$keyPrefix}-prior");
+        $prior = $this->service->bindCompany($prior, $actor, $company->id);
+        $prior = $this->service->bindProperty($prior, $actor, $property->id);
+
+        if ($priorStatus === PropertyBootstrapProvisioningStatusEnum::Completed) {
+            $prior = $this->service->complete($prior, $actor, ['history' => 'completed'], self::EVIDENCE_FINGERPRINT);
+        } elseif ($priorStatus === PropertyBootstrapProvisioningStatusEnum::Failed) {
+            $prior = $this->service->fail($prior, $actor, 'CONTROLLED_FAILURE', ['history' => 'failed']);
+        }
+
+        $this->assertSame($priorStatus, $prior->status);
+
+        $candidate = $this->start($actor, "{$keyPrefix}-candidate");
+        $candidate = $this->service->bindCompany($candidate, $actor, $company->id);
+
+        try {
+            $this->service->bindProperty($candidate, $actor, $property->id);
+            $this->fail('A different run must not claim prior Property history in the same environment.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame(
+                PropertyBootstrapProvenanceService::ERROR_PROPERTY_ALREADY_BOUND_TO_ANOTHER_RUN,
+                $exception->getMessage(),
+            );
+        }
+
+        $this->assertNull($candidate->fresh()->property_id);
     }
 
     private function tableCounts(array $tables): array

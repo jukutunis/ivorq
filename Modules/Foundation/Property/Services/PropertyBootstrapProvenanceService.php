@@ -28,6 +28,8 @@ class PropertyBootstrapProvenanceService
 
     public const ERROR_PROPERTY_REBIND = 'B4C_BOOTSTRAP_PROPERTY_REBIND_REJECTED';
 
+    public const ERROR_PROPERTY_ALREADY_BOUND_TO_ANOTHER_RUN = 'B4C_BOOTSTRAP_PROPERTY_ALREADY_BOUND_TO_ANOTHER_RUN';
+
     public const ERROR_PROPERTY_COMPANY_MISMATCH = 'B4C_BOOTSTRAP_PROPERTY_COMPANY_MISMATCH';
 
     public const ERROR_COMPLETION_BINDINGS_REQUIRED = 'B4C_BOOTSTRAP_COMPLETION_BINDINGS_REQUIRED';
@@ -154,6 +156,18 @@ class PropertyBootstrapProvenanceService
                 throw new RuntimeException(self::ERROR_PROPERTY_COMPANY_MISMATCH);
             }
 
+            $this->lockPropertyBindingIdentity($locked->environment, $property->id);
+
+            $alreadyBound = PropertyBootstrapProvisioningRun::query()
+                ->where('environment', $locked->environment->value)
+                ->where('property_id', $property->id)
+                ->where('id', '<>', $locked->id)
+                ->exists();
+
+            if ($alreadyBound) {
+                throw new RuntimeException(self::ERROR_PROPERTY_ALREADY_BOUND_TO_ANOTHER_RUN);
+            }
+
             $locked->forceFill(['property_id' => $property->id]);
             $locked->save();
 
@@ -274,6 +288,20 @@ class PropertyBootstrapProvenanceService
         DB::select(
             'SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))',
             [$environment->value, $idempotencyKey],
+        );
+    }
+
+    private function lockPropertyBindingIdentity(
+        PropertyBootstrapProvisioningEnvironmentEnum $environment,
+        string $propertyId,
+    ): void {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
+        DB::select(
+            'SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))',
+            [$environment->value, $propertyId],
         );
     }
 
