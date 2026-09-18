@@ -66,3 +66,12 @@ This registry tracks the immutable architectural choices that dictate IVORQ's en
 - **Decision:** Preventive Maintenance, Work Orders, and Engineering Consumption are completely subordinate to the Asset Foundation.
 - **Reason:** Equipment cannot be maintained in software unless it definitively exists as a physical tracking point in the DB.
 - **Affected Modules:** Asset, PM, Work Orders.
+
+---
+
+### ADR-090: Operational Installation First-Trust and Bootstrap Owner Authority
+- **Status:** Approved
+- **Decision:** Operational installation first trust uses an externally verified, deployment-controlled, one-time CLI boundary that durably establishes exactly one initial human owner, Company, Property, active default membership, and narrowly scoped installation-owner assignment before normal human authentication and authorization take over.
+- **Reason:** An empty installation has no authenticated authority; demo seeders, manual SQL, public setup endpoints, broad catch-all administrator roles, and permanent service actors cannot safely establish the root of tenant and Property authority.
+- **Affected Modules:** Foundation Authentication, Authorization, User, Property, Audit, deployment governance, and Property bootstrap provenance.
+- **Implementation:** Architecture only. Runtime implementation, identity verification, MFA activation, B4C linkage, and B5 provisioning require separately authorized packages.
