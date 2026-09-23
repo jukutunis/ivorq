@@ -1,15 +1,24 @@
 <?php
 
+use App\Http\Middleware\HandleInertiaRequests;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets;
 use Illuminate\Http\Request;
+use Illuminate\Session\Middleware\AuthenticateSession;
+use Modules\Finance\FinanceServiceProvider;
+use Modules\Foundation\Authentication\Http\Middleware\EnsureActivePropertyContext;
+use Modules\Foundation\Authentication\Http\Middleware\EnsureAuthenticatedSecurity;
+use Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware;
+use Modules\Foundation\FoundationServiceProvider;
+use Modules\Operations\OperationsServiceProvider;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withProviders([
-        Modules\Foundation\FoundationServiceProvider::class,
-        Modules\Operations\OperationsServiceProvider::class,
-        Modules\Finance\FinanceServiceProvider::class,
+        FoundationServiceProvider::class,
+        OperationsServiceProvider::class,
+        FinanceServiceProvider::class,
     ])
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -19,25 +28,28 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->web(append: [
-            \App\Http\Middleware\HandleInertiaRequests::class,
-            \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
+            HandleInertiaRequests::class,
+            AddLinkHeadersForPreloadedAssets::class,
             // Must run after StartSession so Auth::user() resolves from the session.
             // Sets Spatie Permission team context (property_id) for every web request.
-            \Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware::class,
-            \Illuminate\Session\Middleware\AuthenticateSession::class,
-            \Modules\Foundation\Authentication\Http\Middleware\EnsureUserIsActive::class,
+            SetPermissionTeamIdMiddleware::class,
+            AuthenticateSession::class,
+            EnsureAuthenticatedSecurity::class,
         ]);
 
-        $middleware->api(prepend: [
-            'throttle:api',
-            \Modules\Foundation\Authentication\Http\Middleware\EnsureUserIsActive::class,
+        $middleware->api(prepend: ['throttle:api']);
+
+        $middleware->validateCsrfTokens(except: [
+            'owner-activation/*',
+            'auth/mfa/*',
         ]);
 
         // Named alias for API routes: apply AFTER auth:sanctum so the token-resolved
         // user is available. Usage: Route::middleware(['auth:sanctum', 'permission.team'])
         $middleware->alias([
-            'permission.team' => \Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware::class,
-            'active.property' => \Modules\Foundation\Authentication\Http\Middleware\EnsureActivePropertyContext::class,
+            'permission.team' => SetPermissionTeamIdMiddleware::class,
+            'active.property' => EnsureActivePropertyContext::class,
+            'auth.security' => EnsureAuthenticatedSecurity::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
