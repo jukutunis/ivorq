@@ -20,7 +20,7 @@ class UserRepository
     {
         $user = User::with(['department', 'position', 'roles'])->find($id);
 
-        throw_if(!$user, new NotFoundException('User'));
+        throw_if(! $user, new NotFoundException('User'));
 
         return $user;
     }
@@ -32,11 +32,11 @@ class UserRepository
 
     public function findByEmailAndCompany(string $email, string $companyId): ?User
     {
-        return User::where('email', $email)
+        return User::where('email', mb_strtolower(trim($email)))
             ->whereHas('properties', function ($query) use ($companyId) {
                 $query->where('company_id', $companyId)
-                      ->where('properties.is_active', true)
-                      ->where('property_user.status', 'active');
+                    ->where('properties.is_active', true)
+                    ->where('property_user.status', 'active');
             })->first();
     }
 
