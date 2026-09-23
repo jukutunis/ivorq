@@ -177,7 +177,7 @@ try {
     ]);
     \Illuminate\Support\Facades\DB::table('users')->insert([
         'id' => $actorId, 'name' => 'FD A2 Concurrency Actor',
-        'email' => 'fd-a2-concurrency-' . \Illuminate\Support\Str::random(6) . '@example.test',
+        'email' => 'fd-a2-concurrency-' . \Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(6)) . '@example.test',
         'password' => bcrypt('password'), 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
     ]);
 

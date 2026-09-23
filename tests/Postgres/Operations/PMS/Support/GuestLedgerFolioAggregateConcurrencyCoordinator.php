@@ -142,7 +142,7 @@ try {
     ]);
     \Illuminate\Support\Facades\DB::table('users')->insert([
         'id' => $actorId, 'name' => 'GLF-A Concurrency Actor',
-        'email' => 'glf-a-conc-' . \Illuminate\Support\Str::random(6) . '@example.test',
+        'email' => 'glf-a-conc-' . \Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(6)) . '@example.test',
         'password' => bcrypt('password'), 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
     ]);
     \Illuminate\Support\Facades\DB::table('property_user')->insert([
@@ -277,7 +277,7 @@ try {
     ]);
     \Illuminate\Support\Facades\DB::table('users')->insert([
         'id' => $actorId2, 'name' => 'GLF-A Actor P2',
-        'email' => 'glf-a-conc-p2-' . \Illuminate\Support\Str::random(6) . '@example.test',
+        'email' => 'glf-a-conc-p2-' . \Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(6)) . '@example.test',
         'password' => bcrypt('password'), 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
     ]);
     \Illuminate\Support\Facades\DB::table('property_user')->insert([

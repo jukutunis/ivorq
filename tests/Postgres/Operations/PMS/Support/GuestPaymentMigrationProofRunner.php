@@ -150,7 +150,7 @@ function glfBMigSeedLegacy(bool $ambiguous): array
     ]);
     \Illuminate\Support\Facades\DB::table('users')->insert([
         'id' => $actorId, 'name' => 'GLF-B Mig Actor',
-        'email' => 'glf-b-mig-' . \Illuminate\Support\Str::random(6) . '@example.test',
+        'email' => 'glf-b-mig-' . \Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(6)) . '@example.test',
         'password' => bcrypt('password'), 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
     ]);
     \Illuminate\Support\Facades\DB::table('guests')->insert([
@@ -234,7 +234,7 @@ function glfBMigSeedDualProperty(): array
 
     \Illuminate\Support\Facades\DB::table('users')->insert([
         'id' => $actorId, 'name' => 'GLF-B Dual Actor',
-        'email' => 'glf-b-dual-' . \Illuminate\Support\Str::random(6) . '@example.test',
+        'email' => 'glf-b-dual-' . \Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(6)) . '@example.test',
         'password' => bcrypt('password'), 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
     ]);
 
