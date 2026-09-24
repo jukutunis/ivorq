@@ -38,49 +38,53 @@ class ProfileService
 
     public function changePassword(User $user, string $currentPassword, string $newPassword): bool
     {
-        if ($user->password === null || ! Hash::check($currentPassword, $user->password)) {
-            return false;
-        }
+        return DB::transaction(function () use ($user, $currentPassword, $newPassword): bool {
+            $locked = User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
+            if ($locked->password === null || ! Hash::check($currentPassword, $locked->password)) {
+                return false;
+            }
 
-        $activation = OwnerActivation::query()->where('user_id', $user->id)->where('status', OwnerActivationStatus::Active->value)->first();
-        if ($activation) {
-            Validator::make(['password' => $newPassword], ['password' => [new PrivilegedOwnerPassword]])->validate();
-            DB::transaction(function () use ($user, $newPassword, $activation): void {
-                $this->userRepository->update($user->id, ['password' => $newPassword]);
+            $activation = OwnerActivation::query()
+                ->where('user_id', $locked->id)
+                ->where('status', OwnerActivationStatus::Active->value)
+                ->first();
+            if ($activation) {
+                Validator::make(['password' => $newPassword], ['password' => [new PrivilegedOwnerPassword]])->validate();
+                $locked->forceFill(['password' => $newPassword])->save();
                 $this->events->record('PASSWORD_RESET', 'SUCCESS', [
-                    'actor_user_id' => $user->id,
-                    'subject_user_id' => $user->id,
+                    'actor_user_id' => $locked->id,
+                    'subject_user_id' => $locked->id,
                     'company_id' => $activation->company_id,
                     'property_id' => $activation->property_id,
                     'activation_id' => $activation->id,
                     'reason_code' => 'PASSWORD_CHANGE',
                 ]);
-                $this->revocation->revokeAll($user, 'PASSWORD_CHANGE', [
-                    'actor_user_id' => $user->id,
+                $this->revocation->revokeAll($locked, 'PASSWORD_CHANGE', [
+                    'actor_user_id' => $locked->id,
                     'company_id' => $activation->company_id,
                     'property_id' => $activation->property_id,
                 ]);
-            });
-        } else {
-            $this->userRepository->update($user->id, ['password' => $newPassword]);
-            // Preserve the canonical non-owner behavior. SessionGuard verifies
-            // the supplied password against the in-memory authenticated user,
-            // so refresh that value after the repository update.
-            $user->password = Hash::make($newPassword);
-            Auth::logoutOtherDevices($newPassword);
-
-            if ($currentToken = $user->currentAccessToken()) {
-                $user->tokens()->where('id', '!=', $currentToken->id)->delete();
-                UserSession::query()
-                    ->where('user_id', $user->id)
-                    ->where('token_id', '!=', $currentToken->id)
-                    ->delete();
             } else {
-                $user->tokens()->delete();
-                $this->sessionRepository->revokeAllForUser($user->id);
-            }
-        }
+                $locked->forceFill(['password' => $newPassword])->save();
+                // Preserve the canonical non-owner behavior. SessionGuard verifies
+                // the supplied password against the in-memory authenticated user,
+                // so refresh that value after the locked update.
+                $user->password = $locked->password;
+                Auth::logoutOtherDevices($newPassword);
 
-        return true;
+                if ($currentToken = $user->currentAccessToken()) {
+                    $user->tokens()->where('id', '!=', $currentToken->id)->delete();
+                    UserSession::query()
+                        ->where('user_id', $user->id)
+                        ->where('token_id', '!=', $currentToken->id)
+                        ->delete();
+                } else {
+                    $user->tokens()->delete();
+                    $this->sessionRepository->revokeAllForUser($user->id);
+                }
+            }
+
+            return true;
+        });
     }
 }

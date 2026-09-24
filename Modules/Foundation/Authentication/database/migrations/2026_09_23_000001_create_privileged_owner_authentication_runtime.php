@@ -162,6 +162,8 @@ return new class extends Migration
         DB::statement("ALTER TABLE identity_challenges ADD CONSTRAINT chk_identity_challenge_channel CHECK (channel IN ('web','api','activation'))");
         DB::statement('ALTER TABLE identity_challenges ADD CONSTRAINT chk_identity_challenge_attempts CHECK (max_attempts = 5 AND failed_attempts <= max_attempts)');
         DB::statement("ALTER TABLE identity_security_events ADD CONSTRAINT chk_identity_security_event_outcome CHECK (outcome IN ('SUCCESS','FAILURE'))");
+        DB::statement("ALTER TABLE identity_security_events ADD CONSTRAINT chk_identity_security_event_metadata_object CHECK (jsonb_typeof(metadata) = 'object')");
+        DB::statement("ALTER TABLE identity_security_events ADD CONSTRAINT chk_identity_security_event_metadata_keys CHECK ((metadata - ARRAY['channel','mfa_method','attempts_remaining','recovery_generation','auth_epoch']::text[]) = '{}'::jsonb)");
 
         DB::statement('CREATE UNIQUE INDEX uq_owner_activation_token_outstanding ON owner_activation_tokens (activation_id, purpose) WHERE consumed_at IS NULL AND revoked_at IS NULL');
         DB::statement("CREATE UNIQUE INDEX uq_owner_mfa_factor_current ON owner_mfa_factors (user_id) WHERE state IN ('PENDING','ACTIVE')");

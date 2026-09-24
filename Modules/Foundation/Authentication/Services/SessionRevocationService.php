@@ -29,6 +29,8 @@ class SessionRevocationService
                 'company_id' => $context['company_id'] ?? null,
                 'property_id' => $context['property_id'] ?? null,
                 'reason_code' => $reasonCode,
+            ], [
+                'auth_epoch' => (int) $locked->auth_epoch,
             ]);
 
             return $locked->fresh();

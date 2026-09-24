@@ -515,6 +515,142 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         $this->assertDatabaseHas('identity_security_events', ['event_type' => 'SESSIONS_REVOKED', 'reason_code' => 'PASSWORD_CHANGE']);
     }
 
+    public function test_password_change_winning_first_rejects_stale_recovery_regeneration_after_user_lock_wait(): void
+    {
+        [, $owner, , , $factor] = $this->activeOwner();
+        $oldEpoch = $owner->auth_epoch;
+        $profileWorker = null;
+        $recoveryWorker = null;
+        $staleProfileWorker = null;
+
+        $this->dropAtomicityTrigger('b5a1b1_hold_password_change');
+        DB::unprepared(<<<'SQL'
+            CREATE FUNCTION b5a1b1_hold_password_change() RETURNS trigger AS $$
+            BEGIN
+                PERFORM pg_sleep(8);
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            CREATE TRIGGER trg_b5a1b1_hold_password_change
+            BEFORE INSERT ON identity_security_events
+            FOR EACH ROW WHEN (NEW.event_type = 'PASSWORD_RESET')
+            EXECUTE FUNCTION b5a1b1_hold_password_change();
+        SQL);
+
+        try {
+            $profileWorker = $this->spawnAtomicityWorker([
+                'operation' => 'profile_password_change',
+                'application_name' => 'b5a1b1_case_a_password_change',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'new_password' => 'case A replacement owner passphrase',
+            ]);
+            $this->waitForBackendWait('b5a1b1_case_a_password_change', 'Timeout', 'PgSleep');
+
+            $recoveryWorker = $this->spawnAtomicityWorker([
+                'operation' => 'recovery_regeneration',
+                'application_name' => 'b5a1b1_case_a_recovery',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'totp_code' => app(OwnerTotpService::class)->currentCode($factor, intdiv(time(), 30) + 1),
+            ]);
+            $this->waitForBackendWait('b5a1b1_case_a_recovery', 'Lock');
+
+            $staleProfileWorker = $this->spawnAtomicityWorker([
+                'operation' => 'profile_password_change',
+                'application_name' => 'b5a1b1_case_a_stale_password_change',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'new_password' => 'case A stale mutation must not win',
+            ]);
+            $this->waitForBackendWait('b5a1b1_case_a_stale_password_change', 'Lock');
+
+            $profileResult = $this->collectAtomicityWorker($profileWorker);
+            $profileWorker = null;
+            $recoveryResult = $this->collectAtomicityWorker($recoveryWorker);
+            $recoveryWorker = null;
+            $staleProfileResult = $this->collectAtomicityWorker($staleProfileWorker);
+            $staleProfileWorker = null;
+        } finally {
+            $this->terminateAtomicityWorker($profileWorker);
+            $this->terminateAtomicityWorker($recoveryWorker);
+            $this->terminateAtomicityWorker($staleProfileWorker);
+            $this->dropAtomicityTrigger('b5a1b1_hold_password_change');
+        }
+
+        $this->assertSame('success', $profileResult['status'] ?? null, $profileResult['_stderr'] ?? '');
+        $this->assertSame('validation_rejected', $recoveryResult['status'] ?? null, $recoveryResult['_stderr'] ?? '');
+        $this->assertSame('validation_rejected', $staleProfileResult['status'] ?? null, $staleProfileResult['_stderr'] ?? '');
+        $this->assertTrue(Hash::check('case A replacement owner passphrase', $owner->fresh()->password));
+        $this->assertSame($oldEpoch + 1, $owner->fresh()->auth_epoch);
+        $this->assertSame(1, OwnerRecoveryCode::query()->max('generation'));
+        $this->assertSame(1, IdentitySecurityEvent::query()->where('event_type', 'PASSWORD_RESET')->where('reason_code', 'PASSWORD_CHANGE')->count());
+        $this->assertSame(1, IdentitySecurityEvent::query()->where('event_type', 'SESSIONS_REVOKED')->where('reason_code', 'PASSWORD_CHANGE')->count());
+        $this->assertDatabaseMissing('identity_security_events', ['event_type' => 'RECOVERY_CODES_REGENERATED']);
+        $this->assertDatabaseMissing('identity_security_events', ['event_type' => 'SESSIONS_REVOKED', 'reason_code' => 'RECOVERY_CODES_REGENERATED']);
+    }
+
+    public function test_recovery_regeneration_locking_first_completes_before_waiting_password_change(): void
+    {
+        [, $owner, , , $factor] = $this->activeOwner();
+        $oldEpoch = $owner->auth_epoch;
+        $recoveryWorker = null;
+        $profileWorker = null;
+
+        $this->dropAtomicityTrigger('b5a1b1_hold_recovery_regeneration');
+        DB::unprepared(<<<'SQL'
+            CREATE FUNCTION b5a1b1_hold_recovery_regeneration() RETURNS trigger AS $$
+            BEGIN
+                PERFORM pg_sleep(4);
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            CREATE TRIGGER trg_b5a1b1_hold_recovery_regeneration
+            BEFORE INSERT ON owner_recovery_codes
+            FOR EACH ROW WHEN (NEW.generation = 2 AND NEW.ordinal = 1)
+            EXECUTE FUNCTION b5a1b1_hold_recovery_regeneration();
+        SQL);
+
+        try {
+            $recoveryWorker = $this->spawnAtomicityWorker([
+                'operation' => 'recovery_regeneration',
+                'application_name' => 'b5a1b1_case_b_recovery',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'totp_code' => app(OwnerTotpService::class)->currentCode($factor, intdiv(time(), 30) + 1),
+            ]);
+            $this->waitForBackendWait('b5a1b1_case_b_recovery', 'Timeout', 'PgSleep');
+
+            $profileWorker = $this->spawnAtomicityWorker([
+                'operation' => 'profile_password_change',
+                'application_name' => 'b5a1b1_case_b_password_change',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'new_password' => 'case B replacement owner passphrase',
+            ]);
+            $this->waitForBackendWait('b5a1b1_case_b_password_change', 'Lock');
+
+            $recoveryResult = $this->collectAtomicityWorker($recoveryWorker);
+            $recoveryWorker = null;
+            $profileResult = $this->collectAtomicityWorker($profileWorker);
+            $profileWorker = null;
+        } finally {
+            $this->terminateAtomicityWorker($recoveryWorker);
+            $this->terminateAtomicityWorker($profileWorker);
+            $this->dropAtomicityTrigger('b5a1b1_hold_recovery_regeneration');
+        }
+
+        $this->assertSame('success', $recoveryResult['status'] ?? null, $recoveryResult['_stderr'] ?? '');
+        $this->assertSame(10, $recoveryResult['recovery_code_count'] ?? null);
+        $this->assertSame('success', $profileResult['status'] ?? null, $profileResult['_stderr'] ?? '');
+        $this->assertTrue(Hash::check('case B replacement owner passphrase', $owner->fresh()->password));
+        $this->assertSame($oldEpoch + 2, $owner->fresh()->auth_epoch);
+        $this->assertSame(2, OwnerRecoveryCode::query()->max('generation'));
+        $this->assertDatabaseHas('identity_security_events', ['event_type' => 'RECOVERY_CODES_REGENERATED']);
+        $this->assertDatabaseHas('identity_security_events', ['event_type' => 'SESSIONS_REVOKED', 'reason_code' => 'RECOVERY_CODES_REGENERATED']);
+        $this->assertDatabaseHas('identity_security_events', ['event_type' => 'SESSIONS_REVOKED', 'reason_code' => 'PASSWORD_CHANGE']);
+    }
+
     public function test_lost_activation_completion_response_cannot_redisplay_recovery_codes(): void
     {
         [$activation, $owner, , , $factor, , $challenge] = $this->activeOwner();
@@ -546,16 +682,105 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         $this->assertDatabaseCount('personal_access_tokens', 0);
     }
 
-    public function test_identity_security_events_are_append_only_and_reject_secret_metadata(): void
+    public function test_identity_security_event_writer_rejects_arbitrary_and_nested_secret_metadata_before_persistence(): void
     {
-        $event = app(IdentitySecurityEventService::class)->record('LOGIN_MFA_FAILED', 'FAILURE', ['reason_code' => 'TEST'], ['attempt' => 1]);
+        $writer = app(IdentitySecurityEventService::class);
+        $counterexamples = [
+            'generic note' => ['note' => 'current password is secret'],
+            'TOTP code' => ['totp_code' => '123456'],
+            'camel-case session identifier' => ['sessionId' => 'session-secret'],
+            'unknown field' => ['unreviewed_field' => 'secret'],
+            'nested token' => ['channel' => ['token' => 'bearer-secret']],
+            'arbitrary URL' => ['url' => 'https://example.test/reset?token=secret'],
+            'authorization header' => ['authorization' => 'Bearer secret'],
+        ];
 
-        try {
-            app(IdentitySecurityEventService::class)->record('LOGIN_MFA_FAILED', 'FAILURE', [], ['password' => 'should-not-exist']);
-            $this->fail('Secret metadata should be rejected.');
-        } catch (\InvalidArgumentException) {
-            $this->assertDatabaseCount('identity_security_events', 1);
+        foreach ($counterexamples as $label => $metadata) {
+            try {
+                $writer->record('LOGIN_PASSWORD_ACCEPTED', 'SUCCESS', [], $metadata);
+                $this->fail("{$label} metadata should be rejected.");
+            } catch (\InvalidArgumentException) {
+                $this->assertDatabaseCount('identity_security_events', 0);
+            }
         }
+    }
+
+    public function test_identity_security_event_writer_validates_allowed_types_enums_and_bounds(): void
+    {
+        $writer = app(IdentitySecurityEventService::class);
+        $invalid = [
+            ['LOGIN_MFA_FAILED', 'FAILURE', ['reason_code' => 'SECOND_FACTOR_INVALID'], ['attempts_remaining' => '4']],
+            ['LOGIN_PASSWORD_ACCEPTED', 'SUCCESS', [], ['channel' => 'browser']],
+            ['LOGIN_PASSWORD_ACCEPTED', 'SUCCESS', [], ['channel' => str_repeat('a', 101)]],
+            ['SESSIONS_REVOKED', 'SUCCESS', ['reason_code' => 'LOGOUT_ALL'], ['auth_epoch' => -1]],
+            ['LOGIN_MFA_FAILED', 'FAILURE', ['reason_code' => 'NOT_APPROVED'], ['mfa_method' => 'totp', 'attempts_remaining' => 4]],
+        ];
+
+        foreach ($invalid as [$type, $outcome, $context, $metadata]) {
+            try {
+                $writer->record($type, $outcome, $context, $metadata);
+                $this->fail('Invalid typed event metadata should be rejected.');
+            } catch (\InvalidArgumentException) {
+                $this->assertDatabaseCount('identity_security_events', 0);
+            }
+        }
+    }
+
+    public function test_identity_security_event_writer_accepts_every_current_legitimate_metadata_shape(): void
+    {
+        $patterns = [
+            ['OWNER_INVITED', 'SUCCESS', [], []],
+            ['OWNER_EMAIL_VERIFIED', 'SUCCESS', [], []],
+            ['OWNER_PASSWORD_ESTABLISHED', 'SUCCESS', [], []],
+            ['OWNER_MFA_ENROLLMENT_STARTED', 'SUCCESS', [], []],
+            ['OWNER_MFA_ENROLLED', 'SUCCESS', [], []],
+            ['OWNER_ACTIVATED', 'SUCCESS', [], []],
+            ['LOGIN_PASSWORD_ACCEPTED', 'SUCCESS', [], ['channel' => 'api']],
+            ['LOGIN_MFA_SUCCEEDED', 'SUCCESS', [], ['mfa_method' => 'totp']],
+            ['LOGIN_MFA_FAILED', 'FAILURE', ['reason_code' => 'SECOND_FACTOR_INVALID'], ['mfa_method' => 'recovery_code', 'attempts_remaining' => 4]],
+            ['RECOVERY_CODE_USED', 'SUCCESS', [], []],
+            ['RECOVERY_CODES_REGENERATED', 'SUCCESS', [], ['recovery_generation' => 2]],
+            ['PASSWORD_RESET', 'SUCCESS', ['reason_code' => 'PASSWORD_CHANGE'], []],
+            ['SESSIONS_REVOKED', 'SUCCESS', ['reason_code' => 'PASSWORD_CHANGE'], ['auth_epoch' => 2]],
+            ['OWNER_MFA_RESET_REQUESTED', 'FAILURE', ['reason_code' => 'HIGH_ASSURANCE_RECOVERY_REQUIRED'], []],
+        ];
+
+        foreach ($patterns as [$type, $outcome, $context, $metadata]) {
+            $event = app(IdentitySecurityEventService::class)->record($type, $outcome, $context, $metadata);
+            $this->assertSame($type, $event->event_type);
+            $this->assertSame($metadata, $event->metadata);
+        }
+
+        $this->assertDatabaseCount('identity_security_events', count($patterns));
+    }
+
+    public function test_identity_security_event_database_enforces_object_shape_and_known_top_level_keys(): void
+    {
+        foreach (["'[]'::jsonb", "'{\"unknown\":true}'::jsonb"] as $metadata) {
+            try {
+                DB::table('identity_security_events')->insert([
+                    'id' => (string) Str::ulid(),
+                    'event_type' => 'OWNER_INVITED',
+                    'outcome' => 'SUCCESS',
+                    'metadata' => DB::raw($metadata),
+                    'occurred_at' => now(),
+                    'created_at' => now(),
+                ]);
+                $this->fail('Database metadata defense should reject malformed shape or keys.');
+            } catch (QueryException) {
+                $this->assertDatabaseCount('identity_security_events', 0);
+            }
+        }
+    }
+
+    public function test_identity_security_events_remain_append_only(): void
+    {
+        $event = app(IdentitySecurityEventService::class)->record(
+            'LOGIN_MFA_FAILED',
+            'FAILURE',
+            ['reason_code' => 'SECOND_FACTOR_INVALID'],
+            ['mfa_method' => 'totp', 'attempts_remaining' => 4],
+        );
 
         foreach (['update', 'delete'] as $operation) {
             try {
@@ -650,5 +875,159 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         $this->assertSame(200, $response->status(), (string) IdentitySecurityEvent::query()->where('event_type', 'LOGIN_MFA_FAILED')->latest('occurred_at')->value('reason_code'));
 
         return $response->json('token');
+    }
+
+    private function spawnAtomicityWorker(array $arguments): array
+    {
+        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'b5a1b1-atomicity-'.Str::lower(Str::random(8));
+        mkdir($directory, 0700, true);
+        $workerFile = $directory.DIRECTORY_SEPARATOR.'worker.php';
+        $argumentsFile = $directory.DIRECTORY_SEPARATOR.'arguments.json';
+        $resultFile = $directory.DIRECTORY_SEPARATOR.'result.json';
+        $stderrFile = $directory.DIRECTORY_SEPARATOR.'stderr.txt';
+        $arguments['result_file'] = $resultFile;
+        file_put_contents($workerFile, $this->atomicityWorkerSource());
+        file_put_contents($argumentsFile, json_encode($arguments, JSON_THROW_ON_ERROR));
+
+        $process = proc_open(
+            [PHP_BINARY, $workerFile, base_path(), $argumentsFile],
+            [['pipe', 'r'], ['file', $stderrFile, 'a'], ['file', $stderrFile, 'a']],
+            $pipes,
+            base_path(),
+            array_merge(getenv(), [
+                'APP_ENV' => 'testing',
+                'DB_CONNECTION' => 'pgsql',
+                'DB_DATABASE' => 'ivorq_testing',
+            ]),
+        );
+        if (! is_resource($process)) {
+            $this->fail('Unable to spawn the privileged-auth atomicity worker.');
+        }
+        fclose($pipes[0]);
+
+        return compact('process', 'directory', 'workerFile', 'argumentsFile', 'resultFile', 'stderrFile');
+    }
+
+    private function collectAtomicityWorker(array $worker): array
+    {
+        $deadline = microtime(true) + 20;
+        do {
+            $status = proc_get_status($worker['process']);
+            if (! ($status['running'] ?? false)) {
+                $exitCode = (int) ($status['exitcode'] ?? -1);
+                proc_close($worker['process']);
+                $result = is_file($worker['resultFile'])
+                    ? json_decode((string) file_get_contents($worker['resultFile']), true)
+                    : ['status' => 'missing_result'];
+                $result = is_array($result) ? $result : ['status' => 'malformed_result'];
+                $result['_exit_code'] = $exitCode;
+                $result['_stderr'] = is_file($worker['stderrFile']) ? trim((string) file_get_contents($worker['stderrFile'])) : '';
+                $this->removeAtomicityWorkerFiles($worker);
+
+                return $result;
+            }
+            usleep(100000);
+        } while (microtime(true) < $deadline);
+
+        $this->terminateAtomicityWorker($worker);
+        $this->fail('Privileged-auth atomicity worker timed out.');
+    }
+
+    private function terminateAtomicityWorker(?array $worker): void
+    {
+        if ($worker === null) {
+            return;
+        }
+        $status = proc_get_status($worker['process']);
+        if ($status['running'] ?? false) {
+            proc_terminate($worker['process']);
+        }
+        proc_close($worker['process']);
+        $this->removeAtomicityWorkerFiles($worker);
+    }
+
+    private function removeAtomicityWorkerFiles(array $worker): void
+    {
+        foreach (['workerFile', 'argumentsFile', 'resultFile', 'stderrFile'] as $key) {
+            if (is_file($worker[$key])) {
+                @unlink($worker[$key]);
+            }
+        }
+        @rmdir($worker['directory']);
+    }
+
+    private function waitForBackendWait(string $applicationName, string $waitEventType, ?string $waitEvent = null): void
+    {
+        $deadline = microtime(true) + 10;
+        do {
+            $backend = DB::selectOne(
+                'SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE datname = current_database() AND application_name = ? ORDER BY backend_start DESC LIMIT 1',
+                [$applicationName],
+            );
+            if ($backend && $backend->wait_event_type === $waitEventType && ($waitEvent === null || $backend->wait_event === $waitEvent)) {
+                $this->addToAssertionCount(1);
+
+                return;
+            }
+            usleep(50000);
+        } while (microtime(true) < $deadline);
+
+        $this->fail("Backend {$applicationName} did not reach the required PostgreSQL wait state.");
+    }
+
+    private function dropAtomicityTrigger(string $function): void
+    {
+        $trigger = $function === 'b5a1b1_hold_password_change'
+            ? 'trg_b5a1b1_hold_password_change ON identity_security_events'
+            : 'trg_b5a1b1_hold_recovery_regeneration ON owner_recovery_codes';
+        DB::unprepared("DROP TRIGGER IF EXISTS {$trigger}");
+        DB::unprepared("DROP FUNCTION IF EXISTS {$function}()");
+    }
+
+    private function atomicityWorkerSource(): string
+    {
+        return <<<'PHP'
+<?php
+
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Modules\Foundation\Authentication\Services\OwnerAuthenticationService;
+use Modules\Foundation\User\Models\User;
+use Modules\Foundation\User\Services\ProfileService;
+
+$root = $argv[1];
+$arguments = json_decode((string) file_get_contents($argv[2]), true, 512, JSON_THROW_ON_ERROR);
+require $root.'/vendor/autoload.php';
+$app = require $root.'/bootstrap/app.php';
+$app->make(Kernel::class)->bootstrap();
+DB::select("SELECT set_config('application_name', ?, false)", [$arguments['application_name']]);
+
+try {
+    $user = User::query()->findOrFail($arguments['user_id']);
+    if ($arguments['operation'] === 'profile_password_change') {
+        $changed = app(ProfileService::class)->changePassword(
+            $user,
+            $arguments['current_password'],
+            $arguments['new_password'],
+        );
+        $result = ['status' => $changed ? 'success' : 'validation_rejected'];
+    } else {
+        $codes = app(OwnerAuthenticationService::class)->regenerateRecoveryCodes(
+            $user,
+            $arguments['current_password'],
+            $arguments['totp_code'],
+        );
+        $result = ['status' => 'success', 'recovery_code_count' => count($codes)];
+    }
+} catch (ValidationException) {
+    $result = ['status' => 'validation_rejected'];
+} catch (Throwable $throwable) {
+    $result = ['status' => 'error', 'error' => $throwable::class.': '.$throwable->getMessage()];
+}
+
+file_put_contents($arguments['result_file'], json_encode($result, JSON_THROW_ON_ERROR));
+exit($result['status'] === 'error' ? 1 : 0);
+PHP;
     }
 }

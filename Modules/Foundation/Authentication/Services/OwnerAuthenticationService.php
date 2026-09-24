@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 use Modules\Foundation\Authentication\Enums\OwnerActivationStatus;
 use Modules\Foundation\Authentication\Models\OwnerActivation;
+use Modules\Foundation\Authentication\Models\OwnerRecoveryCode;
 use Modules\Foundation\Authentication\ValueObjects\VerifiedMfaAuthentication;
 use Modules\Foundation\User\Models\User;
 use SensitiveParameter;
@@ -24,12 +25,12 @@ class OwnerAuthenticationService
 
     public function completeTotp(#[SensitiveParameter] string $bearer, #[SensitiveParameter] string $code, string $channel, ?string $guestSessionId): VerifiedMfaAuthentication
     {
-        return $this->complete($bearer, $channel, $guestSessionId, fn (string $userId) => $this->totp->verifyActive($userId, $code));
+        return $this->complete($bearer, $channel, $guestSessionId, 'totp', fn (string $userId) => $this->totp->verifyActive($userId, $code));
     }
 
     public function completeRecoveryCode(#[SensitiveParameter] string $bearer, #[SensitiveParameter] string $code, string $channel, ?string $guestSessionId): VerifiedMfaAuthentication
     {
-        return $this->complete($bearer, $channel, $guestSessionId, function (string $userId) use ($code): void {
+        return $this->complete($bearer, $channel, $guestSessionId, 'recovery_code', function (string $userId) use ($code): void {
             $this->recoveryCodes->claim($userId, $code);
             $this->events->record('RECOVERY_CODE_USED', 'SUCCESS', ['subject_user_id' => $userId]);
         });
@@ -37,32 +38,37 @@ class OwnerAuthenticationService
 
     public function regenerateRecoveryCodes(User $actor, #[SensitiveParameter] string $password, #[SensitiveParameter] string $totpCode): array
     {
-        if ($actor->password === null || ! Hash::check($password, $actor->password)) {
-            throw $this->generic();
-        }
-
-        $result = DB::transaction(function () use ($actor, $totpCode): array {
+        return DB::transaction(function () use ($actor, $password, $totpCode): array {
             $user = User::query()->whereKey($actor->id)->lockForUpdate()->firstOrFail();
-            $activation = OwnerActivation::query()->where('user_id', $user->id)->where('status', OwnerActivationStatus::Active->value)->lockForUpdate()->firstOrFail();
+            if ($user->password === null || ! Hash::check($password, $user->password)) {
+                throw $this->generic();
+            }
+
+            // ACTIVE is terminal and identity fields are immutable. Reading it
+            // after the User lock avoids reversing the activation flow's older
+            // challenge/activation/User lock order while keeping this mutation
+            // serialized by the authoritative User row.
+            $activation = OwnerActivation::query()->where('user_id', $user->id)->where('status', OwnerActivationStatus::Active->value)->firstOrFail();
             $factor = $this->totp->verifyActive($user->id, $totpCode);
             $codes = $this->recoveryCodes->regenerate($factor);
-            $this->events->record('RECOVERY_CODES_REGENERATED', 'SUCCESS', $this->context($activation, $user));
+            $generation = (int) OwnerRecoveryCode::query()->where('factor_id', $factor->id)->max('generation');
+            $this->events->record('RECOVERY_CODES_REGENERATED', 'SUCCESS', $this->context($activation, $user), [
+                'recovery_generation' => $generation,
+            ]);
             $this->revocation->revokeAll($user, 'RECOVERY_CODES_REGENERATED', $this->context($activation, $user));
 
             return $codes;
         });
-
-        return $result;
     }
 
-    private function complete(#[SensitiveParameter] string $bearer, string $channel, ?string $guestSessionId, callable $factorVerifier): VerifiedMfaAuthentication
+    private function complete(#[SensitiveParameter] string $bearer, string $channel, ?string $guestSessionId, string $mfaMethod, callable $factorVerifier): VerifiedMfaAuthentication
     {
         $failure = null;
-        $result = DB::transaction(function () use ($bearer, $channel, $guestSessionId, $factorVerifier, &$failure): ?VerifiedMfaAuthentication {
+        $result = DB::transaction(function () use ($bearer, $channel, $guestSessionId, $mfaMethod, $factorVerifier, &$failure): ?VerifiedMfaAuthentication {
             $challenge = $this->challenges->lockValid($bearer, 'LOGIN_MFA');
             if ($challenge->channel !== $channel) {
                 $failure = $this->generic();
-                $this->recordFailure($challenge, 'CHANNEL_MISMATCH');
+                $this->recordFailure($challenge, 'CHANNEL_MISMATCH', $mfaMethod);
 
                 return null;
             }
@@ -70,7 +76,7 @@ class OwnerAuthenticationService
                 $expected = $guestSessionId === null ? '' : hash('sha256', "IVORQ-GUEST-SESSION-V1\0".$guestSessionId);
                 if ($challenge->guest_session_digest === null || ! hash_equals($challenge->guest_session_digest, $expected)) {
                     $failure = $this->generic();
-                    $this->recordFailure($challenge, 'GUEST_SESSION_MISMATCH');
+                    $this->recordFailure($challenge, 'GUEST_SESSION_MISMATCH', $mfaMethod);
 
                     return null;
                 }
@@ -83,7 +89,7 @@ class OwnerAuthenticationService
                 || (string) $activation->property_id !== (string) $challenge->property_id
                 || ! $this->hasBinding($user, $activation)) {
                 $failure = $this->generic();
-                $this->recordFailure($challenge, 'AUTHORITY_BINDING_INVALID');
+                $this->recordFailure($challenge, 'AUTHORITY_BINDING_INVALID', $mfaMethod);
 
                 return null;
             }
@@ -92,13 +98,15 @@ class OwnerAuthenticationService
                 $factorVerifier($user->id);
             } catch (ValidationException|ModelNotFoundException) {
                 $failure = $this->generic();
-                $this->recordFailure($challenge, 'SECOND_FACTOR_INVALID');
+                $this->recordFailure($challenge, 'SECOND_FACTOR_INVALID', $mfaMethod);
 
                 return null;
             }
 
             $this->challenges->consume($challenge);
-            $this->events->record('LOGIN_MFA_SUCCEEDED', 'SUCCESS', $this->context($activation, $user, $challenge->id));
+            $this->events->record('LOGIN_MFA_SUCCEEDED', 'SUCCESS', $this->context($activation, $user, $challenge->id), [
+                'mfa_method' => $mfaMethod,
+            ]);
 
             return new VerifiedMfaAuthentication($user->id, $activation->company_id, $activation->property_id, $challenge->id);
         });
@@ -135,7 +143,7 @@ class OwnerAuthenticationService
         return $membership && $role;
     }
 
-    private function recordFailure($challenge, string $reason): void
+    private function recordFailure($challenge, string $reason, string $mfaMethod): void
     {
         $this->challenges->fail($challenge);
         $this->events->record('LOGIN_MFA_FAILED', 'FAILURE', [
@@ -145,19 +153,27 @@ class OwnerAuthenticationService
             'activation_id' => $challenge->activation_id,
             'challenge_id' => $challenge->id,
             'reason_code' => $reason,
+        ], [
+            'mfa_method' => $mfaMethod,
+            'attempts_remaining' => max(0, (int) $challenge->max_attempts - (int) $challenge->failed_attempts),
         ]);
     }
 
     private function context(OwnerActivation $activation, User $user, ?string $challengeId = null): array
     {
-        return [
+        $context = [
             'actor_user_id' => $user->id,
             'subject_user_id' => $user->id,
             'company_id' => $activation->company_id,
             'property_id' => $activation->property_id,
             'activation_id' => $activation->id,
-            'challenge_id' => $challengeId,
         ];
+
+        if ($challengeId !== null) {
+            $context['challenge_id'] = $challengeId;
+        }
+
+        return $context;
     }
 
     private function generic(): ValidationException

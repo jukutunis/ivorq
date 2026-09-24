@@ -26,68 +26,82 @@ class AuthService
     public function login(string $email, string $password, string $companyId, string $channel = 'web', ?string $guestSessionId = null): array
     {
         $email = mb_strtolower(trim($email));
-        $user = $this->userRepository->findByEmailAndCompany($email, $companyId);
+        $candidate = $this->userRepository->findByEmailAndCompany($email, $companyId);
 
-        if (! $user || $user->password === null || ! Hash::check($password, $user->password)) {
+        if (! $candidate) {
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
         }
 
-        if (! $user->is_active) {
-            throw ValidationException::withMessages([
-                'email' => ['Your account has been deactivated.'],
-            ]);
-        }
+        $result = DB::transaction(function () use ($candidate, $password, $companyId, $channel, $guestSessionId): array {
+            $user = User::query()->whereKey($candidate->id)->lockForUpdate()->first();
+            if (! $user || $user->password === null || ! Hash::check($password, $user->password)) {
+                throw ValidationException::withMessages([
+                    'email' => ['The provided credentials are incorrect.'],
+                ]);
+            }
 
-        $properties = $user->properties()
-            ->where('company_id', $companyId)
-            ->where('properties.is_active', true)
-            ->wherePivot('status', 'active')
-            ->get();
-        if ($properties->isEmpty()) {
-            throw ValidationException::withMessages(['email' => ['The provided credentials are incorrect.']]);
-        }
+            if (! $user->is_active) {
+                throw ValidationException::withMessages([
+                    'email' => ['Your account has been deactivated.'],
+                ]);
+            }
 
-        $activation = OwnerActivation::query()
-            ->where('user_id', $user->id)
-            ->where('company_id', $companyId)
-            ->first();
-        if ($activation) {
-            if ($activation->status !== OwnerActivationStatus::Active) {
+            $activation = OwnerActivation::query()
+                ->where('user_id', $user->id)
+                ->where('company_id', $companyId)
+                ->lockForUpdate()
+                ->first();
+            $properties = $user->properties()
+                ->where('company_id', $companyId)
+                ->where('properties.is_active', true)
+                ->wherePivot('status', 'active')
+                ->get();
+            if ($properties->isEmpty()) {
                 throw ValidationException::withMessages(['email' => ['The provided credentials are incorrect.']]);
             }
 
-            $property = $properties->firstWhere('id', $activation->property_id);
-            if (! $property || ! $property->pivot->is_default) {
-                throw ValidationException::withMessages(['email' => ['The provided credentials are incorrect.']]);
-            }
+            if ($activation) {
+                if ($activation->status !== OwnerActivationStatus::Active) {
+                    throw ValidationException::withMessages(['email' => ['The provided credentials are incorrect.']]);
+                }
 
-            $challenge = DB::transaction(function () use ($user, $activation, $channel, $guestSessionId): string {
+                $property = $properties->firstWhere('id', $activation->property_id);
+                if (! $property || ! $property->pivot->is_default) {
+                    throw ValidationException::withMessages(['email' => ['The provided credentials are incorrect.']]);
+                }
+
                 $this->events->record('LOGIN_PASSWORD_ACCEPTED', 'SUCCESS', [
                     'subject_user_id' => $user->id,
                     'company_id' => $activation->company_id,
                     'property_id' => $activation->property_id,
                     'activation_id' => $activation->id,
+                ], [
+                    'channel' => $channel,
                 ]);
 
-                return $this->challenges->issueLogin($user, $activation, $channel, $guestSessionId);
-            });
+                $challenge = $this->challenges->issueLogin($user, $activation, $channel, $guestSessionId);
+
+                return [
+                    'mfa_required' => true,
+                    'challenge' => $challenge,
+                    'property_id' => $activation->property_id,
+                ];
+            }
 
             return [
-                'mfa_required' => true,
-                'challenge' => $challenge,
-                'property_id' => $activation->property_id,
+                'user' => $user,
+                'properties' => $properties,
+                'mfa_required' => false,
             ];
+        });
+
+        if (! $result['mfa_required']) {
+            event(new UserLoggedIn($result['user'], request()));
         }
 
-        event(new UserLoggedIn($user, request()));
-
-        return [
-            'user' => $user,
-            'properties' => $properties,
-            'mfa_required' => false,
-        ];
+        return $result;
     }
 
     public function logout(User $user, ?int $tokenId = null): void
