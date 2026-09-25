@@ -4,6 +4,7 @@ namespace Modules\Foundation\Authorization\Services;
 
 use DomainException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Modules\Foundation\Audit\Services\AuditService;
 use Modules\Foundation\User\Models\User;
@@ -62,79 +63,55 @@ class SensitiveActionConfirmationService
             throw new DomainException('Checkout confirmation requires authoritative checkout context.');
         }
 
-        if (! Hash::check($password, $actor->password)) {
-            throw new DomainException('The password is incorrect.');
-        }
+        $metadata = DB::transaction(function () use ($actor, $intent, $password, $companyId, $propertyId, $commercialEvidenceHash): array {
+            $lockedActor = User::query()->whereKey($actor->getKey())->lockForUpdate()->first();
+            if (! $lockedActor
+                || ! $lockedActor->is_active
+                || $lockedActor->password === null
+                || ! Hash::check($password, $lockedActor->password)) {
+                throw new DomainException('The password is incorrect.');
+            }
 
-        $now = Carbon::now();
-        $metadata = [
-            'actor_id' => $actor->getKey(),
-            'intent' => $intent,
-            'company_id' => $companyId,
-            'property_id' => $propertyId,
-            'confirmed_at' => $now->toISOString(),
-            'expires_at' => $now->copy()->addMinutes(self::CONFIRMATION_TTL_MINUTES)->toISOString(),
-        ];
+            $now = Carbon::now();
+            $metadata = [
+                'actor_id' => $lockedActor->getKey(),
+                'auth_epoch' => (int) $lockedActor->auth_epoch,
+                'intent' => $intent,
+                'company_id' => $companyId,
+                'property_id' => $propertyId,
+                'confirmed_at' => $now->toISOString(),
+                'expires_at' => $now->copy()->addMinutes(self::CONFIRMATION_TTL_MINUTES)->toISOString(),
+            ];
 
-        if ($commercialEvidenceHash !== null) {
-            $metadata['commercial_evidence_hash'] = $commercialEvidenceHash;
-        }
+            if ($commercialEvidenceHash !== null) {
+                $metadata['commercial_evidence_hash'] = $commercialEvidenceHash;
+            }
+
+            $this->auditService->log(
+                'sensitive_action_confirmed',
+                $lockedActor,
+                [],
+                [
+                    'intent' => $intent,
+                    'property_id' => $propertyId,
+                    'company_id' => $companyId,
+                    'correlation' => request()?->headers->get('X-Request-Id') ?? request()?->headers->get('X-Correlation-Id'),
+                ],
+                ['sensitive-action-confirmation', $intent, $propertyId]
+            );
+
+            return $metadata;
+        });
 
         $confirmations = session()->get(self::SESSION_KEY, []);
         $confirmations[$intent] = $metadata;
         session()->put(self::SESSION_KEY, $confirmations);
 
-        $this->auditService->log(
-            'sensitive_action_confirmed',
-            $actor,
-            [],
-            [
-                'intent' => $intent,
-                'property_id' => $propertyId,
-                'company_id' => $companyId,
-                'correlation' => request()?->headers->get('X-Request-Id') ?? request()?->headers->get('X-Correlation-Id'),
-            ],
-            ['sensitive-action-confirmation', $intent, $propertyId]
-        );
     }
 
     public function hasValidConfirmation(User $actor, string $intent, ?string $companyId, string $propertyId): bool
     {
-        $confirmations = session()->get(self::SESSION_KEY, []);
-
-        if (! isset($confirmations[$intent]) || ! is_array($confirmations[$intent])) {
-            return false;
-        }
-
-        $metadata = $confirmations[$intent];
-
-        if (! isset($metadata['actor_id'], $metadata['intent'], $metadata['property_id'], $metadata['expires_at'])) {
-            return false;
-        }
-
-        if ($metadata['actor_id'] !== $actor->getKey()) {
-            return false;
-        }
-
-        if ($metadata['intent'] !== $intent) {
-            return false;
-        }
-
-        if ($metadata['property_id'] !== $propertyId) {
-            return false;
-        }
-
-        if (isset($metadata['company_id']) && $metadata['company_id'] !== null) {
-            if ($metadata['company_id'] !== $companyId) {
-                return false;
-            }
-        }
-
-        if (Carbon::now()->isAfter(Carbon::parse($metadata['expires_at']))) {
-            return false;
-        }
-
-        return true;
+        return $this->validatedMetadata($actor, $intent, $companyId, $propertyId) !== null;
     }
 
     public function requireValidConfirmation(User $actor, string $intent, ?string $companyId, string $propertyId): void
@@ -169,6 +146,24 @@ class SensitiveActionConfirmationService
 
     public function confirmationMetadataFor(User $actor, string $intent, ?string $companyId, string $propertyId): ?array
     {
+        $metadata = $this->validatedMetadata($actor, $intent, $companyId, $propertyId);
+        if ($metadata === null) {
+            return null;
+        }
+
+        return [
+            'intent' => $metadata['intent'],
+            'confirmed_at' => $metadata['confirmed_at'],
+            'expires_at' => $metadata['expires_at'],
+            'commercial_evidence_hash' => $metadata['commercial_evidence_hash'] ?? null,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function validatedMetadata(User $actor, string $intent, ?string $companyId, string $propertyId): ?array
+    {
         $confirmations = session()->get(self::SESSION_KEY, []);
 
         if (! isset($confirmations[$intent]) || ! is_array($confirmations[$intent])) {
@@ -177,8 +172,16 @@ class SensitiveActionConfirmationService
 
         $metadata = $confirmations[$intent];
 
-        if (! isset($metadata['actor_id'], $metadata['intent'], $metadata['property_id'], $metadata['expires_at'])) {
+        if (! isset($metadata['actor_id'], $metadata['intent'], $metadata['property_id'], $metadata['confirmed_at'], $metadata['expires_at'])) {
             return null;
+        }
+
+        $issuanceAuthEpoch = 0;
+        if (array_key_exists('auth_epoch', $metadata)) {
+            if (! is_int($metadata['auth_epoch'])) {
+                return null;
+            }
+            $issuanceAuthEpoch = $metadata['auth_epoch'];
         }
 
         if ($metadata['actor_id'] !== $actor->getKey()) {
@@ -203,12 +206,14 @@ class SensitiveActionConfirmationService
             return null;
         }
 
-        return [
-            'intent' => $metadata['intent'],
-            'confirmed_at' => $metadata['confirmed_at'],
-            'expires_at' => $metadata['expires_at'],
-            'commercial_evidence_hash' => $metadata['commercial_evidence_hash'] ?? null,
-        ];
+        $authoritativeActor = User::query()->whereKey($actor->getKey())->first(['id', 'auth_epoch', 'is_active']);
+        if (! $authoritativeActor
+            || ! $authoritativeActor->is_active
+            || (int) $authoritativeActor->auth_epoch !== $issuanceAuthEpoch) {
+            return null;
+        }
+
+        return $metadata;
     }
 
     public function confirmationExpiryAt(User $actor, string $intent, ?string $companyId, string $propertyId): ?Carbon

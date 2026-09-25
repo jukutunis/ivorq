@@ -5,8 +5,10 @@ namespace Tests\Postgres\Foundation\Authentication;
 use Database\Factories\CompanyFactory;
 use Database\Factories\PropertyFactory;
 use Database\Factories\UserFactory;
+use DomainException;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -27,13 +29,26 @@ use Modules\Foundation\Authentication\Services\OwnerRecoveryCodeService;
 use Modules\Foundation\Authentication\Services\OwnerTotpService;
 use Modules\Foundation\Authentication\Services\PasswordService;
 use Modules\Foundation\Authentication\Services\SessionRevocationService;
+use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationConsumption;
+use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationIssuance;
+use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\Property\Enums\PropertyBootstrapProvisioningEnvironmentEnum;
 use Modules\Foundation\Property\Enums\PropertyBootstrapProvisioningStatusEnum;
 use Modules\Foundation\Property\Models\Company;
+use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\Property\Models\PropertyBootstrapProvisioningRun;
 use Modules\Foundation\User\Models\User;
 use Modules\Foundation\User\Models\UserSession;
 use Modules\Foundation\User\Services\ProfileService;
+use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
+use Modules\Operations\FrontDesk\Models\FrontDeskStay;
+use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService;
+use Modules\Operations\PMS\Models\Guest;
+use Modules\Operations\PMS\Models\Reservation;
+use Shared\Services\CurrentPropertyService;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\PostgresTestCase;
 
 class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
@@ -651,6 +666,287 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         $this->assertDatabaseHas('identity_security_events', ['event_type' => 'SESSIONS_REVOKED', 'reason_code' => 'PASSWORD_CHANGE']);
     }
 
+    public function test_sensitive_action_reloads_authoritative_user_and_rejects_stale_password_snapshot(): void
+    {
+        [, $owner, $company, $property] = $this->activeOwner();
+        $staleOwner = User::query()->findOrFail($owner->id);
+        User::query()->whereKey($owner->id)->update(['password' => Hash::make('replacement password after stale snapshot')]);
+
+        try {
+            app(SensitiveActionConfirmationService::class)->confirm(
+                $staleOwner,
+                'administrative-sensitive-action',
+                self::PASSWORD,
+                $company->id,
+                $property->id,
+            );
+            $this->fail('A stale in-memory password hash must not authorize sensitive confirmation.');
+        } catch (DomainException $exception) {
+            $this->assertSame('The password is incorrect.', $exception->getMessage());
+        }
+
+        $this->assertFalse(app(SensitiveActionConfirmationService::class)->hasValidConfirmation(
+            $owner,
+            'administrative-sensitive-action',
+            $company->id,
+            $property->id,
+        ));
+    }
+
+    public function test_checkout_confirmation_reloads_authoritative_user_and_rejects_stale_password_snapshot(): void
+    {
+        [, $owner, $company, $property] = $this->activeOwner();
+        $stay = $this->checkoutScenario($owner, $company, $property);
+        $staleOwner = User::query()->findOrFail($owner->id);
+        User::query()->whereKey($owner->id)->update(['password' => Hash::make('replacement checkout password')]);
+
+        try {
+            app(CheckoutSensitiveConfirmationService::class)->issueForCurrentSession(
+                $staleOwner,
+                $stay->id,
+                'r2-checkout-stale-snapshot',
+                self::PASSWORD,
+            );
+            $this->fail('A stale in-memory password hash must not authorize checkout confirmation.');
+        } catch (DomainException $exception) {
+            $this->assertSame('The password is incorrect.', $exception->getMessage());
+        }
+
+        $this->assertSame(0, CheckoutSensitiveConfirmationIssuance::query()->count());
+    }
+
+    public function test_sensitive_action_password_mutation_winning_first_rejects_old_password_after_lock_wait(): void
+    {
+        [, $owner, $company, $property] = $this->activeOwner();
+        $passwordWorker = null;
+        $confirmationWorker = null;
+
+        $this->installPasswordChangeHoldTrigger();
+
+        try {
+            $passwordWorker = $this->spawnAtomicityWorker([
+                'operation' => 'profile_password_change',
+                'application_name' => 'b5a1b1_r2_sensitive_password_first',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'new_password' => 'r2 sensitive password first replacement',
+            ]);
+            $this->waitForBackendWait('b5a1b1_r2_sensitive_password_first', 'Timeout', 'PgSleep');
+
+            $confirmationWorker = $this->spawnAtomicityWorker([
+                'operation' => 'sensitive_confirmation',
+                'application_name' => 'b5a1b1_r2_sensitive_waiter',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'company_id' => $company->id,
+                'property_id' => $property->id,
+                'intent' => 'administrative-sensitive-action',
+            ]);
+            $this->waitForBackendWait('b5a1b1_r2_sensitive_waiter', 'Lock');
+
+            $passwordResult = $this->collectAtomicityWorker($passwordWorker);
+            $passwordWorker = null;
+            $confirmationResult = $this->collectAtomicityWorker($confirmationWorker);
+            $confirmationWorker = null;
+        } finally {
+            $this->terminateAtomicityWorker($passwordWorker);
+            $this->terminateAtomicityWorker($confirmationWorker);
+            $this->dropAtomicityTrigger('b5a1b1_hold_password_change');
+        }
+
+        $this->assertSame('success', $passwordResult['status'] ?? null, $passwordResult['_stderr'] ?? '');
+        $this->assertSame('domain_rejected', $confirmationResult['status'] ?? null, $confirmationResult['_stderr'] ?? '');
+        $this->assertSame(0, DB::table('audit_logs')->where('event', 'sensitive_action_confirmed')->count());
+    }
+
+    public function test_sensitive_confirmation_winning_first_is_invalid_after_waiting_password_mutation(): void
+    {
+        [, $owner, $company, $property] = $this->activeOwner();
+        $oldEpoch = (int) $owner->auth_epoch;
+        $confirmationWorker = null;
+        $passwordWorker = null;
+
+        try {
+            $confirmationWorker = $this->spawnAtomicityWorker([
+                'operation' => 'sensitive_confirmation',
+                'application_name' => 'b5a1b1_r2_sensitive_first',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'company_id' => $company->id,
+                'property_id' => $property->id,
+                'intent' => 'administrative-sensitive-action',
+                'hold_seconds' => 6,
+            ]);
+            $this->waitForBackendWait('b5a1b1_r2_sensitive_first', 'Timeout', 'PgSleep');
+
+            $passwordWorker = $this->spawnAtomicityWorker([
+                'operation' => 'profile_password_change',
+                'application_name' => 'b5a1b1_r2_password_waiter',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'new_password' => 'r2 confirmation first replacement',
+            ]);
+            $this->waitForBackendWait('b5a1b1_r2_password_waiter', 'Lock');
+
+            $confirmationResult = $this->collectAtomicityWorker($confirmationWorker);
+            $confirmationWorker = null;
+            $passwordResult = $this->collectAtomicityWorker($passwordWorker);
+            $passwordWorker = null;
+        } finally {
+            $this->terminateAtomicityWorker($confirmationWorker);
+            $this->terminateAtomicityWorker($passwordWorker);
+        }
+
+        $this->assertSame('success', $confirmationResult['status'] ?? null, $confirmationResult['_stderr'] ?? '');
+        $this->assertSame('success', $passwordResult['status'] ?? null, $passwordResult['_stderr'] ?? '');
+        $this->assertSame($oldEpoch + 1, (int) $owner->fresh()->auth_epoch);
+        session(['sensitive_action_confirmation' => $confirmationResult['confirmation'] ?? []]);
+        $this->assertFalse(app(SensitiveActionConfirmationService::class)->hasValidConfirmation(
+            $owner,
+            'administrative-sensitive-action',
+            $company->id,
+            $property->id,
+        ));
+    }
+
+    public function test_checkout_password_mutation_winning_first_rejects_old_password_after_lock_wait(): void
+    {
+        [, $owner, $company, $property] = $this->activeOwner();
+        $stay = $this->checkoutScenario($owner, $company, $property);
+        $passwordWorker = null;
+        $checkoutWorker = null;
+
+        $this->installPasswordChangeHoldTrigger();
+
+        try {
+            $passwordWorker = $this->spawnAtomicityWorker([
+                'operation' => 'profile_password_change',
+                'application_name' => 'b5a1b1_r2_checkout_password_first',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'new_password' => 'r2 checkout password first replacement',
+            ]);
+            $this->waitForBackendWait('b5a1b1_r2_checkout_password_first', 'Timeout', 'PgSleep');
+
+            $checkoutWorker = $this->spawnAtomicityWorker([
+                'operation' => 'checkout_confirmation',
+                'application_name' => 'b5a1b1_r2_checkout_waiter',
+                'user_id' => $owner->id,
+                'current_password' => self::PASSWORD,
+                'company_id' => $company->id,
+                'property_id' => $property->id,
+                'front_desk_stay_id' => $stay->id,
+                'idempotency_key' => 'r2-checkout-password-first',
+            ]);
+            $this->waitForBackendWait('b5a1b1_r2_checkout_waiter', 'Lock');
+
+            $passwordResult = $this->collectAtomicityWorker($passwordWorker);
+            $passwordWorker = null;
+            $checkoutResult = $this->collectAtomicityWorker($checkoutWorker);
+            $checkoutWorker = null;
+        } finally {
+            $this->terminateAtomicityWorker($passwordWorker);
+            $this->terminateAtomicityWorker($checkoutWorker);
+            $this->dropAtomicityTrigger('b5a1b1_hold_password_change');
+        }
+
+        $this->assertSame('success', $passwordResult['status'] ?? null, $passwordResult['_stderr'] ?? '');
+        $this->assertSame('domain_rejected', $checkoutResult['status'] ?? null, $checkoutResult['_stderr'] ?? '');
+        $this->assertSame(0, CheckoutSensitiveConfirmationIssuance::query()->count());
+    }
+
+    public function test_auth_epoch_change_invalidates_sensitive_action_confirmation(): void
+    {
+        [, $owner, $company, $property] = $this->activeOwner();
+        $service = app(SensitiveActionConfirmationService::class);
+        $service->confirm($owner, 'administrative-sensitive-action', self::PASSWORD, $company->id, $property->id);
+        $this->assertTrue($service->hasValidConfirmation($owner, 'administrative-sensitive-action', $company->id, $property->id));
+
+        User::query()->whereKey($owner->id)->increment('auth_epoch');
+
+        $this->assertFalse($service->hasValidConfirmation($owner, 'administrative-sensitive-action', $company->id, $property->id));
+        $this->assertNull($service->confirmationMetadataFor($owner, 'administrative-sensitive-action', $company->id, $property->id));
+    }
+
+    public function test_auth_epoch_change_invalidates_checkout_confirmation_before_consumption(): void
+    {
+        [, $owner, $company, $property] = $this->activeOwner();
+        $stay = $this->checkoutScenario($owner, $company, $property);
+        $service = app(CheckoutSensitiveConfirmationService::class);
+        $service->issueForCurrentSession($owner, $stay->id, 'r2-checkout-epoch', self::PASSWORD);
+        User::query()->whereKey($owner->id)->increment('auth_epoch');
+
+        try {
+            DB::transaction(fn () => $service->claimCurrentSessionConfirmationFor($owner, $stay->id, 'r2-checkout-epoch'));
+            $this->fail('An auth_epoch change must invalidate a checkout confirmation.');
+        } catch (DomainException $exception) {
+            $this->assertSame(CheckoutSensitiveConfirmationService::ERROR_CONTEXT_REQUIRED, $exception->getMessage());
+        }
+
+        $this->assertSame(0, CheckoutSensitiveConfirmationConsumption::query()->count());
+    }
+
+    public function test_login_and_final_activation_serialize_without_opposing_owner_user_lock_order(): void
+    {
+        [$activation, $owner, $company, , $challenge] = $this->emailVerifiedActivation();
+        $activationService = app(OwnerActivationService::class);
+        $activationService->establishPassword($challenge, self::PASSWORD);
+        $activationService->startMfa($challenge);
+        $factor = OwnerMfaFactor::query()->sole();
+        $counter = intdiv(time(), 30) - 1;
+        $activationService->confirmMfa($challenge, app(OwnerTotpService::class)->currentCode($factor, $counter));
+        $completionCode = app(OwnerTotpService::class)->currentCode($factor->fresh(), $counter + 1);
+
+        $holderWorker = null;
+        $completionWorker = null;
+        $loginWorker = null;
+
+        try {
+            $holderWorker = $this->spawnAtomicityWorker([
+                'operation' => 'hold_user_lock',
+                'application_name' => 'b5a1b1_r2_user_lock_holder',
+                'user_id' => $owner->id,
+                'hold_seconds' => 6,
+            ]);
+            $this->waitForBackendWait('b5a1b1_r2_user_lock_holder', 'Timeout', 'PgSleep');
+
+            $completionWorker = $this->spawnAtomicityWorker([
+                'operation' => 'complete_activation',
+                'application_name' => 'b5a1b1_r2_activation_completion',
+                'challenge' => $challenge,
+                'totp_code' => $completionCode,
+            ]);
+            $this->waitForBackendWait('b5a1b1_r2_activation_completion', 'Lock');
+
+            $loginWorker = $this->spawnAtomicityWorker([
+                'operation' => 'owner_login',
+                'application_name' => 'b5a1b1_r2_owner_login',
+                'email' => $owner->email,
+                'current_password' => self::PASSWORD,
+                'company_id' => $company->id,
+            ]);
+            $this->waitForBackendWait('b5a1b1_r2_owner_login', 'Lock');
+
+            $holderResult = $this->collectAtomicityWorker($holderWorker);
+            $holderWorker = null;
+            $completionResult = $this->collectAtomicityWorker($completionWorker);
+            $completionWorker = null;
+            $loginResult = $this->collectAtomicityWorker($loginWorker);
+            $loginWorker = null;
+        } finally {
+            $this->terminateAtomicityWorker($holderWorker);
+            $this->terminateAtomicityWorker($completionWorker);
+            $this->terminateAtomicityWorker($loginWorker);
+        }
+
+        $this->assertSame('success', $holderResult['status'] ?? null, $holderResult['_stderr'] ?? '');
+        $this->assertSame('success', $completionResult['status'] ?? null, $completionResult['_stderr'] ?? '');
+        $this->assertSame(10, $completionResult['recovery_code_count'] ?? null);
+        $this->assertSame('success', $loginResult['status'] ?? null, $loginResult['_stderr'] ?? '');
+        $this->assertTrue($loginResult['mfa_required'] ?? false);
+        $this->assertSame(OwnerActivationStatus::Active, $activation->fresh()->status);
+    }
+
     public function test_lost_activation_completion_response_cannot_redisplay_recovery_codes(): void
     {
         [$activation, $owner, , , $factor, , $challenge] = $this->activeOwner();
@@ -796,6 +1092,69 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         }
     }
 
+    private function installPasswordChangeHoldTrigger(): void
+    {
+        $this->dropAtomicityTrigger('b5a1b1_hold_password_change');
+        DB::unprepared(<<<'SQL'
+            CREATE FUNCTION b5a1b1_hold_password_change() RETURNS trigger AS $$
+            BEGIN
+                PERFORM pg_sleep(8);
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            CREATE TRIGGER trg_b5a1b1_hold_password_change
+            BEFORE INSERT ON identity_security_events
+            FOR EACH ROW WHEN (NEW.event_type = 'PASSWORD_RESET')
+            EXECUTE FUNCTION b5a1b1_hold_password_change();
+        SQL);
+    }
+
+    private function checkoutScenario(User $actor, Company $company, Property $property): FrontDeskStay
+    {
+        Permission::firstOrCreate([
+            'name' => FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION,
+            'guard_name' => 'web',
+        ]);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        $actor->givePermissionTo(FrontDeskCheckoutExecuteAuthorizationService::EXECUTE_PERMISSION);
+
+        $guest = Guest::create([
+            'property_id' => $property->id,
+            'guest_code' => 'R2G-'.Str::upper(Str::random(5)),
+            'full_name' => 'R2 Atomicity Guest',
+            'guest_type' => 'individual',
+        ]);
+        $reservation = Reservation::create([
+            'property_id' => $property->id,
+            'primary_guest_id' => $guest->id,
+            'reservation_number' => 'R2R-'.Str::upper(Str::random(6)),
+            'arrival_date' => today(),
+            'departure_date' => today()->addDay(),
+            'nights' => 1,
+            'reservation_source' => 'direct',
+            'status' => 'checked_in',
+            'reserved_room_type' => 'standard',
+        ]);
+        $stay = FrontDeskStay::create([
+            'property_id' => $property->id,
+            'reservation_id' => $reservation->id,
+            'guest_id' => $guest->id,
+            'status' => FrontDeskStayStatusEnum::InHouse,
+            'created_by' => $actor->id,
+            'updated_by' => $actor->id,
+        ]);
+
+        Auth::login($actor);
+        app(CurrentPropertyService::class)->setPropertyId($property->id);
+        session([
+            'active_property_id' => $property->id,
+            'current_property_id' => $property->id,
+            'active_company_id' => $company->id,
+        ]);
+
+        return $stay;
+    }
+
     private function invitedActivation(): array
     {
         $company = CompanyFactory::new()->create();
@@ -910,7 +1269,7 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
 
     private function collectAtomicityWorker(array $worker): array
     {
-        $deadline = microtime(true) + 20;
+        $deadline = microtime(true) + 30;
         do {
             $status = proc_get_status($worker['process']);
             if (! ($status['running'] ?? false)) {
@@ -990,38 +1349,107 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
 <?php
 
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Modules\Foundation\Authentication\Services\AuthService;
+use Modules\Foundation\Authentication\Services\OwnerActivationService;
 use Modules\Foundation\Authentication\Services\OwnerAuthenticationService;
+use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\User\Models\User;
 use Modules\Foundation\User\Services\ProfileService;
+use Shared\Services\CurrentPropertyService;
 
 $root = $argv[1];
 $arguments = json_decode((string) file_get_contents($argv[2]), true, 512, JSON_THROW_ON_ERROR);
 require $root.'/vendor/autoload.php';
 $app = require $root.'/bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
+$app['config']->set('session.driver', 'array');
+$app->make('session.store')->setId((string) Str::uuid());
+$app->make('session.store')->start();
 DB::select("SELECT set_config('application_name', ?, false)", [$arguments['application_name']]);
+DB::unprepared("SET lock_timeout TO '12s'");
+DB::unprepared("SET statement_timeout TO '20s'");
 
 try {
-    $user = User::query()->findOrFail($arguments['user_id']);
     if ($arguments['operation'] === 'profile_password_change') {
+        $user = User::query()->findOrFail($arguments['user_id']);
         $changed = app(ProfileService::class)->changePassword(
             $user,
             $arguments['current_password'],
             $arguments['new_password'],
         );
         $result = ['status' => $changed ? 'success' : 'validation_rejected'];
-    } else {
+    } elseif ($arguments['operation'] === 'recovery_regeneration') {
+        $user = User::query()->findOrFail($arguments['user_id']);
         $codes = app(OwnerAuthenticationService::class)->regenerateRecoveryCodes(
             $user,
             $arguments['current_password'],
             $arguments['totp_code'],
         );
         $result = ['status' => 'success', 'recovery_code_count' => count($codes)];
+    } elseif ($arguments['operation'] === 'sensitive_confirmation') {
+        $user = User::query()->findOrFail($arguments['user_id']);
+        app(CurrentPropertyService::class)->setPropertyId($arguments['property_id']);
+        DB::transaction(function () use ($arguments, $user): void {
+            app(SensitiveActionConfirmationService::class)->confirm(
+                $user,
+                $arguments['intent'],
+                $arguments['current_password'],
+                $arguments['company_id'],
+                $arguments['property_id'],
+            );
+            if (($arguments['hold_seconds'] ?? 0) > 0) {
+                DB::select('SELECT pg_sleep(?)', [(int) $arguments['hold_seconds']]);
+            }
+        });
+        $result = [
+            'status' => 'success',
+            'confirmation' => session()->get('sensitive_action_confirmation', []),
+        ];
+    } elseif ($arguments['operation'] === 'checkout_confirmation') {
+        $user = User::query()->findOrFail($arguments['user_id']);
+        Auth::login($user);
+        app(CurrentPropertyService::class)->setPropertyId($arguments['property_id']);
+        session([
+            'active_property_id' => $arguments['property_id'],
+            'current_property_id' => $arguments['property_id'],
+            'active_company_id' => $arguments['company_id'],
+        ]);
+        $issuance = app(CheckoutSensitiveConfirmationService::class)->issueForCurrentSession(
+            $user,
+            $arguments['front_desk_stay_id'],
+            $arguments['idempotency_key'],
+            $arguments['current_password'],
+        );
+        $result = ['status' => 'success', 'issuance_id' => $issuance->id];
+    } elseif ($arguments['operation'] === 'hold_user_lock') {
+        DB::transaction(function () use ($arguments): void {
+            User::query()->whereKey($arguments['user_id'])->lockForUpdate()->firstOrFail();
+            DB::select('SELECT pg_sleep(?)', [(int) $arguments['hold_seconds']]);
+        });
+        $result = ['status' => 'success'];
+    } elseif ($arguments['operation'] === 'complete_activation') {
+        $codes = app(OwnerActivationService::class)->complete($arguments['challenge'], $arguments['totp_code']);
+        $result = ['status' => 'success', 'recovery_code_count' => count($codes)];
+    } elseif ($arguments['operation'] === 'owner_login') {
+        $login = app(AuthService::class)->login(
+            $arguments['email'],
+            $arguments['current_password'],
+            $arguments['company_id'],
+            'api',
+        );
+        $result = ['status' => 'success', 'mfa_required' => $login['mfa_required']];
+    } else {
+        throw new RuntimeException('Unknown atomicity worker operation.');
     }
 } catch (ValidationException) {
     $result = ['status' => 'validation_rejected'];
+} catch (DomainException) {
+    $result = ['status' => 'domain_rejected'];
 } catch (Throwable $throwable) {
     $result = ['status' => 'error', 'error' => $throwable::class.': '.$throwable->getMessage()];
 }

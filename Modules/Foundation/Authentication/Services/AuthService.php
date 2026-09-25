@@ -34,9 +34,18 @@ class AuthService
             ]);
         }
 
-        $result = DB::transaction(function () use ($candidate, $password, $companyId, $channel, $guestSessionId): array {
+        $result = DB::transaction(function () use ($candidate, $email, $password, $companyId, $channel, $guestSessionId): array {
+            $activation = OwnerActivation::query()
+                ->where('user_id', $candidate->id)
+                ->where('company_id', $companyId)
+                ->lockForUpdate()
+                ->first();
+
             $user = User::query()->whereKey($candidate->id)->lockForUpdate()->first();
-            if (! $user || $user->password === null || ! Hash::check($password, $user->password)) {
+            if (! $user
+                || mb_strtolower($user->email) !== $email
+                || $user->password === null
+                || ! Hash::check($password, $user->password)) {
                 throw ValidationException::withMessages([
                     'email' => ['The provided credentials are incorrect.'],
                 ]);
@@ -48,11 +57,6 @@ class AuthService
                 ]);
             }
 
-            $activation = OwnerActivation::query()
-                ->where('user_id', $user->id)
-                ->where('company_id', $companyId)
-                ->lockForUpdate()
-                ->first();
             $properties = $user->properties()
                 ->where('company_id', $companyId)
                 ->where('properties.is_active', true)
