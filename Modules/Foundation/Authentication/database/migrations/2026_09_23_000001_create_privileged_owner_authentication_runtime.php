@@ -125,6 +125,7 @@ return new class extends Migration
             $table->char('digest', 64)->unique();
             $table->char('guest_session_digest', 64)->nullable();
             $table->timestamp('password_verified_at')->nullable();
+            $table->unsignedBigInteger('auth_epoch')->nullable();
             $table->timestamp('issued_at');
             $table->timestamp('expires_at');
             $table->unsignedSmallInteger('failed_attempts')->default(0);
@@ -160,6 +161,7 @@ return new class extends Migration
         DB::statement("ALTER TABLE owner_mfa_factors ADD CONSTRAINT chk_owner_mfa_factor_state CHECK (state IN ('PENDING','ACTIVE','REVOKED'))");
         DB::statement("ALTER TABLE identity_challenges ADD CONSTRAINT chk_identity_challenge_purpose CHECK (purpose IN ('ACTIVATION','LOGIN_MFA'))");
         DB::statement("ALTER TABLE identity_challenges ADD CONSTRAINT chk_identity_challenge_channel CHECK (channel IN ('web','api','activation'))");
+        DB::statement("ALTER TABLE identity_challenges ADD CONSTRAINT chk_identity_challenge_auth_epoch CHECK ((purpose = 'LOGIN_MFA' AND auth_epoch IS NOT NULL) OR (purpose = 'ACTIVATION' AND auth_epoch IS NULL))");
         DB::statement('ALTER TABLE identity_challenges ADD CONSTRAINT chk_identity_challenge_attempts CHECK (max_attempts = 5 AND failed_attempts <= max_attempts)');
         DB::statement("ALTER TABLE identity_security_events ADD CONSTRAINT chk_identity_security_event_outcome CHECK (outcome IN ('SUCCESS','FAILURE'))");
         DB::statement("ALTER TABLE identity_security_events ADD CONSTRAINT chk_identity_security_event_metadata_object CHECK (jsonb_typeof(metadata) = 'object')");

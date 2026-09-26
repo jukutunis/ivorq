@@ -22,6 +22,8 @@ use Modules\Foundation\Authentication\Models\IdentitySecurityEvent;
 use Modules\Foundation\Authentication\Models\OwnerActivationToken;
 use Modules\Foundation\Authentication\Models\OwnerMfaFactor;
 use Modules\Foundation\Authentication\Models\OwnerRecoveryCode;
+use Modules\Foundation\Authentication\Services\AuthService;
+use Modules\Foundation\Authentication\Services\IdentityChallengeService;
 use Modules\Foundation\Authentication\Services\IdentitySecurityEventService;
 use Modules\Foundation\Authentication\Services\OwnerActivationService;
 use Modules\Foundation\Authentication\Services\OwnerAuthenticationService;
@@ -29,6 +31,7 @@ use Modules\Foundation\Authentication\Services\OwnerRecoveryCodeService;
 use Modules\Foundation\Authentication\Services\OwnerTotpService;
 use Modules\Foundation\Authentication\Services\PasswordService;
 use Modules\Foundation\Authentication\Services\SessionRevocationService;
+use Modules\Foundation\Authentication\Services\TokenService;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationConsumption;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationIssuance;
 use Modules\Foundation\Authorization\Models\Permission;
@@ -340,6 +343,18 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         $this->assertDatabaseCount('personal_access_tokens', 0);
         $this->assertDatabaseCount('user_sessions', 0);
         $challenge = $response->json('challenge');
+        $challengeRow = IdentityChallenge::query()->where('purpose', 'LOGIN_MFA')->sole();
+        $this->assertSame((int) $owner->auth_epoch, $challengeRow->auth_epoch);
+        $activationChallenge = IdentityChallenge::query()->where('purpose', 'ACTIVATION')->sole();
+        $this->assertNull($activationChallenge->auth_epoch);
+        foreach ([[$challengeRow->id, null], [$activationChallenge->id, 0]] as [$challengeId, $invalidEpoch]) {
+            try {
+                DB::table('identity_challenges')->where('id', $challengeId)->update(['auth_epoch' => $invalidEpoch]);
+                $this->fail('The challenge purpose/auth_epoch database contract must reject invalid combinations.');
+            } catch (QueryException) {
+                $this->addToAssertionCount(1);
+            }
+        }
         $code = app(OwnerTotpService::class)->currentCode($factor, intdiv(time(), 30) + 1);
         $result = $this->postJson('/auth/mfa/totp', [
             'challenge' => $challenge,
@@ -353,7 +368,7 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         $this->assertSame($property->id, $token->property_id);
         $this->assertEqualsWithDelta(now()->addHours(8)->timestamp, $token->expires_at->timestamp, 5);
         $this->assertSame($owner->auth_epoch, UserSession::query()->sole()->auth_epoch);
-        $this->assertNotNull(IdentityChallenge::query()->where('purpose', 'LOGIN_MFA')->sole()->credential_issued_at);
+        $this->assertNotNull($challengeRow->fresh()->credential_issued_at);
         $this->withToken($result->json('token'))->getJson('/api/user')->assertOk();
     }
 
@@ -886,6 +901,225 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         $this->assertSame(0, CheckoutSensitiveConfirmationConsumption::query()->count());
     }
 
+    public function test_password_change_invalidates_pending_login_mfa_challenge_without_deleting_it(): void
+    {
+        [, $owner, $company, , $factor] = $this->activeOwner();
+        $bearer = $this->beginApiLogin($owner, $company);
+        $challenge = IdentityChallenge::query()->where('purpose', 'LOGIN_MFA')->sole();
+        $issuedEpoch = $challenge->auth_epoch;
+
+        $this->assertTrue(app(ProfileService::class)->changePassword($owner, self::PASSWORD, 'r3 pending challenge replacement'));
+        $this->assertSame($issuedEpoch + 1, (int) $owner->fresh()->auth_epoch);
+
+        $this->postJson('/auth/mfa/totp', [
+            'challenge' => $bearer,
+            'code' => app(OwnerTotpService::class)->currentCode($factor, intdiv(time(), 30) + 1),
+            'channel' => 'api',
+        ])->assertStatus(422)->assertJsonValidationErrors('code');
+
+        $challenge->refresh();
+        $this->assertSame($issuedEpoch, $challenge->auth_epoch);
+        $this->assertNull($challenge->consumed_at);
+        $this->assertNull($challenge->credential_issued_at);
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+        $this->assertDatabaseCount('user_sessions', 0);
+    }
+
+    public function test_security_revocation_epoch_invalidates_pending_login_mfa_challenge_without_deleting_it(): void
+    {
+        [, $owner, $company, , $factor] = $this->activeOwner();
+        $bearer = $this->beginApiLogin($owner, $company);
+        $challenge = IdentityChallenge::query()->where('purpose', 'LOGIN_MFA')->sole();
+        $issuedEpoch = $challenge->auth_epoch;
+
+        app(SessionRevocationService::class)->revokeAll($owner, 'IDENTITY_COMPROMISE');
+
+        $this->assertSame($issuedEpoch + 1, (int) $owner->fresh()->auth_epoch);
+        $this->assertTrue(IdentityChallenge::query()->whereKey($challenge->id)->exists());
+        $this->postJson('/auth/mfa/totp', [
+            'challenge' => $bearer,
+            'code' => app(OwnerTotpService::class)->currentCode($factor, intdiv(time(), 30) + 1),
+            'channel' => 'api',
+        ])->assertStatus(422)->assertJsonValidationErrors('code');
+
+        $challenge->refresh();
+        $this->assertNull($challenge->consumed_at);
+        $this->assertNull($challenge->credential_issued_at);
+    }
+
+    public function test_epoch_change_after_mfa_prevents_api_token_and_session_issuance(): void
+    {
+        [, $owner, $company, , $factor] = $this->activeOwner();
+        $bearer = $this->beginApiLogin($owner, $company);
+        $authentication = app(OwnerAuthenticationService::class)->completeTotp(
+            $bearer,
+            app(OwnerTotpService::class)->currentCode($factor, intdiv(time(), 30) + 1),
+            'api',
+            null,
+        );
+        $challenge = IdentityChallenge::query()->whereKey($authentication->challengeId)->sole();
+        $this->assertNotNull($challenge->consumed_at);
+
+        User::query()->whereKey($owner->id)->increment('auth_epoch');
+
+        try {
+            app(TokenService::class)->createForVerifiedOwner($authentication, 'r3-stale-epoch');
+            $this->fail('A completed MFA proof from an older auth epoch must not issue an API credential.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('mfa', $exception->errors());
+        }
+
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+        $this->assertDatabaseCount('user_sessions', 0);
+        $this->assertNull($challenge->fresh()->credential_issued_at);
+    }
+
+    public function test_epoch_change_after_mfa_prevents_verified_owner_web_session_issuance(): void
+    {
+        [, $owner, $company, , $factor] = $this->activeOwner();
+        $bearer = $this->beginApiLogin($owner, $company);
+        $authentication = app(OwnerAuthenticationService::class)->completeTotp(
+            $bearer,
+            app(OwnerTotpService::class)->currentCode($factor, intdiv(time(), 30) + 1),
+            'api',
+            null,
+        );
+        $challenge = IdentityChallenge::query()->whereKey($authentication->challengeId)->sole();
+        User::query()->whereKey($owner->id)->increment('auth_epoch');
+
+        try {
+            app(TokenService::class)->recordVerifiedOwnerWebSession($authentication, 'r3-stale-web-session');
+            $this->fail('A completed MFA proof from an older auth epoch must not issue a web credential.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('mfa', $exception->errors());
+        }
+
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+        $this->assertDatabaseCount('user_sessions', 0);
+        $this->assertNull($challenge->fresh()->credential_issued_at);
+    }
+
+    public function test_owner_auth_source_paths_preserve_challenge_activation_user_lock_order(): void
+    {
+        $this->assertMethodMatchesLockOrder(
+            AuthService::class,
+            'login',
+            '/OwnerActivation::query\(\).*?->lockForUpdate\(\).*?User::query\(\).*?->lockForUpdate\(\)/s',
+        );
+        $this->assertMethodMatchesLockOrder(
+            IdentityChallengeService::class,
+            'assertActivation',
+            '/lockValid\(.*?OwnerActivation::query\(\).*?->lockForUpdate\(\)/s',
+        );
+        $this->assertMethodMatchesLockOrder(
+            OwnerAuthenticationService::class,
+            'complete',
+            '/lockValid\(.*?OwnerActivation::query\(\).*?->lockForUpdate\(\).*?User::query\(\).*?->lockForUpdate\(\)/s',
+        );
+        $this->assertMethodMatchesLockOrder(
+            TokenService::class,
+            'claimVerifiedOwner',
+            '/IdentityChallenge::query\(\).*?->lockForUpdate\(\).*?OwnerActivation::query\(\).*?->lockForUpdate\(\).*?User::query\(\).*?->lockForUpdate\(\)/s',
+        );
+    }
+
+    public function test_mfa_completion_and_new_owner_login_serialize_without_deadlock(): void
+    {
+        [$activation, $owner, $company, , $factor] = $this->activeOwner();
+        $bearer = $this->beginApiLogin($owner, $company);
+        $loginWorker = null;
+        $completionWorker = null;
+
+        try {
+            $loginWorker = $this->spawnAtomicityWorker([
+                'operation' => 'owner_login_with_activation_hold',
+                'application_name' => 'b5a1b1_r3_login_vs_mfa_login',
+                'activation_id' => $activation->id,
+                'hold_seconds' => 4,
+                'email' => $owner->email,
+                'current_password' => self::PASSWORD,
+                'company_id' => $company->id,
+            ]);
+            $this->waitForBackendWait('b5a1b1_r3_login_vs_mfa_login', 'Timeout', 'PgSleep');
+
+            $completionWorker = $this->spawnAtomicityWorker([
+                'operation' => 'complete_owner_mfa',
+                'application_name' => 'b5a1b1_r3_login_vs_mfa_completion',
+                'challenge' => $bearer,
+                'totp_code' => app(OwnerTotpService::class)->currentCode($factor, intdiv(time(), 30) + 1),
+                'channel' => 'api',
+            ]);
+            $this->waitForBackendWait('b5a1b1_r3_login_vs_mfa_completion', 'Lock');
+
+            $loginResult = $this->collectAtomicityWorker($loginWorker);
+            $loginWorker = null;
+            $completionResult = $this->collectAtomicityWorker($completionWorker);
+            $completionWorker = null;
+        } finally {
+            $this->terminateAtomicityWorker($loginWorker);
+            $this->terminateAtomicityWorker($completionWorker);
+        }
+
+        $this->assertSame('success', $loginResult['status'] ?? null, $loginResult['_stderr'] ?? '');
+        $this->assertTrue($loginResult['mfa_required'] ?? false);
+        $this->assertSame('success', $completionResult['status'] ?? null, $completionResult['_stderr'] ?? '');
+        $this->assertNotNull(IdentityChallenge::query()->whereKey($completionResult['challenge_id'] ?? null)->value('consumed_at'));
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+        $this->assertDatabaseCount('user_sessions', 0);
+    }
+
+    public function test_verified_credential_issuance_and_new_owner_login_serialize_without_deadlock_and_issue_once(): void
+    {
+        [$activation, $owner, $company, , $factor] = $this->activeOwner();
+        $bearer = $this->beginApiLogin($owner, $company);
+        $authentication = app(OwnerAuthenticationService::class)->completeTotp(
+            $bearer,
+            app(OwnerTotpService::class)->currentCode($factor, intdiv(time(), 30) + 1),
+            'api',
+            null,
+        );
+        $loginWorker = null;
+        $credentialWorker = null;
+
+        try {
+            $loginWorker = $this->spawnAtomicityWorker([
+                'operation' => 'owner_login_with_activation_hold',
+                'application_name' => 'b5a1b1_r3_login_vs_credential_login',
+                'activation_id' => $activation->id,
+                'hold_seconds' => 4,
+                'email' => $owner->email,
+                'current_password' => self::PASSWORD,
+                'company_id' => $company->id,
+            ]);
+            $this->waitForBackendWait('b5a1b1_r3_login_vs_credential_login', 'Timeout', 'PgSleep');
+
+            $credentialWorker = $this->spawnAtomicityWorker([
+                'operation' => 'create_verified_owner_token',
+                'application_name' => 'b5a1b1_r3_login_vs_credential_issuance',
+                'user_id' => $authentication->userId,
+                'company_id' => $authentication->companyId,
+                'property_id' => $authentication->propertyId,
+                'challenge_id' => $authentication->challengeId,
+            ]);
+            $this->waitForBackendWait('b5a1b1_r3_login_vs_credential_issuance', 'Lock');
+
+            $loginResult = $this->collectAtomicityWorker($loginWorker);
+            $loginWorker = null;
+            $credentialResult = $this->collectAtomicityWorker($credentialWorker);
+            $credentialWorker = null;
+        } finally {
+            $this->terminateAtomicityWorker($loginWorker);
+            $this->terminateAtomicityWorker($credentialWorker);
+        }
+
+        $this->assertSame('success', $loginResult['status'] ?? null, $loginResult['_stderr'] ?? '');
+        $this->assertTrue($loginResult['mfa_required'] ?? false);
+        $this->assertSame('success', $credentialResult['status'] ?? null, $credentialResult['_stderr'] ?? '');
+        $this->assertDatabaseCount('personal_access_tokens', 1);
+        $this->assertDatabaseCount('user_sessions', 1);
+        $this->assertNotNull(IdentityChallenge::query()->whereKey($authentication->challengeId)->sole()->credential_issued_at);
+    }
+
     public function test_login_and_final_activation_serialize_without_opposing_owner_user_lock_order(): void
     {
         [$activation, $owner, $company, , $challenge] = $this->emailVerifiedActivation();
@@ -1236,6 +1470,24 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         return $response->json('token');
     }
 
+    private function assertMethodMatchesLockOrder(string $class, string $method, string $expectedPattern): void
+    {
+        $reflection = new \ReflectionMethod($class, $method);
+        $lines = file($reflection->getFileName());
+        $source = implode('', array_slice(
+            $lines,
+            $reflection->getStartLine() - 1,
+            $reflection->getEndLine() - $reflection->getStartLine() + 1,
+        ));
+
+        $this->assertMatchesRegularExpression($expectedPattern, $source, "{$class}::{$method} must retain OWNER AUTH LOCK ORDER V2.");
+        $this->assertDoesNotMatchRegularExpression(
+            '/User::query\(\).*?->lockForUpdate\(\).*?OwnerActivation::query\(\).*?->lockForUpdate\(\)/s',
+            $source,
+            "{$class}::{$method} must not lock User before OwnerActivation.",
+        );
+    }
+
     private function spawnAtomicityWorker(array $arguments): array
     {
         $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'b5a1b1-atomicity-'.Str::lower(Str::random(8));
@@ -1353,9 +1605,12 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Modules\Foundation\Authentication\Models\OwnerActivation;
 use Modules\Foundation\Authentication\Services\AuthService;
 use Modules\Foundation\Authentication\Services\OwnerActivationService;
 use Modules\Foundation\Authentication\Services\OwnerAuthenticationService;
+use Modules\Foundation\Authentication\Services\TokenService;
+use Modules\Foundation\Authentication\ValueObjects\VerifiedMfaAuthentication;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\User\Models\User;
@@ -1435,6 +1690,36 @@ try {
     } elseif ($arguments['operation'] === 'complete_activation') {
         $codes = app(OwnerActivationService::class)->complete($arguments['challenge'], $arguments['totp_code']);
         $result = ['status' => 'success', 'recovery_code_count' => count($codes)];
+    } elseif ($arguments['operation'] === 'complete_owner_mfa') {
+        $authentication = app(OwnerAuthenticationService::class)->completeTotp(
+            $arguments['challenge'],
+            $arguments['totp_code'],
+            $arguments['channel'],
+            null,
+        );
+        $result = ['status' => 'success', 'challenge_id' => $authentication->challengeId];
+    } elseif ($arguments['operation'] === 'create_verified_owner_token') {
+        $authentication = new VerifiedMfaAuthentication(
+            $arguments['user_id'],
+            $arguments['company_id'],
+            $arguments['property_id'],
+            $arguments['challenge_id'],
+        );
+        app(TokenService::class)->createForVerifiedOwner($authentication, 'r3-concurrency');
+        $result = ['status' => 'success'];
+    } elseif ($arguments['operation'] === 'owner_login_with_activation_hold') {
+        $login = DB::transaction(function () use ($arguments): array {
+            OwnerActivation::query()->whereKey($arguments['activation_id'])->lockForUpdate()->firstOrFail();
+            DB::select('SELECT pg_sleep(?)', [(int) $arguments['hold_seconds']]);
+
+            return app(AuthService::class)->login(
+                $arguments['email'],
+                $arguments['current_password'],
+                $arguments['company_id'],
+                'api',
+            );
+        });
+        $result = ['status' => 'success', 'mfa_required' => $login['mfa_required']];
     } elseif ($arguments['operation'] === 'owner_login') {
         $login = app(AuthService::class)->login(
             $arguments['email'],

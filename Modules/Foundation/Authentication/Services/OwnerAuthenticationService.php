@@ -82,11 +82,13 @@ class OwnerAuthenticationService
                 }
             }
 
-            $user = User::query()->whereKey($challenge->user_id)->lockForUpdate()->first();
             $activation = OwnerActivation::query()->whereKey($challenge->activation_id)->lockForUpdate()->first();
+            $user = User::query()->whereKey($challenge->user_id)->lockForUpdate()->first();
             if (! $user || ! $user->is_active || ! $activation || $activation->status !== OwnerActivationStatus::Active
+                || (string) $activation->user_id !== (string) $challenge->user_id
                 || (string) $activation->company_id !== (string) $challenge->company_id
                 || (string) $activation->property_id !== (string) $challenge->property_id
+                || (int) $challenge->auth_epoch !== (int) $user->auth_epoch
                 || ! $this->hasBinding($user, $activation)) {
                 $failure = $this->generic();
                 $this->recordFailure($challenge, 'AUTHORITY_BINDING_INVALID', $mfaMethod);

@@ -80,14 +80,17 @@ class TokenService
             ->whereNull('credential_issued_at')
             ->lockForUpdate()
             ->first();
+        $activation = $challenge
+            ? OwnerActivation::query()
+                ->whereKey($challenge->activation_id)
+                ->where('user_id', $authentication->userId)
+                ->where('company_id', $authentication->companyId)
+                ->where('property_id', $authentication->propertyId)
+                ->where('status', OwnerActivationStatus::Active->value)
+                ->lockForUpdate()
+                ->first()
+            : null;
         $user = User::query()->whereKey($authentication->userId)->where('is_active', true)->lockForUpdate()->first();
-        $activation = OwnerActivation::query()
-            ->where('user_id', $authentication->userId)
-            ->where('company_id', $authentication->companyId)
-            ->where('property_id', $authentication->propertyId)
-            ->where('status', OwnerActivationStatus::Active->value)
-            ->lockForUpdate()
-            ->first();
         $membership = DB::table('property_user')
             ->join('properties', 'properties.id', '=', 'property_user.property_id')
             ->where('property_user.user_id', $authentication->userId)
@@ -107,7 +110,8 @@ class TokenService
             ->where('roles.name', 'installation-owner')
             ->exists();
 
-        if (! $challenge || ! $user || ! $activation || ! $membership || ! $role) {
+        if (! $challenge || ! $user || ! $activation || ! $membership || ! $role
+            || (int) $challenge->auth_epoch !== (int) $user->auth_epoch) {
             throw ValidationException::withMessages(['mfa' => ['Multi-factor authentication verification is invalid.']]);
         }
 

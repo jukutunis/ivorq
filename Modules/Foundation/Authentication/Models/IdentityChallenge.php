@@ -12,6 +12,7 @@ class IdentityChallenge extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'auth_epoch' => 'integer',
         'failed_attempts' => 'integer',
         'max_attempts' => 'integer',
         'password_verified_at' => 'datetime',

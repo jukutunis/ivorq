@@ -16,7 +16,7 @@ class IdentityChallengeService
 
     public function issueActivation(OwnerActivation $activation): string
     {
-        return $this->issue($activation->user_id, $activation->company_id, $activation->property_id, 'ACTIVATION', 'activation', $activation->id, null, null, 20);
+        return $this->issue($activation->user_id, $activation->company_id, $activation->property_id, 'ACTIVATION', 'activation', $activation->id, null, null, null, 20);
     }
 
     public function issueLogin(User $user, OwnerActivation $activation, string $channel, ?string $guestSessionId): string
@@ -29,6 +29,7 @@ class IdentityChallengeService
             $channel,
             $activation->id,
             now(),
+            (int) $user->auth_epoch,
             $guestSessionId === null ? null : hash('sha256', "IVORQ-GUEST-SESSION-V1\0".$guestSessionId),
             5,
         );
@@ -94,7 +95,7 @@ class IdentityChallengeService
         $challenge->forceFill(['consumed_at' => now()])->save();
     }
 
-    private function issue(string $userId, string $companyId, string $propertyId, string $purpose, string $channel, ?string $activationId, mixed $passwordVerifiedAt, ?string $guestDigest, int $ttlMinutes): string
+    private function issue(string $userId, string $companyId, string $propertyId, string $purpose, string $channel, ?string $activationId, mixed $passwordVerifiedAt, ?int $authEpoch, ?string $guestDigest, int $ttlMinutes): string
     {
         [$bearer, $bytes] = SecretBearer::generate();
         IdentityChallenge::query()->create([
@@ -107,6 +108,7 @@ class IdentityChallengeService
             'digest' => SecretBearer::digest(self::DOMAIN, $bytes),
             'guest_session_digest' => $guestDigest,
             'password_verified_at' => $passwordVerifiedAt,
+            'auth_epoch' => $authEpoch,
             'issued_at' => now(),
             'expires_at' => now()->addMinutes($ttlMinutes),
             'failed_attempts' => 0,
