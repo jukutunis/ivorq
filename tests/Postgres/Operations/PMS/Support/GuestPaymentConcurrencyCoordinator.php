@@ -253,7 +253,7 @@ try {
     glfBTable('users')->insert([
         'id' => $actorId,
         'name' => 'GLF-B Concurrency Actor',
-        'email' => 'glf-b-conc-' . \Illuminate\Support\Str::random(6) . '@example.test',
+        'email' => 'glf-b-conc-' . \Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(6)) . '@example.test',
         'password' => \Illuminate\Support\Facades\Hash::make('password'),
         'is_active' => true,
         'created_at' => now(),

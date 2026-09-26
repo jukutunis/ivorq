@@ -18,10 +18,14 @@ class UserSession extends Model
         'ip_address',
         'user_agent',
         'last_active_at',
+        'auth_epoch',
+        'web_session_digest',
+        'channel',
     ];
 
     protected $casts = [
         'last_active_at' => 'datetime',
+        'auth_epoch' => 'integer',
     ];
 
     public function user(): BelongsTo

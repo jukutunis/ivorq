@@ -5,12 +5,17 @@ namespace Modules\Foundation\Authentication\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Password;
 use Inertia\Inertia;
 use Inertia\Response;
+use Modules\Foundation\Authentication\Enums\OwnerActivationStatus;
 use Modules\Foundation\Authentication\Http\Requests\ForgotPasswordRequest;
 use Modules\Foundation\Authentication\Http\Requests\ResetPasswordRequest;
+use Modules\Foundation\Authentication\Models\OwnerActivation;
+use Modules\Foundation\Authentication\Notifications\TenantAwareResetPasswordNotification;
 use Modules\Foundation\Authentication\Services\PasswordService;
+use Modules\Foundation\User\Models\User;
 
 class PasswordResetController extends Controller
 {
@@ -18,10 +23,10 @@ class PasswordResetController extends Controller
         private PasswordService $passwordService
     ) {}
 
-    public function showForgotForm(\Illuminate\Http\Request $request): Response|\Illuminate\Http\RedirectResponse
+    public function showForgotForm(Request $request): Response|RedirectResponse
     {
         $tenantId = $request->session()->get('login.tenant_id');
-        if (!$tenantId) {
+        if (! $tenantId) {
             return redirect()->route('login')->withErrors(['cloud_name' => 'Please select a Cloud Name first to reset your password.']);
         }
 
@@ -29,27 +34,32 @@ class PasswordResetController extends Controller
             'tenant' => [
                 'id' => $tenantId,
                 'name' => $request->session()->get('login.tenant_name'),
-            ]
+            ],
         ]);
     }
 
     public function sendResetLink(ForgotPasswordRequest $request): JsonResponse|RedirectResponse
     {
         $tenantId = $request->session()->get('login.tenant_id');
-        if (!$tenantId) {
+        if (! $tenantId) {
             return back()->withErrors(['email' => 'Session expired. Please start over.']);
         }
 
-        $user = \Modules\Foundation\User\Models\User::where('email', $request->email)
+        $user = User::where('email', mb_strtolower(trim($request->email)))
             ->whereHas('properties', function ($q) use ($tenantId) {
                 $q->where('company_id', $tenantId)
-                  ->where('properties.is_active', true)
-                  ->where('property_user.status', 'active');
+                    ->where('properties.is_active', true)
+                    ->where('property_user.status', 'active');
             })->first();
 
-        if ($user) {
+        $pendingOwnerActivation = $user ? OwnerActivation::query()
+            ->where('user_id', $user->id)
+            ->where('status', '<>', OwnerActivationStatus::Active->value)
+            ->exists() : false;
+
+        if ($user && ! $pendingOwnerActivation) {
             $token = Password::getRepository()->create($user);
-            $user->notify(new \Modules\Foundation\Authentication\Notifications\TenantAwareResetPasswordNotification($token, $tenantId));
+            $user->notify(new TenantAwareResetPasswordNotification($token, $tenantId));
         }
 
         $msg = 'If an eligible account exists, we’ll send password reset instructions.';
@@ -61,9 +71,9 @@ class PasswordResetController extends Controller
         return back()->with('status', __($msg));
     }
 
-    public function showResetForm(\Illuminate\Http\Request $request, string $token): Response
+    public function showResetForm(Request $request, string $token): Response
     {
-        if (!$request->hasValidSignature()) {
+        if (! $request->hasValidSignature()) {
             abort(403, 'Invalid or expired password reset link.');
         }
 
@@ -76,21 +86,33 @@ class PasswordResetController extends Controller
 
     public function reset(ResetPasswordRequest $request): JsonResponse|RedirectResponse
     {
-        if (!$request->hasValidSignature()) {
+        if (! $request->hasValidSignature()) {
             abort(403, 'Invalid or expired password reset link.');
         }
 
         $tenantId = $request->tenant;
 
-        $user = \Modules\Foundation\User\Models\User::where('email', $request->email)
+        $user = User::where('email', mb_strtolower(trim($request->email)))
             ->whereHas('properties', function ($q) use ($tenantId) {
                 $q->where('company_id', $tenantId)
-                  ->where('properties.is_active', true)
-                  ->where('property_user.status', 'active');
+                    ->where('properties.is_active', true)
+                    ->where('property_user.status', 'active');
             })->first();
 
-        if (!$user) {
+        if (! $user) {
             $msg = 'Your account is no longer active in this workspace.';
+
+            return $request->wantsJson()
+                ? response()->json(['message' => $msg], 422)
+                : back()->withErrors(['email' => $msg]);
+        }
+
+        if (OwnerActivation::query()
+            ->where('user_id', $user->id)
+            ->where('status', '<>', OwnerActivationStatus::Active->value)
+            ->exists()) {
+            $msg = 'Owner activation must be completed before password recovery.';
+
             return $request->wantsJson()
                 ? response()->json(['message' => $msg], 422)
                 : back()->withErrors(['email' => $msg]);
@@ -100,12 +122,14 @@ class PasswordResetController extends Controller
 
         if ($status === Password::PASSWORD_RESET) {
             $msg = __($status);
+
             return $request->wantsJson()
                 ? response()->json(['message' => $msg])
                 : redirect()->route('login')->with('status', $msg);
         }
 
         $msg = __($status);
+
         return $request->wantsJson()
             ? response()->json(['message' => $msg], 422)
             : back()->withErrors(['email' => $msg]);

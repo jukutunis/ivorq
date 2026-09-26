@@ -1,0 +1,21 @@
+# Privileged Owner Activation Runtime
+
+Status: implementation record for CC-P02B5A1B1. ADR-090 remains the governing approved architecture decision.
+
+The single-property `installation-owner` activation endpoint returns ten recovery codes only in the successful response that commits the final activation transaction. IVORQ stores only domain-separated SHA-256 digests of those codes.
+
+If that response is lost after commit, the activation remains `ACTIVE`. Replaying the completion endpoint fails and cannot redisplay or silently regenerate the original codes. The owner can authenticate normally with the confirmed TOTP factor, then explicitly regenerate recovery codes using fresh password confirmation and a current TOTP. Regeneration revokes every unused prior code, increments `users.auth_epoch`, revokes all existing web and API credentials, and returns the replacement codes once.
+
+Fresh-password authorization in the B5A1B1 owner runtime is serialized on the authoritative `users` row. Active-owner password change, recovery-code regeneration, and both general and checkout-sensitive confirmation acquire the User `FOR UPDATE` lock before checking the current hash and hold that lock through the authorized mutation or durable confirmation issuance. The caller-provided User model supplies only the stable identifier; its hydrated password or security state is never authoritative. Owner password reset uses the same locked-row mutation contract.
+
+`OWNER AUTH LOCK ORDER V2` is `existing IdentityChallenge, if applicable -> OwnerActivation -> User -> MFA/security subsidiary records`. Without an existing challenge, the order is `OwnerActivation -> User -> subsidiary records`. Privileged owner login therefore locks the matching activation before reloading and locking the User. MFA completion and final credential issuance lock or claim the existing challenge first, then lock the activation before the User. Final activation retains the same activation-before-User ordering. No owner-auth transaction may lock a User `FOR UPDATE` and later attempt to lock an OwnerActivation `FOR UPDATE`.
+
+A `LOGIN_MFA` challenge captures the authoritative `users.auth_epoch` held at successful password verification. Pending MFA completion and completed-but-not-yet-issued credential proof are valid only while `identity_challenges.auth_epoch` equals the current locked `users.auth_epoch`. An epoch mismatch fails with the generic authentication error before second-factor acceptance or final API/web credential issuance. The epoch snapshot logically invalidates stale challenges without deleting challenge rows or introducing a revocation-side challenge lock.
+
+Sensitive confirmation metadata is bound to the authoritative `users.auth_epoch` observed while the User row is locked. General confirmation validation reloads the current User epoch. Checkout issuance additionally binds the epoch into its immutable confirmation fingerprint, while validation and transactional consumption compare the session reference against the authoritative current epoch. Pre-R2 metadata without an explicit epoch remains bound to its immutable issuance fingerprint but is treated only as epoch `0`, so it fails permanently once the authoritative epoch advances. Any epoch increment makes earlier confirmation unusable and cannot reissue, extend, or revalidate it.
+
+The identity-security ledger accepts only declared event types, outcomes, structural context, and event-specific typed metadata; unknown or nested arbitrary metadata is rejected before persistence, with PostgreSQL constraints enforcing JSON-object shape and the bounded global top-level key set.
+
+Managed recoverability note: the unmerged B5A1B1 migration rollback does not restore `users.password` to `NOT NULL`, and it does not drop the `sessions` table when B5A1B1 originally created that table. These known rollback limitations are unchanged by the R1 security correction.
+
+This runtime does not provide public, email-only, recovery-question, or support-bypass MFA reset. High-assurance owner recovery remains a separately authorized future package. It also does not implement AWS authority integration, B5A2 first trust, multi-property owner authority, pilot, or cutover.

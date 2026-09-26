@@ -19,18 +19,29 @@ use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationS
 class CheckoutSensitiveConfirmationService
 {
     public const INTENT = SensitiveActionConfirmationService::CHECKOUT_EXECUTION_INTENT;
+
     public const SESSION_KEY = 'sensitive_action_confirmation';
 
     public const ERROR_CONTEXT_REQUIRED = 'P8_CHECKOUT_CONFIRMATION_CONTEXT_REQUIRED';
+
     public const ERROR_MALFORMED_CONFIRMATION = 'P8_CHECKOUT_CONFIRMATION_MALFORMED';
+
     public const ERROR_CONTEXT_CONFLICT = 'P8_CHECKOUT_CONFIRMATION_CONTEXT_CONFLICT';
+
     public const ERROR_SESSION_MISMATCH = 'P8_CHECKOUT_CONFIRMATION_SESSION_MISMATCH';
+
     public const ERROR_EXPIRED = 'P8_CHECKOUT_CONFIRMATION_EXPIRED';
+
     public const ERROR_ALREADY_CONSUMED = 'P8_CHECKOUT_CONFIRMATION_ALREADY_CONSUMED';
+
     public const ERROR_CHECKOUT_IDENTITY_CONSUMED = 'P8_CHECKOUT_IDENTITY_ALREADY_CONSUMED';
+
     public const ERROR_ACTIVE_TRANSACTION_REQUIRED = 'P8_CHECKOUT_CONFIRMATION_ACTIVE_TRANSACTION_REQUIRED';
+
     public const ERROR_POSTGRESQL_REQUIRED = 'P8_CHECKOUT_CONFIRMATION_POSTGRESQL_REQUIRED';
+
     public const ERROR_DATABASE_INTEGRITY = 'P8_CHECKOUT_CONFIRMATION_DATABASE_INTEGRITY_FAILURE';
+
     public const ERROR_INVALID_IDEMPOTENCY = 'P8_CHECKOUT_CONFIRMATION_INVALID_IDEMPOTENCY_KEY';
 
     public function __construct(
@@ -40,7 +51,7 @@ class CheckoutSensitiveConfirmationService
 
     public static function fingerprintSession(string $sessionId): string
     {
-        return hash('sha256', 'ivorq-checkout-session|' . $sessionId);
+        return hash('sha256', 'ivorq-checkout-session|'.$sessionId);
     }
 
     public function issueForCurrentSession(User $actor, string $frontDeskStayId, string $checkoutIdempotencyKey, string $password): CheckoutSensitiveConfirmationIssuance
@@ -59,93 +70,100 @@ class CheckoutSensitiveConfirmationService
 
     private function issue(CheckoutSensitiveConfirmationContext $context, string $password): CheckoutSensitiveConfirmationIssuance
     {
-        $this->assertAuthoritativeContext($context);
+        [$issuance, $authEpoch] = DB::transaction(function () use ($context, $password): array {
+            $lockedActor = $this->authoritativeActor($context, 'update');
+            if ($lockedActor->password === null || ! Hash::check($password, $lockedActor->password)) {
+                throw new DomainException('The password is incorrect.');
+            }
 
-        if (! Hash::check($password, $context->actor->password)) {
-            throw new DomainException('The password is incorrect.');
-        }
+            $lockedContext = $this->contextWithActor($context, $lockedActor);
+            $this->assertAuthoritativeContext($lockedContext);
 
-        $idempotencyKey = $this->normalizeIdempotencyKey($context->checkoutIdempotencyKey);
-        $now = Carbon::now();
+            $idempotencyKey = $this->normalizeIdempotencyKey($lockedContext->checkoutIdempotencyKey);
+            $authEpoch = (int) $lockedActor->auth_epoch;
+            $now = Carbon::now()->startOfSecond();
 
-        $existing = CheckoutSensitiveConfirmationIssuance::query()
-            ->where('intent', self::INTENT)
-            ->where('actor_id', $context->actor->id)
-            ->where('company_id', $context->company->id)
-            ->where('property_id', $context->property->id)
-            ->where('front_desk_stay_id', $context->stay->id)
-            ->where('checkout_idempotency_key', $idempotencyKey)
-            ->where('session_fingerprint', $context->sessionFingerprint)
-            ->where('expires_at', '>', $now)
-            ->whereNotExists(function ($query): void {
-                $query->selectRaw('1')
-                    ->from('checkout_sensitive_confirmation_consumptions as c')
-                    ->whereColumn('c.issuance_id', 'checkout_sensitive_confirmation_issuances.id');
-            })
-            ->orderByDesc('created_at')
-            ->first();
+            $existing = CheckoutSensitiveConfirmationIssuance::query()
+                ->where('intent', self::INTENT)
+                ->where('actor_id', $lockedActor->id)
+                ->where('company_id', $lockedContext->company->id)
+                ->where('property_id', $lockedContext->property->id)
+                ->where('front_desk_stay_id', $lockedContext->stay->id)
+                ->where('checkout_idempotency_key', $idempotencyKey)
+                ->where('session_fingerprint', $lockedContext->sessionFingerprint)
+                ->where('expires_at', '>', $now)
+                ->whereNotExists(function ($query): void {
+                    $query->selectRaw('1')
+                        ->from('checkout_sensitive_confirmation_consumptions as c')
+                        ->whereColumn('c.issuance_id', 'checkout_sensitive_confirmation_issuances.id');
+                })
+                ->orderByDesc('created_at')
+                ->first();
 
-        if ($existing instanceof CheckoutSensitiveConfirmationIssuance) {
-            $this->storeSessionReference($existing);
+            if ($existing instanceof CheckoutSensitiveConfirmationIssuance) {
+                $reference = $this->sessionReference();
+                if ($reference === null) {
+                    throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+                }
+                $this->assertIssuanceMatchesContext($existing, $lockedContext, $idempotencyKey, $reference, $now, $authEpoch);
 
-            return $existing;
-        }
+                return [$existing, $authEpoch];
+            }
 
-        $confirmedAt = $now;
-        $expiresAt = $now->copy()->addMinutes(SensitiveActionConfirmationService::CONFIRMATION_TTL_MINUTES);
-        $confirmationIdentity = (string) Str::ulid();
-        $confirmationFingerprint = hash('sha256', implode('|', [
-            self::INTENT,
-            $confirmationIdentity,
-            $context->actor->id,
-            $context->company->id,
-            $context->property->id,
-            $context->stay->id,
-            $idempotencyKey,
-            $context->sessionFingerprint,
-            $confirmedAt->toISOString(),
-            $expiresAt->toISOString(),
-        ]));
+            $confirmedAt = $now;
+            $expiresAt = $now->copy()->addMinutes(SensitiveActionConfirmationService::CONFIRMATION_TTL_MINUTES);
+            $confirmationIdentity = (string) Str::ulid();
+            $confirmationFingerprint = $this->confirmationFingerprint(
+                $confirmationIdentity,
+                $lockedContext,
+                $idempotencyKey,
+                $confirmedAt,
+                $expiresAt,
+                $authEpoch,
+            );
 
-        try {
-            $issuance = new CheckoutSensitiveConfirmationIssuance();
-            $issuance->forceFill([
-                'confirmation_identity' => $confirmationIdentity,
-                'intent' => self::INTENT,
-                'actor_id' => $context->actor->id,
-                'company_id' => $context->company->id,
-                'property_id' => $context->property->id,
-                'front_desk_stay_id' => $context->stay->id,
-                'checkout_idempotency_key' => $idempotencyKey,
-                'session_fingerprint' => $context->sessionFingerprint,
-                'confirmation_fingerprint' => $confirmationFingerprint,
-                'confirmed_at' => $confirmedAt,
-                'expires_at' => $expiresAt,
-                'created_at' => $confirmedAt,
-            ])->save();
-        } catch (QueryException $exception) {
-            $this->mapPersistenceQueryException($exception);
-        }
+            try {
+                $issuance = new CheckoutSensitiveConfirmationIssuance;
+                $issuance->forceFill([
+                    'confirmation_identity' => $confirmationIdentity,
+                    'intent' => self::INTENT,
+                    'actor_id' => $lockedActor->id,
+                    'company_id' => $lockedContext->company->id,
+                    'property_id' => $lockedContext->property->id,
+                    'front_desk_stay_id' => $lockedContext->stay->id,
+                    'checkout_idempotency_key' => $idempotencyKey,
+                    'session_fingerprint' => $lockedContext->sessionFingerprint,
+                    'confirmation_fingerprint' => $confirmationFingerprint,
+                    'confirmed_at' => $confirmedAt,
+                    'expires_at' => $expiresAt,
+                    'created_at' => $confirmedAt,
+                ])->save();
+            } catch (QueryException $exception) {
+                $this->mapPersistenceQueryException($exception);
+            }
 
-        $this->storeSessionReference($issuance);
+            $this->auditService->log(
+                'checkout_sensitive_action_confirmed',
+                $lockedActor,
+                [],
+                [
+                    'intent' => self::INTENT,
+                    'company_id' => $lockedContext->company->id,
+                    'property_id' => $lockedContext->property->id,
+                    'front_desk_stay_id' => $lockedContext->stay->id,
+                    'checkout_idempotency_fingerprint' => hash('sha256', $idempotencyKey),
+                    'confirmation_fingerprint' => $confirmationFingerprint,
+                    'confirmed_at' => $confirmedAt->toISOString(),
+                    'expires_at' => $expiresAt->toISOString(),
+                    'correlation' => request()?->headers->get('X-Request-Id') ?? request()?->headers->get('X-Correlation-Id'),
+                ],
+                ['checkout-sensitive-confirmation', $lockedContext->property->id, $lockedContext->stay->id]
+            );
 
-        $this->auditService->log(
-            'checkout_sensitive_action_confirmed',
-            $context->actor,
-            [],
-            [
-                'intent' => self::INTENT,
-                'company_id' => $context->company->id,
-                'property_id' => $context->property->id,
-                'front_desk_stay_id' => $context->stay->id,
-                'checkout_idempotency_fingerprint' => hash('sha256', $idempotencyKey),
-                'confirmation_fingerprint' => $confirmationFingerprint,
-                'confirmed_at' => $confirmedAt->toISOString(),
-                'expires_at' => $expiresAt->toISOString(),
-                'correlation' => request()?->headers->get('X-Request-Id') ?? request()?->headers->get('X-Correlation-Id'),
-            ],
-            ['checkout-sensitive-confirmation', $context->property->id, $context->stay->id]
-        );
+            return [$issuance, $authEpoch];
+        });
+
+        $this->storeSessionReference($issuance, $authEpoch);
 
         return $issuance;
     }
@@ -188,6 +206,8 @@ class CheckoutSensitiveConfirmationService
             sessionFingerprint: self::fingerprintSession(session()->getId()),
         );
 
+        $authoritativeActor = $this->authoritativeActor($context);
+        $context = $this->contextWithActor($context, $authoritativeActor);
         $this->assertAuthoritativeContext($context);
 
         $reference = $this->sessionReference();
@@ -211,7 +231,7 @@ class CheckoutSensitiveConfirmationService
         }
 
         $dbNow = $this->postgresWallClockUtc();
-        $this->assertIssuanceMatchesContext($issuance, $context, $idempotencyKey, $reference, $dbNow);
+        $this->assertIssuanceMatchesContext($issuance, $context, $idempotencyKey, $reference, $dbNow, (int) $authoritativeActor->auth_epoch);
 
         $consumed = CheckoutSensitiveConfirmationConsumption::query()
             ->where('issuance_id', $issuance->id)
@@ -246,8 +266,6 @@ class CheckoutSensitiveConfirmationService
             throw new DomainException(self::ERROR_ACTIVE_TRANSACTION_REQUIRED);
         }
 
-        $this->assertAuthoritativeContext($context);
-
         $reference = $this->sessionReference();
         if ($reference === null) {
             throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
@@ -269,11 +287,15 @@ class CheckoutSensitiveConfirmationService
             throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
         }
 
+        $authoritativeActor = $this->authoritativeActor($context, 'share');
+        $context = $this->contextWithActor($context, $authoritativeActor);
+        $this->assertAuthoritativeContext($context);
+
         $dbNow = $this->postgresWallClockUtc();
-        $this->assertIssuanceMatchesContext($issuance, $context, $idempotencyKey, $reference, $dbNow);
+        $this->assertIssuanceMatchesContext($issuance, $context, $idempotencyKey, $reference, $dbNow, (int) $authoritativeActor->auth_epoch);
 
         try {
-            $consumption = new CheckoutSensitiveConfirmationConsumption();
+            $consumption = new CheckoutSensitiveConfirmationConsumption;
             $consumption->forceFill([
                 'issuance_id' => $issuance->id,
                 'confirmation_identity' => $issuance->confirmation_identity,
@@ -333,7 +355,7 @@ class CheckoutSensitiveConfirmationService
         return $normalized;
     }
 
-    private function storeSessionReference(CheckoutSensitiveConfirmationIssuance $issuance): void
+    private function storeSessionReference(CheckoutSensitiveConfirmationIssuance $issuance, int $authEpoch): void
     {
         $confirmations = session()->get(self::SESSION_KEY, []);
         if (! is_array($confirmations)) {
@@ -342,6 +364,7 @@ class CheckoutSensitiveConfirmationService
 
         $confirmations[self::INTENT] = [
             'actor_id' => $issuance->actor_id,
+            'auth_epoch' => $authEpoch,
             'intent' => self::INTENT,
             'company_id' => $issuance->company_id,
             'property_id' => $issuance->property_id,
@@ -375,14 +398,15 @@ class CheckoutSensitiveConfirmationService
     }
 
     /**
-     * @param array<string, mixed> $reference
+     * @param  array<string, mixed>  $reference
      */
     private function assertIssuanceMatchesContext(
         CheckoutSensitiveConfirmationIssuance $issuance,
         CheckoutSensitiveConfirmationContext $context,
         string $idempotencyKey,
         array $reference,
-        Carbon $dbNow
+        Carbon $dbNow,
+        int $currentAuthEpoch,
     ): void {
         if ($issuance->intent !== self::INTENT) {
             throw new DomainException(self::ERROR_CONTEXT_REQUIRED);
@@ -409,6 +433,30 @@ class CheckoutSensitiveConfirmationService
         if (! $dbNow->lt(Carbon::parse($issuance->expires_at))) {
             throw new DomainException(self::ERROR_EXPIRED);
         }
+
+        $hasExplicitAuthEpoch = array_key_exists('auth_epoch', $reference);
+        if ($hasExplicitAuthEpoch && ! is_int($reference['auth_epoch'])) {
+            throw new DomainException(self::ERROR_CONTEXT_REQUIRED);
+        }
+        $issuanceAuthEpoch = $hasExplicitAuthEpoch ? $reference['auth_epoch'] : 0;
+        if ($issuanceAuthEpoch !== $currentAuthEpoch) {
+            throw new DomainException(self::ERROR_CONTEXT_REQUIRED);
+        }
+
+        if ($hasExplicitAuthEpoch) {
+            $expectedFingerprint = $this->confirmationFingerprint(
+                $issuance->confirmation_identity,
+                $context,
+                $idempotencyKey,
+                Carbon::parse($issuance->confirmed_at),
+                Carbon::parse($issuance->expires_at),
+                $issuanceAuthEpoch,
+            );
+            if (! hash_equals($expectedFingerprint, $issuance->confirmation_fingerprint)) {
+                throw new DomainException(self::ERROR_MALFORMED_CONFIRMATION);
+            }
+        }
+
     }
 
     private function assertAuthoritativeContext(CheckoutSensitiveConfirmationContext $context): void
@@ -433,6 +481,58 @@ class CheckoutSensitiveConfirmationService
         if ($context->sessionFingerprint !== self::fingerprintSession(session()->getId())) {
             throw new DomainException(self::ERROR_SESSION_MISMATCH);
         }
+    }
+
+    private function authoritativeActor(CheckoutSensitiveConfirmationContext $context, ?string $lockMode = null): User
+    {
+        $query = User::query()->whereKey($context->actor->getKey());
+        if ($lockMode === 'update') {
+            $query->lockForUpdate();
+        } elseif ($lockMode === 'share') {
+            $query->sharedLock();
+        }
+
+        $actor = $query->first();
+        if (! $actor || ! $actor->is_active) {
+            throw new DomainException(self::ERROR_CONTEXT_REQUIRED);
+        }
+
+        return $actor;
+    }
+
+    private function contextWithActor(CheckoutSensitiveConfirmationContext $context, User $actor): CheckoutSensitiveConfirmationContext
+    {
+        return new CheckoutSensitiveConfirmationContext(
+            actor: $actor,
+            company: $context->company,
+            property: $context->property,
+            stay: $context->stay,
+            checkoutIdempotencyKey: $context->checkoutIdempotencyKey,
+            sessionFingerprint: $context->sessionFingerprint,
+        );
+    }
+
+    private function confirmationFingerprint(
+        string $confirmationIdentity,
+        CheckoutSensitiveConfirmationContext $context,
+        string $idempotencyKey,
+        Carbon $confirmedAt,
+        Carbon $expiresAt,
+        int $authEpoch,
+    ): string {
+        return hash('sha256', implode('|', [
+            self::INTENT,
+            $confirmationIdentity,
+            $context->actor->id,
+            $context->company->id,
+            $context->property->id,
+            $context->stay->id,
+            $idempotencyKey,
+            $context->sessionFingerprint,
+            $confirmedAt->toISOString(),
+            $expiresAt->toISOString(),
+            $authEpoch,
+        ]));
     }
 
     private function postgresWallClockUtc(): Carbon

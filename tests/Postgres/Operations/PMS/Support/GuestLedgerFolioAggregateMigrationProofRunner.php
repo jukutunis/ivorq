@@ -188,7 +188,7 @@ try {
     ]);
     \Illuminate\Support\Facades\DB::table('users')->insert([
         'id' => $userId, 'name' => 'GLF-A Mig Actor',
-        'email' => 'glf-a-mig-' . \Illuminate\Support\Str::random(6) . '@example.test',
+        'email' => 'glf-a-mig-' . \Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(6)) . '@example.test',
         'password' => bcrypt('password'), 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
     ]);
     \Illuminate\Support\Facades\DB::table('property_user')->insert([

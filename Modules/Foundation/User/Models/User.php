@@ -10,18 +10,19 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Modules\Foundation\Department\Models\Department;
+use Modules\Foundation\Department\Models\DepartmentSupervisor;
 use Modules\Foundation\Department\Models\Position;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\Property\Models\PropertyUser;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
-use Spatie\Permission\Traits\HasRoles;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
+use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, HasUlid, HasAuditColumns, HasRoles, Notifiable, SoftDeletes, LogsActivity;
+    use HasApiTokens, HasAuditColumns, HasRoles, HasUlid, LogsActivity, Notifiable, SoftDeletes;
 
     protected $fillable = [
         'is_system_admin',
@@ -34,6 +35,7 @@ class User extends Authenticatable
         'position_id',
         'employee_id',
         'is_active',
+        'auth_epoch',
     ];
 
     protected $hidden = [
@@ -43,10 +45,16 @@ class User extends Authenticatable
 
     protected $casts = [
         'email_verified_at' => 'datetime',
-        'is_active'         => 'boolean',
-        'is_system_admin'   => 'boolean',
-        'password'          => 'hashed',
+        'is_active' => 'boolean',
+        'is_system_admin' => 'boolean',
+        'password' => 'hashed',
+        'auth_epoch' => 'integer',
     ];
+
+    public function setEmailAttribute(string $value): void
+    {
+        $this->attributes['email'] = mb_strtolower(trim($value));
+    }
 
     public function getActivitylogOptions(): LogOptions
     {
@@ -93,14 +101,14 @@ class User extends Authenticatable
         return $this->properties()
             ->wherePivot('is_default', true)
             ->wherePivot('status', 'active')
-            ->first() 
+            ->first()
             ?? $this->properties()
-            ->wherePivot('status', 'active')
-            ->first();
+                ->wherePivot('status', 'active')
+                ->first();
     }
 
     public function supervisedDepartmentAssignments(): HasMany
     {
-        return $this->hasMany(\Modules\Foundation\Department\Models\DepartmentSupervisor::class, 'user_id');
+        return $this->hasMany(DepartmentSupervisor::class, 'user_id');
     }
 }
