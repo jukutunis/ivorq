@@ -32,16 +32,15 @@ use Modules\Foundation\Authentication\Services\OwnerTotpService;
 use Modules\Foundation\Authentication\Services\PasswordService;
 use Modules\Foundation\Authentication\Services\SessionRevocationService;
 use Modules\Foundation\Authentication\Services\TokenService;
+use Modules\Foundation\Authorization\Enums\FirstTrustRunStatus;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationConsumption;
 use Modules\Foundation\Authorization\Models\CheckoutSensitiveConfirmationIssuance;
+use Modules\Foundation\Authorization\Models\FirstTrustRun;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Services\CheckoutSensitiveConfirmationService;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
-use Modules\Foundation\Property\Enums\PropertyBootstrapProvisioningEnvironmentEnum;
-use Modules\Foundation\Property\Enums\PropertyBootstrapProvisioningStatusEnum;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
-use Modules\Foundation\Property\Models\PropertyBootstrapProvisioningRun;
 use Modules\Foundation\User\Models\User;
 use Modules\Foundation\User\Models\UserSession;
 use Modules\Foundation\User\Services\ProfileService;
@@ -64,6 +63,18 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
     {
         parent::setUp();
         RateLimiter::clear('unused');
+    }
+
+    protected function tearDown(): void
+    {
+        // DatabaseMigrations invokes defensive B5A2A down() guards after each
+        // test. Remove test-only semantic rows first; PostgreSQL TRUNCATE does
+        // not exercise the runtime DELETE path guarded by the ledger trigger.
+        if (DB::getSchemaBuilder()->hasTable('first_trust_runs')) {
+            DB::statement('TRUNCATE TABLE first_trust_runs, owner_activations CASCADE');
+        }
+
+        parent::tearDown();
     }
 
     public function test_complete_activation_happy_path_materializes_only_empty_property_role_and_ten_codes(): void
@@ -1393,18 +1404,27 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
     {
         $company = CompanyFactory::new()->create();
         $property = PropertyFactory::new()->create(['company_id' => $company->id]);
-        $actor = UserFactory::new()->create();
-        $run = new PropertyBootstrapProvisioningRun;
+        $reservedAt = now();
+        $installationId = 'installation-'.Str::ulid();
+        $run = new FirstTrustRun;
         $run->forceFill([
-            'environment' => PropertyBootstrapProvisioningEnvironmentEnum::Rehearsal,
-            'idempotency_key' => 'owner-activation-'.Str::ulid(),
+            'environment' => 'rehearsal',
+            'installation_id' => $installationId,
+            'status' => FirstTrustRunStatus::InProgress,
+            'execution_id' => 'execution-'.Str::ulid(),
+            'authorization_id' => 'authorization-'.Str::ulid(),
+            'authority_reference' => 'authority/rehearsal/v1',
+            'authority_issuer' => 'https://authority.example.test/rehearsal',
             'request_fingerprint' => str_repeat('a', 64),
-            'status' => PropertyBootstrapProvisioningStatusEnum::InProgress,
             'canonical_sha' => str_repeat('b', 40),
-            'source' => 'b5a1b1-test',
-            'initiated_by' => $actor->id,
-            'started_at' => now(),
-            'evidence' => [],
+            'verifier_key_id' => 'arn:aws:kms:ap-southeast-1:000000000000:key/00000000-0000-0000-0000-000000000000',
+            'verifier_bundle_fingerprint' => str_repeat('c', 64),
+            'reservation_reference' => 'reservation-'.Str::ulid(),
+            'reservation_fingerprint' => str_repeat('d', 64),
+            'reservation_reserved_at' => $reservedAt,
+            'reservation_commit_deadline' => $reservedAt->copy()->addMinutes(15),
+            'reservation_recovery_deadline' => $reservedAt->copy()->addDay(),
+            'started_at' => $reservedAt,
         ])->save();
         $owner = UserFactory::new()->withProperty($property)->create([
             'email' => 'installation.owner.'.Str::lower(Str::random(8)).'@example.test',
@@ -1416,10 +1436,20 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
             $owner,
             $run->id,
             'rehearsal',
-            'installation-'.Str::ulid(),
+            $installationId,
             $company->id,
             $property->id,
         );
+        $run->forceFill([
+            'user_id' => $owner->id,
+            'company_id' => $company->id,
+            'property_id' => $property->id,
+            'membership_user_id' => $owner->id,
+            'membership_property_id' => $property->id,
+            'membership_fingerprint' => str_repeat('e', 64),
+            'owner_activation_id' => $activation->id,
+            'foundation_committed_at' => now(),
+        ])->save();
 
         return [$activation, $owner, $company, $property];
     }
