@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
@@ -22,10 +23,12 @@ use Modules\Foundation\Authentication\Models\IdentitySecurityEvent;
 use Modules\Foundation\Authentication\Models\OwnerActivationToken;
 use Modules\Foundation\Authentication\Models\OwnerMfaFactor;
 use Modules\Foundation\Authentication\Models\OwnerRecoveryCode;
+use Modules\Foundation\Authentication\Notifications\OwnerActivationNotification;
 use Modules\Foundation\Authentication\Services\AuthService;
 use Modules\Foundation\Authentication\Services\IdentityChallengeService;
 use Modules\Foundation\Authentication\Services\IdentitySecurityEventService;
 use Modules\Foundation\Authentication\Services\OwnerActivationService;
+use Modules\Foundation\Authentication\Services\OwnerActivationTokenService;
 use Modules\Foundation\Authentication\Services\OwnerAuthenticationService;
 use Modules\Foundation\Authentication\Services\OwnerRecoveryCodeService;
 use Modules\Foundation\Authentication\Services\OwnerTotpService;
@@ -194,6 +197,146 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         OwnerActivationToken::query()->update(['expires_at' => now()->subSecond()]);
         $this->expectException(ValidationException::class);
         $service->redeemEmail($token, 'verify_email');
+    }
+
+    public function test_in_progress_first_trust_prevents_activation_token_issuance(): void
+    {
+        [$activation, $owner] = $this->invitedActivation(false);
+
+        try {
+            app(OwnerActivationService::class)->issueToken($activation, 'verify_email');
+            $this->fail('An incomplete first-trust run must not authorize token issuance.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                ['activation' => ['The activation is not eligible for continuation.']],
+                $exception->errors(),
+            );
+        }
+
+        $this->assertDatabaseCount('owner_activation_tokens', 0);
+        $this->assertSame(OwnerActivationStatus::Invited, $activation->fresh()->status);
+        $this->assertNull($owner->fresh()->email_verified_at);
+        $this->assertFalse($owner->fresh()->is_active);
+    }
+
+    public function test_redeem_independently_rejects_in_progress_first_trust_without_consuming_token(): void
+    {
+        [$activation, $owner] = $this->invitedActivation(false);
+        $token = app(OwnerActivationTokenService::class)->issue($activation, 'verify_email');
+
+        try {
+            app(OwnerActivationService::class)->redeemEmail($token, 'verify_email');
+            $this->fail('Redemption must independently enforce completed first trust.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                ['activation' => ['The activation is not eligible for continuation.']],
+                $exception->errors(),
+            );
+        }
+
+        $this->assertNull(OwnerActivationToken::query()->sole()->consumed_at);
+        $this->assertSame(OwnerActivationStatus::Invited, $activation->fresh()->status);
+        $this->assertNull($owner->fresh()->email_verified_at);
+        $this->assertFalse($owner->fresh()->is_active);
+        $this->assertFalse(IdentityChallenge::query()->where('purpose', 'ACTIVATION')->exists());
+    }
+
+    public function test_completed_first_trust_with_installation_mismatch_fails_issue_and_redeem_closed(): void
+    {
+        [$activation, $owner] = $this->invitedActivation(true, true);
+
+        try {
+            app(OwnerActivationService::class)->issueToken($activation, 'verify_email');
+            $this->fail('A mismatched completed first-trust run must not authorize token issuance.');
+        } catch (ValidationException) {
+            $this->assertDatabaseCount('owner_activation_tokens', 0);
+        }
+
+        $token = app(OwnerActivationTokenService::class)->issue($activation, 'verify_email');
+        try {
+            app(OwnerActivationService::class)->redeemEmail($token, 'verify_email');
+            $this->fail('A mismatched completed first-trust run must not authorize redemption.');
+        } catch (ValidationException) {
+            $this->assertNull(OwnerActivationToken::query()->sole()->consumed_at);
+        }
+
+        $this->assertSame(OwnerActivationStatus::Invited, $activation->fresh()->status);
+        $this->assertNull($owner->fresh()->email_verified_at);
+        $this->assertFalse($owner->fresh()->is_active);
+        $this->assertFalse(IdentityChallenge::query()->where('purpose', 'ACTIVATION')->exists());
+    }
+
+    public function test_invited_owner_can_recover_lost_initial_mail_through_resume_email_proof(): void
+    {
+        Notification::fake();
+        [$activation, $owner] = $this->invitedActivation();
+
+        $this->postJson('/owner-activation/resume/request', [
+            'email' => $owner->email,
+            'environment' => $activation->environment,
+            'installation_id' => $activation->installation_id,
+        ])->assertOk()->assertExactJson([
+            'message' => 'If an eligible activation exists, continuation instructions will be sent.',
+        ]);
+
+        $resumeToken = null;
+        Notification::assertSentOnDemand(
+            OwnerActivationNotification::class,
+            function (OwnerActivationNotification $notification, array $channels) use (&$resumeToken): bool {
+                $resumeToken = (new \ReflectionProperty($notification, 'token'))->getValue($notification);
+
+                return $channels === ['mail'];
+            },
+        );
+        $this->assertIsString($resumeToken);
+        $this->assertDatabaseHas('owner_activation_tokens', [
+            'activation_id' => $activation->id,
+            'purpose' => 'resume_activation',
+        ]);
+
+        $challenge = $this->postJson('/owner-activation/resume/redeem', ['token' => $resumeToken])
+            ->assertOk()
+            ->assertJsonStructure(['challenge'])
+            ->json('challenge');
+        [, $challengedActivation] = app(IdentityChallengeService::class)->assertActivation($challenge);
+
+        $this->assertSame($activation->id, $challengedActivation->id);
+        $this->assertSame(OwnerActivationStatus::EmailVerified, $activation->fresh()->status);
+        $this->assertNotNull($activation->fresh()->email_verified_at);
+        $this->assertNotNull($owner->fresh()->email_verified_at);
+        $this->assertNull($owner->fresh()->password);
+        $this->assertFalse($owner->fresh()->is_active);
+        $this->assertDatabaseCount('owner_mfa_factors', 0);
+        $this->assertSame(1, IdentitySecurityEvent::query()
+            ->where('event_type', 'OWNER_EMAIL_VERIFIED')
+            ->where('subject_user_id', $owner->id)
+            ->count());
+    }
+
+    public function test_resume_request_for_in_progress_first_trust_is_generic_and_sends_nothing(): void
+    {
+        Notification::fake();
+        [$activation, $owner] = $this->invitedActivation(false);
+        $request = [
+            'email' => $owner->email,
+            'environment' => $activation->environment,
+            'installation_id' => $activation->installation_id,
+        ];
+
+        $incomplete = $this->postJson('/owner-activation/resume/request', $request)->assertOk();
+        $nonexistent = $this->postJson('/owner-activation/resume/request', [
+            ...$request,
+            'email' => 'missing.'.Str::lower(Str::random(8)).'@example.test',
+        ])->assertOk();
+
+        $this->assertSame(
+            ['message' => 'If an eligible activation exists, continuation instructions will be sent.'],
+            $incomplete->json(),
+        );
+        $this->assertSame($incomplete->json(), $nonexistent->json());
+        $this->assertDatabaseCount('owner_activation_tokens', 0);
+        Notification::assertNothingSent();
+        $this->assertSame(OwnerActivationStatus::Invited, $activation->fresh()->status);
     }
 
     public function test_email_is_normalized_and_case_insensitive_unique_including_soft_deleted_users(): void
@@ -1400,7 +1543,7 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         return $stay;
     }
 
-    private function invitedActivation(): array
+    private function invitedActivation(bool $completeFirstTrust = true, bool $mismatchedInstallation = false): array
     {
         $company = CompanyFactory::new()->create();
         $property = PropertyFactory::new()->create(['company_id' => $company->id]);
@@ -1436,7 +1579,7 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
             $owner,
             $run->id,
             'rehearsal',
-            $installationId,
+            $mismatchedInstallation ? 'mismatch-'.Str::ulid() : $installationId,
             $company->id,
             $property->id,
         );
@@ -1451,7 +1594,19 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
             'foundation_committed_at' => now(),
         ])->save();
 
-        return [$activation, $owner, $company, $property];
+        if ($completeFirstTrust) {
+            $completedAt = now();
+            $run->forceFill([
+                'consumption_reference' => 'consumption-'.Str::ulid(),
+                'consumption_fingerprint' => str_repeat('f', 64),
+                'external_consumed_at' => $completedAt,
+                'status' => FirstTrustRunStatus::Completed,
+                'completion_evidence_fingerprint' => str_repeat('0', 64),
+                'completed_at' => $completedAt,
+            ])->save();
+        }
+
+        return [$activation, $owner, $company, $property, $run];
     }
 
     private function emailVerifiedActivation(): array

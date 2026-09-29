@@ -44,10 +44,14 @@ class OwnerActivationController extends Controller
             ->where('status', '<>', 'ACTIVE')
             ->first();
         if ($activation && (app()->environment('testing') || config('mail.default') !== 'log')) {
-            $token = $this->activations->issueToken($activation, 'resume_activation');
-            $user = User::query()->find($activation->user_id);
-            if ($user) {
-                Notification::route('mail', $activation->canonical_email)->notify(new OwnerActivationNotification($token));
+            try {
+                $token = $this->activations->issueToken($activation, 'resume_activation');
+                $user = User::query()->find($activation->user_id);
+                if ($user) {
+                    Notification::route('mail', $activation->canonical_email)->notify(new OwnerActivationNotification($token));
+                }
+            } catch (ValidationException) {
+                // Preserve the same outward response for every ineligible activation.
             }
         }
 

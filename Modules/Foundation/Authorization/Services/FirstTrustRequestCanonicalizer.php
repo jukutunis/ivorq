@@ -66,7 +66,7 @@ final class FirstTrustRequestCanonicalizer
             throw new InvalidArgumentException('FIRST_TRUST_REQUEST_ENVIRONMENT_INVALID');
         }
 
-        $installationId = $this->reference($request['installation_id'], 'installation_id');
+        $installationId = $this->reference($request['installation_id'], 'installation_id', 100);
         $canonicalSha = $this->text($request['canonical_sha'], 'canonical_sha', 40);
         if (preg_match('/\A[a-f0-9]{40}\z/', $canonicalSha) !== 1) {
             throw new InvalidArgumentException('FIRST_TRUST_REQUEST_CANONICAL_SHA_INVALID');
@@ -159,7 +159,7 @@ final class FirstTrustRequestCanonicalizer
     {
         if (! is_string($value)
             || ! mb_check_encoding($value, 'UTF-8')
-            || preg_match('/[\x00-\x1F\x7F]/u', $value) === 1) {
+            || preg_match('/\p{Cc}/u', $value) === 1) {
             throw new InvalidArgumentException("FIRST_TRUST_REQUEST_{$field}_INVALID");
         }
 
@@ -171,9 +171,9 @@ final class FirstTrustRequestCanonicalizer
         return $normalized;
     }
 
-    private function reference(mixed $value, string $field): string
+    private function reference(mixed $value, string $field, int $maximumBytes = 200): string
     {
-        $reference = $this->text($value, $field, 200);
+        $reference = $this->text($value, $field, $maximumBytes);
         if (preg_match('/\A[A-Za-z0-9][A-Za-z0-9._:\/#-]*\z/', $reference) !== 1) {
             throw new InvalidArgumentException("FIRST_TRUST_REQUEST_{$field}_INVALID");
         }

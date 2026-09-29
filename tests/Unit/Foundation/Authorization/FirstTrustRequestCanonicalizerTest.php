@@ -53,6 +53,40 @@ class FirstTrustRequestCanonicalizerTest extends TestCase
         $this->assertStringContainsString('Édi  Owner', $canonicalizer->canonicalBytes($request));
     }
 
+    public function test_installation_id_is_bounded_to_100_without_narrowing_authority_reference(): void
+    {
+        $canonicalizer = new FirstTrustRequestCanonicalizer;
+        $request = $this->request();
+        $request['installation_id'] = str_repeat('i', 100);
+        $request['authority']['reference'] = str_repeat('a', 150);
+
+        $normalized = $canonicalizer->normalize($request);
+
+        $this->assertSame(str_repeat('i', 100), $normalized['installation_id']);
+        $this->assertSame(str_repeat('a', 150), $normalized['authority']['reference']);
+
+        $request['installation_id'] = str_repeat('i', 101);
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('FIRST_TRUST_REQUEST_installation_id_INVALID');
+
+        $canonicalizer->normalize($request);
+    }
+
+    public function test_unicode_control_character_is_rejected_without_changing_normal_unicode(): void
+    {
+        $canonicalizer = new FirstTrustRequestCanonicalizer;
+        $valid = $this->request();
+
+        $this->assertSame('Édi Owner', $canonicalizer->normalize($valid)['owner']['name']);
+
+        $invalid = $this->request();
+        $invalid['owner']['name'] = "Owner\u{0085}Name";
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('FIRST_TRUST_REQUEST_owner.name_INVALID');
+
+        $canonicalizer->normalize($invalid);
+    }
+
     public function test_invalid_identity_and_encoding_values_fail_closed(): void
     {
         $invalid = [
