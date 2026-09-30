@@ -9,6 +9,8 @@ use Illuminate\Validation\ValidationException;
 use Modules\Foundation\Authentication\Enums\OwnerActivationStatus;
 use Modules\Foundation\Authentication\Models\OwnerActivation;
 use Modules\Foundation\Authentication\Rules\PrivilegedOwnerPassword;
+use Modules\Foundation\Authorization\Enums\FirstTrustRunStatus;
+use Modules\Foundation\Authorization\Models\FirstTrustRun;
 use Modules\Foundation\Authorization\Models\Role;
 use Modules\Foundation\User\Models\User;
 use SensitiveParameter;
@@ -57,6 +59,8 @@ class OwnerActivationService
             throw ValidationException::withMessages(['activation' => ['The activation is already complete.']]);
         }
 
+        $this->assertFirstTrustCompleted($activation);
+
         return $this->tokens->issue($activation, $purpose);
     }
 
@@ -69,11 +73,14 @@ class OwnerActivationService
     {
         return DB::transaction(function () use ($token, $purpose): string {
             [, $activation] = $this->tokens->redeem($token, $purpose);
-            if ($purpose === 'verify_email') {
-                $this->transition($activation, OwnerActivationStatus::EmailVerified, ['email_verified_at' => now()]);
-                User::query()->whereKey($activation->user_id)->lockForUpdate()->update(['email_verified_at' => now()]);
+            $this->assertFirstTrustCompleted($activation);
+
+            if ($purpose === 'verify_email' || ($purpose === 'resume_activation' && $activation->status === OwnerActivationStatus::Invited)) {
+                $verifiedAt = now();
+                $this->transition($activation, OwnerActivationStatus::EmailVerified, ['email_verified_at' => $verifiedAt]);
+                User::query()->whereKey($activation->user_id)->lockForUpdate()->update(['email_verified_at' => $verifiedAt]);
                 $this->events->record('OWNER_EMAIL_VERIFIED', 'SUCCESS', $this->context($activation));
-            } elseif ($activation->status === OwnerActivationStatus::Invited || $activation->status === OwnerActivationStatus::Active) {
+            } elseif ($activation->status === OwnerActivationStatus::Active) {
                 throw ValidationException::withMessages(['token' => ['The activation link is invalid or expired.']]);
             }
 
@@ -179,6 +186,24 @@ class OwnerActivationService
     {
         if ($activation->status !== $expected) {
             throw ValidationException::withMessages(['activation' => ['The activation state is invalid.']]);
+        }
+    }
+
+    private function assertFirstTrustCompleted(OwnerActivation $activation): void
+    {
+        $completed = FirstTrustRun::query()
+            ->whereKey($activation->first_trust_run_id)
+            ->where('status', FirstTrustRunStatus::Completed->value)
+            ->where('environment', (string) $activation->environment)
+            ->where('installation_id', (string) $activation->installation_id)
+            ->where('user_id', (string) $activation->user_id)
+            ->where('company_id', (string) $activation->company_id)
+            ->where('property_id', (string) $activation->property_id)
+            ->where('owner_activation_id', (string) $activation->id)
+            ->exists();
+
+        if (! $completed) {
+            throw ValidationException::withMessages(['activation' => ['The activation is not eligible for continuation.']]);
         }
     }
 
