@@ -12,6 +12,7 @@ final class FirstTrustEmptyStateGuard
 {
     /** @var list<string> */
     public const LOCK_TABLES = [
+        'activity_log',
         'activity_logs',
         'audit_logs',
         'companies',
@@ -95,6 +96,7 @@ final class FirstTrustEmptyStateGuard
 
         $entityTypes = [User::class, Company::class, Property::class];
         if (DB::table('audit_logs')->whereIn('auditable_type', $entityTypes)->exists()
+            || DB::table('activity_log')->whereIn('subject_type', $entityTypes)->exists()
             || DB::table('activity_logs')->whereIn('subject_type', $entityTypes)->exists()) {
             $this->reject();
         }

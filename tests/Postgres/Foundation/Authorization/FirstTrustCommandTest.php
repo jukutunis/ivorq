@@ -4,6 +4,7 @@ namespace Tests\Postgres\Foundation\Authorization;
 
 use Modules\Foundation\Authorization\Console\EstablishFirstTrustCommand;
 use RuntimeException;
+use Symfony\Component\Console\Tester\CommandTester;
 use Tests\Postgres\Foundation\Authorization\Support\FirstTrustTestCase;
 
 class FirstTrustCommandTest extends FirstTrustTestCase
@@ -91,6 +92,33 @@ class FirstTrustCommandTest extends FirstTrustTestCase
         $this->assertNotSame(0, $oversized['exit']);
         $this->assertStringContainsString('FIRST_TRUST_AUTHORIZATION_INPUT_TOO_LARGE', $oversized['output']);
         $this->assertStringNotContainsString($marker, $oversized['output']);
+        $this->assertNoFoundationMutation();
+    }
+
+    public function test_unknown_provider_exception_is_sanitized_in_command_output(): void
+    {
+        $this->fake(['verify_throws' => true]);
+        $command = new EstablishFirstTrustCommand;
+        $command->setLaravel($this->app);
+        $tester = new CommandTester($command);
+        $tester->setInputs([self::RAW_AUTHORIZATION]);
+
+        $exit = $tester->execute([
+            '--owner-name' => 'Edi Owner',
+            '--owner-email' => 'owner@example.test',
+            '--company-name' => 'IVORQ Test Company',
+            '--company-slug' => 'ivorq-test-company',
+            '--property-name' => 'IVORQ Test Property',
+            '--property-slug' => 'ivorq-test-property',
+            '--property-code' => 'TST_01',
+            '--property-timezone' => 'Asia/Makassar',
+            '--property-currency' => 'IDR',
+        ]);
+        $output = $tester->getDisplay(true);
+
+        $this->assertNotSame(0, $exit);
+        $this->assertStringContainsString('FIRST_TRUST_AUTHORIZATION_VERIFICATION_FAILED', $output);
+        $this->assertStringNotContainsString('TEST_PROVIDER_SECRET_BODY_MUST_NOT_ESCAPE', $output);
         $this->assertNoFoundationMutation();
     }
 

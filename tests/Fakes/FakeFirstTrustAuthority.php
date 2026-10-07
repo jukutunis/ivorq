@@ -59,6 +59,9 @@ final class FakeFirstTrustAuthority implements FirstTrustAuthority
         FirstTrustExpectedBinding $binding,
     ): VerifiedFirstTrustAuthorization {
         $state = $this->read();
+        if (isset($state['verify_error']) && is_string($state['verify_error'])) {
+            throw new RuntimeException($state['verify_error']);
+        }
         if (($state['verify_throws'] ?? false) === true) {
             throw new RuntimeException('TEST_PROVIDER_SECRET_BODY_MUST_NOT_ESCAPE');
         }
@@ -87,6 +90,9 @@ final class FakeFirstTrustAuthority implements FirstTrustAuthority
         FirstTrustExpectedBinding $binding,
     ): VerifiedFirstTrustAuthorityState {
         $state = $this->read();
+        if (isset($state['state_error']) && is_string($state['state_error'])) {
+            throw new RuntimeException($state['state_error']);
+        }
         if (($state['state_unavailable'] ?? false) === true) {
             throw new RuntimeException('TEST_AUTHORITY_STATE_UNAVAILABLE_SECRET');
         }
@@ -120,6 +126,9 @@ final class FakeFirstTrustAuthority implements FirstTrustAuthority
         FirstTrustExpectedBinding $binding,
     ): VerifiedFirstTrustReservation {
         $before = $this->read();
+        if (isset($before['reserve_error']) && is_string($before['reserve_error'])) {
+            throw new RuntimeException($before['reserve_error']);
+        }
         if (isset($before['reserve_barrier_directory']) && is_string($before['reserve_barrier_directory'])) {
             $this->awaitReserveBarrier($before['reserve_barrier_directory'], $executionId);
         }
@@ -182,6 +191,11 @@ final class FakeFirstTrustAuthority implements FirstTrustAuthority
         string $executionId,
         FirstTrustExpectedBinding $binding,
     ): VerifiedFirstTrustConsumption {
+        $before = $this->read();
+        if (isset($before['consume_error']) && is_string($before['consume_error'])) {
+            throw new RuntimeException($before['consume_error']);
+        }
+
         $throw = null;
         $state = $this->mutate(function (array $state) use ($executionId, &$throw): array {
             if (($state['consume_timeout_before_mutation_once'] ?? false) === true) {

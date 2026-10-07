@@ -5,10 +5,16 @@ namespace Tests\Postgres\Foundation\Authorization;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
+use Modules\Foundation\Authentication\Enums\OwnerActivationStatus;
+use Modules\Foundation\Authentication\Models\OwnerActivation;
+use Modules\Foundation\Authentication\Models\OwnerMfaFactor;
+use Modules\Foundation\Authentication\Services\OwnerActivationService;
+use Modules\Foundation\Authentication\Services\OwnerTotpService;
 use Modules\Foundation\Authorization\Enums\FirstTrustRunStatus;
 use Modules\Foundation\Authorization\Models\FirstTrustRun;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
+use Tests\Fakes\FakeFirstTrustAuthority;
 use Tests\Postgres\Foundation\Authorization\Support\FirstTrustTestCase;
 use Throwable;
 
@@ -125,6 +131,108 @@ class FirstTrustRecoveryTest extends FirstTrustTestCase
         $this->assertFoundationCounts(1);
     }
 
+    public function test_completed_exact_retry_after_active_owner_lifecycle_is_mutation_free(): void
+    {
+        config(['app.key' => 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=']);
+        $this->fake();
+        $first = $this->establish();
+        $activation = OwnerActivation::query()->sole();
+        $service = app(OwnerActivationService::class);
+        $token = $service->issueToken($activation, 'verify_email');
+        $challenge = $service->redeemEmail($token, 'verify_email');
+        $service->establishPassword($challenge, 'correct horse battery staple');
+        $service->startMfa($challenge);
+        $factor = OwnerMfaFactor::query()->sole();
+        $counter = intdiv(time(), 30) - 1;
+        $service->confirmMfa($challenge, app(OwnerTotpService::class)->currentCode($factor, $counter));
+        $service->complete(
+            $challenge,
+            app(OwnerTotpService::class)->currentCode($factor->fresh(), $counter + 1),
+        );
+
+        $before = FirstTrustRun::query()->sole();
+        $counts = collect([
+            'users',
+            'companies',
+            'properties',
+            'property_user',
+            'owner_activations',
+            'owner_activation_tokens',
+            'model_has_roles',
+            'owner_mfa_factors',
+            'owner_recovery_codes',
+        ])->mapWithKeys(fn (string $table): array => [$table => DB::table($table)->count()])->all();
+        $runEvidence = [
+            $before->updated_at?->format('c'),
+            $before->completed_at?->format('c'),
+            $before->completion_evidence_fingerprint,
+        ];
+        $userEvidence = (array) DB::table('users')->where('id', $before->user_id)->first();
+        $activationEvidence = (array) DB::table('owner_activations')->where('id', $before->owner_activation_id)->first();
+
+        $second = $this->establish();
+
+        $after = FirstTrustRun::query()->sole();
+        $this->assertSame(OwnerActivationStatus::Active, OwnerActivation::query()->sole()->status);
+        $this->assertTrue((bool) DB::table('users')->where('id', $after->user_id)->value('is_active'));
+        $this->assertSame([
+            $first->runId,
+            $first->executionId,
+            $first->userId,
+            $first->companyId,
+            $first->propertyId,
+            $first->ownerActivationId,
+            $first->completionEvidenceFingerprint,
+        ], [
+            $second->runId,
+            $second->executionId,
+            $second->userId,
+            $second->companyId,
+            $second->propertyId,
+            $second->ownerActivationId,
+            $second->completionEvidenceFingerprint,
+        ]);
+        $this->assertSame('not_attempted', $second->activationDeliveryState);
+        $this->assertSame($runEvidence, [
+            $after->updated_at?->format('c'),
+            $after->completed_at?->format('c'),
+            $after->completion_evidence_fingerprint,
+        ]);
+        $this->assertSame($counts, collect(array_keys($counts))
+            ->mapWithKeys(fn (string $table): array => [$table => DB::table($table)->count()])
+            ->all());
+        $this->assertSame($userEvidence, (array) DB::table('users')->where('id', $after->user_id)->first());
+        $this->assertSame($activationEvidence, (array) DB::table('owner_activations')->where('id', $after->owner_activation_id)->first());
+        Notification::assertCount(1);
+    }
+
+    public function test_in_progress_recovery_still_rejects_an_unexpectedly_active_user(): void
+    {
+        $fake = $this->fake([
+            'consume_timeout_before_mutation_once' => true,
+            'state_unavailable_after_consume_failure' => true,
+        ]);
+        try {
+            $this->establish();
+        } catch (RuntimeException $exception) {
+            $this->assertSame('AUTHORITY_STATE_UNAVAILABLE', $exception->getMessage());
+        }
+
+        $run = FirstTrustRun::query()->sole();
+        DB::table('users')->where('id', $run->user_id)->update(['is_active' => true]);
+        $fake->configure(['state_unavailable' => false]);
+
+        try {
+            $this->establish();
+            $this->fail('IN_PROGRESS recovery must retain strict pre-activation lifecycle checks.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE', $exception->getMessage());
+        }
+
+        $this->assertSame(FirstTrustRunStatus::InProgress, $run->fresh()->status);
+        $this->assertSame(0, DB::table('owner_activation_tokens')->count());
+    }
+
     public function test_changed_retry_is_rejected_without_mutation(): void
     {
         $this->fake();
@@ -225,7 +333,7 @@ class FirstTrustRecoveryTest extends FirstTrustTestCase
 
     public function test_in_progress_without_complete_foundation_is_a_terminal_divergence(): void
     {
-        $run = $this->seedRunWithoutFoundation();
+        [$run] = $this->seedRunWithoutFoundation();
 
         try {
             $this->establish();
@@ -240,7 +348,7 @@ class FirstTrustRecoveryTest extends FirstTrustTestCase
 
     public function test_failed_local_run_is_terminal_and_cannot_be_reopened(): void
     {
-        $run = $this->seedRunWithoutFoundation();
+        [$run] = $this->seedRunWithoutFoundation();
         $run->forceFill([
             'status' => FirstTrustRunStatus::Failed,
             'failed_at' => now(),
@@ -256,6 +364,178 @@ class FirstTrustRecoveryTest extends FirstTrustTestCase
 
         $this->assertSame(FirstTrustRunStatus::Failed, $run->fresh()->status);
         $this->assertSeededRunIsTheOnlyLocalMutation();
+    }
+
+    public static function reservationEvidenceMismatches(): array
+    {
+        return [
+            'reservation fingerprint' => ['reservation_fingerprint'],
+            'commit deadline' => ['commit_deadline'],
+            'recovery deadline' => ['recovery_deadline'],
+        ];
+    }
+
+    #[DataProvider('reservationEvidenceMismatches')]
+    public function test_reserved_recovery_rejects_historical_reservation_mismatch(string $field): void
+    {
+        [$run, $fake] = $this->seedRunWithoutFoundation();
+        $snapshot = $fake->snapshot();
+        $mismatch = match ($field) {
+            'reservation_fingerprint' => str_repeat('c', 64),
+            'commit_deadline' => CarbonImmutable::parse($snapshot[$field])->addSecond()->toAtomString(),
+            'recovery_deadline' => CarbonImmutable::parse($snapshot[$field])->addSecond()->toAtomString(),
+        };
+        $fake->configure([$field => $mismatch]);
+        $updatedAt = $run->updated_at?->format('c');
+
+        try {
+            $this->establish();
+            $this->fail("A {$field} mismatch must fail closed.");
+        } catch (RuntimeException $exception) {
+            $this->assertSame('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE', $exception->getMessage());
+        }
+
+        $this->assertSame($updatedAt, $run->fresh()->updated_at?->format('c'));
+        $this->assertSeededRunIsTheOnlyLocalMutation();
+    }
+
+    public function test_consumed_in_progress_recovery_rejects_historical_reservation_mismatch(): void
+    {
+        $fake = $this->fake([
+            'consume_timeout_after_mutation_once' => true,
+            'state_unavailable_after_consume_failure' => true,
+        ]);
+        try {
+            $this->establish();
+        } catch (RuntimeException $exception) {
+            $this->assertSame('AUTHORITY_STATE_UNAVAILABLE', $exception->getMessage());
+        }
+
+        $run = FirstTrustRun::query()->sole();
+        $updatedAt = $run->updated_at?->format('c');
+        $fake->configure([
+            'state_unavailable' => false,
+            'reservation_fingerprint' => str_repeat('d', 64),
+        ]);
+
+        try {
+            $this->establish();
+            $this->fail('CONSUMED recovery must reconcile its full historical reservation.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE', $exception->getMessage());
+        }
+
+        $this->assertSame($updatedAt, $run->fresh()->updated_at?->format('c'));
+        $this->assertFoundationCounts(1);
+        $this->assertSame(0, DB::table('owner_activation_tokens')->count());
+    }
+
+    public function test_completed_retry_rejects_historical_reservation_mismatch(): void
+    {
+        $fake = $this->fake();
+        $this->establish();
+        $run = FirstTrustRun::query()->sole();
+        $updatedAt = $run->updated_at?->format('c');
+        $fake->configure(['recovery_deadline' => $run->reservation_recovery_deadline->addSecond()->toAtomString()]);
+
+        try {
+            $this->establish();
+            $this->fail('Completed retry must not ignore historical reservation disagreement.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE', $exception->getMessage());
+        }
+
+        $this->assertSame($updatedAt, $run->fresh()->updated_at?->format('c'));
+        $this->assertFoundationCounts(1);
+        $this->assertSame(1, DB::table('owner_activation_tokens')->count());
+    }
+
+    public static function verificationAndStateErrors(): array
+    {
+        return [
+            'authorization expired during verification' => ['verify_error', 'AUTHORIZATION_EXPIRED'],
+            'authorization revoked during state lookup' => ['state_error', 'AUTHORIZATION_REVOKED'],
+            'binding mismatch during state lookup' => ['state_error', 'AUTHORITY_STATE_BINDING_MISMATCH'],
+        ];
+    }
+
+    #[DataProvider('verificationAndStateErrors')]
+    public function test_stable_verification_and_state_errors_cross_unchanged(string $field, string $error): void
+    {
+        $this->fake([$field => $error]);
+
+        try {
+            $this->establish();
+            $this->fail("{$error} must retain its stable classification.");
+        } catch (RuntimeException $exception) {
+            $this->assertSame($error, $exception->getMessage());
+        }
+
+        $this->assertNoFoundationMutation();
+    }
+
+    public static function reserveErrors(): array
+    {
+        return [
+            'other execution owns reservation' => ['ALREADY_RESERVED_OTHER_EXECUTION'],
+            'reservation expired' => ['RESERVATION_EXPIRED'],
+        ];
+    }
+
+    #[DataProvider('reserveErrors')]
+    public function test_deterministic_reserve_errors_do_not_enter_generic_recovery(string $error): void
+    {
+        $this->fake(['reserve_error' => $error]);
+
+        try {
+            $this->establish();
+            $this->fail("{$error} must remain a deterministic rejection.");
+        } catch (RuntimeException $exception) {
+            $this->assertSame($error, $exception->getMessage());
+        }
+
+        $this->assertNoFoundationMutation();
+    }
+
+    public static function consumeErrors(): array
+    {
+        return [
+            'other execution consumed' => ['ALREADY_CONSUMED_OTHER_EXECUTION'],
+            'receipt invalid' => ['RECEIPT_INVALID'],
+            'reservation expired before consume' => ['RESERVATION_EXPIRED'],
+        ];
+    }
+
+    #[DataProvider('consumeErrors')]
+    public function test_deterministic_consume_errors_do_not_enter_generic_recovery(string $error): void
+    {
+        $this->fake(['consume_error' => $error]);
+
+        try {
+            $this->establish();
+            $this->fail("{$error} must remain a deterministic rejection.");
+        } catch (RuntimeException $exception) {
+            $this->assertSame($error, $exception->getMessage());
+        }
+
+        $this->assertSame(FirstTrustRunStatus::InProgress, FirstTrustRun::query()->sole()->status);
+        $this->assertFoundationCounts(1);
+        $this->assertSame(0, DB::table('owner_activation_tokens')->count());
+    }
+
+    public function test_unknown_provider_error_is_sanitized_at_the_orchestrator_boundary(): void
+    {
+        $this->fake(['verify_throws' => true]);
+
+        try {
+            $this->establish();
+            $this->fail('Unknown provider detail must never cross the orchestrator boundary.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('FIRST_TRUST_AUTHORIZATION_VERIFICATION_FAILED', $exception->getMessage());
+            $this->assertStringNotContainsString('TEST_PROVIDER_SECRET', $exception->getMessage());
+        }
+
+        $this->assertNoFoundationMutation();
     }
 
     public static function rollbackFaults(): array
@@ -293,7 +573,8 @@ class FirstTrustRecoveryTest extends FirstTrustTestCase
         $this->assertSame(0, DB::table('activity_logs')->count());
     }
 
-    private function seedRunWithoutFoundation(): FirstTrustRun
+    /** @return array{FirstTrustRun,FakeFirstTrustAuthority} */
+    private function seedRunWithoutFoundation(): array
     {
         $reservedAt = CarbonImmutable::now('UTC')->startOfSecond();
         $executionId = 'ftx-01JSEEDEDRECOVERY0000000';
@@ -324,7 +605,7 @@ class FirstTrustRecoveryTest extends FirstTrustTestCase
             'started_at' => $reservedAt,
         ])->save();
 
-        $this->fake([
+        $fake = $this->fake([
             'authorization_id' => $authorizationId,
             'state' => 'RESERVED',
             'execution_id' => $executionId,
@@ -335,7 +616,7 @@ class FirstTrustRecoveryTest extends FirstTrustTestCase
             'recovery_deadline' => $recoveryDeadline->toAtomString(),
         ]);
 
-        return $run;
+        return [$run, $fake];
     }
 
     private function assertSeededRunIsTheOnlyLocalMutation(): void

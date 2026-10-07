@@ -33,6 +33,29 @@ final class FirstTrustOrchestrator
 {
     private const MAXIMUM_VERIFICATION_BUNDLE_BYTES = 1048576;
 
+    /** @var list<string> */
+    private const STABLE_AUTHORITY_ERRORS = [
+        'AUTHORITY_UNAVAILABLE',
+        'AUTHORITY_CREDENTIAL_REJECTED',
+        'AUTHORITY_PROTOCOL_UNSUPPORTED',
+        'AUTHORIZATION_INVALID',
+        'AUTHORIZATION_EXPIRED',
+        'AUTHORIZATION_REVOKED',
+        'ENVIRONMENT_MISMATCH',
+        'INSTALLATION_MISMATCH',
+        'CANONICAL_SHA_MISMATCH',
+        'REQUEST_FINGERPRINT_MISMATCH',
+        'ALREADY_RESERVED_OTHER_EXECUTION',
+        'RESERVATION_EXPIRED',
+        'ALREADY_CONSUMED_OTHER_EXECUTION',
+        'RECEIPT_INVALID',
+        'AUTHORITY_RECOVERY_REQUIRED',
+        'AUTHORITY_STATE_UNAVAILABLE',
+        'AUTHORITY_STATE_INVALID',
+        'AUTHORITY_STATE_BINDING_MISMATCH',
+        'FIRST_TRUST_AUTHORITY_UNCONFIGURED',
+    ];
+
     public function __construct(
         private readonly FirstTrustAuthority $authority,
         private readonly FirstTrustRequestCanonicalizer $canonicalizer,
@@ -82,8 +105,13 @@ final class FirstTrustOrchestrator
                 $run = $this->ensureFoundation($reservation, $request, $context);
             } else {
                 $this->assertRunIdentity($run, $verified, $context, $state->executionId);
-                $this->assertCompleteFoundation($run, $request, $context);
-                $this->assertRecoveryDeadline($run);
+                $this->assertReservationMatchesRun($reservation, $run);
+                if ($run->status === FirstTrustRunStatus::Completed) {
+                    $this->assertCompletedFoundationIdentity($run, $context);
+                } else {
+                    $this->assertPendingFoundationIntegrity($run, $request, $context);
+                    $this->assertRecoveryDeadline($run);
+                }
             }
 
             return $this->consumeCompleteAndDeliver($run, $verified, $context);
@@ -95,8 +123,13 @@ final class FirstTrustOrchestrator
             }
 
             $this->assertRunIdentity($run, $verified, $context, $state->executionId);
-            $this->assertCompleteFoundation($run, $request, $context);
-            $consumption = $this->consumptionFromState($state, $verified, $context);
+            $this->assertReservationMatchesRun($state, $run);
+            if ($run->status === FirstTrustRunStatus::Completed) {
+                $this->assertCompletedFoundationIdentity($run, $context);
+            } else {
+                $this->assertPendingFoundationIntegrity($run, $request, $context);
+            }
+            $consumption = $this->consumptionFromState($state, $verified, $context, $run);
             [$completed, $newlyCompleted] = $this->complete($run, $consumption, $context);
 
             return $this->result(
@@ -265,8 +298,22 @@ final class FirstTrustOrchestrator
         try {
             $verified = $this->authority->verifyAuthorization($serializedAuthorization, $context['binding']);
         } catch (Throwable $throwable) {
-            if ($throwable->getMessage() === 'FIRST_TRUST_AUTHORITY_UNCONFIGURED') {
-                throw new RuntimeException('FIRST_TRUST_AUTHORITY_UNCONFIGURED');
+            $stable = $this->stableAuthorityError($throwable, [
+                'AUTHORITY_UNAVAILABLE',
+                'AUTHORITY_CREDENTIAL_REJECTED',
+                'AUTHORITY_PROTOCOL_UNSUPPORTED',
+                'AUTHORIZATION_INVALID',
+                'AUTHORIZATION_EXPIRED',
+                'AUTHORIZATION_REVOKED',
+                'ENVIRONMENT_MISMATCH',
+                'INSTALLATION_MISMATCH',
+                'CANONICAL_SHA_MISMATCH',
+                'REQUEST_FINGERPRINT_MISMATCH',
+                'AUTHORITY_STATE_BINDING_MISMATCH',
+                'FIRST_TRUST_AUTHORITY_UNCONFIGURED',
+            ]);
+            if ($stable !== null) {
+                throw new RuntimeException($stable);
             }
 
             throw new RuntimeException('FIRST_TRUST_AUTHORIZATION_VERIFICATION_FAILED');
@@ -305,7 +352,26 @@ final class FirstTrustOrchestrator
     ): VerifiedFirstTrustAuthorityState {
         try {
             return $this->authority->state($authorizationId, $binding);
-        } catch (Throwable) {
+        } catch (Throwable $throwable) {
+            $stable = $this->stableAuthorityError($throwable, [
+                'AUTHORITY_UNAVAILABLE',
+                'AUTHORITY_CREDENTIAL_REJECTED',
+                'AUTHORITY_PROTOCOL_UNSUPPORTED',
+                'AUTHORITY_STATE_UNAVAILABLE',
+                'AUTHORITY_STATE_INVALID',
+                'AUTHORITY_STATE_BINDING_MISMATCH',
+                'AUTHORIZATION_INVALID',
+                'AUTHORIZATION_EXPIRED',
+                'AUTHORIZATION_REVOKED',
+                'ENVIRONMENT_MISMATCH',
+                'INSTALLATION_MISMATCH',
+                'CANONICAL_SHA_MISMATCH',
+                'REQUEST_FINGERPRINT_MISMATCH',
+            ]);
+            if ($stable !== null) {
+                throw new RuntimeException($stable);
+            }
+
             throw new RuntimeException('AUTHORITY_STATE_UNAVAILABLE');
         }
     }
@@ -339,7 +405,12 @@ final class FirstTrustOrchestrator
                 $executionId,
                 $context['binding'],
             );
-        } catch (Throwable) {
+        } catch (Throwable $throwable) {
+            $stable = $this->stableAuthorityError($throwable);
+            if ($stable !== null && $stable !== 'AUTHORITY_UNAVAILABLE') {
+                throw new RuntimeException($stable);
+            }
+
             $state = $this->authoritativeState($verified->authorizationId, $context['binding']);
             $this->assertState($state, $verified, $context);
             if ($state->state !== 'RESERVED') {
@@ -444,7 +515,12 @@ final class FirstTrustOrchestrator
                 ->first();
             if ($existing !== null) {
                 $this->assertRunIdentity($existing, null, $context, $reservation->executionId, $reservation->authorizationId);
-                $this->assertCompleteFoundation($existing, $request, $context);
+                $this->assertReservationMatchesRun($reservation, $existing);
+                if ($existing->status === FirstTrustRunStatus::Completed) {
+                    $this->assertCompletedFoundationIdentity($existing, $context);
+                } else {
+                    $this->assertPendingFoundationIntegrity($existing, $request, $context);
+                }
 
                 return $existing;
             }
@@ -569,7 +645,9 @@ final class FirstTrustOrchestrator
             if ($state->state !== 'CONSUMED' || $state->executionId !== $run->execution_id) {
                 throw new RuntimeException('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE');
             }
-            $this->consumptionFromState($state, $verified, $context);
+            $this->assertReservationMatchesRun($state, $run);
+            $this->assertCompletedFoundationIdentity($run, $context);
+            $this->consumptionFromState($state, $verified, $context, $run);
 
             return $this->result($run, 'not_attempted');
         }
@@ -600,20 +678,25 @@ final class FirstTrustOrchestrator
                 $run->execution_id,
                 $context['binding'],
             );
+        } catch (Throwable $throwable) {
+            $stable = $this->stableAuthorityError($throwable);
+            if ($stable !== null && $stable !== 'AUTHORITY_UNAVAILABLE') {
+                throw new RuntimeException($stable);
+            }
+
+            $consumption = null;
+        }
+
+        if ($consumption !== null) {
             $this->assertConsumption($consumption, $run, $context);
 
             return $consumption;
-        } catch (Throwable $throwable) {
-            if ($throwable instanceof RuntimeException
-                && $throwable->getMessage() === 'FIRST_TRUST_CONSUMPTION_INVALID') {
-                throw $throwable;
-            }
         }
 
         $state = $this->authoritativeState($run->authorization_id, $context['binding']);
         $this->assertState($state, $verified, $context);
         if ($state->state === 'CONSUMED') {
-            $consumption = $this->consumptionFromState($state, $verified, $context);
+            $consumption = $this->consumptionFromState($state, $verified, $context, $run);
             $this->assertConsumption($consumption, $run, $context);
 
             return $consumption;
@@ -622,6 +705,7 @@ final class FirstTrustOrchestrator
         if ($state->state !== 'RESERVED' || $state->executionId !== $run->execution_id) {
             throw new RuntimeException('AUTHORITY_RECOVERY_REQUIRED');
         }
+        $this->assertReservationMatchesRun($state, $run);
         $this->assertRecoveryDeadline($run);
 
         try {
@@ -630,14 +714,16 @@ final class FirstTrustOrchestrator
                 $run->execution_id,
                 $context['binding'],
             );
-            $this->assertConsumption($consumption, $run, $context);
+        } catch (Throwable $throwable) {
+            $stable = $this->stableAuthorityError($throwable);
+            if ($stable !== null && $stable !== 'AUTHORITY_UNAVAILABLE') {
+                throw new RuntimeException($stable);
+            }
 
-            return $consumption;
-        } catch (Throwable) {
             $state = $this->authoritativeState($run->authorization_id, $context['binding']);
             $this->assertState($state, $verified, $context);
             if ($state->state === 'CONSUMED') {
-                $consumption = $this->consumptionFromState($state, $verified, $context);
+                $consumption = $this->consumptionFromState($state, $verified, $context, $run);
                 $this->assertConsumption($consumption, $run, $context);
 
                 return $consumption;
@@ -645,6 +731,10 @@ final class FirstTrustOrchestrator
 
             throw new RuntimeException('AUTHORITY_RECOVERY_REQUIRED');
         }
+
+        $this->assertConsumption($consumption, $run, $context);
+
+        return $consumption;
     }
 
     /** @param array<string,mixed> $context */
@@ -652,6 +742,7 @@ final class FirstTrustOrchestrator
         VerifiedFirstTrustAuthorityState $state,
         VerifiedFirstTrustAuthorization $verified,
         array $context,
+        FirstTrustRun $run,
     ): VerifiedFirstTrustConsumption {
         if ($state->state !== 'CONSUMED'
             || $state->executionId === null
@@ -662,6 +753,8 @@ final class FirstTrustOrchestrator
             || $state->consumedAt === null) {
             throw new RuntimeException('FIRST_TRUST_AUTHORITY_STATE_INVALID');
         }
+
+        $this->assertReservationMatchesRun($state, $run);
 
         return new VerifiedFirstTrustConsumption(
             $state->authorizationId,
@@ -720,6 +813,7 @@ final class FirstTrustOrchestrator
             $this->assertConsumption($consumption, $locked, $context);
 
             if ($locked->status === FirstTrustRunStatus::Completed) {
+                $this->assertCompletedFoundationIdentity($locked, $context);
                 $this->assertCompletedConsumption($locked, $consumption);
 
                 return [$locked, false];
@@ -727,7 +821,7 @@ final class FirstTrustOrchestrator
             if ($locked->status === FirstTrustRunStatus::Failed) {
                 throw new RuntimeException('FIRST_TRUST_LOCAL_FAILED_TERMINAL');
             }
-            $this->assertCompleteFoundation($locked, null, $context);
+            $this->assertPendingFoundationIntegrity($locked, null, $context);
 
             $externalConsumedAt = CarbonImmutable::instance($consumption->consumedAt)->utc()->startOfSecond();
             $completionFingerprint = $this->completionFingerprint($locked, $consumption, $externalConsumedAt);
@@ -751,7 +845,12 @@ final class FirstTrustOrchestrator
         if ($run->consumption_reference !== $consumption->consumptionReference
             || $run->consumption_fingerprint !== $consumption->consumptionFingerprint
             || ! $this->sameInstant($consumption->consumedAt, $run->external_consumed_at)
-            || ! is_string($run->completion_evidence_fingerprint)) {
+            || ! is_string($run->completion_evidence_fingerprint)
+            || $run->completion_evidence_fingerprint !== $this->completionFingerprint(
+                $run,
+                $consumption,
+                $run->external_consumed_at,
+            )) {
             throw new RuntimeException('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE');
         }
     }
@@ -787,7 +886,7 @@ final class FirstTrustOrchestrator
     }
 
     /** @param array<string,mixed> $context */
-    private function assertCompleteFoundation(
+    private function assertPendingFoundationIntegrity(
         FirstTrustRun $run,
         ?FirstTrustRequest $request,
         array $context,
@@ -813,7 +912,7 @@ final class FirstTrustOrchestrator
             ->first();
 
         if ($user === null || $company === null || $property === null || $activation === null || $membership === null
-            || $user->is_active || $user->is_system_admin || $user->password !== null || $user->email_verified_at !== null
+            || $user->trashed() || $user->is_active || $user->is_system_admin || $user->password !== null || $user->email_verified_at !== null
             || ! $company->is_active || $company->trashed()
             || ! $property->is_active || $property->trashed() || $property->company_id !== $company->id
             || $membership->status !== 'active' || ! (bool) $membership->is_default
@@ -849,6 +948,100 @@ final class FirstTrustOrchestrator
             $run->property_id,
             $joinedAt,
         )) {
+            throw new RuntimeException('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE');
+        }
+    }
+
+    /** @param array<string,mixed> $context */
+    private function assertCompletedFoundationIdentity(FirstTrustRun $run, array $context): void
+    {
+        foreach ([
+            'user_id',
+            'company_id',
+            'property_id',
+            'membership_user_id',
+            'membership_property_id',
+            'membership_fingerprint',
+            'owner_activation_id',
+            'foundation_committed_at',
+            'consumption_reference',
+            'consumption_fingerprint',
+            'external_consumed_at',
+            'completion_evidence_fingerprint',
+            'completed_at',
+        ] as $field) {
+            if ($run->{$field} === null) {
+                throw new RuntimeException('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE');
+            }
+        }
+
+        if ($run->status !== FirstTrustRunStatus::Completed
+            || $run->membership_user_id !== $run->user_id
+            || $run->membership_property_id !== $run->property_id
+            || preg_match('/\A[a-f0-9]{64}\z/', $run->membership_fingerprint) !== 1
+            || preg_match('/\A[a-f0-9]{64}\z/', $run->consumption_fingerprint) !== 1
+            || preg_match('/\A[a-f0-9]{64}\z/', $run->completion_evidence_fingerprint) !== 1) {
+            throw new RuntimeException('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE');
+        }
+
+        $user = User::withTrashed()->find($run->user_id);
+        $company = Company::withTrashed()->find($run->company_id);
+        $property = Property::withTrashed()->find($run->property_id);
+        $activation = OwnerActivation::query()->find($run->owner_activation_id);
+        $membership = DB::table('property_user')
+            ->where('user_id', $run->membership_user_id)
+            ->where('property_id', $run->membership_property_id)
+            ->first();
+
+        if ($user === null || $user->trashed() || $user->is_system_admin
+            || $company === null || $company->trashed()
+            || $property === null || $property->trashed() || $property->company_id !== $run->company_id
+            || $membership === null
+            || $activation === null
+            || $activation->first_trust_run_id !== $run->id
+            || $activation->user_id !== $run->user_id
+            || $activation->company_id !== $run->company_id
+            || $activation->property_id !== $run->property_id
+            || $activation->environment !== $context['local_environment']
+            || $activation->installation_id !== $context['installation_id']) {
+            throw new RuntimeException('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE');
+        }
+
+        $joinedAt = CarbonImmutable::parse($membership->joined_at, 'UTC');
+        if ($run->membership_fingerprint !== $this->membershipFingerprint(
+            $run->membership_user_id,
+            $run->membership_property_id,
+            $joinedAt,
+        )) {
+            throw new RuntimeException('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE');
+        }
+    }
+
+    private function assertReservationMatchesRun(
+        VerifiedFirstTrustReservation|VerifiedFirstTrustAuthorityState $reservation,
+        FirstTrustRun $run,
+    ): void {
+        if ($reservation->executionId === null
+            || $reservation->reservationReference === null
+            || $reservation->reservationFingerprint === null
+            || $reservation->reservedAt === null
+            || $reservation->commitDeadline === null
+            || $reservation->recoveryDeadline === null
+            || $reservation->authorizationId !== $run->authorization_id
+            || $reservation->executionId !== $run->execution_id
+            || $reservation->authorityReference !== $run->authority_reference
+            || $reservation->authorityIssuer !== $run->authority_issuer
+            || $reservation->binding->environment !== strtoupper($run->environment)
+            || $reservation->binding->installationId !== $run->installation_id
+            || $reservation->binding->requestFingerprint !== $run->request_fingerprint
+            || $reservation->binding->canonicalSha !== $run->canonical_sha
+            || $reservation->verifiedKeyId !== $run->verifier_key_id
+            || $reservation->verifierBundleFingerprint !== $run->verifier_bundle_fingerprint
+            || $reservation->reservationReference !== $run->reservation_reference
+            || $reservation->reservationFingerprint !== $run->reservation_fingerprint
+            || ! $this->sameInstant($reservation->reservedAt, $run->reservation_reserved_at)
+            || ! $this->sameInstant($reservation->commitDeadline, $run->reservation_commit_deadline)
+            || ! $this->sameInstant($reservation->recoveryDeadline, $run->reservation_recovery_deadline)) {
             throw new RuntimeException('FIRST_TRUST_EXTERNAL_LOCAL_DIVERGENCE');
         }
     }
@@ -972,6 +1165,18 @@ final class FirstTrustOrchestrator
         return $value !== ''
             && strlen($value) <= $maximumBytes
             && preg_match('/\A[A-Za-z0-9][A-Za-z0-9._:\/#-]*\z/', $value) === 1;
+    }
+
+    /** @param null|list<string> $permitted */
+    private function stableAuthorityError(Throwable $throwable, ?array $permitted = null): ?string
+    {
+        $message = $throwable->getMessage();
+        if (! in_array($message, self::STABLE_AUTHORITY_ERRORS, true)
+            || ($permitted !== null && ! in_array($message, $permitted, true))) {
+            return null;
+        }
+
+        return $message;
     }
 
     private function now(): CarbonImmutable

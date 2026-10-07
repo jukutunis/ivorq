@@ -35,6 +35,7 @@ class FirstTrustProtectedStateTest extends FirstTrustTestCase
             'identity security event' => ['identity_security_events'],
             'authenticated Laravel session' => ['sessions'],
             'prior audit history' => ['audit_logs'],
+            'prior Spatie activity history' => ['activity_log'],
             'prior activity history' => ['activity_logs'],
         ];
     }
@@ -208,6 +209,12 @@ class FirstTrustProtectedStateTest extends FirstTrustTestCase
             'audit_logs' => [
                 'id' => $id, 'event' => 'created', 'auditable_type' => User::class,
                 'auditable_id' => $foreign, 'created_at' => $now,
+            ],
+            'activity_log' => [
+                'id' => $id, 'log_name' => 'default', 'description' => 'prior Spatie history',
+                'event' => 'created', 'subject_type' => User::class, 'subject_id' => $foreign,
+                'attribute_changes' => '{}', 'properties' => '{}',
+                'created_at' => $now, 'updated_at' => $now,
             ],
             'activity_logs' => [
                 'id' => $id, 'description' => 'prior authority history', 'subject_type' => User::class,
