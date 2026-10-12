@@ -6,6 +6,8 @@
     "keywords": ["laravel", "framework"],
     "license": "MIT",
     "require": {
+        "aws/aws-sdk-php": "^3",
+        "ext-openssl": "*",
         "php": "^8.3",
         "inertiajs/inertia-laravel": "^3.1",
         "laravel/framework": "^13.8",
