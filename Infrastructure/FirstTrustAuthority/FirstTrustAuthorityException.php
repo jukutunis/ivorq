@@ -3,7 +3,6 @@
 namespace Infrastructure\FirstTrustAuthority;
 
 use RuntimeException;
-use Throwable;
 
 final class FirstTrustAuthorityException extends RuntimeException
 {
@@ -19,8 +18,8 @@ final class FirstTrustAuthorityException extends RuntimeException
         'AUTHORITY_STATE_INVALID', 'AUTHORITY_STATE_BINDING_MISMATCH',
     ];
 
-    public function __construct(string $stableCode, ?Throwable $previous = null)
+    public function __construct(string $stableCode)
     {
-        parent::__construct(in_array($stableCode, self::ALLOWED, true) ? $stableCode : 'AUTHORITY_UNAVAILABLE', 0, $previous);
+        parent::__construct(in_array($stableCode, self::ALLOWED, true) ? $stableCode : 'AUTHORITY_UNAVAILABLE');
     }
 }

@@ -3,12 +3,13 @@
 namespace Infrastructure\FirstTrustAuthority;
 
 use DateTimeImmutable;
-use JsonException;
+use DateTimeZone;
 use OpenSSLAsymmetricKey;
 
 final class PinnedVerificationBundleLoader
 {
     private const MAX_BUNDLE_BYTES = 262144;
+
     private const FIELDS = ['activated_at', 'audience', 'environment', 'issuer', 'kms_key_arn', 'protocol', 'retired_at', 'sha256_fingerprint', 'spki_pem'];
 
     /** @var array{fingerprint:string,keys:array<string,array{pem:string,activated_at:DateTimeImmutable,retired_at:?DateTimeImmutable}>}|null */
@@ -24,7 +25,9 @@ final class PinnedVerificationBundleLoader
     /** @return array{fingerprint:string,keys:array<string,array{pem:string,activated_at:DateTimeImmutable,retired_at:?DateTimeImmutable}>} */
     public function load(): array
     {
-        if ($this->loaded !== null) return $this->loaded;
+        if ($this->loaded !== null) {
+            return $this->loaded;
+        }
         if ($this->path === '' || ! is_file($this->path) || ! is_readable($this->path)) {
             throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
         }
@@ -36,17 +39,17 @@ final class PinnedVerificationBundleLoader
         if (! is_string($bytes) || strlen($bytes) !== $size || ! mb_check_encoding($bytes, 'UTF-8')) {
             throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
         }
-        try {
-            $decoded = json_decode($bytes, true, 32, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
-        } catch (JsonException) {
+        $decoded = (new FirstTrustProtocolV1Parser)->decodeStrict($bytes, 'AUTHORITY_UNAVAILABLE');
+        $entries = is_array($decoded) && array_is_list($decoded) ? $decoded : [$decoded];
+        if ($entries === []) {
             throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
         }
-        $entries = is_array($decoded) && array_is_list($decoded) ? $decoded : [$decoded];
-        if ($entries === []) throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
 
         $keys = [];
         foreach ($entries as $entry) {
-            if (! is_array($entry) || array_is_list($entry)) throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
+            if (! is_array($entry) || array_is_list($entry)) {
+                throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
+            }
             $fields = array_keys($entry);
             sort($fields, SORT_STRING);
             if ($fields !== self::FIELDS || $entry['protocol'] !== 1
@@ -63,7 +66,9 @@ final class PinnedVerificationBundleLoader
                 throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
             }
             $key = openssl_pkey_get_public($pem);
-            if (! $key instanceof OpenSSLAsymmetricKey) throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
+            if (! $key instanceof OpenSSLAsymmetricKey) {
+                throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
+            }
             $details = openssl_pkey_get_details($key);
             if (! is_array($details) || ($details['type'] ?? null) !== OPENSSL_KEYTYPE_EC || ($details['bits'] ?? null) !== 256
                 || ($details['ec']['curve_name'] ?? null) !== 'prime256v1') {
@@ -76,7 +81,9 @@ final class PinnedVerificationBundleLoader
             }
             $activated = $this->time($entry['activated_at']);
             $retired = $entry['retired_at'] === null ? null : $this->time($entry['retired_at']);
-            if ($retired !== null && $retired <= $activated) throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
+            if ($retired !== null && $retired <= $activated) {
+                throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
+            }
             $keys[$entry['kms_key_arn']] = ['pem' => $pem, 'activated_at' => $activated, 'retired_at' => $retired];
         }
 
@@ -88,8 +95,11 @@ final class PinnedVerificationBundleLoader
         if (! is_string($value) || preg_match('/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z\z/D', $value) !== 1) {
             throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
         }
-        $time = DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s.v\Z', $value);
-        if (! $time || $time->format('Y-m-d\TH:i:s.v\Z') !== $value) throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
+        $time = DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s.v\Z', $value, new DateTimeZone('UTC'));
+        if (! $time || $time->format('Y-m-d\TH:i:s.v\Z') !== $value) {
+            throw new FirstTrustAuthorityException('AUTHORITY_UNAVAILABLE');
+        }
+
         return $time;
     }
 }

@@ -2,12 +2,12 @@
 
 namespace Infrastructure\FirstTrustAuthority;
 
+use Aws\Configuration\ConfigurationResolver;
 use Aws\Credentials\CredentialsInterface;
 use Aws\Signature\SignatureV4;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Request;
-use JsonException;
 use Modules\Foundation\Authorization\Contracts\FirstTrustAuthority;
 use Modules\Foundation\Authorization\Data\FirstTrustExpectedBinding;
 use Modules\Foundation\Authorization\Data\VerifiedFirstTrustAuthorityState;
@@ -20,8 +20,9 @@ use Throwable;
 final class AwsFirstTrustAuthority implements FirstTrustAuthority
 {
     private const MAX_RESPONSE_BYTES = 262144;
+
     private const REMOTE_CODES = [
-        'AUTHORIZATION_INVALID', 'AUTHORIZATION_EXPIRED', 'AUTHORIZATION_REVOKED',
+        'AUTHORITY_PROTOCOL_UNSUPPORTED', 'AUTHORIZATION_INVALID', 'AUTHORIZATION_EXPIRED', 'AUTHORIZATION_REVOKED',
         'ENVIRONMENT_MISMATCH', 'INSTALLATION_MISMATCH', 'CANONICAL_SHA_MISMATCH',
         'REQUEST_FINGERPRINT_MISMATCH', 'ALREADY_RESERVED_OTHER_EXECUTION',
         'RESERVATION_EXPIRED', 'ALREADY_CONSUMED_OTHER_EXECUTION', 'RECEIPT_INVALID',
@@ -56,7 +57,8 @@ final class AwsFirstTrustAuthority implements FirstTrustAuthority
             'authorization_envelope' => $serializedAuthorization,
             'execution_id' => $executionId,
             'expected_binding' => $this->binding($binding),
-        ], false);
+        ], false, 'AUTHORIZATION_INVALID');
+
         return $this->verifier->verifyReservation($this->singleString($response, 'reservation_envelope', 'AUTHORIZATION_INVALID'), $authorization->authorizationId, $executionId, $binding);
     }
 
@@ -65,18 +67,20 @@ final class AwsFirstTrustAuthority implements FirstTrustAuthority
         $response = $this->call('consume', $authorizationId, [
             'execution_id' => $executionId,
             'expected_binding' => $this->binding($binding),
-        ], false);
+        ], false, 'RECEIPT_INVALID');
+
         return $this->verifier->verifyConsumption($this->singleString($response, 'consumption_receipt', 'RECEIPT_INVALID'), $authorizationId, $executionId, $binding);
     }
 
     public function state(string $authorizationId, FirstTrustExpectedBinding $binding): VerifiedFirstTrustAuthorityState
     {
-        $response = $this->call('state', $authorizationId, ['expected_binding' => $this->binding($binding)], true);
+        $response = $this->call('state', $authorizationId, ['expected_binding' => $this->binding($binding)], true, 'AUTHORITY_STATE_INVALID');
+
         return $this->verifier->verifyState($this->singleString($response, 'authority_state_envelope', 'AUTHORITY_STATE_INVALID'), $authorizationId, $binding);
     }
 
     /** @param array<string,mixed> $body @return array<string,mixed> */
-    private function call(string $operation, string $authorizationId, array $body, bool $state): array
+    private function call(string $operation, string $authorizationId, array $body, bool $state, string $successInvalidCode): array
     {
         try {
             $provided = ($this->credentialProvider)();
@@ -88,13 +92,17 @@ final class AwsFirstTrustAuthority implements FirstTrustAuthority
         } catch (FirstTrustAuthorityException $e) {
             throw $e;
         } catch (Throwable $e) {
-            throw new FirstTrustAuthorityException('AUTHORITY_CREDENTIAL_REJECTED', $e);
+            throw new FirstTrustAuthorityException('AUTHORITY_CREDENTIAL_REJECTED');
         }
 
-        $json = json_encode($body, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        $url = rtrim($this->baseUrl, '/').'/v1/authorizations/'.rawurlencode($authorizationId).'/'.$operation;
-        $request = new Request('POST', $url, ['Content-Type' => 'application/json', 'Accept' => 'application/json'], $json);
-        $signed = (new SignatureV4('execute-api', $region))->signRequest($request, $credentials);
+        try {
+            $json = json_encode($body, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+            $url = rtrim($this->baseUrl, '/').'/v1/authorizations/'.rawurlencode($authorizationId).'/'.$operation;
+            $request = new Request('POST', $url, ['Content-Type' => 'application/json', 'Accept' => 'application/json'], $json);
+            $signed = (new SignatureV4('execute-api', $region))->signRequest($request, $credentials);
+        } catch (Throwable $e) {
+            throw new FirstTrustAuthorityException('AUTHORITY_CREDENTIAL_REJECTED');
+        }
         try {
             $response = $this->http->send($signed, [
                 'http_errors' => false,
@@ -103,46 +111,68 @@ final class AwsFirstTrustAuthority implements FirstTrustAuthority
                 'timeout' => $this->requestTimeout,
             ]);
         } catch (Throwable $e) {
-            throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE', $e);
+            throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE');
         }
-        return $this->decodeResponse($response, $state);
+
+        return $this->decodeResponse($response, $state, $successInvalidCode);
     }
 
     /** @return array<string,mixed> */
-    private function decodeResponse(ResponseInterface $response, bool $state): array
+    private function decodeResponse(ResponseInterface $response, bool $state, string $successInvalidCode): array
     {
         $status = $response->getStatusCode();
-        if ($status >= 300 && $status < 400) throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE');
+        if ($status >= 300 && $status < 400) {
+            throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE');
+        }
         $declared = $response->getHeaderLine('Content-Length');
-        if ($declared !== '' && (! ctype_digit($declared) || (int) $declared > self::MAX_RESPONSE_BYTES)) throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_INVALID' : 'AUTHORIZATION_INVALID');
+        if ($declared !== '' && (! ctype_digit($declared) || (int) $declared > self::MAX_RESPONSE_BYTES)) {
+            throw new FirstTrustAuthorityException($successInvalidCode);
+        }
         $stream = $response->getBody();
         $body = '';
         while (! $stream->eof()) {
-            $body .= $stream->read(min(8192, self::MAX_RESPONSE_BYTES + 1 - strlen($body)));
-            if (strlen($body) > self::MAX_RESPONSE_BYTES) throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_INVALID' : 'AUTHORIZATION_INVALID');
+            $chunk = $stream->read(min(8192, self::MAX_RESPONSE_BYTES + 1 - strlen($body)));
+            if ($chunk === '') {
+                throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE');
+            }
+            $body .= $chunk;
+            if (strlen($body) > self::MAX_RESPONSE_BYTES) {
+                throw new FirstTrustAuthorityException($successInvalidCode);
+            }
         }
-        try {
-            $decoded = json_decode($body, true, 16, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
-        } catch (JsonException) {
-            throw new FirstTrustAuthorityException($status >= 200 && $status < 300 ? ($state ? 'AUTHORITY_STATE_INVALID' : 'AUTHORIZATION_INVALID') : ($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE'));
+        if ($status === 401 || $status === 403) {
+            throw new FirstTrustAuthorityException('AUTHORITY_CREDENTIAL_REJECTED');
         }
-        if (! is_array($decoded) || array_is_list($decoded)) throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_INVALID' : 'AUTHORIZATION_INVALID');
+        if ($status >= 500) {
+            throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE');
+        }
+        $failureCode = $status >= 200 && $status < 300 ? $successInvalidCode : ($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE');
+        $decoded = (new FirstTrustProtocolV1Parser)->decodeStrictObject($body, $failureCode);
+        if (! is_array($decoded) || array_is_list($decoded)) {
+            throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_INVALID' : 'AUTHORIZATION_INVALID');
+        }
         if ($status < 200 || $status >= 300) {
             $error = $decoded['error'] ?? null;
             $errorFields = is_array($error) ? array_keys($error) : [];
             sort($errorFields, SORT_STRING);
             if (array_keys($decoded) === ['error'] && is_array($error) && ! array_is_list($error)
                 && $errorFields === ['code', 'message'] && is_string($error['code']) && is_string($error['message'])
-                && in_array($error['code'], self::REMOTE_CODES, true)) throw new FirstTrustAuthorityException($error['code']);
+                && in_array($error['code'], self::REMOTE_CODES, true)) {
+                throw new FirstTrustAuthorityException($error['code']);
+            }
             throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE');
         }
+
         return $decoded;
     }
 
     /** @param array<string,mixed> $response */
     private function singleString(array $response, string $field, string $invalidCode): string
     {
-        if (array_keys($response) !== [$field] || ! is_string($response[$field]) || $response[$field] === '') throw new FirstTrustAuthorityException($invalidCode);
+        if (array_keys($response) !== [$field] || ! is_string($response[$field]) || $response[$field] === '') {
+            throw new FirstTrustAuthorityException($invalidCode);
+        }
+
         return $response[$field];
     }
 
@@ -154,20 +184,9 @@ final class AwsFirstTrustAuthority implements FirstTrustAuthority
 
     public static function resolveExternalRegion(): string
     {
-        foreach (['AWS_REGION', 'AWS_DEFAULT_REGION'] as $name) {
-            $value = getenv($name);
-            if (is_string($value) && $value !== '') return $value;
-        }
-        $profile = getenv('AWS_PROFILE');
-        $profile = is_string($profile) && $profile !== '' ? $profile : 'default';
-        $configured = getenv('AWS_CONFIG_FILE');
-        $home = getenv('USERPROFILE');
-        $path = is_string($configured) && $configured !== '' ? $configured : (is_string($home) ? $home.'/.aws/config' : '');
-        if ($path !== '' && is_file($path) && is_readable($path)) {
-            $profiles = parse_ini_file($path, true, INI_SCANNER_RAW);
-            $section = $profile === 'default' ? 'default' : 'profile '.$profile;
-            $region = is_array($profiles) ? ($profiles[$section]['region'] ?? null) : null;
-            if (is_string($region) && $region !== '') return $region;
+        $region = ConfigurationResolver::resolve('region', null, 'string');
+        if (is_string($region) && $region !== '') {
+            return $region;
         }
         throw new FirstTrustAuthorityException('AUTHORITY_CREDENTIAL_REJECTED');
     }

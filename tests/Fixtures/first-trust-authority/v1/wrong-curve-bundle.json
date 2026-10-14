@@ -1,0 +1,11 @@
+{
+    "protocol": 1,
+    "environment": "REHEARSAL",
+    "issuer": "https://issuer.test",
+    "audience": "ivorq.test",
+    "kms_key_arn": "arn:aws:kms:ap-southeast-1:123456789012:key/11111111-1111-4111-8111-111111111111",
+    "spki_pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuRUa365djL1vIuvBPASB\nCY+USumAvo9jLwR1lc0alqt+7t1V1Wf2pcwX0baNaIdLSJG/sc/k9teiu6WlcJdN\n4o3Kkw8/sHGyBRV2ls72wYvD7IWxZA9lng9YvSHrUZsCwkSVMuaexbKVm9y8qlRy\nAd8GtMvNTLUKc2fpeEqPjLXszi/JBJU/Mfnkyoc3DSYFUTR3t3TpEmXtgjSRoNR+\nbD3k9O7p5eGWunf9zBEIwnTPn7P8//kB/DPsg1imMd/yP+zdBaYldnDz4gRofyoE\nysey8fVYtR6UkNzPXx8akjx2FNwmMW5vjkZLc+ietkbaCrxG1fX8uSIiEabxHvAj\n/QIDAQAB\n-----END PUBLIC KEY-----\n",
+    "sha256_fingerprint": "8fe4323775820ecdeb28a8a691537c96c917cb68fbbfe6d8a1f90a3c5de65e09",
+    "activated_at": "2029-01-01T00:00:00.000Z",
+    "retired_at": null
+}
