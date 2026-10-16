@@ -126,4 +126,20 @@ final class FirstTrustProtocolV1ParserTest extends TestCase
         $this->expectExceptionMessage('AUTHORITY_PROTOCOL_UNSUPPORTED');
         (new FirstTrustProtocolV1Parser)->parse(FirstTrustTestFactory::canonical($envelope), 'authorization', 'AUTHORIZATION_INVALID');
     }
+
+    public function test_serialized_envelope_enforces_the_exact_32_kib_boundary(): void
+    {
+        $valid = FirstTrustTestFactory::fixture('authorization-envelope.json');
+        $atLimit = $valid.str_repeat(' ', FirstTrustProtocolV1Parser::MAX_ENVELOPE_BYTES - strlen($valid));
+        $parsed = (new FirstTrustProtocolV1Parser)->parse($atLimit, 'authorization', 'AUTHORIZATION_INVALID');
+        $this->assertSame('auth-1', $parsed['payload']['authorization_id']);
+        $this->assertSame(32768, strlen($atLimit));
+
+        try {
+            (new FirstTrustProtocolV1Parser)->parse($atLimit.' ', 'authorization', 'AUTHORIZATION_INVALID');
+            $this->fail('Expected oversized envelope rejection.');
+        } catch (FirstTrustAuthorityException $exception) {
+            $this->assertSame('AUTHORIZATION_INVALID', $exception->getMessage());
+        }
+    }
 }

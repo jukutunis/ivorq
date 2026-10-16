@@ -146,8 +146,18 @@ final class FirstTrustEnvelopeVerifierTest extends TestCase
             'outer nested execution' => ['authority-state-execution-mismatch-v2.json', 'AUTHORITY_STATE_BINDING_MISMATCH', 'mismatch-verification-bundle.json'],
             'outer nested authorization' => ['authority-state-authorization-mismatch.json', 'AUTHORITY_STATE_BINDING_MISMATCH'],
             'environment' => ['authority-state-environment-mismatch.json', 'AUTHORITY_STATE_BINDING_MISMATCH'],
-            'issuer' => ['authority-state-issuer-mismatch.json', 'AUTHORITY_STATE_INVALID'],
+            'issuer' => ['authority-state-issuer-mismatch.json', 'AUTHORITY_STATE_BINDING_MISMATCH'],
         ];
+    }
+
+    public function test_signed_state_authority_reference_mismatch_is_a_binding_mismatch(): void
+    {
+        [$verifier] = $this->verifier(expectedAuthorityReference: 'other-authority.test');
+        $this->assertAuthorityCode('AUTHORITY_STATE_BINDING_MISMATCH', fn () => $verifier->verifyState(
+            FirstTrustTestFactory::fixture('authority-state-available.json'),
+            'auth-1',
+            $this->binding(),
+        ));
     }
 
     public function test_fixture_manifest_proves_exact_nonsecret_external_provenance(): void
@@ -210,12 +220,13 @@ final class FirstTrustEnvelopeVerifierTest extends TestCase
         string $now = '2030-01-01T00:05:00.000Z',
         string $expectedIssuer = 'https://issuer.test',
         string $expectedAudience = 'ivorq.test',
+        string $expectedAuthorityReference = 'authority.test',
     ): array {
         $path = base_path('tests/Fixtures/first-trust-authority/v1/'.$bundle);
         $bytes = file_get_contents($path);
         $loader = new PinnedVerificationBundleLoader($path, 'REHEARSAL', 'https://issuer.test', 'ivorq.test');
 
-        return [new FirstTrustEnvelopeVerifier(new FirstTrustProtocolV1Parser, $loader, 'authority.test', $expectedIssuer, $expectedAudience, 60, static fn () => new DateTimeImmutable($now, new DateTimeZone('UTC'))), $bytes];
+        return [new FirstTrustEnvelopeVerifier(new FirstTrustProtocolV1Parser, $loader, $expectedAuthorityReference, $expectedIssuer, $expectedAudience, 60, static fn () => new DateTimeImmutable($now, new DateTimeZone('UTC'))), $bytes];
     }
 
     private function verifierFromPath(string $path): FirstTrustEnvelopeVerifier

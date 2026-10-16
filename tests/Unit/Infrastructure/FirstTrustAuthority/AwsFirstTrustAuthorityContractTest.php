@@ -187,6 +187,13 @@ final class AwsFirstTrustAuthorityContractTest extends TestCase
         $this->assertCount(0, $history);
     }
 
+    public function test_malformed_region_fails_before_http(): void
+    {
+        [$authority, $history] = $this->authority([], region: static fn () => 'not/a-region');
+        $this->assertAuthorityCode('AUTHORITY_CREDENTIAL_REJECTED', fn () => $authority->consume('auth-1', 'execution-1', $this->binding()));
+        $this->assertCount(0, $history);
+    }
+
     public function test_credential_status_oversized_response_and_duplicate_json_fail_closed(): void
     {
         [$rejected] = $this->authority([new Response(403, [], 'AWS_REMOTE_SECRET_MARKER')]);
@@ -198,7 +205,7 @@ final class AwsFirstTrustAuthorityContractTest extends TestCase
             $this->assertStringNotContainsString('AWS_REMOTE_SECRET_MARKER', $e->getMessage());
         }
 
-        [$oversized] = $this->authority([new Response(200, ['Content-Length' => '262145'], '')]);
+        [$oversized] = $this->authority([new Response(200, ['Content-Length' => '32769'], '')]);
         try {
             $oversized->consume('auth-1', 'execution-1', $this->binding());
             $this->fail();
@@ -206,7 +213,7 @@ final class AwsFirstTrustAuthorityContractTest extends TestCase
             $this->assertSame('RECEIPT_INVALID', $e->getMessage());
         }
 
-        [$streamedOversized] = $this->authority([new Response(200, [], str_repeat('x', 262145))]);
+        [$streamedOversized] = $this->authority([new Response(200, [], str_repeat('x', 32769))]);
         $this->assertAuthorityCode('RECEIPT_INVALID', fn () => $streamedOversized->consume('auth-1', 'execution-1', $this->binding()));
 
         [$duplicate] = $this->authority([new Response(200, [], '{"consumption_receipt":"a","consumption_receipt":"b"}')]);
@@ -214,21 +221,50 @@ final class AwsFirstTrustAuthorityContractTest extends TestCase
         $duplicate->consume('auth-1', 'execution-1', $this->binding());
     }
 
+    public function test_exact_application_boundary_is_accepted_and_oversized_reserve_is_not_signed_or_sent(): void
+    {
+        $response = json_encode(['consumption_receipt' => FirstTrustTestFactory::fixture('consumption-receipt.json')], JSON_THROW_ON_ERROR);
+        $responseAtLimit = $response.str_repeat(' ', FirstTrustProtocolV1Parser::MAX_ENVELOPE_BYTES - strlen($response));
+        [$atLimit, $atLimitHistory] = $this->authority([new Response(200, ['Content-Length' => '32768'], $responseAtLimit)]);
+        $this->assertSame('consumption-1', $atLimit->consume('auth-1', 'execution-1', $this->binding())->consumptionReference);
+        $this->assertCount(1, $atLimitHistory);
+
+        $credentialsResolved = 0;
+        [$oversized, $oversizedHistory] = $this->authority([], function () use (&$credentialsResolved) {
+            $credentialsResolved++;
+
+            return new Credentials('ASIASYNTHETICTEST', 'synthetic-secret-not-real', 'synthetic-session-token');
+        });
+        $authorization = FirstTrustTestFactory::fixture('authorization-envelope.json');
+        $authorizationAtLimit = $authorization.str_repeat(' ', FirstTrustProtocolV1Parser::MAX_ENVELOPE_BYTES - strlen($authorization));
+        $this->assertAuthorityCode('AUTHORIZATION_INVALID', fn () => $oversized->reserve($authorizationAtLimit, 'execution-1', $this->binding()));
+        $this->assertSame(0, $credentialsResolved);
+        $this->assertCount(0, $oversizedHistory);
+    }
+
     public function test_official_sdk_region_resolver_uses_environment_and_shared_profile(): void
     {
         $originals = [];
-        foreach (['AWS_REGION', 'AWS_PROFILE', 'AWS_CONFIG_FILE'] as $name) {
+        foreach (['AWS_REGION', 'AWS_DEFAULT_REGION', 'AWS_PROFILE', 'AWS_CONFIG_FILE'] as $name) {
             $originals[$name] = getenv($name);
         }
         $config = tempnam(sys_get_temp_dir(), 'aws-config-');
-        file_put_contents($config, "[profile review]\nregion = ap-southeast-2\n");
+        file_put_contents($config, "[default]\nregion = eu-central-1\n[profile review]\nregion = ap-southeast-2\n");
         try {
             putenv('AWS_REGION=ap-southeast-1');
-            $this->assertSame('ap-southeast-1', AwsFirstTrustAuthority::resolveExternalRegion());
-            putenv('AWS_REGION');
+            putenv('AWS_DEFAULT_REGION=eu-west-2');
             putenv('AWS_PROFILE=review');
             putenv('AWS_CONFIG_FILE='.$config);
+            $this->assertSame('ap-southeast-1', AwsFirstTrustAuthority::resolveExternalRegion());
+            putenv('AWS_REGION');
+            $this->assertSame('eu-west-2', AwsFirstTrustAuthority::resolveExternalRegion());
+            putenv('AWS_DEFAULT_REGION');
             $this->assertSame('ap-southeast-2', AwsFirstTrustAuthority::resolveExternalRegion());
+            putenv('AWS_PROFILE');
+            $this->assertSame('eu-central-1', AwsFirstTrustAuthority::resolveExternalRegion());
+
+            file_put_contents($config, '');
+            $this->assertAuthorityCode('AUTHORITY_CREDENTIAL_REJECTED', static fn () => AwsFirstTrustAuthority::resolveExternalRegion());
         } finally {
             @unlink($config);
             foreach ($originals as $name => $value) {
@@ -268,7 +304,7 @@ final class AwsFirstTrustAuthorityContractTest extends TestCase
     }
 
     /** @param list<mixed> $queue @return array{AwsFirstTrustAuthority,\ArrayObject<int,array<string,mixed>>} */
-    private function authority(array $queue, ?callable $credentials = null): array
+    private function authority(array $queue, ?callable $credentials = null, ?callable $region = null): array
     {
         $history = new \ArrayObject;
         $stack = HandlerStack::create(new MockHandler($queue));
@@ -281,8 +317,9 @@ final class AwsFirstTrustAuthorityContractTest extends TestCase
             static fn () => new DateTimeImmutable('2030-01-01T00:05:00.000Z', new DateTimeZone('UTC')),
         );
         $credentials ??= static fn () => new Credentials('ASIASYNTHETICTEST', 'synthetic-secret-not-real', 'synthetic-session-token');
+        $region ??= static fn () => 'ap-southeast-1';
 
-        return [new AwsFirstTrustAuthority($verifier, new Client(['handler' => $stack]), $credentials, static fn () => 'ap-southeast-1', 'https://authority.test'), $history];
+        return [new AwsFirstTrustAuthority($verifier, new Client(['handler' => $stack]), $credentials, $region, 'https://authority.test'), $history];
     }
 
     private function binding(): FirstTrustExpectedBinding

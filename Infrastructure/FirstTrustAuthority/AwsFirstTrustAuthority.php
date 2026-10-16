@@ -19,7 +19,7 @@ use Throwable;
 
 final class AwsFirstTrustAuthority implements FirstTrustAuthority
 {
-    private const MAX_RESPONSE_BYTES = 262144;
+    private const MAX_APPLICATION_BYTES = 32768;
 
     private const REMOTE_CODES = [
         'AUTHORITY_PROTOCOL_UNSUPPORTED', 'AUTHORIZATION_INVALID', 'AUTHORIZATION_EXPIRED', 'AUTHORIZATION_REVOKED',
@@ -83,6 +83,15 @@ final class AwsFirstTrustAuthority implements FirstTrustAuthority
     private function call(string $operation, string $authorizationId, array $body, bool $state, string $successInvalidCode): array
     {
         try {
+            $json = json_encode($body, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        } catch (Throwable) {
+            throw new FirstTrustAuthorityException($successInvalidCode);
+        }
+        if (strlen($json) > self::MAX_APPLICATION_BYTES) {
+            throw new FirstTrustAuthorityException($successInvalidCode);
+        }
+
+        try {
             $provided = ($this->credentialProvider)();
             $credentials = $provided instanceof PromiseInterface ? $provided->wait() : $provided;
             $region = ($this->regionProvider)();
@@ -96,7 +105,6 @@ final class AwsFirstTrustAuthority implements FirstTrustAuthority
         }
 
         try {
-            $json = json_encode($body, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
             $url = rtrim($this->baseUrl, '/').'/v1/authorizations/'.rawurlencode($authorizationId).'/'.$operation;
             $request = new Request('POST', $url, ['Content-Type' => 'application/json', 'Accept' => 'application/json'], $json);
             $signed = (new SignatureV4('execute-api', $region))->signRequest($request, $credentials);
@@ -125,18 +133,21 @@ final class AwsFirstTrustAuthority implements FirstTrustAuthority
             throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE');
         }
         $declared = $response->getHeaderLine('Content-Length');
-        if ($declared !== '' && (! ctype_digit($declared) || (int) $declared > self::MAX_RESPONSE_BYTES)) {
+        if ($declared !== '' && (! ctype_digit($declared) || (int) $declared > self::MAX_APPLICATION_BYTES)) {
             throw new FirstTrustAuthorityException($successInvalidCode);
         }
         $stream = $response->getBody();
         $body = '';
         while (! $stream->eof()) {
-            $chunk = $stream->read(min(8192, self::MAX_RESPONSE_BYTES + 1 - strlen($body)));
+            $chunk = $stream->read(min(8192, self::MAX_APPLICATION_BYTES + 1 - strlen($body)));
             if ($chunk === '') {
+                if ($stream->eof()) {
+                    break;
+                }
                 throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_UNAVAILABLE' : 'AUTHORITY_UNAVAILABLE');
             }
             $body .= $chunk;
-            if (strlen($body) > self::MAX_RESPONSE_BYTES) {
+            if (strlen($body) > self::MAX_APPLICATION_BYTES) {
                 throw new FirstTrustAuthorityException($successInvalidCode);
             }
         }
@@ -184,7 +195,9 @@ final class AwsFirstTrustAuthority implements FirstTrustAuthority
 
     public static function resolveExternalRegion(): string
     {
-        $region = ConfigurationResolver::resolve('region', null, 'string');
+        $region = ConfigurationResolver::env('region', 'string')
+            ?? ConfigurationResolver::env('default_region', 'string')
+            ?? ConfigurationResolver::ini('region', 'string');
         if (is_string($region) && $region !== '') {
             return $region;
         }

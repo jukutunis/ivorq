@@ -65,9 +65,14 @@ final class FirstTrustEnvelopeVerifier
 
     public function verifyReservation(string $serialized, string $authorizationId, string $executionId, FirstTrustExpectedBinding $binding): VerifiedFirstTrustReservation
     {
+        return $this->verifyReservationInContext($serialized, $authorizationId, $executionId, $binding, false);
+    }
+
+    private function verifyReservationInContext(string $serialized, string $authorizationId, string $executionId, FirstTrustExpectedBinding $binding, bool $stateContext): VerifiedFirstTrustReservation
+    {
         $verified = $this->verify($serialized, 'reservation', 'AUTHORIZATION_INVALID');
         $p = $verified['payload'];
-        $this->assertCommon($p, $binding, 'AUTHORIZATION_INVALID');
+        $this->assertCommon($p, $binding, 'AUTHORIZATION_INVALID', $stateContext);
         if ($p['authorization_id'] !== $authorizationId || $p['execution_id'] !== $executionId) {
             throw new FirstTrustAuthorityException('AUTHORITY_STATE_BINDING_MISMATCH');
         }
@@ -83,9 +88,14 @@ final class FirstTrustEnvelopeVerifier
 
     public function verifyConsumption(string $serialized, string $authorizationId, string $executionId, FirstTrustExpectedBinding $binding): VerifiedFirstTrustConsumption
     {
+        return $this->verifyConsumptionInContext($serialized, $authorizationId, $executionId, $binding, false);
+    }
+
+    private function verifyConsumptionInContext(string $serialized, string $authorizationId, string $executionId, FirstTrustExpectedBinding $binding, bool $stateContext): VerifiedFirstTrustConsumption
+    {
         $verified = $this->verify($serialized, 'consumption_receipt', 'RECEIPT_INVALID');
         $p = $verified['payload'];
-        $this->assertCommon($p, $binding, 'RECEIPT_INVALID');
+        $this->assertCommon($p, $binding, 'RECEIPT_INVALID', $stateContext);
         if ($p['authorization_id'] !== $authorizationId || $p['execution_id'] !== $executionId) {
             throw new FirstTrustAuthorityException('AUTHORITY_STATE_BINDING_MISMATCH');
         }
@@ -112,7 +122,7 @@ final class FirstTrustEnvelopeVerifier
                 throw new FirstTrustAuthorityException('AUTHORITY_STATE_INVALID');
             }
             try {
-                $reservation = $this->verifyReservation($p['reservation_envelope'], $authorizationId, $p['execution_id'], $binding);
+                $reservation = $this->verifyReservationInContext($p['reservation_envelope'], $authorizationId, $p['execution_id'], $binding, true);
             } catch (FirstTrustAuthorityException $exception) {
                 $this->throwNestedStateFailure($exception);
             }
@@ -127,7 +137,7 @@ final class FirstTrustEnvelopeVerifier
                     throw new FirstTrustAuthorityException('AUTHORITY_STATE_INVALID');
                 }
                 try {
-                    $receipt = $this->verifyConsumption($p['consumption_receipt'], $authorizationId, $p['execution_id'], $binding);
+                    $receipt = $this->verifyConsumptionInContext($p['consumption_receipt'], $authorizationId, $p['execution_id'], $binding, true);
                 } catch (FirstTrustAuthorityException $exception) {
                     $this->throwNestedStateFailure($exception);
                 }
@@ -168,7 +178,7 @@ final class FirstTrustEnvelopeVerifier
     private function assertCommon(array $p, FirstTrustExpectedBinding $binding, string $invalidCode, bool $state = false): void
     {
         if ($p['authority_reference'] !== $this->authorityReference || $p['issuer'] !== $this->issuer) {
-            throw new FirstTrustAuthorityException($invalidCode);
+            throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_BINDING_MISMATCH' : $invalidCode);
         }
         if ($p['environment'] !== $binding->environment) {
             throw new FirstTrustAuthorityException($state ? 'AUTHORITY_STATE_BINDING_MISMATCH' : 'ENVIRONMENT_MISMATCH');

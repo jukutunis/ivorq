@@ -6,7 +6,7 @@ use JsonException;
 
 final class FirstTrustProtocolV1Parser
 {
-    public const MAX_ENVELOPE_BYTES = 262144;
+    public const MAX_ENVELOPE_BYTES = 32768;
 
     private const ENVELOPE_FIELDS = ['key_id', 'kind', 'payload', 'protocol', 'signature', 'signature_encoding'];
 
