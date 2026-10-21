@@ -141,8 +141,8 @@ final class FirstTrustEnvelopeVerifierTest extends TestCase
         return [
             'nested reservation signature' => ['authority-state-nested-reservation-tampered.json', 'AUTHORITY_STATE_INVALID'],
             'nested receipt signature' => ['authority-state-nested-receipt-tampered.json', 'AUTHORITY_STATE_INVALID'],
-            'reservation fingerprint' => ['authority-state-reservation-fingerprint-mismatch-v2.json', 'AUTHORITY_STATE_INVALID', 'mismatch-verification-bundle.json'],
-            'consumption fingerprint' => ['authority-state-consumption-fingerprint-mismatch-v2.json', 'AUTHORITY_STATE_INVALID', 'mismatch-verification-bundle.json'],
+            'reservation fingerprint' => ['authority-state-reservation-fingerprint-mismatch-v2.json', 'AUTHORITY_STATE_BINDING_MISMATCH', 'mismatch-verification-bundle.json'],
+            'consumption fingerprint' => ['authority-state-consumption-fingerprint-mismatch-v2.json', 'AUTHORITY_STATE_BINDING_MISMATCH', 'mismatch-verification-bundle.json'],
             'outer nested execution' => ['authority-state-execution-mismatch-v2.json', 'AUTHORITY_STATE_BINDING_MISMATCH', 'mismatch-verification-bundle.json'],
             'outer nested authorization' => ['authority-state-authorization-mismatch.json', 'AUTHORITY_STATE_BINDING_MISMATCH'],
             'environment' => ['authority-state-environment-mismatch.json', 'AUTHORITY_STATE_BINDING_MISMATCH'],

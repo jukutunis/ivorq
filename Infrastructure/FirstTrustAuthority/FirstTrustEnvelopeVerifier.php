@@ -119,7 +119,7 @@ final class FirstTrustEnvelopeVerifier
         $args = [$p['authorization_id'], $p['authority_reference'], $p['issuer'], $p['state'], $binding, $this->time($p['state_generated_at'], 'AUTHORITY_STATE_INVALID'), $verified['key_id'], $verified['bundle_fingerprint']];
         if ($p['state'] === 'RESERVED' || $p['state'] === 'CONSUMED') {
             if (! hash_equals($p['reservation_fingerprint'], hash('sha256', $p['reservation_envelope']))) {
-                throw new FirstTrustAuthorityException('AUTHORITY_STATE_INVALID');
+                throw new FirstTrustAuthorityException('AUTHORITY_STATE_BINDING_MISMATCH');
             }
             try {
                 $reservation = $this->verifyReservationInContext($p['reservation_envelope'], $authorizationId, $p['execution_id'], $binding, true);
@@ -134,7 +134,7 @@ final class FirstTrustEnvelopeVerifier
             array_push($args, $p['execution_id'], $p['reservation_reference'], $p['reservation_fingerprint'], $reservation->reservedAt, $reservation->commitDeadline, $reservation->recoveryDeadline);
             if ($p['state'] === 'CONSUMED') {
                 if (! hash_equals($p['consumption_fingerprint'], hash('sha256', $p['consumption_receipt']))) {
-                    throw new FirstTrustAuthorityException('AUTHORITY_STATE_INVALID');
+                    throw new FirstTrustAuthorityException('AUTHORITY_STATE_BINDING_MISMATCH');
                 }
                 try {
                     $receipt = $this->verifyConsumptionInContext($p['consumption_receipt'], $authorizationId, $p['execution_id'], $binding, true);
