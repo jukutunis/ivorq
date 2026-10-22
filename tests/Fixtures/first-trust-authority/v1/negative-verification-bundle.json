@@ -1,0 +1,11 @@
+{
+    "protocol": 1,
+    "environment": "REHEARSAL",
+    "issuer": "https://issuer.test",
+    "audience": "ivorq.test",
+    "kms_key_arn": "arn:aws:kms:ap-southeast-1:123456789012:key/44444444-4444-4444-8444-444444444444",
+    "spki_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEVjYvM8Tce27VlxseWs9w/cAoUcLn\n66aIgOmExeOw1YnO7qwGVA3ZtIZOP98QcVt3fTCs7YKun0CUGidyZlpNNw==\n-----END PUBLIC KEY-----\n",
+    "sha256_fingerprint": "08a97b84a40272fbb27b62935a070870cdc68de7a96e45bf19208ecc97ae4716",
+    "activated_at": "2029-01-01T00:00:00.000Z",
+    "retired_at": null
+}

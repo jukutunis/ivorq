@@ -1,0 +1,108 @@
+{
+    "external_repository_sha": "658a2d694891bf667150779e6af965dd28a5f24e",
+    "synthetic_nonsecret": true,
+    "private_key_persisted": false,
+    "sources": [
+        "schemas/v1/*.json",
+        "service/src/canonical-envelope.ts",
+        "service/test/signer.test.ts"
+    ],
+    "fixtures": {
+        "verification-bundle.json": {
+            "sha256": "5f6e0fa6989c4bff154c37d0a5d2717f5c591bbddb3aa3f144e0b40fce624ad0",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "rotation-bundle.json": {
+            "sha256": "20edf19453b15e5a768e906d3ed44a97331ab71e9b80ca1024023ed2028b8f01",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "authorization-envelope.json": {
+            "sha256": "6765756c2de78b1c8206647f15a5fbbaed8442cf96eb5441c929ff20e14a7ed9",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "authorization-envelope-rotated-key.json": {
+            "sha256": "3ceb994ff74595addef6cd22bd5037a2120e2c05539046a21adf31733fec1969",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "reservation-envelope.json": {
+            "sha256": "eeeb800e4b0ff478265c30986b0a121922d6698124e6e97fd191de9b3becbac8",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "consumption-receipt.json": {
+            "sha256": "14a622d93eaea267ef18bc1353c79b1edec7101a7251ce7a781fa0076e6e8cae",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "authority-state-available.json": {
+            "sha256": "95a649949915cd6d1790325aa5a8ae724c45327e5514625a4de0452b45ebff1b",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "authority-state-reserved.json": {
+            "sha256": "9d51211e1a28c765520d2748fba49b2d241e4bd545df10334938e0ecd06ffa4e",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "authority-state-consumed.json": {
+            "sha256": "c043154f8ea2fdbf1e72cf1b7f26d095231fbe5f81dd0ea8da435b101bb6cdf3",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "authority-state-revoked.json": {
+            "sha256": "c8457276a9e476f8987509eae0e4e5a14145636350f8daa0032a53524ef4fc8d",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "authority-state-expired.json": {
+            "sha256": "06290561eff6298c5460c8ca444f11b11c496a32943dcaf7ea3699d8d5661e95",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "wrong-curve-bundle.json": {
+            "sha256": "e65147b4c2072fd2d5220b2c77a80ce83ca10e1008d0d9d6b4b00f921b1632d5",
+            "purpose": "Protocol-v1 parser, verifier, rotation, state, or negative-key test evidence."
+        },
+        "negative-verification-bundle.json": {
+            "sha256": "0a835ee63356b0a399338dbc060933b657b2c28ba079387703451e5bb7c2fba0",
+            "purpose": "Signed synthetic negative nested-state or trust-bundle evidence."
+        },
+        "authority-state-nested-reservation-tampered.json": {
+            "sha256": "80d7b1c0e24d3adbdc7a416a3a4a00a2714e6c20a42b8d6345e6549e21dfe0e3",
+            "purpose": "Signed synthetic negative nested-state or trust-bundle evidence."
+        },
+        "authority-state-nested-receipt-tampered.json": {
+            "sha256": "89b943f7cbded3a717f7cfacdf907fc04e3ff983b243925bb04470813d170d86",
+            "purpose": "Signed synthetic negative nested-state or trust-bundle evidence."
+        },
+        "authority-state-authorization-mismatch.json": {
+            "sha256": "7d0adcebbcce02716bd7c95641187601275231d86670a4aedcbe571aab2795ea",
+            "purpose": "Signed synthetic negative nested-state or trust-bundle evidence."
+        },
+        "authority-state-environment-mismatch.json": {
+            "sha256": "f44148b4e9d3996bfaca93c3f829a67e62aa8f23cc55642e93e9bb684690dec9",
+            "purpose": "Signed synthetic negative nested-state or trust-bundle evidence."
+        },
+        "authority-state-issuer-mismatch.json": {
+            "sha256": "7455cc015ad7c99d9891d47773828d9152b0e49e390592675b8fe196878799e6",
+            "purpose": "Signed synthetic negative nested-state or trust-bundle evidence."
+        },
+        "mismatch-verification-bundle.json": {
+            "sha256": "1fa7f31b153bcaf833f3c6c891c70d91066607996d294c0b6da25b92cfc6531c",
+            "purpose": "Signed synthetic outer/nested mismatch evidence."
+        },
+        "authority-state-reservation-fingerprint-mismatch-v2.json": {
+            "sha256": "fc0fe83f10abb709c17f7932c828570bb88eadcaa52f0f0b68835941146ad862",
+            "purpose": "Signed synthetic outer/nested mismatch evidence."
+        },
+        "authority-state-consumption-fingerprint-mismatch-v2.json": {
+            "sha256": "b09f7d1fa17195650d1cbfe1a747fc52116c33b9df3ed65bc0625a800f0e0952",
+            "purpose": "Signed synthetic outer/nested mismatch evidence."
+        },
+        "authority-state-execution-mismatch-v2.json": {
+            "sha256": "66eec2a5a7a111e2c20d5a655899b2d0541790925f806859127ff40a6cce6a55",
+            "purpose": "Signed synthetic outer/nested mismatch evidence."
+        },
+        "authorization-variant-bundle.json": {
+            "sha256": "97ea4d054ebc2a8a6aa78f0ab439466d4ffacb9c287cb6e683c51598e202bf62",
+            "purpose": "Signed synthetic authorization lifetime boundary evidence."
+        },
+        "authorization-long-lifetime.json": {
+            "sha256": "734b4cf81fa467a42edcc44ab8c7db8d79fbb30e4205d2089919f3e7d6ed8cde",
+            "purpose": "Signed synthetic authorization lifetime boundary evidence."
+        }
+    }
+}

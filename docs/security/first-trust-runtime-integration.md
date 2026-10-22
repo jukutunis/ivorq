@@ -94,3 +94,17 @@ Only after commit does `FirstTrustActivationDeliveryService` issue a `verify_ema
 | Notification failure | Keep `COMPLETED`/`INVITED`; use `requestResume` |
 
 B5A2C, AWS integration, real authorization parsing/signature verification, operational/rehearsal business bootstrap, B4C, Business Date, Finance, Inventory, CostControl, pilot, and cutover remain outside this implementation.
+
+## B5A2C production authority adapter
+
+Status: code-complete implementation target; not operationally enabled. The independently accepted protocol source is `ivorq-first-trust-authority` commit `658a2d694891bf667150779e6af965dd28a5f24e`.
+
+IVORQ verifies protocol-v1 evidence locally and contacts the separately governed authority only for reserve, state, and consume. The accepted wire envelope is strict canonical JSON containing `protocol`, `kind`, immutable KMS `key_id`, `signature_encoding`, base64url canonical payload bytes, and a DER ECDSA signature. Verification uses the exact per-kind domain prefix and `openssl_verify(..., OPENSSL_ALGO_SHA256)` with a pinned EC `prime256v1`/P-256 public SPKI key. Exact nested reservation and consumption envelope bytes are independently verified and fingerprinted.
+
+The configured verification-bundle file is bounded to 256 KiB and fingerprinted from its exact bytes. A single entry follows the accepted external schema; a reviewed rotation file may be a top-level list of unchanged accepted entries. Environment, issuer, audience, immutable KMS key ARN, activation/retirement window, key type/curve, and SPKI DER fingerprint are fail-closed. Responses cannot introduce trust material, and there is no JWK or remote key discovery.
+
+The production adapter is selected only when all existing first-trust settings are nonempty: environment, installation ID, release SHA, authority reference, issuer, audience, HTTPS base URL, and verification-bundle path. Otherwise the existing `UnconfiguredFirstTrustAuthority` remains bound. Container resolution performs no credential resolution, bundle load, or network call. `verifyAuthorization()` remains entirely offline.
+
+Reserve, state, and consume use one mocked-in-tests HTTPS POST to the accepted route. The finalized JSON body is signed by the official AWS SDK v3 `SignatureV4` implementation for `execute-api`. Credentials come from `CredentialProvider::defaultProvider()`; region uses SDK configuration helpers in the order `AWS_REGION`, `AWS_DEFAULT_REGION`, then the selected/default shared-config profile. No static AWS secret or caller-controlled region is stored in IVORQ. The serialized protocol envelope, finalized outbound JSON body, and complete HTTP response body each enforce the external authority's 32 KiB application boundary; the separate local verification-bundle limit remains 256 KiB. Redirects and generic retries are disabled; connect/request timeouts and response size are bounded. Only allowlisted stable errors cross the application boundary, with no raw AWS, HTTP, credential, header, body, request ID, signed artifact, or previous-exception detail.
+
+**CODE-COMPLETE ≠ OPERATIONALLY ENABLED.** AWS resource verification, deployment configuration review, IAM/Identity Center authorization, pinned-bundle deployment, Rehearsal enablement authorization, live Rehearsal execution approval, and Operational enablement approval remain separate future gates. This package provisions no AWS resources and performs no live authority calls.
