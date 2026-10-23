@@ -4,6 +4,7 @@ namespace Modules\Foundation\Property\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Modules\Foundation\Authorization\Models\FirstTrustRun;
 use Modules\Foundation\Property\Enums\PropertyBootstrapProvisioningEnvironmentEnum;
 use Modules\Foundation\Property\Enums\PropertyBootstrapProvisioningStatusEnum;
 use Modules\Foundation\User\Models\User;
@@ -29,6 +30,11 @@ class PropertyBootstrapProvisioningRun extends Model
     public function initiatingActor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'initiated_by');
+    }
+
+    public function firstTrustRun(): BelongsTo
+    {
+        return $this->belongsTo(FirstTrustRun::class);
     }
 
     public function company(): BelongsTo
