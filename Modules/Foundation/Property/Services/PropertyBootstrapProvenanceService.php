@@ -6,6 +6,10 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use JsonException;
+use Modules\Foundation\Authentication\Enums\OwnerActivationStatus;
+use Modules\Foundation\Authentication\Models\OwnerActivation;
+use Modules\Foundation\Authorization\Enums\FirstTrustRunStatus;
+use Modules\Foundation\Authorization\Models\FirstTrustRun;
 use Modules\Foundation\Property\Enums\PropertyBootstrapProvisioningEnvironmentEnum;
 use Modules\Foundation\Property\Enums\PropertyBootstrapProvisioningStatusEnum;
 use Modules\Foundation\Property\Models\Company;
@@ -34,6 +38,12 @@ class PropertyBootstrapProvenanceService
 
     public const ERROR_COMPLETION_BINDINGS_REQUIRED = 'B4C_BOOTSTRAP_COMPLETION_BINDINGS_REQUIRED';
 
+    public const ERROR_FIRST_TRUST_REQUIRED = 'B5A3_FIRST_TRUST_PROVENANCE_REQUIRED';
+
+    public const ERROR_FIRST_TRUST_INVALID = 'B5A3_FIRST_TRUST_PROVENANCE_INVALID';
+
+    public const ERROR_FIRST_TRUST_BINDING_MISMATCH = 'B5A3_FIRST_TRUST_PROVENANCE_BINDING_MISMATCH';
+
     public function start(
         User $actor,
         PropertyBootstrapProvisioningEnvironmentEnum $environment,
@@ -41,12 +51,16 @@ class PropertyBootstrapProvenanceService
         string $requestFingerprint,
         string $canonicalSha,
         string $source,
+        ?string $firstTrustRunId = null,
     ): PropertyBootstrapProvisioningRun {
         $this->assertAuthenticatedActiveActor($actor);
         $this->assertBoundedNonBlank($idempotencyKey, 255, 'idempotency key');
         $this->assertSha256($requestFingerprint, 'request fingerprint');
         $this->assertGitSha($canonicalSha);
         $this->assertBoundedNonBlank($source, 255, 'source');
+        if ($firstTrustRunId !== null) {
+            $this->assertBoundedNonBlank($firstTrustRunId, 26, 'first-trust run ID');
+        }
 
         return DB::transaction(function () use (
             $actor,
@@ -55,9 +69,11 @@ class PropertyBootstrapProvenanceService
             $requestFingerprint,
             $canonicalSha,
             $source,
+            $firstTrustRunId,
         ): PropertyBootstrapProvisioningRun {
             $freshActor = $this->assertAuthenticatedActiveActor($actor);
             $this->lockStartIdentity($environment, $idempotencyKey);
+            $firstTrust = $this->resolveFirstTrustLinkage($freshActor, $environment, $firstTrustRunId);
 
             $existing = PropertyBootstrapProvisioningRun::query()
                 ->where('environment', $environment->value)
@@ -73,6 +89,7 @@ class PropertyBootstrapProvenanceService
                     $requestFingerprint,
                     $canonicalSha,
                     $source,
+                    $firstTrust?->id,
                 );
 
                 if ($existing->status === PropertyBootstrapProvisioningStatusEnum::Failed) {
@@ -91,6 +108,7 @@ class PropertyBootstrapProvenanceService
                 'canonical_sha' => $canonicalSha,
                 'source' => $source,
                 'initiated_by' => $freshActor->id,
+                'first_trust_run_id' => $firstTrust?->id,
                 'started_at' => now(),
                 'evidence' => [],
             ]);
@@ -110,6 +128,11 @@ class PropertyBootstrapProvenanceService
         return DB::transaction(function () use ($run, $actor, $companyId): PropertyBootstrapProvisioningRun {
             $locked = $this->lockMutableRun($run, $actor);
             $company = Company::query()->whereKey($companyId)->firstOrFail();
+
+            $firstTrust = $this->validatedLinkedFirstTrust($locked, $actor);
+            if ($firstTrust !== null && (string) $company->id !== (string) $firstTrust->company_id) {
+                throw new RuntimeException(self::ERROR_FIRST_TRUST_BINDING_MISMATCH);
+            }
 
             if ($locked->company_id !== null) {
                 if ((string) $locked->company_id !== (string) $company->id) {
@@ -143,6 +166,11 @@ class PropertyBootstrapProvenanceService
         return DB::transaction(function () use ($run, $actor, $propertyId): PropertyBootstrapProvisioningRun {
             $locked = $this->lockMutableRun($run, $actor);
             $property = Property::query()->whereKey($propertyId)->firstOrFail();
+
+            $firstTrust = $this->validatedLinkedFirstTrust($locked, $actor);
+            if ($firstTrust !== null && (string) $property->id !== (string) $firstTrust->property_id) {
+                throw new RuntimeException(self::ERROR_FIRST_TRUST_BINDING_MISMATCH);
+            }
 
             if ($locked->property_id !== null) {
                 if ((string) $locked->property_id !== (string) $property->id) {
@@ -186,6 +214,8 @@ class PropertyBootstrapProvenanceService
         return DB::transaction(function () use ($run, $actor, $evidence): PropertyBootstrapProvisioningRun {
             $locked = $this->lockMutableRun($run, $actor);
 
+            $this->validatedLinkedFirstTrust($locked, $actor);
+
             if ($locked->evidence === $evidence) {
                 return $locked;
             }
@@ -209,6 +239,8 @@ class PropertyBootstrapProvenanceService
 
         return DB::transaction(function () use ($run, $actor, $evidence, $evidenceFingerprint): PropertyBootstrapProvisioningRun {
             $locked = $this->lockMutableRun($run, $actor);
+
+            $this->validatedLinkedFirstTrust($locked, $actor);
 
             if ($locked->company_id === null || $locked->property_id === null) {
                 throw new RuntimeException(self::ERROR_COMPLETION_BINDINGS_REQUIRED);
@@ -245,6 +277,7 @@ class PropertyBootstrapProvenanceService
 
         return DB::transaction(function () use ($run, $actor, $failureCode, $evidence): PropertyBootstrapProvisioningRun {
             $locked = $this->lockMutableRun($run, $actor);
+            $this->validatedLinkedFirstTrust($locked, $actor);
             $locked->forceFill([
                 'evidence' => $evidence,
                 'status' => PropertyBootstrapProvisioningStatusEnum::Failed,
@@ -312,12 +345,14 @@ class PropertyBootstrapProvenanceService
         string $requestFingerprint,
         string $canonicalSha,
         string $source,
+        ?string $firstTrustRunId,
     ): void {
         if ($run->environment !== $environment
             || ! hash_equals((string) $run->request_fingerprint, $requestFingerprint)
             || ! hash_equals((string) $run->canonical_sha, $canonicalSha)
             || (string) $run->source !== $source
             || (string) $run->initiated_by !== (string) $actor->id
+            || ($run->first_trust_run_id === null ? null : (string) $run->first_trust_run_id) !== $firstTrustRunId
         ) {
             throw new RuntimeException(self::ERROR_IDEMPOTENCY_CONFLICT);
         }
@@ -342,6 +377,162 @@ class PropertyBootstrapProvenanceService
         }
 
         return $locked;
+    }
+
+    private function resolveFirstTrustLinkage(
+        User $actor,
+        PropertyBootstrapProvisioningEnvironmentEnum $environment,
+        ?string $firstTrustRunId,
+    ): ?FirstTrustRun {
+        $configuredEnvironment = config('first-trust.environment');
+        $configuredInstallationId = config('first-trust.installation_id');
+        $hasEnvironment = is_string($configuredEnvironment) && trim($configuredEnvironment) !== '';
+        $hasInstallation = is_string($configuredInstallationId) && trim($configuredInstallationId) !== '';
+
+        if (! $hasEnvironment && ! $hasInstallation) {
+            if ($firstTrustRunId !== null) {
+                throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
+            }
+
+            return null;
+        }
+
+        if (! $hasEnvironment || ! $hasInstallation) {
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
+        }
+
+        $normalizedEnvironment = strtolower(trim($configuredEnvironment));
+        $configuredInstallationId = trim($configuredInstallationId);
+        if ($normalizedEnvironment !== $environment->value) {
+            if ($firstTrustRunId === null) {
+                return null;
+            }
+
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_BINDING_MISMATCH);
+        }
+
+        $applicable = FirstTrustRun::query()
+            ->where('environment', $normalizedEnvironment)
+            ->where('installation_id', $configuredInstallationId)
+            ->sharedLock()
+            ->first();
+
+        if ($applicable === null) {
+            if ($firstTrustRunId === null) {
+                return null;
+            }
+
+            $applicable = FirstTrustRun::query()->whereKey($firstTrustRunId)->sharedLock()->first();
+            if ($applicable === null) {
+                throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
+            }
+        }
+
+        if ($firstTrustRunId === null) {
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_REQUIRED);
+        }
+
+        if ((string) $applicable->id !== $firstTrustRunId) {
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_BINDING_MISMATCH);
+        }
+
+        return $this->assertFirstTrustState(
+            $applicable,
+            $actor,
+            $environment,
+            $configuredInstallationId,
+        );
+    }
+
+    private function validatedLinkedFirstTrust(
+        PropertyBootstrapProvisioningRun $run,
+        User $actor,
+    ): ?FirstTrustRun {
+        if ($run->first_trust_run_id === null) {
+            return null;
+        }
+
+        $configuredEnvironment = config('first-trust.environment');
+        $configuredInstallationId = config('first-trust.installation_id');
+        if (! is_string($configuredEnvironment)
+            || trim($configuredEnvironment) === ''
+            || ! is_string($configuredInstallationId)
+            || trim($configuredInstallationId) === ''
+            || strtolower(trim($configuredEnvironment)) !== $run->environment->value
+        ) {
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
+        }
+
+        $firstTrust = FirstTrustRun::query()
+            ->whereKey($run->first_trust_run_id)
+            ->sharedLock()
+            ->first();
+        if ($firstTrust === null) {
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
+        }
+
+        $firstTrust = $this->assertFirstTrustState(
+            $firstTrust,
+            $actor,
+            $run->environment,
+            trim($configuredInstallationId),
+        );
+
+        if ((string) $run->initiated_by !== (string) $firstTrust->user_id
+            || ($run->company_id !== null && (string) $run->company_id !== (string) $firstTrust->company_id)
+            || ($run->property_id !== null && (string) $run->property_id !== (string) $firstTrust->property_id)
+        ) {
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_BINDING_MISMATCH);
+        }
+
+        return $firstTrust;
+    }
+
+    private function assertFirstTrustState(
+        FirstTrustRun $firstTrust,
+        User $actor,
+        PropertyBootstrapProvisioningEnvironmentEnum $environment,
+        string $installationId,
+    ): FirstTrustRun {
+        if ($firstTrust->status !== FirstTrustRunStatus::Completed
+            || $firstTrust->user_id === null
+            || $firstTrust->company_id === null
+            || $firstTrust->property_id === null
+            || $firstTrust->membership_user_id === null
+            || $firstTrust->membership_property_id === null
+            || $firstTrust->membership_fingerprint === null
+            || $firstTrust->owner_activation_id === null
+            || $firstTrust->foundation_committed_at === null
+        ) {
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
+        }
+
+        if ((string) $firstTrust->environment !== $environment->value
+            || (string) $firstTrust->installation_id !== $installationId
+            || (string) $firstTrust->user_id !== (string) $actor->id
+            || (string) $firstTrust->membership_user_id !== (string) $firstTrust->user_id
+            || (string) $firstTrust->membership_property_id !== (string) $firstTrust->property_id
+        ) {
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_BINDING_MISMATCH);
+        }
+
+        $activation = OwnerActivation::query()
+            ->whereKey($firstTrust->owner_activation_id)
+            ->sharedLock()
+            ->first();
+        if ($activation === null
+            || $activation->status !== OwnerActivationStatus::Active
+            || (string) $activation->first_trust_run_id !== (string) $firstTrust->id
+            || (string) $activation->user_id !== (string) $firstTrust->user_id
+            || (string) $activation->company_id !== (string) $firstTrust->company_id
+            || (string) $activation->property_id !== (string) $firstTrust->property_id
+            || (string) $activation->environment !== $environment->value
+            || (string) $activation->installation_id !== $installationId
+        ) {
+            throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
+        }
+
+        return $firstTrust;
     }
 
     private function assertSha256(string $value, string $label): void
