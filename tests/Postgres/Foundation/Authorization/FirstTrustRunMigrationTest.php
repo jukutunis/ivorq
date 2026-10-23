@@ -147,9 +147,11 @@ class FirstTrustRunMigrationTest extends PostgresTestCase
 
     public function test_existing_owner_activation_blocks_000001_before_table_creation(): void
     {
+        $b5a3Migration = require base_path('Modules/Foundation/Property/database/migrations/2026_10_23_000001_add_first_trust_provenance_to_property_bootstrap_runs.php');
         $linkageMigration = require base_path('Modules/Foundation/Authorization/database/migrations/2026_09_27_000002_relink_owner_activations_to_first_trust_runs.php');
         $ledgerMigration = require base_path('Modules/Foundation/Authorization/database/migrations/2026_09_27_000001_create_first_trust_runs_table.php');
 
+        $b5a3Migration->down();
         $linkageMigration->down();
         $ledgerMigration->down();
         $this->seedLegacyActivation();
