@@ -279,10 +279,200 @@ final class FirstTrustB4CProvenanceLinkageTest extends PostgresTestCase
         );
     }
 
+    public function test_config_removal_cannot_restore_legacy_null_link_after_completed_first_trust(): void
+    {
+        $fixture = $this->completedFirstTrust('config-removal');
+        $this->actingAs($fixture['actor']);
+        config([
+            'first-trust.environment' => null,
+            'first-trust.installation_id' => null,
+        ]);
+
+        foreach ([null, $fixture['run']->id] as $index => $firstTrustRunId) {
+            $this->assertRuntimeCode(
+                PropertyBootstrapProvenanceService::ERROR_FIRST_TRUST_INVALID,
+                fn () => $this->service->start(
+                    $fixture['actor'],
+                    PropertyBootstrapProvisioningEnvironmentEnum::Operational,
+                    "config-removal-{$index}",
+                    self::REQUEST_FINGERPRINT,
+                    self::CANONICAL_SHA,
+                    'b5a3-r1-test',
+                    $firstTrustRunId,
+                ),
+            );
+        }
+
+        $this->assertSame(0, PropertyBootstrapProvisioningRun::query()->count());
+    }
+
+    public function test_config_removal_fails_closed_when_in_progress_history_exists(): void
+    {
+        $actor = $this->actor();
+        $this->actingAs($actor);
+        $this->unfinishedFirstTrust('removed-config-in-progress', 'IN_PROGRESS');
+
+        $this->assertRuntimeCode(
+            PropertyBootstrapProvenanceService::ERROR_FIRST_TRUST_INVALID,
+            fn () => $this->service->start(
+                $actor,
+                PropertyBootstrapProvisioningEnvironmentEnum::Operational,
+                'removed-config-in-progress',
+                self::REQUEST_FINGERPRINT,
+                self::CANONICAL_SHA,
+                'b5a3-r1-test',
+            ),
+        );
+
+        $this->assertSame(0, PropertyBootstrapProvisioningRun::query()->count());
+    }
+
+    public function test_config_removal_fails_closed_when_failed_history_exists(): void
+    {
+        $actor = $this->actor();
+        $this->actingAs($actor);
+        $this->unfinishedFirstTrust('removed-config-failed', 'FAILED');
+
+        $this->assertRuntimeCode(
+            PropertyBootstrapProvenanceService::ERROR_FIRST_TRUST_INVALID,
+            fn () => $this->service->start(
+                $actor,
+                PropertyBootstrapProvisioningEnvironmentEnum::Operational,
+                'removed-config-failed',
+                self::REQUEST_FINGERPRINT,
+                self::CANONICAL_SHA,
+                'b5a3-r1-test',
+            ),
+        );
+
+        $this->assertSame(0, PropertyBootstrapProvisioningRun::query()->count());
+    }
+
+    public function test_configured_environment_mismatch_rejects_null_link_in_both_directions(): void
+    {
+        $operational = $this->completedFirstTrust('environment-operational');
+        $this->actingAs($operational['actor']);
+
+        $this->assertRuntimeCode(
+            PropertyBootstrapProvenanceService::ERROR_FIRST_TRUST_BINDING_MISMATCH,
+            fn () => $this->service->start(
+                $operational['actor'],
+                PropertyBootstrapProvisioningEnvironmentEnum::Rehearsal,
+                'operational-to-rehearsal',
+                self::REQUEST_FINGERPRINT,
+                self::CANONICAL_SHA,
+                'b5a3-r1-test',
+            ),
+        );
+
+        $rehearsal = $this->completedFirstTrust('environment-rehearsal', environment: 'rehearsal');
+        $this->actingAs($rehearsal['actor']);
+
+        $this->assertRuntimeCode(
+            PropertyBootstrapProvenanceService::ERROR_FIRST_TRUST_BINDING_MISMATCH,
+            fn () => $this->service->start(
+                $rehearsal['actor'],
+                PropertyBootstrapProvisioningEnvironmentEnum::Operational,
+                'rehearsal-to-operational',
+                self::REQUEST_FINGERPRINT,
+                self::CANONICAL_SHA,
+                'b5a3-r1-test',
+            ),
+        );
+
+        $this->assertSame(0, PropertyBootstrapProvisioningRun::query()->count());
+    }
+
+    public function test_complete_config_with_nonmatching_installation_and_existing_history_fails_closed(): void
+    {
+        $fixture = $this->completedFirstTrust('nonmatching-history');
+        $this->actingAs($fixture['actor']);
+        $this->configure('operational', 'different-installation');
+
+        $this->assertRuntimeCode(
+            PropertyBootstrapProvenanceService::ERROR_FIRST_TRUST_INVALID,
+            fn () => $this->service->start(
+                $fixture['actor'],
+                PropertyBootstrapProvisioningEnvironmentEnum::Operational,
+                'nonmatching-history',
+                self::REQUEST_FINGERPRINT,
+                self::CANONICAL_SHA,
+                'b5a3-r1-test',
+            ),
+        );
+
+        $this->assertSame(0, PropertyBootstrapProvisioningRun::query()->count());
+    }
+
+    public function test_complete_config_without_first_trust_history_preserves_legacy_null_link(): void
+    {
+        $actor = $this->actor();
+        $this->actingAs($actor);
+        $this->configure('operational', 'not-yet-established');
+
+        $run = $this->service->start(
+            $actor,
+            PropertyBootstrapProvisioningEnvironmentEnum::Operational,
+            'configured-empty-ledger',
+            self::REQUEST_FINGERPRINT,
+            self::CANONICAL_SHA,
+            'legacy-b4c',
+        );
+
+        $this->assertSame(0, FirstTrustRun::query()->count());
+        $this->assertNull($run->first_trust_run_id);
+    }
+
+    public function test_partial_first_trust_configuration_remains_invalid_regardless_of_history(): void
+    {
+        $actor = $this->actor();
+        $this->actingAs($actor);
+        $configurations = [
+            ['first-trust.environment' => 'OPERATIONAL', 'first-trust.installation_id' => null],
+            ['first-trust.environment' => null, 'first-trust.installation_id' => 'partial-installation'],
+        ];
+
+        foreach ($configurations as $index => $configuration) {
+            config($configuration);
+            $this->assertRuntimeCode(
+                PropertyBootstrapProvenanceService::ERROR_FIRST_TRUST_INVALID,
+                fn () => $this->service->start(
+                    $actor,
+                    PropertyBootstrapProvisioningEnvironmentEnum::Operational,
+                    "partial-empty-{$index}",
+                    self::REQUEST_FINGERPRINT,
+                    self::CANONICAL_SHA,
+                    'b5a3-r1-test',
+                ),
+            );
+        }
+
+        $this->unfinishedFirstTrust('partial-history', 'IN_PROGRESS');
+
+        foreach ($configurations as $index => $configuration) {
+            config($configuration);
+            $this->assertRuntimeCode(
+                PropertyBootstrapProvenanceService::ERROR_FIRST_TRUST_INVALID,
+                fn () => $this->service->start(
+                    $actor,
+                    PropertyBootstrapProvisioningEnvironmentEnum::Operational,
+                    "partial-history-{$index}",
+                    self::REQUEST_FINGERPRINT,
+                    self::CANONICAL_SHA,
+                    'b5a3-r1-test',
+                ),
+            );
+        }
+
+        $this->assertSame(0, PropertyBootstrapProvisioningRun::query()->count());
+    }
+
     public function test_legacy_null_link_remains_available_only_without_applicable_first_trust(): void
     {
         $actor = $this->actor();
         $this->actingAs($actor);
+
+        $this->assertSame(0, FirstTrustRun::query()->count());
 
         $run = $this->service->start(
             $actor,
@@ -395,16 +585,9 @@ final class FirstTrustB4CProvenanceLinkageTest extends PostgresTestCase
             'first_trust_run_id' => null,
         ]));
 
-        config(['first-trust.environment' => null, 'first-trust.installation_id' => null]);
-        $legacy = $this->service->start(
-            $fixture['actor'],
-            PropertyBootstrapProvisioningEnvironmentEnum::Operational,
-            'legacy-late-link',
-            self::REQUEST_FINGERPRINT,
-            self::CANONICAL_SHA,
-            'legacy-b4c',
-        );
-        $this->assertQueryRejected(fn () => DB::table('property_bootstrap_provisioning_runs')->where('id', $legacy->id)->update([
+        $legacy = $this->rawB4CRun($fixture['actor'], 'legacy-late-link');
+        DB::table('property_bootstrap_provisioning_runs')->insert($legacy);
+        $this->assertQueryRejected(fn () => DB::table('property_bootstrap_provisioning_runs')->where('id', $legacy['id'])->update([
             'first_trust_run_id' => $fixture['run']->id,
         ]));
 
@@ -429,9 +612,11 @@ final class FirstTrustB4CProvenanceLinkageTest extends PostgresTestCase
         $this->assertNotSame($results[0]['pg_backend_pid'], $results[1]['pg_backend_pid']);
     }
 
-    private function completedFirstTrust(string $suffix, bool $activate = true): array
-    {
-        $environment = 'operational';
+    private function completedFirstTrust(
+        string $suffix,
+        bool $activate = true,
+        string $environment = 'operational',
+    ): array {
         $installation = "installation-{$suffix}";
         $now = now();
         $actor = $this->actor();

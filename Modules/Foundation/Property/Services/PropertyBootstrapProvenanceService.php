@@ -394,6 +394,10 @@ class PropertyBootstrapProvenanceService
                 throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
             }
 
+            if (FirstTrustRun::query()->exists()) {
+                throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
+            }
+
             return null;
         }
 
@@ -404,10 +408,6 @@ class PropertyBootstrapProvenanceService
         $normalizedEnvironment = strtolower(trim($configuredEnvironment));
         $configuredInstallationId = trim($configuredInstallationId);
         if ($normalizedEnvironment !== $environment->value) {
-            if ($firstTrustRunId === null) {
-                return null;
-            }
-
             throw new RuntimeException(self::ERROR_FIRST_TRUST_BINDING_MISMATCH);
         }
 
@@ -419,6 +419,10 @@ class PropertyBootstrapProvenanceService
 
         if ($applicable === null) {
             if ($firstTrustRunId === null) {
+                if (FirstTrustRun::query()->exists()) {
+                    throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
+                }
+
                 return null;
             }
 
