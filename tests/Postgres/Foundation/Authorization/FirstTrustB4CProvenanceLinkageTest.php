@@ -596,6 +596,56 @@ final class FirstTrustB4CProvenanceLinkageTest extends PostgresTestCase
         $this->assertSame(1, PropertyBootstrapProvisioningRun::query()->where('first_trust_run_id', $fixture['run']->id)->count());
     }
 
+    public function test_first_trust_lock_wins_and_serializes_legacy_decision_until_history_is_visible(): void
+    {
+        $results = $this->spawnLegacyFirstTrustRace('first_trust_wins', $this->actor());
+        $firstTrust = $results['first_trust'];
+        $b4c = $results['b4c'];
+
+        $this->assertSame(0, $firstTrust['_exit_code'], $firstTrust['_stderr'] ?? ($firstTrust['error'] ?? ''));
+        $this->assertSame(0, $b4c['_exit_code'], $b4c['_stderr'] ?? ($b4c['error'] ?? ''));
+        $this->assertSame('committed', $firstTrust['outcome']);
+        $this->assertContains('ShareRowExclusiveLock', $firstTrust['lock_modes']);
+        $this->assertSame('rejected', $b4c['outcome']);
+        $this->assertSame(PropertyBootstrapProvenanceService::ERROR_FIRST_TRUST_INVALID, $b4c['error_code']);
+        $this->assertSame('Lock', $results['blocked']['wait_event_type']);
+        $this->assertSame('relation', $results['blocked']['wait_event']);
+        $this->assertNotSame($firstTrust['php_pid'], $b4c['php_pid']);
+        $this->assertNotSame($firstTrust['pg_backend_pid'], $b4c['pg_backend_pid']);
+        $this->assertSame(1, FirstTrustRun::query()->count());
+        $this->assertSame(0, PropertyBootstrapProvisioningRun::query()->whereNull('first_trust_run_id')->count());
+        $this->assertFalse(
+            FirstTrustRun::query()->exists()
+            && PropertyBootstrapProvisioningRun::query()->whereNull('first_trust_run_id')->exists(),
+        );
+    }
+
+    public function test_legacy_lock_wins_and_canonical_first_trust_guard_rejects_b4c_history(): void
+    {
+        $results = $this->spawnLegacyFirstTrustRace('legacy_wins', $this->actor());
+        $firstTrust = $results['first_trust'];
+        $b4c = $results['b4c'];
+
+        $this->assertSame(0, $firstTrust['_exit_code'], $firstTrust['_stderr'] ?? ($firstTrust['error'] ?? ''));
+        $this->assertSame(0, $b4c['_exit_code'], $b4c['_stderr'] ?? ($b4c['error'] ?? ''));
+        $this->assertSame('committed', $b4c['outcome']);
+        $this->assertContains('ShareLock', $b4c['lock_modes']);
+        $this->assertSame('rejected', $firstTrust['outcome']);
+        $this->assertSame('FIRST_TRUST_PROTECTED_STATE_NOT_EMPTY', $firstTrust['error_code']);
+        $this->assertSame(1, $firstTrust['b4c_count_after_lock']);
+        $this->assertContains('ShareRowExclusiveLock', $firstTrust['lock_modes']);
+        $this->assertSame('Lock', $results['blocked']['wait_event_type']);
+        $this->assertSame('relation', $results['blocked']['wait_event']);
+        $this->assertNotSame($firstTrust['php_pid'], $b4c['php_pid']);
+        $this->assertNotSame($firstTrust['pg_backend_pid'], $b4c['pg_backend_pid']);
+        $this->assertSame(0, FirstTrustRun::query()->count());
+        $this->assertSame(1, PropertyBootstrapProvisioningRun::query()->whereNull('first_trust_run_id')->count());
+        $this->assertFalse(
+            FirstTrustRun::query()->exists()
+            && PropertyBootstrapProvisioningRun::query()->whereNull('first_trust_run_id')->exists(),
+        );
+    }
+
     public function test_two_process_exact_linked_starts_converge_to_one_run(): void
     {
         $fixture = $this->completedFirstTrust('concurrency');
@@ -840,6 +890,136 @@ final class FirstTrustB4CProvenanceLinkageTest extends PostgresTestCase
         return require base_path('Modules/Foundation/Property/database/migrations/2026_10_23_000001_add_first_trust_provenance_to_property_bootstrap_runs.php');
     }
 
+    private function spawnLegacyFirstTrustRace(string $scenario, User $actor): array
+    {
+        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'b5a3-r2-race-'.Str::lower(Str::random(8));
+        mkdir($directory, 0700, true);
+        $workerFile = $directory.DIRECTORY_SEPARATOR.'worker.php';
+        file_put_contents($workerFile, $this->legacyFirstTrustRaceWorkerSource());
+        $processes = [];
+
+        $start = function (string $role) use ($scenario, $actor, $directory, $workerFile, &$processes): void {
+            $argumentsFile = $directory.DIRECTORY_SEPARATOR."arguments-{$role}.json";
+            $resultFile = $directory.DIRECTORY_SEPARATOR."result-{$role}.json";
+            $stderrFile = $directory.DIRECTORY_SEPARATOR."stderr-{$role}.txt";
+            file_put_contents($argumentsFile, json_encode([
+                'role' => $role,
+                'scenario' => $scenario,
+                'actor_id' => $actor->id,
+                'barrier_directory' => $directory,
+                'result_file' => $resultFile,
+            ], JSON_THROW_ON_ERROR));
+            $specification = [['pipe', 'r'], ['file', $stderrFile, 'a'], ['file', $stderrFile, 'a']];
+            $process = proc_open(
+                [PHP_BINARY, $workerFile, base_path(), $argumentsFile],
+                $specification,
+                $pipes,
+                base_path(),
+                array_merge(getenv(), [
+                    'APP_ENV' => 'testing',
+                    'DB_CONNECTION' => 'pgsql',
+                    'DB_DATABASE' => 'ivorq_testing',
+                    'FIRST_TRUST_ENVIRONMENT' => '',
+                    'FIRST_TRUST_INSTALLATION_ID' => '',
+                ]),
+            );
+            if (! is_resource($process)) {
+                $this->fail("Unable to spawn the B5A3 R2 {$role} worker.");
+            }
+            fclose($pipes[0]);
+            $processes[$role] = [
+                'process' => $process,
+                'result' => $resultFile,
+                'stderr' => $stderrFile,
+            ];
+        };
+
+        try {
+            if ($scenario === 'first_trust_wins') {
+                $start('first_trust');
+                $this->waitForRaceSignal($directory.DIRECTORY_SEPARATOR.'first_trust-ready.json');
+                $start('b4c');
+                $attempted = $this->waitForRaceSignal($directory.DIRECTORY_SEPARATOR.'b4c-attempted.json');
+                $blocked = $this->waitForBackendRelationLock((int) $attempted['pg_backend_pid']);
+                file_put_contents($directory.DIRECTORY_SEPARATOR.'release-first_trust.signal', 'release');
+            } elseif ($scenario === 'legacy_wins') {
+                $start('b4c');
+                $this->waitForRaceSignal($directory.DIRECTORY_SEPARATOR.'b4c-ready.json');
+                $start('first_trust');
+                $attempted = $this->waitForRaceSignal($directory.DIRECTORY_SEPARATOR.'first_trust-attempted.json');
+                $blocked = $this->waitForBackendRelationLock((int) $attempted['pg_backend_pid']);
+                file_put_contents($directory.DIRECTORY_SEPARATOR.'release-b4c.signal', 'release');
+            } else {
+                $this->fail("Unknown B5A3 R2 race scenario {$scenario}.");
+            }
+
+            $results = ['blocked' => $blocked];
+            foreach ($processes as $role => $process) {
+                $exitCode = $this->waitForProcess($process['process'], 20);
+                $decoded = is_file($process['result'])
+                    ? json_decode((string) file_get_contents($process['result']), true)
+                    : ['error' => 'missing result'];
+                $decoded = is_array($decoded) ? $decoded : ['error' => 'malformed result'];
+                $decoded['_exit_code'] = $exitCode;
+                $decoded['_stderr'] = is_file($process['stderr']) ? trim((string) file_get_contents($process['stderr'])) : '';
+                $results[$role] = $decoded;
+            }
+
+            return $results;
+        } finally {
+            foreach ($processes as $process) {
+                if (is_resource($process['process'])) {
+                    $status = proc_get_status($process['process']);
+                    if ($status['running'] ?? false) {
+                        proc_terminate($process['process']);
+                    }
+                    proc_close($process['process']);
+                }
+            }
+            foreach (glob($directory.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
+                if (is_file($file)) {
+                    @unlink($file);
+                }
+            }
+            @rmdir($directory);
+        }
+    }
+
+    private function waitForRaceSignal(string $path): array
+    {
+        $deadline = microtime(true) + 10;
+        do {
+            if (is_file($path)) {
+                $decoded = json_decode((string) file_get_contents($path), true);
+
+                return is_array($decoded) ? $decoded : [];
+            }
+            usleep(25000);
+        } while (microtime(true) < $deadline);
+
+        $this->fail("Timed out waiting for race signal {$path}.");
+    }
+
+    private function waitForBackendRelationLock(int $backendPid): array
+    {
+        $deadline = microtime(true) + 10;
+        do {
+            $activity = DB::selectOne(
+                'SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid = ?',
+                [$backendPid],
+            );
+            if (($activity?->wait_event_type ?? null) === 'Lock') {
+                return [
+                    'wait_event_type' => $activity->wait_event_type,
+                    'wait_event' => $activity->wait_event,
+                ];
+            }
+            usleep(25000);
+        } while (microtime(true) < $deadline);
+
+        $this->fail("PostgreSQL backend {$backendPid} did not block on the expected relation lock.");
+    }
+
     private function spawnLinkedStartWorkers(array $fixture, array $keys): array
     {
         $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'b5a3-concurrency-'.Str::lower(Str::random(8));
@@ -974,6 +1154,197 @@ try {
     ], JSON_THROW_ON_ERROR));
 } catch (Throwable $throwable) {
     file_put_contents($arguments['result_file'], json_encode(['error' => $throwable::class.': '.$throwable->getMessage()], JSON_THROW_ON_ERROR));
+    exit(1);
+}
+PHP;
+    }
+
+    private function legacyFirstTrustRaceWorkerSource(): string
+    {
+        return <<<'PHP'
+<?php
+
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Modules\Foundation\Authorization\Services\FirstTrustEmptyStateGuard;
+use Modules\Foundation\Property\Enums\PropertyBootstrapProvisioningEnvironmentEnum;
+use Modules\Foundation\Property\Models\PropertyBootstrapProvisioningRun;
+use Modules\Foundation\Property\Services\PropertyBootstrapProvenanceService;
+use Modules\Foundation\User\Models\User;
+
+$root = $argv[1];
+$arguments = json_decode((string) file_get_contents($argv[2]), true, 512, JSON_THROW_ON_ERROR);
+require $root.'/vendor/autoload.php';
+$app = require $root.'/bootstrap/app.php';
+$app->make(Kernel::class)->bootstrap();
+config([
+    'first-trust.environment' => null,
+    'first-trust.installation_id' => null,
+]);
+
+$backendPid = (int) DB::selectOne('SELECT pg_backend_pid() AS pid')->pid;
+$signal = static function (string $name, array $payload) use ($arguments): void {
+    $path = $arguments['barrier_directory'].'/'.$name.'.json';
+    $temporary = $path.'.tmp';
+    file_put_contents($temporary, json_encode($payload, JSON_THROW_ON_ERROR));
+    rename($temporary, $path);
+};
+$waitForRelease = static function (string $role) use ($arguments): void {
+    $path = $arguments['barrier_directory'].'/release-'.$role.'.signal';
+    $deadline = microtime(true) + 10;
+    while (! is_file($path) && microtime(true) < $deadline) {
+        usleep(25000);
+    }
+    if (! is_file($path)) {
+        throw new RuntimeException("Timed out waiting to release {$role}.");
+    }
+};
+$lockModes = static fn (): array => array_values(array_map(
+    static fn (object $lock): string => (string) $lock->mode,
+    DB::select(<<<'SQL'
+        SELECT lock.mode
+        FROM pg_locks lock
+        JOIN pg_class relation ON relation.oid = lock.relation
+        WHERE lock.pid = pg_backend_pid()
+          AND relation.relname = 'first_trust_runs'
+          AND lock.granted
+        ORDER BY lock.mode
+    SQL),
+));
+$insertFirstTrust = static function (string $suffix): string {
+    $id = (string) Str::ulid();
+    $now = now();
+    DB::table('first_trust_runs')->insert([
+        'id' => $id,
+        'environment' => 'operational',
+        'installation_id' => "race-{$suffix}",
+        'status' => 'IN_PROGRESS',
+        'execution_id' => "execution-{$suffix}",
+        'authorization_id' => "authorization-{$suffix}",
+        'authority_reference' => 'authority/test/v1',
+        'authority_issuer' => 'https://authority.example.test',
+        'request_fingerprint' => str_repeat('1', 64),
+        'canonical_sha' => 'f56a1031cd63287c8cff37edf9f88245ad704220',
+        'verifier_key_id' => "key-{$suffix}",
+        'verifier_bundle_fingerprint' => str_repeat('2', 64),
+        'reservation_reference' => "reservation-{$suffix}",
+        'reservation_fingerprint' => str_repeat('3', 64),
+        'reservation_reserved_at' => $now,
+        'reservation_commit_deadline' => $now->copy()->addMinutes(15),
+        'reservation_recovery_deadline' => $now->copy()->addDay(),
+        'started_at' => $now,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    return $id;
+};
+
+try {
+    if ($arguments['role'] === 'first_trust') {
+        DB::beginTransaction();
+        $signal('first_trust-attempted', [
+            'php_pid' => getmypid(),
+            'pg_backend_pid' => $backendPid,
+            'sequence' => 'first_trust_lock_attempted',
+        ]);
+        app(FirstTrustEmptyStateGuard::class)->lockProtectedTables();
+
+        if ($arguments['scenario'] === 'first_trust_wins') {
+            $runId = $insertFirstTrust('first-wins');
+            $modes = $lockModes();
+            $signal('first_trust-ready', [
+                'php_pid' => getmypid(),
+                'pg_backend_pid' => $backendPid,
+                'sequence' => 'first_trust_locked_and_inserted',
+                'lock_modes' => $modes,
+            ]);
+            $waitForRelease('first_trust');
+            DB::commit();
+            file_put_contents($arguments['result_file'], json_encode([
+                'outcome' => 'committed',
+                'run_id' => $runId,
+                'lock_modes' => $modes,
+                'php_pid' => getmypid(),
+                'pg_backend_pid' => $backendPid,
+                'barrier_order' => ['first_trust_locked_and_inserted', 'b4c_blocked', 'first_trust_committed'],
+            ], JSON_THROW_ON_ERROR));
+        } else {
+            $runId = $insertFirstTrust('legacy-wins');
+            $modes = $lockModes();
+            $b4cCount = PropertyBootstrapProvisioningRun::query()->whereNull('first_trust_run_id')->count();
+            if ($b4cCount === 0) {
+                throw new RuntimeException('B5A3_R2_EXPECTED_B4C_HISTORY_MISSING');
+            }
+            DB::rollBack();
+            file_put_contents($arguments['result_file'], json_encode([
+                'outcome' => 'rejected',
+                'error_code' => 'FIRST_TRUST_PROTECTED_STATE_NOT_EMPTY',
+                'rolled_back_run_id' => $runId,
+                'b4c_count_after_lock' => $b4cCount,
+                'lock_modes' => $modes,
+                'php_pid' => getmypid(),
+                'pg_backend_pid' => $backendPid,
+                'barrier_order' => ['legacy_locked_and_inserted', 'first_trust_blocked', 'legacy_committed', 'first_trust_rejected'],
+            ], JSON_THROW_ON_ERROR));
+        }
+    } else {
+        $actor = User::query()->findOrFail($arguments['actor_id']);
+        Auth::login($actor);
+        DB::beginTransaction();
+        $signal('b4c-attempted', [
+            'php_pid' => getmypid(),
+            'pg_backend_pid' => $backendPid,
+            'sequence' => 'b4c_legacy_decision_attempted',
+        ]);
+        try {
+            $run = app(PropertyBootstrapProvenanceService::class)->start(
+                $actor,
+                PropertyBootstrapProvisioningEnvironmentEnum::Operational,
+                'b5a3-r2-'.$arguments['scenario'],
+                str_repeat('a', 64),
+                'f56a1031cd63287c8cff37edf9f88245ad704220',
+                'b5a3-r2-race-test',
+            );
+            $modes = $lockModes();
+            $signal('b4c-ready', [
+                'php_pid' => getmypid(),
+                'pg_backend_pid' => $backendPid,
+                'sequence' => 'legacy_locked_and_inserted',
+                'lock_modes' => $modes,
+            ]);
+            $waitForRelease('b4c');
+            DB::commit();
+            file_put_contents($arguments['result_file'], json_encode([
+                'outcome' => 'committed',
+                'run_id' => $run->id,
+                'lock_modes' => $modes,
+                'php_pid' => getmypid(),
+                'pg_backend_pid' => $backendPid,
+                'barrier_order' => ['legacy_locked_and_inserted', 'first_trust_blocked', 'legacy_committed'],
+            ], JSON_THROW_ON_ERROR));
+        } catch (RuntimeException $exception) {
+            DB::rollBack();
+            file_put_contents($arguments['result_file'], json_encode([
+                'outcome' => 'rejected',
+                'error_code' => $exception->getMessage(),
+                'php_pid' => getmypid(),
+                'pg_backend_pid' => $backendPid,
+                'barrier_order' => ['first_trust_locked_and_inserted', 'b4c_blocked', 'first_trust_committed', 'b4c_rejected'],
+            ], JSON_THROW_ON_ERROR));
+        }
+    }
+} catch (Throwable $throwable) {
+    while (DB::transactionLevel() > 0) {
+        DB::rollBack();
+    }
+    file_put_contents($arguments['result_file'], json_encode([
+        'error' => $throwable::class.': '.$throwable->getMessage(),
+        'php_pid' => getmypid(),
+        'pg_backend_pid' => $backendPid,
+    ], JSON_THROW_ON_ERROR));
     exit(1);
 }
 PHP;

@@ -394,6 +394,8 @@ class PropertyBootstrapProvenanceService
                 throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
             }
 
+            $this->lockFirstTrustLegacyDecision();
+
             if (FirstTrustRun::query()->exists()) {
                 throw new RuntimeException(self::ERROR_FIRST_TRUST_INVALID);
             }
@@ -409,6 +411,10 @@ class PropertyBootstrapProvenanceService
         $configuredInstallationId = trim($configuredInstallationId);
         if ($normalizedEnvironment !== $environment->value) {
             throw new RuntimeException(self::ERROR_FIRST_TRUST_BINDING_MISMATCH);
+        }
+
+        if ($firstTrustRunId === null) {
+            $this->lockFirstTrustLegacyDecision();
         }
 
         $applicable = FirstTrustRun::query()
@@ -446,6 +452,15 @@ class PropertyBootstrapProvenanceService
             $environment,
             $configuredInstallationId,
         );
+    }
+
+    private function lockFirstTrustLegacyDecision(): void
+    {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
+        DB::statement('LOCK TABLE first_trust_runs IN SHARE MODE');
     }
 
     private function validatedLinkedFirstTrust(
