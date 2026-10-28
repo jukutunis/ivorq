@@ -8,10 +8,11 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
-use Modules\Finance\AccountsPayable\Models\ApInvoice;
 use Modules\Finance\Payables\Models\SupplierInvoice;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
+use Modules\Finance\Payables\Services\SupplierInvoiceIntakeSourceService;
+use Modules\Finance\Payables\Services\SupplierInvoiceRegistrationService;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
@@ -24,6 +25,8 @@ class SupplierInvoiceControlWorkspaceController extends Controller
     public function __construct(
         private readonly SupplierInvoiceApprovalService $approvalService,
         private readonly SupplierInvoiceExceptionReviewService $exceptionReviewService,
+        private readonly SupplierInvoiceRegistrationService $registrationService,
+        private readonly SupplierInvoiceIntakeSourceService $intakeSourceService,
         private readonly SensitiveActionConfirmationService $confirmationService,
     ) {}
 
@@ -32,24 +35,26 @@ class SupplierInvoiceControlWorkspaceController extends Controller
         $user = $request->user();
         $propertyId = $this->resolvePropertyId($request);
 
-        $invoices = ApInvoice::with(['vendor', 'lines'])
+        $invoices = SupplierInvoice::withoutGlobalScope('property')
+            ->with(['vendor', 'lines', 'threeWayMatch'])
             ->where('property_id', $propertyId)
             ->orderByDesc('created_at')
             ->limit(100)
             ->get()
-            ->map(fn (ApInvoice $inv) => [
+            ->map(fn (SupplierInvoice $inv) => [
                 'id' => $inv->id,
-                'vendor_invoice_number' => $inv->vendor_invoice_number,
+                'vendor_invoice_number' => $inv->invoice_number,
                 'vendor_name' => $inv->vendor?->name,
                 'invoice_date' => $inv->invoice_date?->toDateString(),
                 'due_date' => $inv->due_date?->toDateString(),
-                'grand_total_amount' => (string) ($inv->grand_total_amount ?? '0'),
-                'subtotal_amount' => (string) ($inv->subtotal_amount ?? '0'),
+                'grand_total_amount' => (string) ($inv->grand_total ?? '0'),
+                'subtotal_amount' => (string) ($inv->subtotal ?? '0'),
                 'tax_amount' => (string) ($inv->tax_amount ?? '0'),
-                'amount_paid' => (string) ($inv->amount_paid ?? '0'),
-                'status' => $inv->status?->value,
-                'status_label' => $this->statusLabel($inv->status?->value),
-                'payment_status' => $inv->payment_status?->value,
+                'amount_paid' => '0.00',
+                'status' => $inv->status,
+                'status_label' => $this->statusLabel($inv->status),
+                'payment_status' => null,
+                'match_status' => $inv->threeWayMatch?->match_status,
                 'approved_at' => $inv->approved_at?->toIso8601String(),
                 'rejected_at' => $inv->rejected_at?->toIso8601String(),
                 'rejection_reason' => $inv->rejection_reason,
@@ -61,12 +66,37 @@ class SupplierInvoiceControlWorkspaceController extends Controller
 
         return Inertia::render('Ivorq/Finance/SupplierInvoiceControlWorkspace', [
             'invoices' => $invoices,
+            'intake_sources' => $this->intakeSourceService->project($propertyId),
             'permissions' => [
+                'can_register' => $user?->can(SupplierInvoiceRegistrationService::PERMISSION) ?? false,
                 'can_approve' => $user?->can(SupplierInvoiceApprovalService::PERMISSION) ?? false,
                 'can_reject' => $user?->can(SupplierInvoiceApprovalService::PERMISSION) ?? false,
                 'can_resolve_exception' => $user?->can(SupplierInvoiceExceptionReviewService::PERMISSION) ?? false,
             ],
         ]);
+    }
+
+    public function store(Request $request): RedirectResponse
+    {
+        $this->authorizeAction($request->user(), SupplierInvoiceRegistrationService::PERMISSION);
+        $propertyId = $this->resolvePropertyId($request);
+        $validated = $request->validate([
+            'purchase_order_id' => ['required', 'string', 'max:26'],
+            'goods_receipt_id' => ['nullable', 'string', 'max:26'],
+            'invoice_number' => ['required', 'string', 'max:255'],
+            'invoice_date' => ['required', 'date'],
+            'due_date' => ['nullable', 'date', 'after_or_equal:invoice_date'],
+            'remarks' => ['nullable', 'string', 'max:2000'],
+            'registration_idempotency_key' => ['required', 'string', 'max:96'],
+        ]);
+
+        return $this->redirectingAction(
+            fn () => $this->registrationService->registerFromSource(
+                ['property_id' => $propertyId, ...$validated],
+                $request->user()
+            ),
+            'Supplier invoice registered and matched from source evidence.'
+        );
     }
 
     public function approve(Request $request, string $invoice): RedirectResponse
@@ -136,7 +166,9 @@ class SupplierInvoiceControlWorkspaceController extends Controller
 
     private function findScopedInvoice(string $invoiceId, string $propertyId): SupplierInvoice
     {
-        return SupplierInvoice::where('property_id', $propertyId)->findOrFail($invoiceId);
+        return SupplierInvoice::withoutGlobalScope('property')
+            ->where('property_id', $propertyId)
+            ->findOrFail($invoiceId);
     }
 
     private function redirectingAction(callable $action, string $successMessage): RedirectResponse
@@ -165,13 +197,10 @@ class SupplierInvoiceControlWorkspaceController extends Controller
 
     private function statusLabel(?string $status): string
     {
-        return match($status) {
-            'draft' => 'Draft',
-            'pending_review' => 'Pending Review',
-            'approved' => 'Approved',
-            'rejected' => 'Rejected',
-            'posted' => 'Posted',
-            'voided' => 'Voided',
+        return match(strtoupper((string) $status)) {
+            'REGISTERED' => 'Registered',
+            'APPROVED' => 'Approved',
+            'REJECTED' => 'Rejected',
             default => $status ?? 'Unknown',
         };
     }

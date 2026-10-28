@@ -114,6 +114,22 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.payables.cash-payment-execute.execute');
         Route::post('/payables/cash-reconciliation', [\Modules\Finance\GeneralCashier\Http\Controllers\CashbookEvidenceWorkspaceController::class, 'reconcile'])
             ->name('finance.payables.cash-reconciliation.reconcile');
+        Route::get('/general-cashier/operations', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'index'])
+            ->name('finance.general-cashier.operations.index');
+        Route::post('/general-cashier/sessions/open', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'openSession'])
+            ->name('finance.general-cashier.sessions.open');
+        Route::post('/general-cashier/instruments', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'configureInstrument'])
+            ->name('finance.general-cashier.instruments.store');
+        Route::post('/general-cashier/cash-counts', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'recordCount'])
+            ->name('finance.general-cashier.cash-counts.store');
+        Route::post('/general-cashier/baselines', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'createBaseline'])
+            ->name('finance.general-cashier.baselines.store');
+        Route::post('/general-cashier/corrections/void', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'voidPayment'])
+            ->name('finance.general-cashier.corrections.void');
+        Route::post('/general-cashier/corrections/cash-return', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'recordCashReturn'])
+            ->name('finance.general-cashier.corrections.cash-return');
+        Route::post('/general-cashier/corrections/cash-reversal', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'reverseCashPayment'])
+            ->name('finance.general-cashier.corrections.cash-reversal');
         Route::get('/banking/operations', [\Modules\Finance\Banking\Http\Controllers\BankingOperationsWorkspaceController::class, 'index'])
             ->name('finance.banking.operations.index');
         Route::post('/banking/bank-payment-execute', [\Modules\Finance\Banking\Http\Controllers\BankingOperationsWorkspaceController::class, 'execute'])
@@ -140,6 +156,8 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.banking.migration.pilot-authorization.execute');
         Route::get('/payables/supplier-invoices', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'index'])
             ->name('finance.payables.supplier-invoices.index');
+        Route::post('/payables/supplier-invoices', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'store'])
+            ->name('finance.payables.supplier-invoices.store');
         Route::post('/payables/supplier-invoices/{invoice}/approve', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'approve'])
             ->name('finance.payables.supplier-invoices.approve');
         Route::post('/payables/supplier-invoices/{invoice}/reject', [\Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController::class, 'reject'])

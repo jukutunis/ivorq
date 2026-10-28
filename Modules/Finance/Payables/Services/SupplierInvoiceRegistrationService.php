@@ -15,7 +15,22 @@ class SupplierInvoiceRegistrationService
 
     public function __construct(
         private readonly ThreeWayMatchingEngine $matchingEngine,
+        private readonly SupplierInvoiceIntakeSourceService $intakeSourceService,
     ) {
+    }
+
+    public function registerFromSource(array $input, User $actor): array
+    {
+        $propertyId = $this->requiredString(
+            $input['property_id'] ?? null,
+            'Supplier invoice property is required.'
+        );
+
+        return DB::transaction(function () use ($propertyId, $input, $actor): array {
+            $resolved = $this->intakeSourceService->resolve($propertyId, $input);
+
+            return $this->registerAndMatch($resolved, $actor);
+        });
     }
 
     public function registerAndMatch(array $data, User $actor): array
@@ -38,6 +53,22 @@ class SupplierInvoiceRegistrationService
         return DB::transaction(function () use ($normalized, $actor): SupplierInvoice {
             $this->assertSourceScope($normalized);
 
+            if ($normalized['registration_idempotency_key'] !== null) {
+                $replay = SupplierInvoice::with('lines')
+                    ->where('property_id', $normalized['property_id'])
+                    ->where('registration_idempotency_key', $normalized['registration_idempotency_key'])
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($replay) {
+                    if (!hash_equals((string) $replay->source_fingerprint, $normalized['source_fingerprint'])) {
+                        throw new DomainException('Supplier invoice registration key was already used for different source evidence.');
+                    }
+
+                    return $replay;
+                }
+            }
+
             $existing = SupplierInvoice::with('lines')
                 ->where('property_id', $normalized['property_id'])
                 ->where('vendor_id', $normalized['vendor_id'])
@@ -55,6 +86,8 @@ class SupplierInvoiceRegistrationService
                 'purchase_order_id' => $normalized['purchase_order_id'],
                 'goods_receipt_id' => $normalized['goods_receipt_id'],
                 'invoice_number' => $normalized['invoice_number'],
+                'registration_idempotency_key' => $normalized['registration_idempotency_key'],
+                'source_fingerprint' => $normalized['source_fingerprint'],
                 'invoice_date' => $normalized['invoice_date'],
                 'due_date' => $normalized['due_date'],
                 'currency_code' => $normalized['currency_code'],
@@ -250,7 +283,7 @@ class SupplierInvoiceRegistrationService
             throw new DomainException('Supplier invoice tax and discount amounts cannot be negative.');
         }
 
-        return [
+        $normalized = [
             'property_id' => $this->requiredString($data['property_id'] ?? null, 'Supplier invoice property is required.'),
             'vendor_id' => $this->requiredString($data['vendor_id'] ?? null, 'Supplier invoice vendor is required.'),
             'purchase_order_id' => $this->requiredString($data['purchase_order_id'] ?? null, 'Supplier invoice purchase order is required.'),
@@ -264,8 +297,23 @@ class SupplierInvoiceRegistrationService
             'discount_amount' => $discountAmount,
             'grand_total' => round($subtotal + $taxAmount - $discountAmount, 2),
             'remarks' => $data['remarks'] ?? null,
+            'registration_idempotency_key' => $this->nullableString($data['registration_idempotency_key'] ?? null),
             'lines' => $normalizedLines,
         ];
+
+        if ($normalized['registration_idempotency_key'] !== null
+            && strlen($normalized['registration_idempotency_key']) > 96) {
+            throw new DomainException('Supplier invoice registration key exceeds the supported length.');
+        }
+
+        $fingerprintEvidence = $normalized;
+        unset($fingerprintEvidence['registration_idempotency_key']);
+        $normalized['source_fingerprint'] = hash(
+            'sha256',
+            json_encode($fingerprintEvidence, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)
+        );
+
+        return $normalized;
     }
 
     private function requiredString(mixed $value, string $message): string

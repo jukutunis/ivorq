@@ -40,8 +40,15 @@ class GeneralCashierOperationalFoundationTest extends PostgresTestCase
             'name' => GeneralCashierOperationalFoundationService::OPEN_PERMISSION,
             'guard_name' => 'web',
         ]);
+        Permission::firstOrCreate([
+            'name' => GeneralCashierOperationalFoundationService::CONFIGURE_INSTRUMENT_PERMISSION,
+            'guard_name' => 'web',
+        ]);
         app(PermissionRegistrar::class)->forgetCachedPermissions();
-        $this->actor->givePermissionTo(GeneralCashierOperationalFoundationService::OPEN_PERMISSION);
+        $this->actor->givePermissionTo([
+            GeneralCashierOperationalFoundationService::OPEN_PERMISSION,
+            GeneralCashierOperationalFoundationService::CONFIGURE_INSTRUMENT_PERMISSION,
+        ]);
         app(CurrentPropertyService::class)->setPropertyId($this->property->id);
 
         $this->service = app(GeneralCashierOperationalFoundationService::class);
@@ -147,6 +154,52 @@ class GeneralCashierOperationalFoundationTest extends PostgresTestCase
         $this->assertSame(CashierPaymentInstrumentTypeEnum::CASH->value, $context['instrument_type']);
         $this->assertSame($accountId, $context['operational_gl_account_id']);
         $this->assertNoForbiddenMutation($before);
+    }
+
+    public function test_authorized_actor_configures_server_validated_payment_instrument_idempotently(): void
+    {
+        $accountId = $this->makeGlAccount($this->property, '1005', true);
+        $before = $this->forbiddenMutationSnapshot();
+
+        $instrument = $this->service->configureInstrument('Main Cash Drawer', 'CASH', $accountId, $this->actor);
+        $replay = $this->service->configureInstrument('Main Cash Drawer', 'CASH', $accountId, $this->actor);
+
+        $this->assertSame($instrument->id, $replay->id);
+        $this->assertSame($this->property->id, $instrument->property_id);
+        $this->assertSame($accountId, $instrument->operational_gl_account_id);
+        $this->assertSame(CashierPaymentInstrumentTypeEnum::CASH, $instrument->type);
+        $this->assertTrue($instrument->is_active);
+        $this->assertNoForbiddenMutation($before);
+    }
+
+    public function test_instrument_configuration_rejects_unauthorized_cross_property_and_conflicting_sources(): void
+    {
+        $accountId = $this->makeGlAccount($this->property, '1006', true);
+        $otherProperty = $this->makeProperty();
+        $otherAccountId = $this->makeGlAccount($otherProperty, '1007', true);
+        $unauthorized = $this->makeUser();
+        $this->attachActorToProperty($unauthorized, $this->property);
+
+        foreach ([
+            fn () => $this->service->configureInstrument('Denied', 'CASH', $accountId, $unauthorized),
+            fn () => $this->service->configureInstrument('Cross Property', 'CASH', $otherAccountId, $this->actor),
+            fn () => $this->service->configureInstrument('Unsupported', 'CARD', $accountId, $this->actor),
+        ] as $invalidConfiguration) {
+            try {
+                $invalidConfiguration();
+                $this->fail('Invalid instrument configuration must fail closed.');
+            } catch (AuthorizationException|DomainException) {
+                $this->assertDatabaseMissing('cashier_payment_instruments', ['name' => 'Denied']);
+            }
+        }
+
+        $this->service->configureInstrument('Conflicting', 'CASH', $accountId, $this->actor);
+        try {
+            $this->service->configureInstrument('Conflicting', 'BANK', $accountId, $this->actor);
+            $this->fail('Conflicting instrument replay must fail.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('Conflicting', $exception->getMessage());
+        }
     }
 
     public function test_operational_context_fails_closed_for_invalid_session_instrument_actor_or_account(): void

@@ -21,6 +21,7 @@ class SensitiveActionConfirmationService
         'frontdesk-checkout-execution',
         'cash-payment-execution',
         'bank-payment-execution',
+        'supplier-payment-correction',
         'banking-migration-account-identity-pilot-execution',
         'inventory-goods-receipt-posting',
         'inventory-transfer-posting',

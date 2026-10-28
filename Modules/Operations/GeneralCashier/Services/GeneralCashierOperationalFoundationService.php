@@ -9,6 +9,7 @@ use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
+use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
 use Modules\Operations\GeneralCashier\Models\CashierPaymentInstrument;
 use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Shared\Services\CurrentPropertyService;
@@ -17,6 +18,7 @@ use Throwable;
 class GeneralCashierOperationalFoundationService
 {
     public const OPEN_PERMISSION = 'finance.general-cashier.session.open';
+    public const CONFIGURE_INSTRUMENT_PERMISSION = 'finance.general-cashier.instrument.configure';
 
     public function __construct(
         private readonly CurrentPropertyService $currentPropertyService,
@@ -84,6 +86,65 @@ class GeneralCashierOperationalFoundationService
             $session->save();
 
             return $session->fresh();
+        });
+    }
+
+    public function configureInstrument(
+        string $name,
+        string $type,
+        string $operationalGlAccountId,
+        ?User $actor
+    ): CashierPaymentInstrument {
+        return DB::transaction(function () use ($name, $type, $operationalGlAccountId, $actor): CashierPaymentInstrument {
+            $actor = $this->resolveAuthorizedActor($actor, self::CONFIGURE_INSTRUMENT_PERMISSION);
+            $propertyId = $this->resolveActivePropertyId();
+            $this->assertActorCanAccessProperty($actor, $propertyId);
+
+            $name = trim($name);
+            if ($name === '') {
+                throw new \DomainException('Cashier Payment Instrument name is required.');
+            }
+
+            $instrumentType = CashierPaymentInstrumentTypeEnum::tryFrom(strtoupper(trim($type)));
+            if (!$instrumentType) {
+                throw new \DomainException('Cashier Payment Instrument type is unsupported.');
+            }
+
+            $account = Account::withoutGlobalScope('property')
+                ->whereKey($operationalGlAccountId)
+                ->where('property_id', $propertyId)
+                ->where('is_active', true)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$account || ($instrumentType === CashierPaymentInstrumentTypeEnum::CASH && !$account->is_cash_equivalent)) {
+                throw new \DomainException('Active property-scoped operational account is unavailable for the instrument.');
+            }
+
+            $existing = CashierPaymentInstrument::where('property_id', $propertyId)
+                ->where('name', $name)
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing) {
+                if ($existing->type === $instrumentType
+                    && $existing->operational_gl_account_id === $account->id
+                    && $existing->is_active) {
+                    return $existing->fresh();
+                }
+
+                throw new \DomainException('Conflicting Cashier Payment Instrument configuration already exists.');
+            }
+
+            return CashierPaymentInstrument::create([
+                'property_id' => $propertyId,
+                'name' => $name,
+                'type' => $instrumentType->value,
+                'operational_gl_account_id' => $account->id,
+                'is_active' => true,
+                'created_by' => $actor->id,
+                'updated_by' => $actor->id,
+            ])->fresh();
         });
     }
 

@@ -97,6 +97,7 @@ class PermissionSeeder extends Seeder
             'finance.payables.payment-proposal.submit',
             'finance.payables.payment-proposal.approve',
             'finance.general-cashier.session.open',
+            'finance.general-cashier.instrument.configure',
             'finance.general-cashier.payment.execute',
             'finance.general-cashier.checkout-obligation.view',
             'finance.payables.supplier-payment.candidate.create',

@@ -6,7 +6,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use Modules\Finance\AccountsPayable\Models\ApInvoice;
+use Modules\Finance\Payables\Models\SupplierInvoice;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
@@ -86,8 +86,8 @@ class SupplierInvoiceControlWorkspaceTest extends PostgresTestCase
         $this->assertNotNull($displayed, 'Invoice should appear in workspace projection');
         $this->assertSame('INV-EVIDENCE-001', $displayed['vendor_invoice_number']);
         $this->assertNotNull($displayed['vendor_name']);
-        $this->assertSame('pending_review', $displayed['status']);
-        $this->assertSame('Pending Review', $displayed['status_label']);
+        $this->assertSame(SupplierInvoice::STATUS_REGISTERED, $displayed['status']);
+        $this->assertSame('Registered', $displayed['status_label']);
         $this->assertGreaterThanOrEqual(0, (int) $displayed['line_count']);
     }
 
@@ -96,8 +96,8 @@ class SupplierInvoiceControlWorkspaceTest extends PostgresTestCase
         $this->createFixtures();
 
         $tables = [
-            'ap_invoices',
-            'ap_invoice_lines',
+            'vendor_invoices',
+            'vendor_invoice_lines',
             'payment_proposals',
             'payment_proposal_items',
             'payment_executions',
@@ -254,7 +254,7 @@ class SupplierInvoiceControlWorkspaceTest extends PostgresTestCase
         ]);
     }
 
-    private function makeInvoice(Property $property, string $invoiceNumber, string $status): ApInvoice
+    private function makeInvoice(Property $property, string $invoiceNumber, string $status): SupplierInvoice
     {
         $vendorId = (string) Str::ulid();
         $timestamp = now();
@@ -283,19 +283,22 @@ class SupplierInvoiceControlWorkspaceTest extends PostgresTestCase
             'updated_at' => $timestamp,
         ]);
 
-        return ApInvoice::create([
+        return SupplierInvoice::create([
             'property_id' => $property->id,
             'vendor_id' => $vendorId,
-            'invoice_type' => 'grni_matched',
-            'vendor_invoice_number' => $invoiceNumber,
+            'invoice_number' => $invoiceNumber,
             'invoice_date' => '2026-07-01',
             'due_date' => '2026-07-31',
-            'subtotal_amount' => '80.00',
+            'currency_code' => 'USD',
+            'subtotal' => '80.00',
             'tax_amount' => '20.00',
-            'grand_total_amount' => '100.00',
-            'amount_paid' => '0.00',
-            'amount_remaining' => '100.00',
-            'status' => $status,
+            'discount_amount' => '0.00',
+            'grand_total' => '100.00',
+            'status' => match ($status) {
+                'approved' => SupplierInvoice::STATUS_APPROVED,
+                'rejected' => SupplierInvoice::STATUS_REJECTED,
+                default => SupplierInvoice::STATUS_REGISTERED,
+            },
         ]);
     }
 

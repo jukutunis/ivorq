@@ -38,9 +38,31 @@ interface Invoice {
   line_count: number;
 }
 
+interface IntakeReceipt {
+  id: string;
+  grn_number: string;
+  status: string;
+  received_at: string | null;
+}
+
+interface IntakeSource {
+  id: string;
+  po_no: string;
+  vendor_id: string;
+  vendor_name: string;
+  currency_code: string;
+  subtotal: string;
+  tax_amount: string;
+  total_amount: string;
+  status: string;
+  receipts: IntakeReceipt[];
+}
+
 interface Props {
   invoices: Invoice[];
+  intake_sources: IntakeSource[];
   permissions: {
+    can_register: boolean;
     can_approve: boolean;
     can_reject: boolean;
     can_resolve_exception: boolean;
@@ -58,6 +80,7 @@ const financeTabs = [
 
 function statusBadge(status: string): BadgeStatus {
   switch (status) {
+    case 'REGISTERED': return 'pending';
     case 'PENDING': return 'pending';
     case 'pending_review': return 'pending';
     case 'APPROVED': return 'ready';
@@ -69,11 +92,11 @@ function statusBadge(status: string): BadgeStatus {
   }
 }
 
-export default function SupplierInvoiceControlWorkspace({ invoices, permissions }: Props) {
+export default function SupplierInvoiceControlWorkspace({ invoices, intake_sources, permissions }: Props) {
   const { flash } = usePage<{ flash?: { success?: string | null; error?: string | null } }>().props;
   const [selectedId, setSelectedId] = useState<string | null>(invoices[0]?.id ?? null);
 
-  const pendingCount = useMemo(() => invoices.filter((invoice) => invoice.status === 'PENDING').length, [invoices]);
+  const pendingCount = useMemo(() => invoices.filter((invoice) => invoice.status === 'REGISTERED').length, [invoices]);
   const approvedCount = useMemo(() => invoices.filter((invoice) => invoice.status === 'APPROVED').length, [invoices]);
   const rejectedCount = useMemo(() => invoices.filter((invoice) => invoice.status === 'REJECTED').length, [invoices]);
   const selectedInvoice = invoices.find((invoice) => invoice.id === selectedId) ?? invoices[0] ?? null;
@@ -118,6 +141,8 @@ export default function SupplierInvoiceControlWorkspace({ invoices, permissions 
           {(flash?.success || flash?.error) && (
             <div className={`finance-flash ${flash.success ? 'success' : 'error'}`}>{flash.success || flash.error}</div>
           )}
+
+          <SupplierInvoiceIntake sources={intake_sources} canRegister={permissions.can_register} />
 
           <OperationalSnapshot>
             <SnapshotCard value={pendingCount} label="Pending" statusColor="pending-purple" />
@@ -182,8 +207,99 @@ export default function SupplierInvoiceControlWorkspace({ invoices, permissions 
   );
 }
 
+function SupplierInvoiceIntake({ sources, canRegister }: { sources: IntakeSource[]; canRegister: boolean }) {
+  const form = useForm({
+    purchase_order_id: '',
+    goods_receipt_id: '',
+    invoice_number: '',
+    invoice_date: new Date().toISOString().slice(0, 10),
+    due_date: '',
+    remarks: '',
+    registration_idempotency_key: crypto.randomUUID(),
+  });
+  const selectedSource = sources.find((source) => source.id === form.data.purchase_order_id) ?? null;
+
+  return (
+    <AttentionArea title="Source-Proven Invoice Intake" badgeText="Controlled" badgeType="inspection" areaType="inspection">
+      <div className="finance-context-note" style={{ marginBottom: '12px' }}>
+        Supplier, currency, quantities, prices, and totals are resolved from the selected purchase order and receiving evidence. Tax-bearing purchase orders fail closed.
+      </div>
+      {!canRegister ? (
+        <div className="finance-empty-state">Invoice registration authority is not active for the current actor.</div>
+      ) : sources.length === 0 ? (
+        <div className="finance-empty-state">No eligible purchase-order sources are available in the active property.</div>
+      ) : (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            form.post(route('finance.payables.supplier-invoices.store'), {
+              preserveScroll: true,
+              onSuccess: () => form.setData('registration_idempotency_key', crypto.randomUUID()),
+            });
+          }}
+        >
+          <div className="finance-evidence-grid">
+            <label>
+              <span className="filter-label">Purchase Order</span>
+              <select
+                className="form-input"
+                value={form.data.purchase_order_id}
+                onChange={(event) => {
+                  form.setData({ ...form.data, purchase_order_id: event.target.value, goods_receipt_id: '' });
+                }}
+                required
+              >
+                <option value="">Select source</option>
+                {sources.map((source) => <option key={source.id} value={source.id}>{source.po_no} — {source.vendor_name}</option>)}
+              </select>
+            </label>
+            <label>
+              <span className="filter-label">Receiving Evidence</span>
+              <select
+                className="form-input"
+                value={form.data.goods_receipt_id}
+                onChange={(event) => form.setData('goods_receipt_id', event.target.value)}
+                disabled={!selectedSource}
+              >
+                <option value="">No receipt (will raise match exception)</option>
+                {selectedSource?.receipts.map((receipt) => <option key={receipt.id} value={receipt.id}>{receipt.grn_number} — {receipt.status}</option>)}
+              </select>
+            </label>
+            <label>
+              <span className="filter-label">Supplier Invoice Number</span>
+              <input className="form-input" value={form.data.invoice_number} onChange={(event) => form.setData('invoice_number', event.target.value)} maxLength={255} required />
+            </label>
+            <label>
+              <span className="filter-label">Invoice Date</span>
+              <input type="date" className="form-input" value={form.data.invoice_date} onChange={(event) => form.setData('invoice_date', event.target.value)} required />
+            </label>
+            <label>
+              <span className="filter-label">Due Date</span>
+              <input type="date" className="form-input" value={form.data.due_date} min={form.data.invoice_date} onChange={(event) => form.setData('due_date', event.target.value)} />
+            </label>
+            <div>
+              <span className="filter-label">Server-Owned Financial Evidence</span>
+              <div className="finance-context-note">
+                {selectedSource ? `${selectedSource.currency_code} ${selectedSource.total_amount} · ${selectedSource.vendor_name}` : 'Select a purchase order'}
+              </div>
+            </div>
+          </div>
+          <label style={{ display: 'block', marginTop: '12px' }}>
+            <span className="filter-label">Remarks</span>
+            <textarea className="form-input" value={form.data.remarks} onChange={(event) => form.setData('remarks', event.target.value)} maxLength={2000} rows={2} />
+          </label>
+          {Object.keys(form.errors).length > 0 && <div className="finance-flash error" style={{ marginTop: '12px' }}>{Object.values(form.errors)[0]}</div>}
+          <Button type="submit" style={{ marginTop: '12px' }} disabled={form.processing || !selectedSource}>
+            <Icon name="check" /> {form.processing ? 'Registering…' : 'Register and Match'}
+          </Button>
+        </form>
+      )}
+    </AttentionArea>
+  );
+}
+
 function InvoiceEvidence({ invoice }: { invoice: Invoice }) {
-  const isPending = invoice.status === 'PENDING' || invoice.status === 'pending_review';
+  const isPending = invoice.status === 'REGISTERED';
 
   return (
     <AttentionArea

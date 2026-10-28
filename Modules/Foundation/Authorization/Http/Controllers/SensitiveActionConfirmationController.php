@@ -133,6 +133,7 @@ class SensitiveActionConfirmationController extends Controller
             'administrative-sensitive-action' => 'Administrative Sensitive Action',
             'cash-payment-execution' => 'Cash Payment Execution',
             'bank-payment-execution' => 'Bank Payment Execution',
+            'supplier-payment-correction' => 'Supplier Payment Correction',
             'banking-migration-account-identity-pilot-execution' => 'Banking Account Identity Pilot Execution',
             'engineering-room-availability-release' => 'Engineering Room Availability Release',
             'frontdesk-check-in' => 'Front Desk Check-In',

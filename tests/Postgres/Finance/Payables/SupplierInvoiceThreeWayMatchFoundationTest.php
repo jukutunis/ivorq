@@ -146,6 +146,75 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertSame($sourceBefore, $this->sourceSnapshot($fixture));
     }
 
+    public function test_source_intake_resolves_financial_evidence_server_side_and_replays_idempotently(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $input = [
+            'property_id' => $this->property->id,
+            'purchase_order_id' => $fixture['purchase_order_id'],
+            'goods_receipt_id' => $fixture['goods_receipt_id'],
+            'invoice_number' => 'SINV-SOURCE-001',
+            'invoice_date' => '2026-06-30',
+            'registration_idempotency_key' => 'source-intake-001',
+            'vendor_id' => (string) Str::ulid(),
+            'currency_code' => 'USD',
+            'tax_amount' => 999,
+            'lines' => [['quantity' => 1, 'unit_price' => 1]],
+        ];
+
+        $first = $this->service->registerFromSource($input, $this->actor);
+        $beforeReplay = $this->invoiceEvidenceCounts();
+        $replay = $this->service->registerFromSource($input, $this->actor);
+
+        $this->assertSame($first['invoice']->id, $replay['invoice']->id);
+        $this->assertSame($first['match']->id, $replay['match']->id);
+        $this->assertSame($beforeReplay, $this->invoiceEvidenceCounts());
+        $this->assertSame($fixture['vendor_id'], $first['invoice']->vendor_id);
+        $this->assertSame('IDR', $first['invoice']->currency_code);
+        $this->assertEquals('125.00', $first['invoice']->grand_total);
+        $this->assertEquals('10.000', $first['invoice']->lines->first()->quantity);
+        $this->assertEquals('12.50', $first['invoice']->lines->first()->unit_price);
+        $this->assertNotNull($first['invoice']->source_fingerprint);
+    }
+
+    public function test_source_intake_conflicting_replay_and_cross_property_source_fail_closed(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $input = [
+            'property_id' => $this->property->id,
+            'purchase_order_id' => $fixture['purchase_order_id'],
+            'goods_receipt_id' => $fixture['goods_receipt_id'],
+            'invoice_number' => 'SINV-SOURCE-002',
+            'invoice_date' => '2026-06-30',
+            'registration_idempotency_key' => 'source-intake-002',
+        ];
+
+        $this->service->registerFromSource($input, $this->actor);
+        $beforeConflict = $this->invoiceEvidenceCounts();
+
+        try {
+            $this->service->registerFromSource(
+                [...$input, 'invoice_number' => 'SINV-SOURCE-CONFLICT'],
+                $this->actor
+            );
+            $this->fail('Conflicting idempotent replay must fail.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('different source evidence', $exception->getMessage());
+        }
+
+        $otherProperty = $this->makeProperty();
+        try {
+            $this->service->registerFromSource([
+                ...$input,
+                'property_id' => $otherProperty->id,
+                'registration_idempotency_key' => 'cross-property-source',
+            ], $this->actor);
+            $this->fail('Cross-property source intake must fail.');
+        } catch (AuthorizationException|DomainException) {
+            $this->assertSame($beforeConflict, $this->invoiceEvidenceCounts());
+        }
+    }
+
     public function test_registration_failure_leaves_no_partial_header_line_or_match_evidence(): void
     {
         $fixture = $this->makePurchasingFixture($this->property);

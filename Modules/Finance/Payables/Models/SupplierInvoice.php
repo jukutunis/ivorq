@@ -31,6 +31,8 @@ class SupplierInvoice extends Model
         'purchase_order_id',
         'goods_receipt_id',
         'invoice_number',
+        'registration_idempotency_key',
+        'source_fingerprint',
         'invoice_date',
         'due_date',
         'currency_code',
