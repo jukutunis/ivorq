@@ -110,6 +110,8 @@ class PermissionSeeder extends Seeder
             'finance.general-cashier.payment.void',
             'finance.general-cashier.cash-return.record',
             'finance.general-cashier.cash-payment-reversal.create',
+            'finance.banking.bank-return.record',
+            'finance.general-cashier.bank-payment-reversal.create',
             'finance.payables.ap-settlement.allocate',
             'finance.fx-rate.record',
             'finance.fx-rate.approve',

@@ -155,7 +155,9 @@ class JournalEntryDraftFinalizationAuthorizationService
             || ($candidate->source_type === 'PaymentExecution'
             && $candidate->posting_event === 'SupplierPaymentCashDisbursement')
             || ($candidate->source_type === 'CashSupplierPaymentReversalExecution'
-            && $candidate->posting_event === 'SupplierPaymentCashReturnReversal');
+            && $candidate->posting_event === 'SupplierPaymentCashReturnReversal')
+            || ($candidate->source_type === 'BankSupplierPaymentReversalExecution'
+            && $candidate->posting_event === 'SupplierPaymentBankReturnReversal');
     }
 
     private function assertPaymentExecutionNotVoided(JournalCandidate $candidate): void

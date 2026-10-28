@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Finance\Banking\Enums\ControlledBankStatementLineDirectionEnum;
 use Modules\Finance\Banking\Services\BankingSourceEvidenceService;
+use Modules\Finance\Banking\Services\BankReturnEvidenceService;
 use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Services\JournalCandidateDraftMaterializationService;
@@ -24,6 +25,7 @@ use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierOperationalFoundationService;
 use Modules\Operations\GeneralCashier\Services\PaymentExecutionService;
+use Modules\Operations\GeneralCashier\Services\BankSupplierPaymentReversalService;
 use Shared\Services\CurrentPropertyService;
 use Spatie\Permission\PermissionRegistrar;
 use Tests\PostgresTestCase;
@@ -57,6 +59,8 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
     private JournalEntryDraftFinalizationAuthorizationService $authorizationService;
 
     private JournalEntryControlledPostingService $postingService;
+    private BankReturnEvidenceService $bankReturnService;
+    private BankSupplierPaymentReversalService $bankReversalService;
 
     protected function setUp(): void
     {
@@ -94,6 +98,8 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
         $this->draftService = app(JournalCandidateDraftMaterializationService::class);
         $this->authorizationService = app(JournalEntryDraftFinalizationAuthorizationService::class);
         $this->postingService = app(JournalEntryControlledPostingService::class);
+        $this->bankReturnService = app(BankReturnEvidenceService::class);
+        $this->bankReversalService = app(BankSupplierPaymentReversalService::class);
     }
 
     public function test_confirmed_bank_payment_uses_independent_statement_line_and_controlled_posting(): void
@@ -243,6 +249,50 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
         } catch (DomainException) {
             $this->assertSame(0, DB::table('payment_executions')->count());
         }
+    }
+
+    public function test_bank_return_and_reversal_use_independent_inflow_and_controlled_gl_candidate(): void
+    {
+        $source = $this->makeApprovedPaymentProposalItem('125.00');
+        $bank = $this->bankingService->registerBankAccount($this->bankAccountId, 'Controlled Bank', 'Operating Account', 'BANK-RETURN-ACCOUNT', 'IDR', 'BANK-RETURN-SOURCE', $this->actor);
+        $outflow = $this->bankingService->registerStatementLine($bank->id, 'OUTFLOW-SOURCE', 'OUTFLOW-001', '2026-07-01', ControlledBankStatementLineDirectionEnum::OUTFLOW, '125.00', 'IDR', $this->actor, $source['vendor_id']);
+        $cashier = $this->makeBankCashierContext();
+        $execution = $this->paymentExecutionService->recordConfirmedBankExecution($source['proposal_item_id'], $cashier['session_id'], $cashier['instrument_id'], $bank->id, $outflow->id, $this->actor);
+        $paymentCandidate = $this->candidateService->createForPaymentExecution($execution->id);
+        $this->reviewService->approve($paymentCandidate->id, $this->actor->id);
+        $paymentDraft = $this->draftService->materialize($paymentCandidate->id, $this->actor->id);
+        $this->authorizationService->authorize($paymentDraft->id, $this->actor->id);
+        $postedPayment = $this->postingService->post($paymentDraft->id, $this->actor->id);
+        $invalidInflow = $this->bankingService->registerStatementLine($bank->id, 'INVALID-RETURN-SOURCE', 'INVALID-RETURN-001', '2026-07-02', ControlledBankStatementLineDirectionEnum::INFLOW, '124.00', 'IDR', $this->actor, $source['vendor_id']);
+        try {
+            $this->bankReturnService->record($postedPayment->id, $invalidInflow->id, 'BANK_RETURN', 'bank-return-invalid', $this->actor);
+            $this->fail('Mismatched bank-return amount must fail closed.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('conflicts', $exception->getMessage());
+        }
+        $inflow = $this->bankingService->registerStatementLine($bank->id, 'RETURN-SOURCE', 'RETURN-001', '2026-07-02', ControlledBankStatementLineDirectionEnum::INFLOW, '125.00', 'IDR', $this->actor, $source['vendor_id']);
+
+        $return = $this->bankReturnService->record($postedPayment->id, $inflow->id, 'BANK_RETURN', 'bank-return-replay-001', $this->actor);
+        $replay = $this->bankReturnService->record($postedPayment->id, $inflow->id, 'BANK_RETURN', 'bank-return-replay-001', $this->actor);
+        $this->assertSame($return->id, $replay->id);
+        $this->assertSame($inflow->id, $return->return_statement_line_id);
+        $this->assertSame('125.00', (string) $return->return_amount);
+        try {
+            $this->bankReturnService->record($postedPayment->id, $inflow->id, 'PAYMENT_REJECTED', 'bank-return-replay-001', $this->actor);
+            $this->fail('Conflicting bank-return replay must fail.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('Conflicting', $exception->getMessage());
+        }
+
+        $reversal = $this->bankReversalService->record($return->id, $this->actor);
+        $reversalReplay = $this->bankReversalService->record($return->id, $this->actor);
+        $this->assertSame($reversal->id, $reversalReplay->id);
+        $candidate = $this->candidateService->createForBankReversalExecution($reversal->id);
+        $this->assertSame(SupplierPaymentJournalCandidateService::BANK_REVERSAL_SOURCE_TYPE, $candidate->source_type);
+        $this->assertSame(SupplierPaymentJournalCandidateService::BANK_REVERSAL_POSTING_EVENT, $candidate->posting_event);
+        $this->assertSame('125.0000', (string) $candidate->lines[0]->amount);
+        $this->assertSame('DEBIT', $candidate->lines[0]->entry_type->value);
+        $this->assertSame('CREDIT', $candidate->lines[1]->entry_type->value);
     }
 
     private function makeApprovedPaymentProposalItem(string $amount): array
@@ -444,6 +494,8 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
             BankingSourceEvidenceService::REGISTER_STATEMENT_LINE_PERMISSION,
             GeneralCashierOperationalFoundationService::OPEN_PERMISSION,
             PaymentExecutionService::PERMISSION,
+            BankReturnEvidenceService::PERMISSION,
+            BankSupplierPaymentReversalService::PERMISSION,
             SupplierPaymentJournalCandidateService::PERMISSION,
             JournalCandidateReviewService::PERMISSION,
             JournalCandidateDraftMaterializationService::PERMISSION,

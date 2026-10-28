@@ -130,6 +130,10 @@ Route::middleware(['auth', 'active.property'])->group(function () {
             ->name('finance.general-cashier.corrections.cash-return');
         Route::post('/general-cashier/corrections/cash-reversal', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'reverseCashPayment'])
             ->name('finance.general-cashier.corrections.cash-reversal');
+        Route::post('/general-cashier/corrections/bank-return', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'recordBankReturn'])
+            ->name('finance.general-cashier.corrections.bank-return');
+        Route::post('/general-cashier/corrections/bank-reversal', [\Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController::class, 'reverseBankPayment'])
+            ->name('finance.general-cashier.corrections.bank-reversal');
         Route::get('/banking/operations', [\Modules\Finance\Banking\Http\Controllers\BankingOperationsWorkspaceController::class, 'index'])
             ->name('finance.banking.operations.index');
         Route::post('/banking/bank-payment-execute', [\Modules\Finance\Banking\Http\Controllers\BankingOperationsWorkspaceController::class, 'execute'])

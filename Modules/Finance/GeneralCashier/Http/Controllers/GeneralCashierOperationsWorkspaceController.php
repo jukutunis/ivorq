@@ -13,6 +13,10 @@ use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\GeneralLedger\Services\SupplierPaymentJournalCandidateService;
+use Modules\Finance\Banking\Services\BankReturnEvidenceService;
+use Modules\Finance\Banking\Models\BankReturnEvidence;
+use Modules\Finance\Banking\Models\ControlledBankStatementLine;
+use Modules\Finance\Banking\Enums\ControlledBankStatementLineDirectionEnum;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Models\CashCountEvidence;
@@ -28,6 +32,8 @@ use Modules\Operations\GeneralCashier\Services\CashReturnEvidenceService;
 use Modules\Operations\GeneralCashier\Services\CashSupplierPaymentReversalService;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierOperationalFoundationService;
 use Modules\Operations\GeneralCashier\Services\PaymentExecutionVoidService;
+use Modules\Operations\GeneralCashier\Services\BankSupplierPaymentReversalService;
+use Modules\Operations\GeneralCashier\Models\BankSupplierPaymentReversalExecution;
 use Shared\Services\CurrentPropertyService;
 use Throwable;
 
@@ -43,6 +49,8 @@ class GeneralCashierOperationsWorkspaceController extends Controller
         private readonly CashReturnEvidenceService $returnService,
         private readonly CashSupplierPaymentReversalService $reversalService,
         private readonly SupplierPaymentJournalCandidateService $candidateService,
+        private readonly BankReturnEvidenceService $bankReturnService,
+        private readonly BankSupplierPaymentReversalService $bankReversalService,
         private readonly SensitiveActionConfirmationService $confirmationService,
     ) {}
 
@@ -79,13 +87,16 @@ class GeneralCashierOperationsWorkspaceController extends Controller
                 'can_record_cash_return' => $actor?->can(CashReturnEvidenceService::PERMISSION) ?? false,
                 'can_reverse_cash' => ($actor?->can(CashSupplierPaymentReversalService::PERMISSION) ?? false)
                     && ($actor?->can(SupplierPaymentJournalCandidateService::PERMISSION) ?? false),
+                'can_record_bank_return' => $actor?->can(BankReturnEvidenceService::PERMISSION) ?? false,
+                'can_reverse_bank' => ($actor?->can(BankSupplierPaymentReversalService::PERMISSION) ?? false)
+                    && ($actor?->can(SupplierPaymentJournalCandidateService::PERMISSION) ?? false),
             ],
         ]);
     }
 
     public function openSession(Request $request): RedirectResponse
     {
-        $this->authorize($request->user(), GeneralCashierOperationalFoundationService::OPEN_PERMISSION);
+        $this->authorizeAction($request->user(), GeneralCashierOperationalFoundationService::OPEN_PERMISSION);
         $this->resolvePropertyId($request);
 
         return $this->action(fn () => $this->foundationService->openSession($request->user()), 'Cashier session opened.');
@@ -93,7 +104,7 @@ class GeneralCashierOperationsWorkspaceController extends Controller
 
     public function configureInstrument(Request $request): RedirectResponse
     {
-        $this->authorize($request->user(), GeneralCashierOperationalFoundationService::CONFIGURE_INSTRUMENT_PERMISSION);
+        $this->authorizeAction($request->user(), GeneralCashierOperationalFoundationService::CONFIGURE_INSTRUMENT_PERMISSION);
         $this->resolvePropertyId($request);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -109,7 +120,7 @@ class GeneralCashierOperationsWorkspaceController extends Controller
 
     public function recordCount(Request $request): RedirectResponse
     {
-        $this->authorize($request->user(), CashCountAndBaselineService::RECORD_COUNT_PERMISSION);
+        $this->authorizeAction($request->user(), CashCountAndBaselineService::RECORD_COUNT_PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
         $data = $request->validate([
             'operational_gl_account_id' => ['required', 'string', 'size:26'],
@@ -129,7 +140,7 @@ class GeneralCashierOperationsWorkspaceController extends Controller
 
     public function createBaseline(Request $request): RedirectResponse
     {
-        $this->authorize($request->user(), CashCountAndBaselineService::CREATE_BASELINE_PERMISSION);
+        $this->authorizeAction($request->user(), CashCountAndBaselineService::CREATE_BASELINE_PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
         $data = $request->validate(['cash_count_evidence_id' => ['required', 'string', 'size:26']]);
         CashCountEvidence::withoutGlobalScope('property')->whereKey($data['cash_count_evidence_id'])
@@ -140,7 +151,7 @@ class GeneralCashierOperationsWorkspaceController extends Controller
 
     public function voidPayment(Request $request): RedirectResponse
     {
-        $this->authorize($request->user(), PaymentExecutionVoidService::PERMISSION);
+        $this->authorizeAction($request->user(), PaymentExecutionVoidService::PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
         if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
         $data = $request->validate([
@@ -155,7 +166,7 @@ class GeneralCashierOperationsWorkspaceController extends Controller
 
     public function recordCashReturn(Request $request): RedirectResponse
     {
-        $this->authorize($request->user(), CashReturnEvidenceService::PERMISSION);
+        $this->authorizeAction($request->user(), CashReturnEvidenceService::PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
         if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
         $data = $request->validate([
@@ -173,8 +184,8 @@ class GeneralCashierOperationsWorkspaceController extends Controller
 
     public function reverseCashPayment(Request $request): RedirectResponse
     {
-        $this->authorize($request->user(), CashSupplierPaymentReversalService::PERMISSION);
-        $this->authorize($request->user(), SupplierPaymentJournalCandidateService::PERMISSION);
+        $this->authorizeAction($request->user(), CashSupplierPaymentReversalService::PERMISSION);
+        $this->authorizeAction($request->user(), SupplierPaymentJournalCandidateService::PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
         if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
         $data = $request->validate(['cash_return_evidence_id' => ['required', 'string', 'size:26']]);
@@ -187,6 +198,42 @@ class GeneralCashierOperationsWorkspaceController extends Controller
                 $this->candidateService->createForCashReversalExecution($reversal->id);
             });
         }, 'Cash supplier-payment reversal and GL candidate created.');
+    }
+
+    public function recordBankReturn(Request $request): RedirectResponse
+    {
+        $this->authorizeAction($request->user(), BankReturnEvidenceService::PERMISSION);
+        $propertyId = $this->resolvePropertyId($request);
+        if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
+        $data = $request->validate([
+            'posted_journal_entry_id' => ['required', 'string', 'size:26'],
+            'return_statement_line_id' => ['required', 'string', 'size:26'],
+            'reason_code' => ['required', 'in:BANK_RETURN,PAYMENT_REJECTED,BENEFICIARY_REJECTED'],
+            'idempotency_key' => ['required', 'string', 'max:96'],
+        ]);
+        JournalEntry::withoutGlobalScope('property')->whereKey($data['posted_journal_entry_id'])->where('property_id', $propertyId)->firstOrFail();
+        ControlledBankStatementLine::withoutGlobalScope('property')->whereKey($data['return_statement_line_id'])->where('property_id', $propertyId)->firstOrFail();
+
+        return $this->action(fn () => $this->bankReturnService->record(
+            $data['posted_journal_entry_id'], $data['return_statement_line_id'], $data['reason_code'], $data['idempotency_key'], $request->user()
+        ), 'Immutable Banking-owned return evidence recorded.');
+    }
+
+    public function reverseBankPayment(Request $request): RedirectResponse
+    {
+        $this->authorizeAction($request->user(), BankSupplierPaymentReversalService::PERMISSION);
+        $this->authorizeAction($request->user(), SupplierPaymentJournalCandidateService::PERMISSION);
+        $propertyId = $this->resolvePropertyId($request);
+        if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
+        $data = $request->validate(['bank_return_evidence_id' => ['required', 'string', 'size:26']]);
+        BankReturnEvidence::withoutGlobalScope('property')->whereKey($data['bank_return_evidence_id'])->where('property_id', $propertyId)->firstOrFail();
+
+        return $this->action(function () use ($data, $request): void {
+            DB::transaction(function () use ($data, $request): void {
+                $reversal = $this->bankReversalService->record($data['bank_return_evidence_id'], $request->user());
+                $this->candidateService->createForBankReversalExecution($reversal->id);
+            });
+        }, 'Bank supplier-payment reversal and GL candidate created.');
     }
 
     private function correctionProjection(string $propertyId): array
@@ -204,6 +251,12 @@ class GeneralCashierOperationsWorkspaceController extends Controller
             ->orderByDesc('reversed_at')->get();
         $candidateByReversal = JournalCandidate::withoutGlobalScope('property')->where('property_id', $propertyId)
             ->where('source_type', SupplierPaymentJournalCandidateService::REVERSAL_SOURCE_TYPE)->get()->keyBy('source_id');
+        $bankReturnLines = ControlledBankStatementLine::withoutGlobalScope('property')->where('property_id', $propertyId)
+            ->where('direction', ControlledBankStatementLineDirectionEnum::INFLOW->value)->orderByDesc('statement_date')->limit(100)->get();
+        $bankReturns = BankReturnEvidence::withoutGlobalScope('property')->where('property_id', $propertyId)->orderByDesc('recorded_at')->get();
+        $bankReversals = BankSupplierPaymentReversalExecution::withoutGlobalScope('property')->where('property_id', $propertyId)->orderByDesc('reversed_at')->get();
+        $bankCandidateByReversal = JournalCandidate::withoutGlobalScope('property')->where('property_id', $propertyId)
+            ->where('source_type', SupplierPaymentJournalCandidateService::BANK_REVERSAL_SOURCE_TYPE)->get()->keyBy('source_id');
 
         return [
             'executions' => $executions->map(fn ($execution) => [
@@ -229,6 +282,23 @@ class GeneralCashierOperationsWorkspaceController extends Controller
                 'candidate_id' => $candidateByReversal->get($reversal->id)?->id,
                 'candidate_status' => $candidateByReversal->get($reversal->id)?->status?->value,
             ])->values(),
+            'bank_return_lines' => $bankReturnLines->map(fn ($line) => [
+                'id' => $line->id, 'controlled_bank_account_id' => $line->controlled_bank_account_id,
+                'amount' => (string) $line->amount, 'currency_code' => $line->currency_code,
+                'statement_date' => $line->statement_date?->toDateString(), 'external_reference' => $line->external_reference,
+            ])->values(),
+            'bank_returns' => $bankReturns->map(fn ($return) => [
+                'id' => $return->id, 'payment_execution_id' => $return->payment_execution_id,
+                'amount' => (string) $return->return_amount, 'currency_code' => $return->currency_code,
+                'reason_code' => $return->reason_code, 'return_statement_line_id' => $return->return_statement_line_id,
+                'reversed' => $bankReversals->contains('bank_return_evidence_id', $return->id),
+            ])->values(),
+            'bank_reversals' => $bankReversals->map(fn ($reversal) => [
+                'id' => $reversal->id, 'bank_return_evidence_id' => $reversal->bank_return_evidence_id,
+                'amount' => (string) $reversal->reversal_amount, 'currency_code' => $reversal->currency_code,
+                'candidate_id' => $bankCandidateByReversal->get($reversal->id)?->id,
+                'candidate_status' => $bankCandidateByReversal->get($reversal->id)?->status?->value,
+            ])->values(),
         ];
     }
 
@@ -243,7 +313,7 @@ class GeneralCashierOperationsWorkspaceController extends Controller
             ->with('error', 'Sensitive action confirmation is required before supplier payment correction.');
     }
 
-    private function authorize(?User $user, string $permission): void
+    private function authorizeAction(?User $user, string $permission): void
     {
         if (!$user || !$user->can($permission)) abort(403, 'Unauthorized.');
     }

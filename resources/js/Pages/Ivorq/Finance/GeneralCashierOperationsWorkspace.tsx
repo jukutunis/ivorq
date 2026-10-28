@@ -23,8 +23,11 @@ type CorrectionProjection = {
   posted_cash_journals: Array<{ id: string; reference: string | null; posting_date: string | null; source_id: string }>;
   cash_returns: Array<{ id: string; payment_execution_id: string; amount: string; currency_code: string; source_reference: string; observed_return_date: string; reversed: boolean }>;
   reversals: Array<{ id: string; cash_return_evidence_id: string; amount: string; currency_code: string; candidate_id: string | null; candidate_status: string | null }>;
+  bank_return_lines: Array<{ id: string; controlled_bank_account_id: string; amount: string; currency_code: string; statement_date: string; external_reference: string }>;
+  bank_returns: Array<{ id: string; payment_execution_id: string; amount: string; currency_code: string; reason_code: string; return_statement_line_id: string; reversed: boolean }>;
+  bank_reversals: Array<{ id: string; bank_return_evidence_id: string; amount: string; currency_code: string; candidate_id: string | null; candidate_status: string | null }>;
 };
-type Permissions = { can_open_session: boolean; can_configure_instrument: boolean; can_record_count: boolean; can_create_baseline: boolean; can_void: boolean; can_record_cash_return: boolean; can_reverse_cash: boolean };
+type Permissions = { can_open_session: boolean; can_configure_instrument: boolean; can_record_count: boolean; can_create_baseline: boolean; can_void: boolean; can_record_cash_return: boolean; can_reverse_cash: boolean; can_record_bank_return: boolean; can_reverse_bank: boolean };
 
 const tabs = [
   { href: '/finance/payables/supplier-invoices', label: 'Supplier Invoices' },
@@ -119,6 +122,8 @@ function PaymentCorrectionPanel({ corrections, permissions }: { corrections: Cor
   const voidForm = useForm({ payment_execution_id: '', reason: '' });
   const returnForm = useForm({ posted_journal_entry_id: '', source_reference: '', observed_return_date: new Date().toISOString().slice(0, 10) });
   const reversalForm = useForm({ cash_return_evidence_id: '' });
+  const bankReturnForm = useForm({ posted_journal_entry_id: '', return_statement_line_id: '', reason_code: 'BANK_RETURN', idempotency_key: crypto.randomUUID() });
+  const bankReversalForm = useForm({ bank_return_evidence_id: '' });
   return <AttentionArea title="Supplier Payment Correction" badgeText="Confirmation Required" badgeType="warning" areaType="warning">
     <p className="finance-context-note">Pre-post VOID and posted cash reversal are separate. Posted reversal requires independently recorded cash-return evidence and creates a pending-review GL candidate; it never rewrites the original payment or journal.</p>
     <div className="finance-master-detail">
@@ -140,8 +145,20 @@ function PaymentCorrectionPanel({ corrections, permissions }: { corrections: Cor
         <select className="form-input" value={reversalForm.data.cash_return_evidence_id} onChange={(e) => reversalForm.setData('cash_return_evidence_id', e.target.value)} required><option value="">Select unreversed return</option>{corrections.cash_returns.filter((item) => !item.reversed).map((item) => <option key={item.id} value={item.id}>{item.source_reference} — {item.currency_code} {item.amount}</option>)}</select>
         <Button type="submit" disabled={reversalForm.processing}>Create Reversal + GL Candidate</Button>
       </form>}
+      {permissions.can_record_bank_return && <form onSubmit={(event) => { event.preventDefault(); bankReturnForm.post(route('finance.general-cashier.corrections.bank-return'), { onSuccess: () => bankReturnForm.setData('idempotency_key', crypto.randomUUID()) }); }}>
+        <div className="finance-section-title">Banking-owned Return Evidence</div>
+        <select className="form-input" value={bankReturnForm.data.posted_journal_entry_id} onChange={(e) => bankReturnForm.setData('posted_journal_entry_id', e.target.value)} required><option value="">Select posted bank-payment journal</option>{corrections.posted_cash_journals.map((item) => <option key={item.id} value={item.id}>{item.reference ?? item.id} — {item.posting_date}</option>)}</select>
+        <select className="form-input" value={bankReturnForm.data.return_statement_line_id} onChange={(e) => bankReturnForm.setData('return_statement_line_id', e.target.value)} required><option value="">Select independent inflow evidence</option>{corrections.bank_return_lines.map((item) => <option key={item.id} value={item.id}>{item.external_reference} — {item.currency_code} {item.amount}</option>)}</select>
+        <select className="form-input" value={bankReturnForm.data.reason_code} onChange={(e) => bankReturnForm.setData('reason_code', e.target.value)}><option value="BANK_RETURN">Bank Return</option><option value="PAYMENT_REJECTED">Payment Rejected</option><option value="BENEFICIARY_REJECTED">Beneficiary Rejected</option></select>
+        <Button type="submit" disabled={bankReturnForm.processing}>Record Bank Return</Button>
+      </form>}
+      {permissions.can_reverse_bank && <form onSubmit={(event) => { event.preventDefault(); bankReversalForm.post(route('finance.general-cashier.corrections.bank-reversal')); }}>
+        <div className="finance-section-title">Create Bank Reversal Chain</div>
+        <select className="form-input" value={bankReversalForm.data.bank_return_evidence_id} onChange={(e) => bankReversalForm.setData('bank_return_evidence_id', e.target.value)} required><option value="">Select unreversed bank return</option>{corrections.bank_returns.filter((item) => !item.reversed).map((item) => <option key={item.id} value={item.id}>{item.reason_code} — {item.currency_code} {item.amount}</option>)}</select>
+        <Button type="submit" disabled={bankReversalForm.processing}>Create Bank Reversal + GL Candidate</Button>
+      </form>}
     </div>
-    <div className="finance-evidence-section"><div className="finance-section-title">Read-only Correction Provenance</div><div className="finance-evidence-list">{corrections.reversals.map((item) => <EvidenceRow key={item.id} label={`Reversal ${item.id}`} value={`${item.currency_code} ${item.amount} · candidate ${item.candidate_id ?? 'not created'} · ${item.candidate_status ?? 'N/A'}`} />)}</div></div>
+    <div className="finance-evidence-section"><div className="finance-section-title">Read-only Correction Provenance</div><div className="finance-evidence-list">{corrections.reversals.map((item) => <EvidenceRow key={item.id} label={`Cash reversal ${item.id}`} value={`${item.currency_code} ${item.amount} · candidate ${item.candidate_id ?? 'not created'} · ${item.candidate_status ?? 'N/A'}`} />)}{corrections.bank_reversals.map((item) => <EvidenceRow key={item.id} label={`Bank reversal ${item.id}`} value={`${item.currency_code} ${item.amount} · candidate ${item.candidate_id ?? 'not created'} · ${item.candidate_status ?? 'N/A'}`} />)}</div></div>
   </AttentionArea>;
 }
 

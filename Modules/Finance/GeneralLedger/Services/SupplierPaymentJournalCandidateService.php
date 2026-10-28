@@ -18,6 +18,8 @@ use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Models\CashReturnEvidence;
 use Modules\Operations\GeneralCashier\Models\CashSupplierPaymentReversalExecution;
+use Modules\Operations\GeneralCashier\Models\BankSupplierPaymentReversalExecution;
+use Modules\Finance\Banking\Models\BankReturnEvidence;
 use Modules\Operations\GeneralCashier\Models\PaymentExecution;
 use Throwable;
 
@@ -28,6 +30,8 @@ class SupplierPaymentJournalCandidateService
     public const POSTING_EVENT = 'SupplierPaymentCashDisbursement';
     public const REVERSAL_SOURCE_TYPE = 'CashSupplierPaymentReversalExecution';
     public const REVERSAL_POSTING_EVENT = 'SupplierPaymentCashReturnReversal';
+    public const BANK_REVERSAL_SOURCE_TYPE = 'BankSupplierPaymentReversalExecution';
+    public const BANK_REVERSAL_POSTING_EVENT = 'SupplierPaymentBankReturnReversal';
 
     public function __construct(
         private readonly OperationalIdentityMappingService $mappingService,
@@ -164,6 +168,41 @@ class SupplierPaymentJournalCandidateService
         });
     }
 
+    public function createForBankReversalExecution(string $reversalExecutionId): JournalCandidate
+    {
+        return DB::transaction(function () use ($reversalExecutionId): JournalCandidate {
+            $actor = $this->resolveActiveActor();
+            $reversal = BankSupplierPaymentReversalExecution::withoutGlobalScope('property')->whereKey($reversalExecutionId)->lockForUpdate()->firstOrFail();
+            $this->assertActorCanAccessProperty($actor, $reversal->property_id);
+            $returnEvidence = BankReturnEvidence::withoutGlobalScope('property')->whereKey($reversal->bank_return_evidence_id)->lockForUpdate()->firstOrFail();
+            $originalJournal = JournalEntry::with('lines')->withoutGlobalScope('property')->whereKey($reversal->original_posted_journal_entry_id)->lockForUpdate()->firstOrFail();
+            $this->assertBankReversalExecutionSource($reversal, $returnEvidence, $originalJournal);
+            $candidateDate = Carbon::parse($reversal->reversed_at)->toDateString();
+            $accountEvidence = $this->resolveReversalAccountEvidence($reversal, $originalJournal, $candidateDate);
+            $amount = $this->assertSupportedReversalAmount($reversal, $returnEvidence, $accountEvidence);
+            $metadata = $this->bankReversalCandidateMetadata($reversal, $returnEvidence, $originalJournal, $accountEvidence, $amount);
+            $identity = ['property_id' => $reversal->property_id, 'source_type' => self::BANK_REVERSAL_SOURCE_TYPE, 'source_id' => $reversal->id, 'posting_event' => self::BANK_REVERSAL_POSTING_EVENT];
+            $existing = JournalCandidate::where($identity)->lockForUpdate()->first();
+            if ($existing) {
+                $this->assertExistingCashReversalCandidateMatches($existing, $metadata, $amount);
+                return $existing->fresh(['lines']);
+            }
+
+            $candidate = new JournalCandidate($identity + [
+                'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
+                'candidate_date' => $candidateDate,
+                'description' => 'Supplier Payment Bank Return Reversal Candidate for Reversal Execution '.$reversal->id,
+                'metadata' => $metadata,
+            ]);
+            $candidate->created_by = $actor->id;
+            $candidate->updated_by = $actor->id;
+            $candidate->save();
+            $candidate->lines()->create(['operational_identity' => OperationalIdentityEnum::CASH_AND_BANK->value, 'entry_type' => EntryTypeEnum::DEBIT->value, 'amount' => $amount, 'cost_center_id' => $accountEvidence['cash_mapping']->cost_center_id, 'notes' => 'Debit bank control for evidenced supplier-payment bank return.']);
+            $candidate->lines()->create(['operational_identity' => OperationalIdentityEnum::AP_CONTROL->value, 'entry_type' => EntryTypeEnum::CREDIT->value, 'amount' => $amount, 'cost_center_id' => $accountEvidence['ap_mapping']->cost_center_id, 'notes' => 'Credit AP liability control for full bank supplier-payment reversal.']);
+            return $candidate->fresh(['lines']);
+        });
+    }
+
     private function resolveActiveActor(): User
     {
         $authUser = Auth::user();
@@ -251,6 +290,29 @@ class SupplierPaymentJournalCandidateService
             $originalPaymentJournal->posted_at === null
         ) {
             throw new DomainException('Cash supplier payment reversal requires posted original supplier payment JournalEntry evidence.');
+        }
+    }
+
+    private function assertBankReversalExecutionSource(
+        BankSupplierPaymentReversalExecution $reversal,
+        BankReturnEvidence $returnEvidence,
+        JournalEntry $originalPaymentJournal
+    ): void {
+        if ($returnEvidence->id !== $reversal->bank_return_evidence_id
+            || $returnEvidence->payment_execution_id !== $reversal->original_payment_execution_id
+            || $returnEvidence->posted_journal_entry_id !== $reversal->original_posted_journal_entry_id
+            || $returnEvidence->property_id !== $reversal->property_id
+            || $returnEvidence->controlled_bank_account_id !== $reversal->controlled_bank_account_id
+            || $returnEvidence->currency_code !== $reversal->currency_code
+            || $this->amountString($returnEvidence->return_amount) !== $this->amountString($reversal->reversal_amount)) {
+            throw new DomainException('Bank supplier-payment reversal conflicts with Bank Return evidence.');
+        }
+        if ($originalPaymentJournal->status !== JournalStatusEnum::Posted
+            || $originalPaymentJournal->source_module !== 'GeneralCashier'
+            || $originalPaymentJournal->source_type !== self::SOURCE_TYPE
+            || $originalPaymentJournal->source_id !== $reversal->original_payment_execution_id
+            || $originalPaymentJournal->posting_event !== self::POSTING_EVENT) {
+            throw new DomainException('Bank supplier-payment reversal requires posted original payment journal evidence.');
         }
     }
 
@@ -343,6 +405,27 @@ class SupplierPaymentJournalCandidateService
         ];
     }
 
+    private function resolveReversalAccountEvidence(object $reversal, JournalEntry $originalPaymentJournal, string $candidateDate): array
+    {
+        $date = Carbon::parse($candidateDate);
+        try {
+            $apMapping = $this->mappingService->resolve($reversal->property_id, OperationalIdentityEnum::AP_CONTROL, $date);
+            $this->validationService->validate(OperationalIdentityEnum::AP_CONTROL, $apMapping->account);
+            $this->assertActivePropertyAccount($apMapping->account, $reversal->property_id, 'AP liability control');
+            $cashMapping = $this->mappingService->resolve($reversal->property_id, OperationalIdentityEnum::CASH_AND_BANK, $date);
+            $this->validationService->validate(OperationalIdentityEnum::CASH_AND_BANK, $cashMapping->account);
+            $this->assertActivePropertyAccount($cashMapping->account, $reversal->property_id, 'cash and bank');
+        } catch (OperationalIdentityMappingNotFoundException | OperationalIdentityValidationException | DomainException) {
+            throw new DomainException('Supplier payment reversal account evidence is unavailable for candidate creation.');
+        }
+        if ($cashMapping->account_id !== $reversal->operational_gl_account_id) throw new DomainException('Bank reversal account conflicts with active CASH_AND_BANK mapping.');
+        $amount = $this->amountString($reversal->reversal_amount);
+        $apLines = $originalPaymentJournal->lines->filter(fn ($line) => $line->account_id === $apMapping->account_id && $this->amountString($line->debit_amount) === $amount && $this->amountToCents($line->credit_amount) === 0)->values();
+        $bankLines = $originalPaymentJournal->lines->filter(fn ($line) => $line->account_id === $cashMapping->account_id && $this->amountString($line->credit_amount) === $amount && $this->amountToCents($line->debit_amount) === 0)->values();
+        if ($apLines->count() !== 1 || $bankLines->count() !== 1) throw new DomainException('Original supplier payment journal cannot support full bank reversal.');
+        return ['ap_mapping' => $apMapping, 'cash_mapping' => $cashMapping, 'original_ap_debit_line' => $apLines->first(), 'original_cash_credit_line' => $bankLines->first()];
+    }
+
     private function assertActivePropertyAccount(object $account, string $propertyId, string $label): void
     {
         if ($account->property_id !== $propertyId || !$account->is_active || $account->deleted_at !== null) {
@@ -395,6 +478,17 @@ class SupplierPaymentJournalCandidateService
         }
 
         return number_format($reversalAmount / 100, 2, '.', '');
+    }
+
+    private function assertSupportedReversalAmount(object $reversal, object $returnEvidence, array $accountEvidence): string
+    {
+        $amount = $this->amountToCents($reversal->reversal_amount);
+        if ($amount <= 0 || $amount !== $this->amountToCents($returnEvidence->return_amount)
+            || $amount !== $this->amountToCents($accountEvidence['original_ap_debit_line']->debit_amount)
+            || $amount !== $this->amountToCents($accountEvidence['original_cash_credit_line']->credit_amount)) {
+            throw new DomainException('Bank supplier-payment reversal amount conflicts with source evidence.');
+        }
+        return number_format($amount / 100, 2, '.', '');
     }
 
     private function candidateMetadata(
@@ -490,6 +584,32 @@ class SupplierPaymentJournalCandidateService
                     'account_id' => $accountEvidence['ap_mapping']->account_id,
                     'original_journal_entry_line_id' => $accountEvidence['original_ap_debit_line']->id,
                 ],
+            ],
+        ];
+    }
+
+    private function bankReversalCandidateMetadata(object $reversal, BankReturnEvidence $return, JournalEntry $journal, array $accounts, string $amount): array
+    {
+        return [
+            'contract' => 'supplier_payment_bank_return_reversal_candidate_v1',
+            'currency_code' => $reversal->currency_code,
+            'amount' => $amount,
+            'bank_supplier_payment_reversal_execution' => [
+                'id' => $reversal->id, 'bank_return_evidence_id' => $reversal->bank_return_evidence_id,
+                'original_payment_execution_id' => $reversal->original_payment_execution_id,
+                'original_posted_journal_entry_id' => $reversal->original_posted_journal_entry_id,
+                'controlled_bank_account_id' => $reversal->controlled_bank_account_id,
+                'property_id' => $reversal->property_id, 'vendor_id' => $reversal->vendor_id,
+                'reversed_by' => $reversal->reversed_by, 'reversed_at' => $reversal->reversed_at?->toISOString(),
+            ],
+            'bank_return_evidence' => [
+                'id' => $return->id, 'return_statement_line_id' => $return->return_statement_line_id,
+                'reason_code' => $return->reason_code, 'observed_return_date' => $return->observed_return_date?->toDateString(),
+            ],
+            'original_payment_journal' => ['journal_entry_id' => $journal->id, 'journal_candidate_id' => $journal->journal_candidate_id, 'posted_by' => $journal->posted_by, 'posted_at' => $journal->posted_at?->toISOString()],
+            'accounts' => [
+                'cash_and_bank' => ['operational_identity' => OperationalIdentityEnum::CASH_AND_BANK->value, 'mapping_id' => $accounts['cash_mapping']->id, 'account_id' => $accounts['cash_mapping']->account_id, 'original_journal_entry_line_id' => $accounts['original_cash_credit_line']->id],
+                'ap_liability_control' => ['operational_identity' => OperationalIdentityEnum::AP_CONTROL->value, 'mapping_id' => $accounts['ap_mapping']->id, 'account_id' => $accounts['ap_mapping']->account_id, 'original_journal_entry_line_id' => $accounts['original_ap_debit_line']->id],
             ],
         ];
     }
