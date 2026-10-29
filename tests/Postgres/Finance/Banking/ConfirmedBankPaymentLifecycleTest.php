@@ -23,9 +23,9 @@ use Modules\Foundation\Property\Enums\PropertyBusinessDateStatusEnum;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
+use Modules\Operations\GeneralCashier\Services\BankSupplierPaymentReversalService;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierOperationalFoundationService;
 use Modules\Operations\GeneralCashier\Services\PaymentExecutionService;
-use Modules\Operations\GeneralCashier\Services\BankSupplierPaymentReversalService;
 use Shared\Services\CurrentPropertyService;
 use Spatie\Permission\PermissionRegistrar;
 use Tests\PostgresTestCase;
@@ -59,7 +59,9 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
     private JournalEntryDraftFinalizationAuthorizationService $authorizationService;
 
     private JournalEntryControlledPostingService $postingService;
+
     private BankReturnEvidenceService $bankReturnService;
+
     private BankSupplierPaymentReversalService $bankReversalService;
 
     protected function setUp(): void

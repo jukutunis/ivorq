@@ -18,9 +18,13 @@ class SupplierInvoiceControlWorkspaceTest extends PostgresTestCase
     use RefreshDatabase;
 
     private Company $company;
+
     private Property $property;
+
     private Property $otherProperty;
+
     private User $financeUser;
+
     private User $otherPropertyUser;
 
     public function test_unauthenticated_actor_cannot_access_workspace(): void
@@ -262,7 +266,7 @@ class SupplierInvoiceControlWorkspaceTest extends PostgresTestCase
         DB::table('vendor_categories')->insert([
             'id' => (string) Str::ulid(),
             'property_id' => $property->id,
-            'category_code' => 'VCAT-' . Str::random(4),
+            'category_code' => 'VCAT-'.Str::random(4),
             'name' => 'Test Category',
             'is_active' => true,
             'created_at' => $timestamp,
@@ -276,8 +280,8 @@ class SupplierInvoiceControlWorkspaceTest extends PostgresTestCase
             'vendor_category_id' => DB::table('vendor_categories')
                 ->where('property_id', $property->id)
                 ->first()->id,
-            'vendor_code' => 'V-' . Str::random(6),
-            'name' => 'Vendor for ' . $invoiceNumber,
+            'vendor_code' => 'V-'.Str::random(6),
+            'name' => 'Vendor for '.$invoiceNumber,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,

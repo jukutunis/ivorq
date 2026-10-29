@@ -17,7 +17,9 @@ use Modules\Operations\GeneralCashier\Models\PaymentExecution;
 class BankReturnEvidenceService
 {
     public const PERMISSION = 'finance.banking.bank-return.record';
+
     public const CONTRACT = 'bank_return_evidence_from_external_inflow_v1';
+
     public const REASON_CODES = ['BANK_RETURN', 'PAYMENT_REJECTED', 'BENEFICIARY_REJECTED'];
 
     public function record(
@@ -31,8 +33,12 @@ class BankReturnEvidenceService
             $actor = $this->authorizedActor($actor);
             $reasonCode = strtoupper(trim($reasonCode));
             $idempotencyKey = trim($idempotencyKey);
-            if (!in_array($reasonCode, self::REASON_CODES, true)) throw new DomainException('Bank return reason code is unsupported.');
-            if ($idempotencyKey === '' || strlen($idempotencyKey) > 96) throw new DomainException('Bank return idempotency key is invalid.');
+            if (! in_array($reasonCode, self::REASON_CODES, true)) {
+                throw new DomainException('Bank return reason code is unsupported.');
+            }
+            if ($idempotencyKey === '' || strlen($idempotencyKey) > 96) {
+                throw new DomainException('Bank return idempotency key is invalid.');
+            }
 
             $journal = JournalEntry::with('lines')->whereKey($postedPaymentJournalEntryId)->lockForUpdate()->firstOrFail();
             if ($journal->status !== JournalStatusEnum::Posted
@@ -43,7 +49,7 @@ class BankReturnEvidenceService
             }
 
             $execution = PaymentExecution::withoutGlobalScope('property')->whereKey($journal->source_id)->lockForUpdate()->firstOrFail();
-            if (!$execution->controlled_bank_account_id || !$execution->controlled_bank_statement_line_id
+            if (! $execution->controlled_bank_account_id || ! $execution->controlled_bank_statement_line_id
                 || $execution->property_id !== $journal->property_id) {
                 throw new DomainException('Bank return requires a confirmed bank PaymentExecution.');
             }
@@ -84,7 +90,9 @@ class BankReturnEvidenceService
                     ->orWhere(fn ($inner) => $inner->where('property_id', $execution->property_id)->where('idempotency_key', $idempotencyKey)))
                 ->lockForUpdate()->first();
             if ($existing) {
-                if ($existing->source_identity_hash === $hash) return $existing->fresh();
+                if ($existing->source_identity_hash === $hash) {
+                    return $existing->fresh();
+                }
                 throw new DomainException('Conflicting bank-return evidence already exists.');
             }
 
@@ -114,13 +122,16 @@ class BankReturnEvidenceService
     private function authorizedActor(?User $actor): User
     {
         $actor = $actor ? User::whereKey($actor->id)->where('is_active', true)->first() : null;
-        if (!$actor || !$actor->can(self::PERMISSION)) throw new AuthorizationException('Bank return evidence permission is required.');
+        if (! $actor || ! $actor->can(self::PERMISSION)) {
+            throw new AuthorizationException('Bank return evidence permission is required.');
+        }
+
         return $actor;
     }
 
     private function assertPropertyAccess(User $actor, string $propertyId): void
     {
-        if (!$actor->properties()->where('properties.id', $propertyId)->wherePivot('status', 'active')->exists()) {
+        if (! $actor->properties()->where('properties.id', $propertyId)->wherePivot('status', 'active')->exists()) {
             throw new AuthorizationException('Bank return evidence requires active property access.');
         }
     }

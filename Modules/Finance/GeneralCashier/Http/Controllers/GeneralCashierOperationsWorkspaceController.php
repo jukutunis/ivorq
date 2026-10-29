@@ -9,37 +9,38 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
+use Modules\Finance\Banking\Enums\ControlledBankStatementLineDirectionEnum;
+use Modules\Finance\Banking\Models\BankReturnEvidence;
+use Modules\Finance\Banking\Models\ControlledBankStatementLine;
+use Modules\Finance\Banking\Services\BankReturnEvidenceService;
 use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\GeneralLedger\Services\SupplierPaymentJournalCandidateService;
-use Modules\Finance\Banking\Services\BankReturnEvidenceService;
-use Modules\Finance\Banking\Models\BankReturnEvidence;
-use Modules\Finance\Banking\Models\ControlledBankStatementLine;
-use Modules\Finance\Banking\Enums\ControlledBankStatementLineDirectionEnum;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\GeneralCashier\Models\BankSupplierPaymentReversalExecution;
 use Modules\Operations\GeneralCashier\Models\CashCountEvidence;
+use Modules\Operations\GeneralCashier\Models\CashierPaymentInstrument;
+use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\GeneralCashier\Models\CashReconciliationBaseline;
 use Modules\Operations\GeneralCashier\Models\CashReturnEvidence;
 use Modules\Operations\GeneralCashier\Models\CashSupplierPaymentReversalExecution;
-use Modules\Operations\GeneralCashier\Models\CashierPaymentInstrument;
-use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Modules\Operations\GeneralCashier\Models\PaymentExecution;
 use Modules\Operations\GeneralCashier\Models\PaymentExecutionVoidEvidence;
+use Modules\Operations\GeneralCashier\Services\BankSupplierPaymentReversalService;
 use Modules\Operations\GeneralCashier\Services\CashCountAndBaselineService;
 use Modules\Operations\GeneralCashier\Services\CashReturnEvidenceService;
 use Modules\Operations\GeneralCashier\Services\CashSupplierPaymentReversalService;
 use Modules\Operations\GeneralCashier\Services\GeneralCashierOperationalFoundationService;
 use Modules\Operations\GeneralCashier\Services\PaymentExecutionVoidService;
-use Modules\Operations\GeneralCashier\Services\BankSupplierPaymentReversalService;
-use Modules\Operations\GeneralCashier\Models\BankSupplierPaymentReversalExecution;
 use Shared\Services\CurrentPropertyService;
 use Throwable;
 
 class GeneralCashierOperationsWorkspaceController extends Controller
 {
     private const ROUTE = 'finance.general-cashier.operations.index';
+
     private const CORRECTION_INTENT = 'supplier-payment-correction';
 
     public function __construct(
@@ -153,7 +154,9 @@ class GeneralCashierOperationsWorkspaceController extends Controller
     {
         $this->authorizeAction($request->user(), PaymentExecutionVoidService::PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
-        if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
+        if ($redirect = $this->confirmationRedirect($request, $propertyId)) {
+            return $redirect;
+        }
         $data = $request->validate([
             'payment_execution_id' => ['required', 'string', 'size:26'],
             'reason' => ['required', 'string', 'min:3', 'max:500'],
@@ -168,7 +171,9 @@ class GeneralCashierOperationsWorkspaceController extends Controller
     {
         $this->authorizeAction($request->user(), CashReturnEvidenceService::PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
-        if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
+        if ($redirect = $this->confirmationRedirect($request, $propertyId)) {
+            return $redirect;
+        }
         $data = $request->validate([
             'posted_journal_entry_id' => ['required', 'string', 'size:26'],
             'source_reference' => ['required', 'string', 'max:255'],
@@ -187,7 +192,9 @@ class GeneralCashierOperationsWorkspaceController extends Controller
         $this->authorizeAction($request->user(), CashSupplierPaymentReversalService::PERMISSION);
         $this->authorizeAction($request->user(), SupplierPaymentJournalCandidateService::PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
-        if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
+        if ($redirect = $this->confirmationRedirect($request, $propertyId)) {
+            return $redirect;
+        }
         $data = $request->validate(['cash_return_evidence_id' => ['required', 'string', 'size:26']]);
         CashReturnEvidence::withoutGlobalScope('property')->whereKey($data['cash_return_evidence_id'])
             ->where('property_id', $propertyId)->firstOrFail();
@@ -204,7 +211,9 @@ class GeneralCashierOperationsWorkspaceController extends Controller
     {
         $this->authorizeAction($request->user(), BankReturnEvidenceService::PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
-        if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
+        if ($redirect = $this->confirmationRedirect($request, $propertyId)) {
+            return $redirect;
+        }
         $data = $request->validate([
             'posted_journal_entry_id' => ['required', 'string', 'size:26'],
             'return_statement_line_id' => ['required', 'string', 'size:26'],
@@ -224,7 +233,9 @@ class GeneralCashierOperationsWorkspaceController extends Controller
         $this->authorizeAction($request->user(), BankSupplierPaymentReversalService::PERMISSION);
         $this->authorizeAction($request->user(), SupplierPaymentJournalCandidateService::PERMISSION);
         $propertyId = $this->resolvePropertyId($request);
-        if ($redirect = $this->confirmationRedirect($request, $propertyId)) return $redirect;
+        if ($redirect = $this->confirmationRedirect($request, $propertyId)) {
+            return $redirect;
+        }
         $data = $request->validate(['bank_return_evidence_id' => ['required', 'string', 'size:26']]);
         BankReturnEvidence::withoutGlobalScope('property')->whereKey($data['bank_return_evidence_id'])->where('property_id', $propertyId)->firstOrFail();
 
@@ -315,13 +326,16 @@ class GeneralCashierOperationsWorkspaceController extends Controller
 
     private function authorizeAction(?User $user, string $permission): void
     {
-        if (!$user || !$user->can($permission)) abort(403, 'Unauthorized.');
+        if (! $user || ! $user->can($permission)) {
+            abort(403, 'Unauthorized.');
+        }
     }
 
     private function action(callable $action, string $message): RedirectResponse
     {
         try {
             $action();
+
             return redirect()->route(self::ROUTE)->with('success', $message);
         } catch (AuthorizationException $exception) {
             throw $exception;
@@ -334,6 +348,7 @@ class GeneralCashierOperationsWorkspaceController extends Controller
     {
         $propertyId = $request->session()->get('active_property_id') ?? app(CurrentPropertyService::class)->resolveOrFail();
         app(CurrentPropertyService::class)->setPropertyId($propertyId);
+
         return $propertyId;
     }
 }

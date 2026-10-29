@@ -2,8 +2,8 @@
 
 namespace Modules\Finance\Payables;
 
-use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\ServiceProvider;
 
 class PayablesServiceProvider extends ServiceProvider
 {
@@ -16,7 +16,7 @@ class PayablesServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
         $this->registerRoutes();
-        $this->loadMigrationsFrom(__DIR__ . '/database/migrations');
+        $this->loadMigrationsFrom(__DIR__.'/database/migrations');
     }
 
     protected function registerPolicies(): void
@@ -28,6 +28,6 @@ class PayablesServiceProvider extends ServiceProvider
     {
         Route::prefix('api/v1')
             ->middleware(['api', 'auth:sanctum', 'permission.team'])
-            ->group(__DIR__ . '/routes/api.php');
+            ->group(__DIR__.'/routes/api.php');
     }
 }

@@ -77,7 +77,7 @@ class SupplierInvoiceIntakeSourceService
             ->lockForUpdate()
             ->first();
 
-        if (!$purchaseOrder) {
+        if (! $purchaseOrder) {
             throw new DomainException('Purchase order source is unavailable in the active property or lifecycle.');
         }
 
@@ -89,7 +89,7 @@ class SupplierInvoiceIntakeSourceService
             ->lockForUpdate()
             ->first();
 
-        if (!$vendor || ($vendor->property_id !== null && $vendor->property_id !== $propertyId)) {
+        if (! $vendor || ($vendor->property_id !== null && $vendor->property_id !== $propertyId)) {
             throw new DomainException('Purchase order supplier is not active and approved for the property.');
         }
 
@@ -109,7 +109,7 @@ class SupplierInvoiceIntakeSourceService
                 ->lockForUpdate()
                 ->first();
 
-            if (!$receipt) {
+            if (! $receipt) {
                 throw new DomainException('Receiving evidence does not belong to the selected purchase order and property.');
             }
         }

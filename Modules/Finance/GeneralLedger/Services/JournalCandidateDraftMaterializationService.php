@@ -9,6 +9,7 @@ use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
+use Modules\Finance\GeneralLedger\Models\JournalCandidateLine;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Finance\GeneralLedger\Models\JournalEntryLine;
 use Modules\Foundation\User\Models\User;
@@ -104,7 +105,7 @@ class JournalCandidateDraftMaterializationService
             ->where('is_active', true)
             ->first();
 
-        if (!$actor) {
+        if (! $actor) {
             throw new AuthorizationException('Unauthorized to materialize journal candidate drafts.');
         }
 
@@ -114,7 +115,7 @@ class JournalCandidateDraftMaterializationService
             throw new AuthorizationException('Unauthorized to materialize journal candidate drafts.');
         }
 
-        if (!$authorized) {
+        if (! $authorized) {
             throw new AuthorizationException('Unauthorized to materialize journal candidate drafts.');
         }
 
@@ -128,7 +129,7 @@ class JournalCandidateDraftMaterializationService
             ->wherePivot('status', 'active')
             ->exists();
 
-        if (!$hasPropertyAccess) {
+        if (! $hasPropertyAccess) {
             throw new AuthorizationException('Unauthorized to materialize journal candidate drafts.');
         }
     }
@@ -175,7 +176,7 @@ class JournalCandidateDraftMaterializationService
     }
 
     /**
-     * @param Collection<int, \Modules\Finance\GeneralLedger\Models\JournalCandidateLine> $candidateLines
+     * @param  Collection<int, JournalCandidateLine>  $candidateLines
      * @return array<int, array{account_id: string, department_id: ?string, debit_amount: float|int, credit_amount: float|int, memo: ?string}>
      */
     private function expectedJournalLines(JournalCandidate $candidate, Collection $candidateLines): array
@@ -231,7 +232,7 @@ class JournalCandidateDraftMaterializationService
         }
 
         if ($debitTotal !== $creditTotal) {
-            throw new RuntimeException('Candidate is out of balance. Debits: ' . ($debitTotal / 100) . ', Credits: ' . ($creditTotal / 100));
+            throw new RuntimeException('Candidate is out of balance. Debits: '.($debitTotal / 100).', Credits: '.($creditTotal / 100));
         }
 
         return $expectedLines;

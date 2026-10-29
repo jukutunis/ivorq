@@ -10,8 +10,8 @@ use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
-use Modules\Operations\GeneralCashier\Models\PaymentExecutionVoidEvidence;
 use Modules\Operations\GeneralCashier\Models\PaymentExecution;
+use Modules\Operations\GeneralCashier\Models\PaymentExecutionVoidEvidence;
 use Modules\Operations\GeneralCashier\Services\CashbookTransactionProjectionService;
 use RuntimeException;
 use Throwable;
@@ -64,7 +64,7 @@ class JournalEntryControlledPostingService
             ->where('is_active', true)
             ->first();
 
-        if (!$actor) {
+        if (! $actor) {
             throw new AuthorizationException('Unauthorized to execute JournalEntry posting.');
         }
 
@@ -74,7 +74,7 @@ class JournalEntryControlledPostingService
             throw new AuthorizationException('Unauthorized to execute JournalEntry posting.');
         }
 
-        if (!$authorized) {
+        if (! $authorized) {
             throw new AuthorizationException('Unauthorized to execute JournalEntry posting.');
         }
 
@@ -88,7 +88,7 @@ class JournalEntryControlledPostingService
             ->wherePivot('status', 'active')
             ->exists();
 
-        if (!$hasPropertyAccess) {
+        if (! $hasPropertyAccess) {
             throw new AuthorizationException('Unauthorized to execute JournalEntry posting.');
         }
     }
@@ -135,7 +135,7 @@ class JournalEntryControlledPostingService
             ->lockForUpdate()
             ->first();
 
-        if (!$candidate) {
+        if (! $candidate) {
             throw new RuntimeException('Source JournalCandidate provenance is missing.');
         }
 
@@ -147,7 +147,7 @@ class JournalEntryControlledPostingService
             throw new RuntimeException('Only approved JournalCandidate-derived drafts can be posted.');
         }
 
-        if (!$this->isSupportedCandidate($candidate)) {
+        if (! $this->isSupportedCandidate($candidate)) {
             throw new RuntimeException('Only supported JournalCandidates can be posted through this action.');
         }
 

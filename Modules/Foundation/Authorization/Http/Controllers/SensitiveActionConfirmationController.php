@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
+use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
 
@@ -23,7 +24,7 @@ class SensitiveActionConfirmationController extends Controller
         $companyId = $request->session()->get('active_company_id');
         $intent = $request->query('intent', '');
 
-        if (!in_array($intent, SensitiveActionConfirmationService::REGISTERED_INTENTS, true)) {
+        if (! in_array($intent, SensitiveActionConfirmationService::REGISTERED_INTENTS, true)) {
             abort(400, 'Invalid sensitive action intent.');
         }
 
@@ -48,7 +49,7 @@ class SensitiveActionConfirmationController extends Controller
         $companyId = $request->session()->get('active_company_id');
 
         $validated = $request->validate([
-            'intent' => ['required', 'string', 'in:' . implode(',', SensitiveActionConfirmationService::REGISTERED_INTENTS)],
+            'intent' => ['required', 'string', 'in:'.implode(',', SensitiveActionConfirmationService::REGISTERED_INTENTS)],
             'password' => ['required', 'string'],
         ]);
 
@@ -80,7 +81,7 @@ class SensitiveActionConfirmationController extends Controller
         $companyId = $request->session()->get('active_company_id');
 
         $validated = $request->validate([
-            'intent' => ['required', 'string', 'in:' . implode(',', SensitiveActionConfirmationService::REGISTERED_INTENTS)],
+            'intent' => ['required', 'string', 'in:'.implode(',', SensitiveActionConfirmationService::REGISTERED_INTENTS)],
         ]);
 
         try {
@@ -100,7 +101,7 @@ class SensitiveActionConfirmationController extends Controller
     {
         $user = $request->user();
 
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             abort(401, 'Unauthenticated.');
         }
 
@@ -119,7 +120,7 @@ class SensitiveActionConfirmationController extends Controller
 
     private function resolvePropertyName(string $propertyId): string
     {
-        $property = \Modules\Foundation\Property\Models\Property::query()->find($propertyId);
+        $property = Property::query()->find($propertyId);
 
         return $property?->name ?? 'Unknown Property';
     }

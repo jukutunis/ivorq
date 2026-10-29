@@ -20,7 +20,9 @@ class GeneralCashierOperationsWorkspaceTest extends PostgresTestCase
     use RefreshDatabase;
 
     private Company $company;
+
     private Property $property;
+
     private User $actor;
 
     protected function setUp(): void

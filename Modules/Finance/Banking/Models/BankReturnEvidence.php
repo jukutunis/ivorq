@@ -9,7 +9,7 @@ use Shared\Traits\HasUlid;
 
 class BankReturnEvidence extends Model
 {
-    use HasUlid, BelongsToProperty, HasAuditColumns;
+    use BelongsToProperty, HasAuditColumns, HasUlid;
 
     protected $table = 'bank_return_evidence';
 

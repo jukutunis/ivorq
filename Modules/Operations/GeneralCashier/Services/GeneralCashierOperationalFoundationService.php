@@ -8,8 +8,8 @@ use Illuminate\Support\Facades\DB;
 use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
-use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Enums\CashierPaymentInstrumentTypeEnum;
+use Modules\Operations\GeneralCashier\Enums\CashierSessionStatusEnum;
 use Modules\Operations\GeneralCashier\Models\CashierPaymentInstrument;
 use Modules\Operations\GeneralCashier\Models\CashierSession;
 use Shared\Services\CurrentPropertyService;
@@ -18,6 +18,7 @@ use Throwable;
 class GeneralCashierOperationalFoundationService
 {
     public const OPEN_PERMISSION = 'finance.general-cashier.session.open';
+
     public const CONFIGURE_INSTRUMENT_PERMISSION = 'finance.general-cashier.instrument.configure';
 
     public function __construct(
@@ -102,12 +103,12 @@ class GeneralCashierOperationalFoundationService
 
             $name = trim($name);
             if ($name === '') {
-                throw new \DomainException('Cashier Payment Instrument name is required.');
+                throw new DomainException('Cashier Payment Instrument name is required.');
             }
 
             $instrumentType = CashierPaymentInstrumentTypeEnum::tryFrom(strtoupper(trim($type)));
-            if (!$instrumentType) {
-                throw new \DomainException('Cashier Payment Instrument type is unsupported.');
+            if (! $instrumentType) {
+                throw new DomainException('Cashier Payment Instrument type is unsupported.');
             }
 
             $account = Account::withoutGlobalScope('property')
@@ -117,8 +118,8 @@ class GeneralCashierOperationalFoundationService
                 ->lockForUpdate()
                 ->first();
 
-            if (!$account || ($instrumentType === CashierPaymentInstrumentTypeEnum::CASH && !$account->is_cash_equivalent)) {
-                throw new \DomainException('Active property-scoped operational account is unavailable for the instrument.');
+            if (! $account || ($instrumentType === CashierPaymentInstrumentTypeEnum::CASH && ! $account->is_cash_equivalent)) {
+                throw new DomainException('Active property-scoped operational account is unavailable for the instrument.');
             }
 
             $existing = CashierPaymentInstrument::where('property_id', $propertyId)
@@ -133,7 +134,7 @@ class GeneralCashierOperationalFoundationService
                     return $existing->fresh();
                 }
 
-                throw new \DomainException('Conflicting Cashier Payment Instrument configuration already exists.');
+                throw new DomainException('Conflicting Cashier Payment Instrument configuration already exists.');
             }
 
             return CashierPaymentInstrument::create([
@@ -171,7 +172,7 @@ class GeneralCashierOperationalFoundationService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if (!$instrument->is_active) {
+            if (! $instrument->is_active) {
                 throw new DomainException('Cashier Payment Instrument is inactive.');
             }
 
@@ -185,7 +186,7 @@ class GeneralCashierOperationalFoundationService
                 ->lockForUpdate()
                 ->first();
 
-            if (!$account) {
+            if (! $account) {
                 throw new DomainException('Cashier Payment Instrument operational account is unavailable.');
             }
 
@@ -209,7 +210,7 @@ class GeneralCashierOperationalFoundationService
             throw new AuthorizationException('General Cashier permission is unavailable.');
         }
 
-        if (!$authorized) {
+        if (! $authorized) {
             throw new AuthorizationException('General Cashier permission is required.');
         }
 
@@ -218,7 +219,7 @@ class GeneralCashierOperationalFoundationService
 
     private function resolveActiveActor(?User $actor): User
     {
-        if (!$actor) {
+        if (! $actor) {
             throw new AuthorizationException('General Cashier action requires an active actor.');
         }
 
@@ -226,7 +227,7 @@ class GeneralCashierOperationalFoundationService
             ->where('is_active', true)
             ->first();
 
-        if (!$freshActor) {
+        if (! $freshActor) {
             throw new AuthorizationException('General Cashier action requires an active actor.');
         }
 
@@ -237,7 +238,7 @@ class GeneralCashierOperationalFoundationService
     {
         $propertyId = $this->currentPropertyService->getPropertyId();
 
-        if (!$propertyId) {
+        if (! $propertyId) {
             throw new AuthorizationException('General Cashier action requires active property context.');
         }
 
@@ -245,7 +246,7 @@ class GeneralCashierOperationalFoundationService
             ->where('is_active', true)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new AuthorizationException('General Cashier action requires active property context.');
         }
 
@@ -259,7 +260,7 @@ class GeneralCashierOperationalFoundationService
             ->wherePivot('status', 'active')
             ->exists();
 
-        if (!$hasPropertyAccess) {
+        if (! $hasPropertyAccess) {
             throw new AuthorizationException('General Cashier action requires active property access.');
         }
     }

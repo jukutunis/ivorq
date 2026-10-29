@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Modules\Finance\Banking\Models\BankReturnEvidence;
 use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
@@ -16,21 +17,26 @@ use Modules\Finance\GeneralLedger\Exceptions\OperationalIdentityValidationExcept
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
 use Modules\Finance\GeneralLedger\Models\JournalEntry;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\GeneralCashier\Models\BankSupplierPaymentReversalExecution;
 use Modules\Operations\GeneralCashier\Models\CashReturnEvidence;
 use Modules\Operations\GeneralCashier\Models\CashSupplierPaymentReversalExecution;
-use Modules\Operations\GeneralCashier\Models\BankSupplierPaymentReversalExecution;
-use Modules\Finance\Banking\Models\BankReturnEvidence;
 use Modules\Operations\GeneralCashier\Models\PaymentExecution;
 use Throwable;
 
 class SupplierPaymentJournalCandidateService
 {
     public const PERMISSION = 'finance.payables.supplier-payment.candidate.create';
+
     public const SOURCE_TYPE = 'PaymentExecution';
+
     public const POSTING_EVENT = 'SupplierPaymentCashDisbursement';
+
     public const REVERSAL_SOURCE_TYPE = 'CashSupplierPaymentReversalExecution';
+
     public const REVERSAL_POSTING_EVENT = 'SupplierPaymentCashReturnReversal';
+
     public const BANK_REVERSAL_SOURCE_TYPE = 'BankSupplierPaymentReversalExecution';
+
     public const BANK_REVERSAL_POSTING_EVENT = 'SupplierPaymentBankReturnReversal';
 
     public function __construct(
@@ -74,7 +80,7 @@ class SupplierPaymentJournalCandidateService
             $candidate = new JournalCandidate($identity + [
                 'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
                 'candidate_date' => $candidateDate,
-                'description' => 'Supplier Payment Cash Disbursement Candidate for Payment Execution ' . $execution->id,
+                'description' => 'Supplier Payment Cash Disbursement Candidate for Payment Execution '.$execution->id,
                 'metadata' => $metadata,
             ]);
             $candidate->created_by = $actor->id;
@@ -141,7 +147,7 @@ class SupplierPaymentJournalCandidateService
             $candidate = new JournalCandidate($identity + [
                 'status' => JournalCandidateStatusEnum::PENDING_REVIEW->value,
                 'candidate_date' => $candidateDate,
-                'description' => 'Supplier Payment Cash Return Reversal Candidate for Reversal Execution ' . $reversal->id,
+                'description' => 'Supplier Payment Cash Return Reversal Candidate for Reversal Execution '.$reversal->id,
                 'metadata' => $metadata,
             ]);
             $candidate->created_by = $actor->id;
@@ -185,6 +191,7 @@ class SupplierPaymentJournalCandidateService
             $existing = JournalCandidate::where($identity)->lockForUpdate()->first();
             if ($existing) {
                 $this->assertExistingCashReversalCandidateMatches($existing, $metadata, $amount);
+
                 return $existing->fresh(['lines']);
             }
 
@@ -199,6 +206,7 @@ class SupplierPaymentJournalCandidateService
             $candidate->save();
             $candidate->lines()->create(['operational_identity' => OperationalIdentityEnum::CASH_AND_BANK->value, 'entry_type' => EntryTypeEnum::DEBIT->value, 'amount' => $amount, 'cost_center_id' => $accountEvidence['cash_mapping']->cost_center_id, 'notes' => 'Debit bank control for evidenced supplier-payment bank return.']);
             $candidate->lines()->create(['operational_identity' => OperationalIdentityEnum::AP_CONTROL->value, 'entry_type' => EntryTypeEnum::CREDIT->value, 'amount' => $amount, 'cost_center_id' => $accountEvidence['ap_mapping']->cost_center_id, 'notes' => 'Credit AP liability control for full bank supplier-payment reversal.']);
+
             return $candidate->fresh(['lines']);
         });
     }
@@ -207,7 +215,7 @@ class SupplierPaymentJournalCandidateService
     {
         $authUser = Auth::user();
 
-        if (!$authUser) {
+        if (! $authUser) {
             throw new AuthorizationException('Supplier payment candidate creation requires an authenticated actor.');
         }
 
@@ -215,7 +223,7 @@ class SupplierPaymentJournalCandidateService
             ->where('is_active', true)
             ->first();
 
-        if (!$actor) {
+        if (! $actor) {
             throw new AuthorizationException('Supplier payment candidate creation actor is inactive or unresolved.');
         }
 
@@ -225,7 +233,7 @@ class SupplierPaymentJournalCandidateService
             throw new AuthorizationException('Supplier payment candidate creation permission is unavailable.');
         }
 
-        if (!$authorized) {
+        if (! $authorized) {
             throw new AuthorizationException('Supplier payment candidate creation permission is required.');
         }
 
@@ -239,7 +247,7 @@ class SupplierPaymentJournalCandidateService
             ->wherePivot('status', 'active')
             ->exists();
 
-        if (!$hasPropertyAccess) {
+        if (! $hasPropertyAccess) {
             throw new AuthorizationException('Supplier payment candidate creation requires active property access.');
         }
     }
@@ -328,7 +336,7 @@ class SupplierPaymentJournalCandidateService
             $cashMapping = $this->mappingService->resolve($execution->property_id, OperationalIdentityEnum::CASH_AND_BANK, $date);
             $this->validationService->validate(OperationalIdentityEnum::CASH_AND_BANK, $cashMapping->account);
             $this->assertActivePropertyAccount($cashMapping->account, $execution->property_id, 'cash and bank');
-        } catch (OperationalIdentityMappingNotFoundException | OperationalIdentityValidationException | DomainException) {
+        } catch (OperationalIdentityMappingNotFoundException|OperationalIdentityValidationException|DomainException) {
             throw new DomainException('Supplier payment account evidence is unavailable for candidate creation.');
         }
 
@@ -372,7 +380,7 @@ class SupplierPaymentJournalCandidateService
             $cashMapping = $this->mappingService->resolve($reversal->property_id, OperationalIdentityEnum::CASH_AND_BANK, $date);
             $this->validationService->validate(OperationalIdentityEnum::CASH_AND_BANK, $cashMapping->account);
             $this->assertActivePropertyAccount($cashMapping->account, $reversal->property_id, 'cash and bank');
-        } catch (OperationalIdentityMappingNotFoundException | OperationalIdentityValidationException | DomainException) {
+        } catch (OperationalIdentityMappingNotFoundException|OperationalIdentityValidationException|DomainException) {
             throw new DomainException('Supplier payment reversal account evidence is unavailable for candidate creation.');
         }
 
@@ -415,21 +423,26 @@ class SupplierPaymentJournalCandidateService
             $cashMapping = $this->mappingService->resolve($reversal->property_id, OperationalIdentityEnum::CASH_AND_BANK, $date);
             $this->validationService->validate(OperationalIdentityEnum::CASH_AND_BANK, $cashMapping->account);
             $this->assertActivePropertyAccount($cashMapping->account, $reversal->property_id, 'cash and bank');
-        } catch (OperationalIdentityMappingNotFoundException | OperationalIdentityValidationException | DomainException) {
+        } catch (OperationalIdentityMappingNotFoundException|OperationalIdentityValidationException|DomainException) {
             throw new DomainException('Supplier payment reversal account evidence is unavailable for candidate creation.');
         }
-        if ($cashMapping->account_id !== $reversal->operational_gl_account_id) throw new DomainException('Bank reversal account conflicts with active CASH_AND_BANK mapping.');
+        if ($cashMapping->account_id !== $reversal->operational_gl_account_id) {
+            throw new DomainException('Bank reversal account conflicts with active CASH_AND_BANK mapping.');
+        }
         $amount = $this->amountString($reversal->reversal_amount);
         $apLines = $originalPaymentJournal->lines->filter(fn ($line) => $line->account_id === $apMapping->account_id && $this->amountString($line->debit_amount) === $amount && $this->amountToCents($line->credit_amount) === 0)->values();
         $bankLines = $originalPaymentJournal->lines->filter(fn ($line) => $line->account_id === $cashMapping->account_id && $this->amountString($line->credit_amount) === $amount && $this->amountToCents($line->debit_amount) === 0)->values();
-        if ($apLines->count() !== 1 || $bankLines->count() !== 1) throw new DomainException('Original supplier payment journal cannot support full bank reversal.');
+        if ($apLines->count() !== 1 || $bankLines->count() !== 1) {
+            throw new DomainException('Original supplier payment journal cannot support full bank reversal.');
+        }
+
         return ['ap_mapping' => $apMapping, 'cash_mapping' => $cashMapping, 'original_ap_debit_line' => $apLines->first(), 'original_cash_credit_line' => $bankLines->first()];
     }
 
     private function assertActivePropertyAccount(object $account, string $propertyId, string $label): void
     {
-        if ($account->property_id !== $propertyId || !$account->is_active || $account->deleted_at !== null) {
-            throw new DomainException($label . ' account is not active for the supplier payment property.');
+        if ($account->property_id !== $propertyId || ! $account->is_active || $account->deleted_at !== null) {
+            throw new DomainException($label.' account is not active for the supplier payment property.');
         }
     }
 
@@ -488,6 +501,7 @@ class SupplierPaymentJournalCandidateService
             || $amount !== $this->amountToCents($accountEvidence['original_cash_credit_line']->credit_amount)) {
             throw new DomainException('Bank supplier-payment reversal amount conflicts with source evidence.');
         }
+
         return number_format($amount / 100, 2, '.', '');
     }
 

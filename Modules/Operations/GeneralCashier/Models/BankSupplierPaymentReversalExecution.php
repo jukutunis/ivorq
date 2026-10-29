@@ -9,7 +9,7 @@ use Shared\Traits\HasUlid;
 
 class BankSupplierPaymentReversalExecution extends Model
 {
-    use HasUlid, BelongsToProperty, HasAuditColumns;
+    use BelongsToProperty, HasAuditColumns, HasUlid;
 
     protected $guarded = ['id'];
 

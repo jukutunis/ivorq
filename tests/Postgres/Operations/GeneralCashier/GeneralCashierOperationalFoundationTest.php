@@ -24,8 +24,11 @@ class GeneralCashierOperationalFoundationTest extends PostgresTestCase
     use RefreshDatabase;
 
     private Property $property;
+
     private User $actor;
+
     private GeneralCashierOperationalFoundationService $service;
+
     private int $sequence = 1;
 
     protected function setUp(): void
@@ -271,8 +274,8 @@ class GeneralCashierOperationalFoundationTest extends PostgresTestCase
 
         DB::table('companies')->insert([
             'id' => $companyId,
-            'name' => 'General Cashier Company ' . $suffix,
-            'slug' => 'general-cashier-company-' . $suffix,
+            'name' => 'General Cashier Company '.$suffix,
+            'slug' => 'general-cashier-company-'.$suffix,
             'is_active' => true,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
@@ -281,9 +284,9 @@ class GeneralCashierOperationalFoundationTest extends PostgresTestCase
         DB::table('properties')->insert([
             'id' => $propertyId,
             'company_id' => $companyId,
-            'name' => 'General Cashier Property ' . $suffix,
-            'slug' => 'general-cashier-property-' . $suffix,
-            'code' => 'GCP' . $suffix,
+            'name' => 'General Cashier Property '.$suffix,
+            'slug' => 'general-cashier-property-'.$suffix,
+            'code' => 'GCP'.$suffix,
             'timezone' => 'UTC',
             'currency' => 'IDR',
             'is_active' => true,
@@ -303,8 +306,8 @@ class GeneralCashierOperationalFoundationTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $userId,
             'is_system_admin' => false,
-            'name' => 'General Cashier User ' . $suffix,
-            'email' => 'general-cashier-user-' . $suffix . '@example.test',
+            'name' => 'General Cashier User '.$suffix,
+            'email' => 'general-cashier-user-'.$suffix.'@example.test',
             'password' => 'not-used',
             'is_active' => $active,
             'created_at' => $timestamp,
@@ -323,7 +326,7 @@ class GeneralCashierOperationalFoundationTest extends PostgresTestCase
             'id' => $accountId,
             'property_id' => $property->id,
             'code' => $code,
-            'name' => 'General Cashier Account ' . $code,
+            'name' => 'General Cashier Account '.$code,
             'normal_balance' => 'Debit',
             'account_type' => 'Asset',
             'account_category' => 'CurrentAsset',
@@ -342,7 +345,7 @@ class GeneralCashierOperationalFoundationTest extends PostgresTestCase
     {
         return CashierPaymentInstrument::create([
             'property_id' => $property->id,
-            'name' => 'Instrument ' . $this->sequence++,
+            'name' => 'Instrument '.$this->sequence++,
             'type' => CashierPaymentInstrumentTypeEnum::CASH->value,
             'operational_gl_account_id' => $accountId,
             'is_active' => $active,

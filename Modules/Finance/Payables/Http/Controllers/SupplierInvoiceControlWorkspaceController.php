@@ -106,7 +106,7 @@ class SupplierInvoiceControlWorkspaceController extends Controller
         $this->findScopedInvoice($invoice, $propertyId);
 
         $companyId = $request->session()->get('active_company_id');
-        if (!$this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
+        if (! $this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
             return redirect()
                 ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval'])
                 ->with('error', 'Sensitive action confirmation is required before approving supplier invoices.');
@@ -125,7 +125,7 @@ class SupplierInvoiceControlWorkspaceController extends Controller
         $this->findScopedInvoice($invoice, $propertyId);
 
         $companyId = $request->session()->get('active_company_id');
-        if (!$this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
+        if (! $this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
             return redirect()
                 ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval'])
                 ->with('error', 'Sensitive action confirmation is required before rejecting supplier invoices.');
@@ -148,7 +148,7 @@ class SupplierInvoiceControlWorkspaceController extends Controller
         $this->findScopedInvoice($invoice, $propertyId);
 
         $companyId = $request->session()->get('active_company_id');
-        if (!$this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
+        if (! $this->confirmationService->hasValidConfirmation($request->user(), 'finance-approval', $companyId, $propertyId)) {
             return redirect()
                 ->route('system.sensitive-action-confirmation.index', ['intent' => 'finance-approval'])
                 ->with('error', 'Sensitive action confirmation is required before resolving supplier invoice exceptions.');
@@ -190,14 +190,14 @@ class SupplierInvoiceControlWorkspaceController extends Controller
 
     private function authorizeAction(?User $user, string $permission): void
     {
-        if (!$user || !$user->can($permission)) {
+        if (! $user || ! $user->can($permission)) {
             abort(403, 'Unauthorized.');
         }
     }
 
     private function statusLabel(?string $status): string
     {
-        return match(strtoupper((string) $status)) {
+        return match (strtoupper((string) $status)) {
             'REGISTERED' => 'Registered',
             'APPROVED' => 'Approved',
             'REJECTED' => 'Rejected',

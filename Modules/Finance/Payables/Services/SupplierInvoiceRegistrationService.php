@@ -16,8 +16,7 @@ class SupplierInvoiceRegistrationService
     public function __construct(
         private readonly ThreeWayMatchingEngine $matchingEngine,
         private readonly SupplierInvoiceIntakeSourceService $intakeSourceService,
-    ) {
-    }
+    ) {}
 
     public function registerFromSource(array $input, User $actor): array
     {
@@ -61,7 +60,7 @@ class SupplierInvoiceRegistrationService
                     ->first();
 
                 if ($replay) {
-                    if (!hash_equals((string) $replay->source_fingerprint, $normalized['source_fingerprint'])) {
+                    if (! hash_equals((string) $replay->source_fingerprint, $normalized['source_fingerprint'])) {
                         throw new DomainException('Supplier invoice registration key was already used for different source evidence.');
                     }
 
@@ -123,11 +122,11 @@ class SupplierInvoiceRegistrationService
     {
         $freshActor = User::query()->find($actor->id);
 
-        if (!$freshActor || !$freshActor->is_active) {
+        if (! $freshActor || ! $freshActor->is_active) {
             throw new AuthorizationException('Supplier invoice registration actor is inactive or unresolved.');
         }
 
-        if (!$freshActor->can(self::PERMISSION)) {
+        if (! $freshActor->can(self::PERMISSION)) {
             throw new AuthorizationException('Supplier invoice registration permission is required.');
         }
 
@@ -136,7 +135,7 @@ class SupplierInvoiceRegistrationService
             ->wherePivot('status', 'active')
             ->exists();
 
-        if (!$hasPropertyAccess) {
+        if (! $hasPropertyAccess) {
             throw new AuthorizationException('Supplier invoice registration requires active property access.');
         }
     }
@@ -148,7 +147,7 @@ class SupplierInvoiceRegistrationService
             ->where('is_active', true)
             ->exists();
 
-        if (!$propertyExists) {
+        if (! $propertyExists) {
             throw new DomainException('Supplier invoice property is not active or does not exist.');
         }
 
@@ -159,7 +158,7 @@ class SupplierInvoiceRegistrationService
             ->where('is_approved', true)
             ->first();
 
-        if (!$vendor || ($vendor->property_id !== null && $vendor->property_id !== $data['property_id'])) {
+        if (! $vendor || ($vendor->property_id !== null && $vendor->property_id !== $data['property_id'])) {
             throw new DomainException('Supplier invoice vendor is outside the active property scope.');
         }
 
@@ -168,7 +167,7 @@ class SupplierInvoiceRegistrationService
             ->whereNull('deleted_at')
             ->first();
 
-        if (!$purchaseOrder || $purchaseOrder->property_id !== $data['property_id']) {
+        if (! $purchaseOrder || $purchaseOrder->property_id !== $data['property_id']) {
             throw new DomainException('Supplier invoice purchase order is outside the active property scope.');
         }
 
@@ -178,7 +177,7 @@ class SupplierInvoiceRegistrationService
                 ->whereNull('deleted_at')
                 ->first();
 
-            if (!$goodsReceipt || $goodsReceipt->property_id !== $data['property_id']) {
+            if (! $goodsReceipt || $goodsReceipt->property_id !== $data['property_id']) {
                 throw new DomainException('Supplier invoice receiving evidence is outside the active property scope.');
             }
         }
@@ -192,7 +191,7 @@ class SupplierInvoiceRegistrationService
                 ->select('purchase_orders.property_id')
                 ->first();
 
-            if (!$purchaseOrderLine || $purchaseOrderLine->property_id !== $data['property_id']) {
+            if (! $purchaseOrderLine || $purchaseOrderLine->property_id !== $data['property_id']) {
                 throw new DomainException('Supplier invoice purchase order line is outside the active property scope.');
             }
 
@@ -207,7 +206,7 @@ class SupplierInvoiceRegistrationService
                 ->select('receiving_documents.property_id')
                 ->first();
 
-            if (!$goodsReceiptLine || $goodsReceiptLine->property_id !== $data['property_id']) {
+            if (! $goodsReceiptLine || $goodsReceiptLine->property_id !== $data['property_id']) {
                 throw new DomainException('Supplier invoice receiving line is outside the active property scope.');
             }
         }
@@ -227,7 +226,7 @@ class SupplierInvoiceRegistrationService
 
         $lines = $data['lines'] ?? [];
 
-        if (!is_array($lines) || count($lines) === 0) {
+        if (! is_array($lines) || count($lines) === 0) {
             throw new DomainException('Supplier invoice requires at least one line.');
         }
 
@@ -340,7 +339,7 @@ class SupplierInvoiceRegistrationService
 
     private function decimal(mixed $value, int $precision): float
     {
-        if (!is_numeric($value)) {
+        if (! is_numeric($value)) {
             throw new DomainException('Supplier invoice numeric evidence is invalid.');
         }
 

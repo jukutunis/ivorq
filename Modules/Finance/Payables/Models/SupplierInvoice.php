@@ -17,10 +17,12 @@ use Shared\Traits\HasUlid;
 
 class SupplierInvoice extends Model
 {
-    use HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes;
+    use BelongsToProperty, HasAuditColumns, HasUlid, SoftDeletes;
 
     public const STATUS_REGISTERED = 'REGISTERED';
+
     public const STATUS_APPROVED = 'APPROVED';
+
     public const STATUS_REJECTED = 'REJECTED';
 
     protected $table = 'vendor_invoices';

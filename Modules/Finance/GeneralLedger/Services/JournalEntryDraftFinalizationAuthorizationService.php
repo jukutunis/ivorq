@@ -4,7 +4,6 @@ namespace Modules\Finance\GeneralLedger\Services;
 
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
-use Modules\Finance\GeneralLedger\Enums\EntryTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalCandidateStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
 use Modules\Finance\GeneralLedger\Models\JournalCandidate;
@@ -60,7 +59,7 @@ class JournalEntryDraftFinalizationAuthorizationService
             ->where('is_active', true)
             ->first();
 
-        if (!$actor) {
+        if (! $actor) {
             throw new AuthorizationException('Unauthorized to authorize JournalEntry draft finalization.');
         }
 
@@ -70,7 +69,7 @@ class JournalEntryDraftFinalizationAuthorizationService
             throw new AuthorizationException('Unauthorized to authorize JournalEntry draft finalization.');
         }
 
-        if (!$authorized) {
+        if (! $authorized) {
             throw new AuthorizationException('Unauthorized to authorize JournalEntry draft finalization.');
         }
 
@@ -84,7 +83,7 @@ class JournalEntryDraftFinalizationAuthorizationService
             ->wherePivot('status', 'active')
             ->exists();
 
-        if (!$hasPropertyAccess) {
+        if (! $hasPropertyAccess) {
             throw new AuthorizationException('Unauthorized to authorize JournalEntry draft finalization.');
         }
     }
@@ -114,7 +113,7 @@ class JournalEntryDraftFinalizationAuthorizationService
             ->lockForUpdate()
             ->first();
 
-        if (!$candidate) {
+        if (! $candidate) {
             throw new RuntimeException('Source JournalCandidate provenance is missing.');
         }
 
@@ -126,7 +125,7 @@ class JournalEntryDraftFinalizationAuthorizationService
             throw new RuntimeException('Only approved JournalCandidate-derived drafts can be finalization-authorized.');
         }
 
-        if (!$this->isSupportedCandidate($candidate)) {
+        if (! $this->isSupportedCandidate($candidate)) {
             throw new RuntimeException('Only approved supported JournalCandidate-derived drafts can be finalization-authorized.');
         }
 

@@ -15,16 +15,19 @@ use Modules\Operations\GeneralCashier\Models\PaymentExecution;
 class BankSupplierPaymentReversalService
 {
     public const PERMISSION = 'finance.general-cashier.bank-payment-reversal.create';
+
     public const CONTRACT = 'bank_supplier_payment_reversal_execution_v1';
 
     public function record(string $bankReturnEvidenceId, ?User $actor): BankSupplierPaymentReversalExecution
     {
         return DB::transaction(function () use ($bankReturnEvidenceId, $actor): BankSupplierPaymentReversalExecution {
             $actor = $actor ? User::whereKey($actor->id)->where('is_active', true)->first() : null;
-            if (!$actor || !$actor->can(self::PERMISSION)) throw new AuthorizationException('Bank supplier-payment reversal permission is required.');
+            if (! $actor || ! $actor->can(self::PERMISSION)) {
+                throw new AuthorizationException('Bank supplier-payment reversal permission is required.');
+            }
 
             $return = BankReturnEvidence::withoutGlobalScope('property')->whereKey($bankReturnEvidenceId)->lockForUpdate()->firstOrFail();
-            if (!$actor->properties()->where('properties.id', $return->property_id)->wherePivot('status', 'active')->exists()) {
+            if (! $actor->properties()->where('properties.id', $return->property_id)->wherePivot('status', 'active')->exists()) {
                 throw new AuthorizationException('Bank supplier-payment reversal requires active property access.');
             }
             $execution = PaymentExecution::withoutGlobalScope('property')->whereKey($return->payment_execution_id)->lockForUpdate()->firstOrFail();
@@ -52,7 +55,9 @@ class BankSupplierPaymentReversalService
                 ->where('bank_return_evidence_id', $return->id)->orWhere('original_payment_execution_id', $execution->id)
                 ->lockForUpdate()->first();
             if ($existing) {
-                if ($existing->source_identity_hash === $hash) return $existing->fresh();
+                if ($existing->source_identity_hash === $hash) {
+                    return $existing->fresh();
+                }
                 throw new DomainException('Conflicting bank supplier-payment reversal evidence already exists.');
             }
 
