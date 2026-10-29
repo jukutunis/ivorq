@@ -141,6 +141,7 @@ const financeTabs = [
   { href: '/finance/accounts-receivable', label: 'Accounts Receivable' },
   { href: '/finance/budget-watch', label: 'Budget Watch' },
   { href: '/finance/general-ledger/grni-control', label: 'GRNI Control' },
+  { href: '/finance/fx-rates', label: 'FX Rate Evidence' },
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];
 

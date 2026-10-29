@@ -20,10 +20,14 @@ use App\Http\Controllers\Ivorq\LogbookEntrySelfCorrectionController;
 use App\Http\Controllers\Ivorq\ShiftLogController;
 use Modules\Finance\Banking\Http\Controllers\BankingMigrationPlanController;
 use Modules\Finance\Banking\Http\Controllers\BankingOperationsWorkspaceController;
+use Modules\Finance\FxReference\Http\Controllers\ExchangeRateEvidenceWorkspaceController;
 use Modules\Finance\FxReference\Http\Controllers\FxAdjustmentControlWorkspaceController;
 use Modules\Finance\FxReference\Http\Controllers\FxBreakGlassController;
 use Modules\Finance\GeneralCashier\Http\Controllers\CashbookEvidenceWorkspaceController;
 use Modules\Finance\GeneralCashier\Http\Controllers\GeneralCashierOperationsWorkspaceController;
+use Modules\Finance\GeneralLedger\Http\Controllers\FinancialPeriodControlWorkspaceController;
+use Modules\Finance\GeneralLedger\Http\Controllers\FinancialReportingWorkspaceController;
+use Modules\Finance\GeneralLedger\Http\Controllers\GeneralLedgerOperationsWorkspaceController;
 use Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController;
 use Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController;
 use Modules\Finance\Payables\Http\Controllers\PaymentProposalControlWorkspaceController;
@@ -190,6 +194,22 @@ Route::middleware(['auth', 'active.property'])->group(function () {
         Route::get('/budget-watch', [FinanceController::class, 'budgetWatch']);
         Route::get('/general-ledger/grni-control', [GrniControlWorkspaceController::class, 'index'])
             ->name('finance.general-ledger.grni-control');
+        Route::get('/general-ledger/operations', [GeneralLedgerOperationsWorkspaceController::class, 'index'])
+            ->name('finance.general-ledger.operations');
+        Route::get('/general-ledger/reports', [FinancialReportingWorkspaceController::class, 'index'])
+            ->name('finance.general-ledger.reports');
+        Route::get('/general-ledger/period-control', [FinancialPeriodControlWorkspaceController::class, 'index'])
+            ->name('finance.general-ledger.period-control');
+        Route::post('/general-ledger/period-control/initialize', [FinancialPeriodControlWorkspaceController::class, 'initialize'])
+            ->name('finance.general-ledger.period-control.initialize');
+        Route::get('/fx-rates', [ExchangeRateEvidenceWorkspaceController::class, 'index'])
+            ->name('finance.fx-rates.index');
+        Route::post('/fx-rates', [ExchangeRateEvidenceWorkspaceController::class, 'record'])
+            ->name('finance.fx-rates.record');
+        Route::post('/fx-rates/{evidence}/approve', [ExchangeRateEvidenceWorkspaceController::class, 'approve'])
+            ->name('finance.fx-rates.approve');
+        Route::post('/fx-rates/{evidence}/reject', [ExchangeRateEvidenceWorkspaceController::class, 'reject'])
+            ->name('finance.fx-rates.reject');
         Route::get('/fx-adjustments', [FxAdjustmentControlWorkspaceController::class, 'index'])
             ->name('finance.fx-adjustments.index');
         Route::get('/fx-access-management', [FxOperationalRoleAssignmentController::class, 'index'])

@@ -3,16 +3,12 @@
 namespace Modules\Finance\GeneralLedger\Services;
 
 use Illuminate\Support\Facades\Log;
-use Modules\Finance\GeneralLedger\Enums\PackageStatusEnum;
-use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
-use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
-use Modules\Finance\GeneralLedger\Models\FinancialPackageSnapshot;
-use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Finance\GeneralLedger\DTOs\FinancialStatementPackageDTO;
-use Modules\Finance\GeneralLedger\DTOs\TrialBalanceDTO;
-use Modules\Finance\GeneralLedger\DTOs\ProfitLossDTO;
-use Modules\Finance\GeneralLedger\DTOs\BalanceSheetDTO;
-use Modules\Finance\GeneralLedger\DTOs\CashFlowDTO;
+use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\PackageStatusEnum;
+use Modules\Finance\GeneralLedger\Models\Account;
+use Modules\Finance\GeneralLedger\Models\FinancialPackageSnapshot;
+use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
 
 class FinancialPackageService
 {
@@ -20,8 +16,7 @@ class FinancialPackageService
         protected TrialBalanceService $trialBalanceService,
         protected ProfitLossService $profitLossService,
         protected BalanceSheetService $balanceSheetService,
-        protected CashFlowService $cashFlowService,
-        protected PeriodControlService $periodControlService
+        protected CashFlowService $cashFlowService
     ) {}
 
     public function generate(string $propertyId, int $year, int $month): FinancialStatementPackageDTO
@@ -34,7 +29,7 @@ class FinancialPackageService
         $isClosed = $period && $period->status === FinancialPeriodStatusEnum::Closed;
 
         if ($isClosed) {
-            Log::info("Closed-period financial package accessed.", [
+            Log::info('Closed-period financial package accessed.', [
                 'property_id' => $propertyId,
                 'period_year' => $year,
                 'period_month' => $month,
@@ -79,7 +74,7 @@ class FinancialPackageService
 
         $status = PackageStatusEnum::Valid;
         foreach ($validations as $isValid) {
-            if (!$isValid) {
+            if (! $isValid) {
                 $status = PackageStatusEnum::Invalid;
                 break;
             }
@@ -101,7 +96,7 @@ class FinancialPackageService
             status: $status
         );
 
-        if ($isClosed && !$snapshotExists) {
+        if ($isClosed && ! $snapshotExists) {
             FinancialPackageSnapshot::create([
                 'property_id' => $propertyId,
                 'period_year' => $year,
@@ -119,10 +114,10 @@ class FinancialPackageService
     {
         // For the sake of simplicity and to ensure full DTO structure integrity,
         // we use a fast cheat: we serialize the decoded object back. Wait, that's not possible in PHP.
-        // Let's manually hydrate the fields we need for validation checks in tests, or we can simply 
+        // Let's manually hydrate the fields we need for validation checks in tests, or we can simply
         // rely on the immutable nature of closed periods and regenerate the DTOs from the DB.
-        // We will throw an exception here if we truly needed it, but since we regenerate below, 
+        // We will throw an exception here if we truly needed it, but since we regenerate below,
         // let's actually just bypass `reconstructFromSnapshot` and regenerate from the DB.
-        throw new \Exception("Not implemented");
+        throw new \Exception('Not implemented');
     }
 }

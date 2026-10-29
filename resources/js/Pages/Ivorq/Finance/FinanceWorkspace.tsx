@@ -28,6 +28,10 @@ interface FinanceWorkspaceProps {
   capabilities?: {
     can_view_fx_adjustments?: boolean;
     can_manage_fx_operational_roles?: boolean;
+    can_view_general_ledger?: boolean;
+    can_view_financial_reports?: boolean;
+    can_manage_financial_period?: boolean;
+    can_view_fx_rates?: boolean;
   };
 }
 
@@ -37,6 +41,18 @@ const FinanceWorkspace = ({ activeTab = 'revenue_cash', capabilities = {} }: Fin
     { href: '/finance/accounts-payable', label: 'Accounts Payable', badge: 12 },
     { href: '/finance/accounts-receivable', label: 'Accounts Receivable', badge: 8 },
     { href: '/finance/budget-watch', label: 'Budget Watch' },
+    ...(capabilities.can_view_general_ledger
+      ? [{ href: '/finance/general-ledger/operations', label: 'General Ledger' }]
+      : []),
+    ...(capabilities.can_view_financial_reports
+      ? [{ href: '/finance/general-ledger/reports', label: 'Financial Reports' }]
+      : []),
+    ...(capabilities.can_manage_financial_period
+      ? [{ href: '/finance/general-ledger/period-control', label: 'Period Control' }]
+      : []),
+    ...(capabilities.can_view_fx_rates
+      ? [{ href: '/finance/fx-rates', label: 'FX Rates' }]
+      : []),
     ...(capabilities.can_view_fx_adjustments
       ? [{ href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' }]
       : []),

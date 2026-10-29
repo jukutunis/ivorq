@@ -4,13 +4,13 @@ namespace Modules\Finance\GeneralLedger\Services;
 
 use Exception;
 use Illuminate\Support\Facades\DB;
-use Modules\Finance\GeneralLedger\Models\PostingProfile;
-use Modules\Finance\GeneralLedger\Models\PostingLog;
-use Modules\Finance\GeneralLedger\Models\JournalEntry;
-use Modules\Finance\GeneralLedger\Enums\PostingLogStatusEnum;
-use Modules\Finance\GeneralLedger\Enums\PostingEventEnum;
 use Modules\Finance\GeneralLedger\Enums\AccountRoleEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
+use Modules\Finance\GeneralLedger\Enums\PostingEventEnum;
+use Modules\Finance\GeneralLedger\Enums\PostingLogStatusEnum;
+use Modules\Finance\GeneralLedger\Models\JournalEntry;
+use Modules\Finance\GeneralLedger\Models\PostingLog;
+use Modules\Finance\GeneralLedger\Models\PostingProfile;
 
 class SubledgerPostingService
 {
@@ -55,10 +55,6 @@ class SubledgerPostingService
         string $date, string $reference, string $description, float $amount,
         array $debitRoles, array $creditRoles
     ): ?JournalEntry {
-        $year = (int) date('Y', strtotime($date));
-        $month = (int) date('m', strtotime($date));
-        app(\Modules\Finance\GeneralLedger\Services\PeriodControlService::class)->enforceOpen($propertyId, $year, $month);
-
         try {
             return DB::transaction(function () use (
                 $propertyId, $module, $event, $sourceType, $sourceId, $date, $reference, $description, $amount, $debitRoles, $creditRoles
@@ -82,15 +78,15 @@ class SubledgerPostingService
                     ->where('is_active', true)
                     ->first();
 
-                if (!$profile) {
+                if (! $profile) {
                     throw new Exception("Active posting profile not found for module {$module} and event {$event}.");
                 }
 
                 $debitRule = $profile->rules()->whereIn('account_role', $debitRoles)->first();
                 $creditRule = $profile->rules()->whereIn('account_role', $creditRoles)->first();
 
-                if (!$debitRule || !$creditRule) {
-                    throw new Exception("Missing posting rules for required roles.");
+                if (! $debitRule || ! $creditRule) {
+                    throw new Exception('Missing posting rules for required roles.');
                 }
 
                 // Create Draft Journal

@@ -2,62 +2,73 @@
 
 namespace Tests\Feature\Finance\GeneralLedger;
 
+use Database\Factories\PropertyFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Cache;
-use Tests\TestCase;
-use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
-use Modules\Finance\GeneralLedger\Models\JournalEntry;
+use Illuminate\Support\Str;
+use Modules\Finance\Banking\Services\BankStatementService;
 use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
 use Modules\Finance\GeneralLedger\Enums\JournalStatusEnum;
-use Modules\Finance\GeneralLedger\Services\PeriodControlService;
-use Modules\Finance\GeneralLedger\Services\SubledgerPostingService;
-use Modules\Finance\GeneralLedger\Services\GeneralLedgerService;
 use Modules\Finance\GeneralLedger\Exceptions\PeriodClosedException;
-use Modules\Finance\Banking\Services\BankStatementService;
+use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
+use Modules\Finance\GeneralLedger\Models\JournalEntry;
+use Modules\Finance\GeneralLedger\Services\GeneralLedgerService;
+use Modules\Finance\GeneralLedger\Services\PeriodControlService;
+use Modules\Foundation\Property\Models\PropertyBusinessDate;
+use Tests\TestCase;
 
 class PeriodControlTest extends TestCase
 {
     use RefreshDatabase;
 
     protected string $propertyId;
+
     protected PeriodControlService $service;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->propertyId = (string) Str::ulid();
+        $this->propertyId = PropertyFactory::new()->create()->id;
         $this->service = app(PeriodControlService::class);
         Cache::flush();
     }
 
-    public function test_missing_period_auto_created()
+    public function test_missing_period_fails_closed_without_auto_creation()
     {
-        $this->assertTrue($this->service->isOpen($this->propertyId, 2026, 6));
+        $this->assertFalse($this->service->isOpen($this->propertyId, 2026, 6));
 
-        $this->assertDatabaseHas('gl_financial_periods', [
+        $this->assertDatabaseMissing('gl_financial_periods', [
             'property_id' => $this->propertyId,
             'period_year' => 2026,
             'period_month' => 6,
-            'status' => FinancialPeriodStatusEnum::Open->value,
         ]);
     }
 
     public function test_period_status_cache_invalidation()
     {
-        $this->service->isOpen($this->propertyId, 2026, 6);
+        FinancialPeriod::create([
+            'property_id' => $this->propertyId,
+            'period_year' => 2026,
+            'period_month' => 6,
+            'status' => FinancialPeriodStatusEnum::Open,
+        ]);
         $userId = (string) Str::ulid();
-        
+
         $this->service->close($this->propertyId, 2026, 6, $userId);
-        
         $this->assertFalse($this->service->isOpen($this->propertyId, 2026, 6));
     }
 
     public function test_only_latest_closed_period_can_reopen()
     {
         $userId = (string) Str::ulid();
-        $this->service->isOpen($this->propertyId, 2026, 5);
-        $this->service->isOpen($this->propertyId, 2026, 6);
+        foreach ([5, 6] as $month) {
+            FinancialPeriod::create([
+                'property_id' => $this->propertyId,
+                'period_year' => 2026,
+                'period_month' => $month,
+                'status' => FinancialPeriodStatusEnum::Open,
+            ]);
+        }
 
         $this->service->close($this->propertyId, 2026, 5, $userId);
         $this->service->close($this->propertyId, 2026, 6, $userId);
@@ -72,7 +83,12 @@ class PeriodControlTest extends TestCase
     public function test_reopen_requires_reason()
     {
         $userId = (string) Str::ulid();
-        $this->service->isOpen($this->propertyId, 2026, 6);
+        FinancialPeriod::create([
+            'property_id' => $this->propertyId,
+            'period_year' => 2026,
+            'period_month' => 6,
+            'status' => FinancialPeriodStatusEnum::Open,
+        ]);
         $this->service->close($this->propertyId, 2026, 6, $userId);
 
         $this->expectException(\Exception::class);
@@ -84,7 +100,12 @@ class PeriodControlTest extends TestCase
     public function test_closing_records_snapshot_timestamp()
     {
         $userId = (string) Str::ulid();
-        $this->service->isOpen($this->propertyId, 2026, 6);
+        FinancialPeriod::create([
+            'property_id' => $this->propertyId,
+            'period_year' => 2026,
+            'period_month' => 6,
+            'status' => FinancialPeriodStatusEnum::Open,
+        ]);
         $this->service->close($this->propertyId, 2026, 6, $userId);
 
         $period = FinancialPeriod::where('property_id', $this->propertyId)->first();
@@ -96,8 +117,17 @@ class PeriodControlTest extends TestCase
     public function test_closed_period_blocks_gl_posting()
     {
         $userId = (string) Str::ulid();
-        $this->service->isOpen($this->propertyId, 2026, 6);
+        FinancialPeriod::create([
+            'property_id' => $this->propertyId,
+            'period_year' => 2026,
+            'period_month' => 6,
+            'status' => FinancialPeriodStatusEnum::Open,
+        ]);
         $this->service->close($this->propertyId, 2026, 6, $userId);
+        PropertyBusinessDate::factory()->create([
+            'property_id' => $this->propertyId,
+            'business_date' => '2026-06-15',
+        ]);
 
         $glService = app(GeneralLedgerService::class);
 
@@ -116,29 +146,25 @@ class PeriodControlTest extends TestCase
         $glService->postJournalEntry($journal->id);
     }
 
-    public function test_closed_period_blocks_ap_posting()
+    public function test_subledger_defers_period_authority_to_general_ledger_service()
     {
-        $userId = (string) Str::ulid();
-        $this->service->isOpen($this->propertyId, 2026, 6);
-        $this->service->close($this->propertyId, 2026, 6, $userId);
+        $source = (string) file_get_contents(base_path('Modules/Finance/GeneralLedger/Services/SubledgerPostingService.php'));
+        $ledger = (string) file_get_contents(base_path('Modules/Finance/GeneralLedger/Services/GeneralLedgerService.php'));
 
-        $postingService = app(SubledgerPostingService::class);
-
-        $this->expectException(PeriodClosedException::class);
-        $postingService->postAccountPayable(
-            $this->propertyId,
-            (string) Str::ulid(),
-            100.0,
-            '2026-06-15',
-            'REF',
-            'DESC'
-        );
+        $this->assertStringNotContainsString('PeriodControlService', $source);
+        $this->assertStringContainsString('FinancialPeriod::where', $ledger);
+        $this->assertStringContainsString('Auto-creation is not permitted', $ledger);
     }
 
     public function test_closed_period_blocks_banking_changes()
     {
         $userId = (string) Str::ulid();
-        $this->service->isOpen($this->propertyId, 2026, 6);
+        FinancialPeriod::create([
+            'property_id' => $this->propertyId,
+            'period_year' => 2026,
+            'period_month' => 6,
+            'status' => FinancialPeriodStatusEnum::Open,
+        ]);
         $this->service->close($this->propertyId, 2026, 6, $userId);
 
         $bankService = app(BankStatementService::class);

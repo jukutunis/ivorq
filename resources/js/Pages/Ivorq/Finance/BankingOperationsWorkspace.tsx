@@ -186,6 +186,9 @@ const financeTabs = [
   { href: '/finance/accounts-payable', label: 'Accounts Payable' },
   { href: '/finance/payables/payment-proposals', label: 'Payment Proposals' },
   { href: '/finance/payables/cashbook-evidence', label: 'Cashbook Evidence' },
+  { href: '/finance/general-ledger/operations', label: 'General Ledger' },
+  { href: '/finance/general-ledger/reports', label: 'Financial Reports' },
+  { href: '/finance/fx-rates', label: 'FX Rate Evidence' },
   { href: '/finance/banking/operations', label: 'Banking Operations' },
   { href: '/finance/fx-adjustments', label: 'Realized FX Adjustments' },
 ];

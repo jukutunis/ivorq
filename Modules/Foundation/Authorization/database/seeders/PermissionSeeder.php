@@ -84,6 +84,10 @@ class PermissionSeeder extends Seeder
 
             // Finance & GL Review Lifecycle
             'generalledger.period.manage',
+            'generalledger.trialbalance.view',
+            'generalledger.profitloss.view',
+            'generalledger.balancesheet.view',
+            'generalledger.cashflow.view',
             'finance.journal-candidate.review',
             'finance.journal-candidate.materialize-draft',
             'finance.journal-entry-draft.authorize-finalization',

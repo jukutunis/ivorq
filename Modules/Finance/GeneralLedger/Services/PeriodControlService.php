@@ -2,11 +2,12 @@
 
 namespace Modules\Finance\GeneralLedger\Services;
 
-use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
-use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
-use Modules\Finance\GeneralLedger\Exceptions\PeriodClosedException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Modules\Finance\GeneralLedger\Enums\FinancialPeriodStatusEnum;
+use Modules\Finance\GeneralLedger\Exceptions\PeriodClosedException;
+use Modules\Finance\GeneralLedger\Models\FinancialPackageSnapshot;
+use Modules\Finance\GeneralLedger\Models\FinancialPeriod;
 
 class PeriodControlService
 {
@@ -19,32 +20,17 @@ class PeriodControlService
     }
 
     /**
-     * Checks if a period is open. If missing, auto-creates it as Open.
+     * Legacy compatibility check only. Missing periods fail closed and are never created here.
      */
     public function isOpen(string $propertyId, int $year, int $month): bool
     {
-        $cacheKey = $this->getCacheKey($propertyId, $year, $month);
+        $status = FinancialPeriod::where('property_id', $propertyId)
+            ->where('period_year', $year)
+            ->where('period_month', $month)
+            ->value('status');
 
-        $status = Cache::remember($cacheKey, now()->addDays(7), function () use ($propertyId, $year, $month) {
-            $period = FinancialPeriod::where('property_id', $propertyId)
-                ->where('period_year', $year)
-                ->where('period_month', $month)
-                ->first();
-
-            if (!$period) {
-                $period = FinancialPeriod::create([
-                    'property_id' => $propertyId,
-                    'period_year' => $year,
-                    'period_month' => $month,
-                    'status' => FinancialPeriodStatusEnum::Open,
-                    'opened_at' => now(),
-                ]);
-            }
-
-            return $period->status;
-        });
-
-        return $status === FinancialPeriodStatusEnum::Open || $status === FinancialPeriodStatusEnum::Reopened;
+        return $status === FinancialPeriodStatusEnum::Open->value
+            || $status === FinancialPeriodStatusEnum::Reopened->value;
     }
 
     /**
@@ -52,8 +38,8 @@ class PeriodControlService
      */
     public function enforceOpen(string $propertyId, int $year, int $month): void
     {
-        if (!$this->isOpen($propertyId, $year, $month)) {
-            throw new PeriodClosedException("The financial period {$year}-{$month} is closed or closing. No modifications are allowed.");
+        if (! $this->isOpen($propertyId, $year, $month)) {
+            throw new PeriodClosedException("The financial period {$year}-{$month} is missing, closed, or closing. No modifications are allowed.");
         }
     }
 
@@ -70,7 +56,7 @@ class PeriodControlService
                 ->firstOrFail();
 
             if ($period->status === FinancialPeriodStatusEnum::Closed) {
-                throw new \Exception("Period is already closed.");
+                throw new \Exception('Period is already closed.');
             }
 
             $period->update([
@@ -90,10 +76,10 @@ class PeriodControlService
     public function reopen(string $propertyId, int $year, int $month, string $userId, string $reason): void
     {
         if (empty(trim($reason))) {
-            throw new \Exception("Reopen requires a reason.");
+            throw new \Exception('Reopen requires a reason.');
         }
 
-        DB::transaction(function () use ($propertyId, $year, $month, $userId, $reason) {
+        DB::transaction(function () use ($propertyId, $year, $month, $userId) {
             $period = FinancialPeriod::where('property_id', $propertyId)
                 ->where('period_year', $year)
                 ->where('period_month', $month)
@@ -101,7 +87,7 @@ class PeriodControlService
                 ->firstOrFail();
 
             if ($period->status !== FinancialPeriodStatusEnum::Closed) {
-                throw new \Exception("Only closed periods can be reopened.");
+                throw new \Exception('Only closed periods can be reopened.');
             }
 
             // Ensure it's the latest closed period
@@ -112,7 +98,7 @@ class PeriodControlService
                 ->first();
 
             if ($latestClosed->id !== $period->id) {
-                throw new \Exception("Only the most recently closed period can be reopened.");
+                throw new \Exception('Only the most recently closed period can be reopened.');
             }
 
             $period->update([
@@ -125,13 +111,13 @@ class PeriodControlService
             ]);
 
             Cache::forget($this->getCacheKey($propertyId, $year, $month));
-            
+
             if (Cache::supportsTags()) {
                 Cache::tags(["reporting:{$propertyId}"])->flush();
             }
 
             // BR-014: Reopened periods invalidate snapshots.
-            \Modules\Finance\GeneralLedger\Models\FinancialPackageSnapshot::where('property_id', $propertyId)
+            FinancialPackageSnapshot::where('property_id', $propertyId)
                 ->where('period_year', $year)
                 ->where('period_month', $month)
                 ->forceDelete();
