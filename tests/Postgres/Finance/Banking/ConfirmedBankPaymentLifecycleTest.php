@@ -272,6 +272,39 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
         } catch (DomainException $exception) {
             $this->assertStringContainsString('conflicts', $exception->getMessage());
         }
+        $conflictingVendorInflow = $this->bankingService->registerStatementLine(
+            $bank->id,
+            'CONFLICTING-VENDOR-RETURN-SOURCE',
+            'CONFLICTING-VENDOR-RETURN-001',
+            '2026-07-02',
+            ControlledBankStatementLineDirectionEnum::INFLOW,
+            '125.00',
+            'IDR',
+            $this->actor,
+            (string) Str::ulid()
+        );
+        $beforeVendorConflict = [
+            'returns' => DB::table('bank_return_evidence')->count(),
+            'reversals' => DB::table('bank_supplier_payment_reversal_executions')->count(),
+            'candidates' => DB::table('journal_candidates')->count(),
+        ];
+        try {
+            $this->bankReturnService->record(
+                $postedPayment->id,
+                $conflictingVendorInflow->id,
+                'BANK_RETURN',
+                'bank-return-vendor-conflict',
+                $this->actor
+            );
+            $this->fail('Conflicting bank-return vendor evidence must fail closed.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('conflicts', $exception->getMessage());
+        }
+        $this->assertSame($beforeVendorConflict, [
+            'returns' => DB::table('bank_return_evidence')->count(),
+            'reversals' => DB::table('bank_supplier_payment_reversal_executions')->count(),
+            'candidates' => DB::table('journal_candidates')->count(),
+        ]);
         $inflow = $this->bankingService->registerStatementLine($bank->id, 'RETURN-SOURCE', 'RETURN-001', '2026-07-02', ControlledBankStatementLineDirectionEnum::INFLOW, '125.00', 'IDR', $this->actor, $source['vendor_id']);
 
         $return = $this->bankReturnService->record($postedPayment->id, $inflow->id, 'BANK_RETURN', 'bank-return-replay-001', $this->actor);
@@ -279,6 +312,7 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
         $this->assertSame($return->id, $replay->id);
         $this->assertSame($inflow->id, $return->return_statement_line_id);
         $this->assertSame('125.00', (string) $return->return_amount);
+        $this->assertSame($source['vendor_id'], $return->source_snapshot['return_vendor_reference']);
         try {
             $this->bankReturnService->record($postedPayment->id, $inflow->id, 'PAYMENT_REJECTED', 'bank-return-replay-001', $this->actor);
             $this->fail('Conflicting bank-return replay must fail.');
@@ -295,6 +329,68 @@ class ConfirmedBankPaymentLifecycleTest extends PostgresTestCase
         $this->assertSame('125.0000', (string) $candidate->lines[0]->amount);
         $this->assertSame('DEBIT', $candidate->lines[0]->entry_type->value);
         $this->assertSame('CREDIT', $candidate->lines[1]->entry_type->value);
+    }
+
+    public function test_bank_return_preserves_canonical_null_vendor_reference_convention(): void
+    {
+        $source = $this->makeApprovedPaymentProposalItem('125.00');
+        $bank = $this->bankingService->registerBankAccount(
+            $this->bankAccountId,
+            'Controlled Bank',
+            'Operating Account',
+            'BANK-NULL-VENDOR-ACCOUNT',
+            'IDR',
+            'BANK-NULL-VENDOR-SOURCE',
+            $this->actor
+        );
+        $outflow = $this->bankingService->registerStatementLine(
+            $bank->id,
+            'NULL-VENDOR-OUTFLOW-SOURCE',
+            'NULL-VENDOR-OUTFLOW-001',
+            '2026-07-01',
+            ControlledBankStatementLineDirectionEnum::OUTFLOW,
+            '125.00',
+            'IDR',
+            $this->actor,
+            $source['vendor_id']
+        );
+        $cashier = $this->makeBankCashierContext();
+        $execution = $this->paymentExecutionService->recordConfirmedBankExecution(
+            $source['proposal_item_id'],
+            $cashier['session_id'],
+            $cashier['instrument_id'],
+            $bank->id,
+            $outflow->id,
+            $this->actor
+        );
+        $candidate = $this->candidateService->createForPaymentExecution($execution->id);
+        $this->reviewService->approve($candidate->id, $this->actor->id);
+        $draft = $this->draftService->materialize($candidate->id, $this->actor->id);
+        $this->authorizationService->authorize($draft->id, $this->actor->id);
+        $posted = $this->postingService->post($draft->id, $this->actor->id);
+        $inflow = $this->bankingService->registerStatementLine(
+            $bank->id,
+            'NULL-VENDOR-RETURN-SOURCE',
+            'NULL-VENDOR-RETURN-001',
+            '2026-07-02',
+            ControlledBankStatementLineDirectionEnum::INFLOW,
+            '125.00',
+            'IDR',
+            $this->actor,
+            null
+        );
+
+        $return = $this->bankReturnService->record(
+            $posted->id,
+            $inflow->id,
+            'BANK_RETURN',
+            'bank-return-null-vendor',
+            $this->actor
+        );
+
+        $this->assertNull($return->source_snapshot['return_vendor_reference']);
+        $this->assertSame($source['vendor_id'], $return->vendor_id);
+        $this->assertSame(1, DB::table('bank_return_evidence')->count());
     }
 
     private function makeApprovedPaymentProposalItem(string $amount): array

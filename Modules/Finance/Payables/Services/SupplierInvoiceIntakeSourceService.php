@@ -4,6 +4,7 @@ namespace Modules\Finance\Payables\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Modules\Finance\Payables\Models\SupplierInvoice;
 
 class SupplierInvoiceIntakeSourceService
 {
@@ -39,7 +40,26 @@ class SupplierInvoiceIntakeSourceService
                     ->whereNull('deleted_at')
                     ->orderByDesc('received_at')
                     ->get(['id', 'grn_number', 'status', 'received_at'])
-                    ->map(fn (object $receipt): array => (array) $receipt)
+                    ->map(function (object $receipt) use ($purchaseOrder): ?array {
+                        $invoiceableLines = $this->receiptLines($receipt->id, $purchaseOrder->id);
+
+                        if ($invoiceableLines === []) {
+                            return null;
+                        }
+
+                        return (array) $receipt + [
+                            'remaining_quantity' => number_format(
+                                array_sum(array_map(
+                                    fn (array $line): float => (float) $line['quantity'],
+                                    $invoiceableLines
+                                )),
+                                3,
+                                '.',
+                                ''
+                            ),
+                        ];
+                    })
+                    ->filter()
                     ->values()
                     ->all();
 
@@ -115,7 +135,7 @@ class SupplierInvoiceIntakeSourceService
         }
 
         $lines = $receipt
-            ? $this->receiptLines($receipt->id, $purchaseOrder->id)
+            ? $this->receiptLines($receipt->id, $purchaseOrder->id, true)
             : $this->purchaseOrderLines($purchaseOrder->id);
 
         if ($lines === []) {
@@ -139,28 +159,141 @@ class SupplierInvoiceIntakeSourceService
         ];
     }
 
-    private function receiptLines(string $receiptId, string $purchaseOrderId): array
+    public function assertReceiptCapacity(array $data): void
     {
-        return DB::table('receiving_lines as rl')
+        $requested = [];
+
+        foreach ($data['lines'] as $line) {
+            $receiptLineId = $line['goods_receipt_line_id'];
+
+            if ($receiptLineId === null) {
+                continue;
+            }
+
+            if (isset($requested[$receiptLineId])
+                && $requested[$receiptLineId]['purchase_order_line_id'] !== $line['purchase_order_line_id']) {
+                throw new DomainException('Supplier invoice receipt-line provenance is inconsistent.');
+            }
+
+            $requested[$receiptLineId] ??= [
+                'purchase_order_line_id' => $line['purchase_order_line_id'],
+                'quantity' => 0.0,
+            ];
+            $requested[$receiptLineId]['quantity'] += (float) $line['quantity'];
+        }
+
+        if ($requested === []) {
+            return;
+        }
+
+        $receiptLineIds = array_keys($requested);
+        sort($receiptLineIds);
+
+        $receiptLines = DB::table('receiving_lines as rl')
+            ->join('receiving_documents as rd', 'rd.id', '=', 'rl.receiving_document_id')
+            ->whereIn('rl.id', $receiptLineIds)
+            ->whereNull('rd.deleted_at')
+            ->orderBy('rl.id')
+            ->lockForUpdate()
+            ->get([
+                'rl.id', 'rl.receiving_document_id', 'rl.purchase_order_line_id', 'rl.received_quantity',
+                'rd.property_id', 'rd.purchase_order_id',
+            ]);
+
+        if ($receiptLines->count() !== count($receiptLineIds)) {
+            throw new DomainException('Supplier invoice receiving capacity evidence is unavailable.');
+        }
+
+        $claimed = $this->claimedQuantities($receiptLineIds);
+
+        foreach ($receiptLines as $receiptLine) {
+            $lineRequest = $requested[$receiptLine->id];
+
+            if ($receiptLine->property_id !== $data['property_id']
+                || $receiptLine->purchase_order_id !== $data['purchase_order_id']
+                || $receiptLine->receiving_document_id !== $data['goods_receipt_id']
+                || $receiptLine->purchase_order_line_id !== $lineRequest['purchase_order_line_id']) {
+                throw new DomainException('Supplier invoice receiving capacity conflicts with source provenance.');
+            }
+
+            $remaining = max(
+                0.0,
+                round((float) $receiptLine->received_quantity - ($claimed[$receiptLine->id] ?? 0.0), 3)
+            );
+
+            if (round($lineRequest['quantity'], 3) - $remaining > 0.0005) {
+                throw new DomainException('Supplier invoice quantity exceeds remaining receipt capacity.');
+            }
+        }
+    }
+
+    private function receiptLines(
+        string $receiptId,
+        string $purchaseOrderId,
+        bool $lockForUpdate = false
+    ): array {
+        $query = DB::table('receiving_lines as rl')
             ->join('purchase_order_lines as pol', 'pol.id', '=', 'rl.purchase_order_line_id')
             ->where('rl.receiving_document_id', $receiptId)
             ->where('pol.purchase_order_id', $purchaseOrderId)
             ->whereNull('pol.deleted_at')
-            ->orderBy('rl.id')
-            ->get([
-                'pol.id as purchase_order_line_id', 'rl.id as goods_receipt_line_id',
-                'pol.inventory_item_id', 'pol.description', 'rl.received_quantity as quantity',
-                'pol.unit_cost',
-            ])
-            ->map(fn (object $line): array => [
-                'purchase_order_line_id' => $line->purchase_order_line_id,
-                'goods_receipt_line_id' => $line->goods_receipt_line_id,
-                'inventory_item_id' => $line->inventory_item_id,
-                'description' => $line->description,
-                'quantity' => (string) $line->quantity,
-                'unit_price' => (string) $line->unit_cost,
-            ])
+            ->orderBy('rl.id');
+
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        $lines = $query->get([
+            'pol.id as purchase_order_line_id', 'rl.id as goods_receipt_line_id',
+            'pol.inventory_item_id', 'pol.description', 'rl.received_quantity as quantity',
+            'pol.unit_cost',
+        ]);
+        $claimed = $this->claimedQuantities($lines->pluck('goods_receipt_line_id')->all());
+
+        return $lines
+            ->map(function (object $line) use ($claimed): ?array {
+                $remaining = max(
+                    0.0,
+                    round((float) $line->quantity - ($claimed[$line->goods_receipt_line_id] ?? 0.0), 3)
+                );
+
+                if ($remaining <= 0.0) {
+                    return null;
+                }
+
+                return [
+                    'purchase_order_line_id' => $line->purchase_order_line_id,
+                    'goods_receipt_line_id' => $line->goods_receipt_line_id,
+                    'inventory_item_id' => $line->inventory_item_id,
+                    'description' => $line->description,
+                    'quantity' => number_format($remaining, 3, '.', ''),
+                    'unit_price' => (string) $line->unit_cost,
+                ];
+            })
+            ->filter()
             ->values()
+            ->all();
+    }
+
+    private function claimedQuantities(array $receiptLineIds): array
+    {
+        if ($receiptLineIds === []) {
+            return [];
+        }
+
+        return DB::table('vendor_invoice_lines as vil')
+            ->join('vendor_invoices as vi', 'vi.id', '=', 'vil.vendor_invoice_id')
+            ->whereIn('vil.goods_receipt_line_id', $receiptLineIds)
+            ->whereIn('vi.status', [SupplierInvoice::STATUS_REGISTERED, SupplierInvoice::STATUS_APPROVED])
+            ->whereNull('vi.deleted_at')
+            ->groupBy('vil.goods_receipt_line_id')
+            ->get([
+                'vil.goods_receipt_line_id',
+                DB::raw('SUM(vil.quantity) as claimed_quantity'),
+            ])
+            ->mapWithKeys(fn (object $line): array => [
+                $line->goods_receipt_line_id => round((float) $line->claimed_quantity, 3),
+            ])
             ->all();
     }
 

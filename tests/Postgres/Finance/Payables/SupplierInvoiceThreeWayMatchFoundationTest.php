@@ -17,12 +17,14 @@ use Modules\Finance\GeneralLedger\Services\JournalEntryDraftFinalizationAuthoriz
 use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
 use Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController;
+use Modules\Finance\Payables\Models\SupplierInvoice;
 use Modules\Finance\Payables\Services\ApGrniSettlementAgingProjectionService;
 use Modules\Finance\Payables\Services\GrniClearingAllocationEligibilityService;
 use Modules\Finance\Payables\Services\PaymentProposalApprovalService;
 use Modules\Finance\Payables\Services\PaymentProposalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceApprovalService;
 use Modules\Finance\Payables\Services\SupplierInvoiceExceptionReviewService;
+use Modules\Finance\Payables\Services\SupplierInvoiceIntakeSourceService;
 use Modules\Finance\Payables\Services\SupplierInvoiceRegistrationService;
 use Modules\Finance\Payables\Services\ThreeWayMatchingEngine;
 use Modules\Foundation\Authorization\Models\Permission;
@@ -213,6 +215,90 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         } catch (AuthorizationException|DomainException) {
             $this->assertSame($beforeConflict, $this->invoiceEvidenceCounts());
         }
+    }
+
+    public function test_receipt_capacity_is_cumulative_and_projection_uses_only_remaining_quantity(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $first = $this->service->registerAndMatch(
+            $this->invoicePayload($fixture, [], ['quantity' => 4]),
+            $this->actor
+        );
+
+        $this->assertEquals('4.000', $first['invoice']->lines->first()->quantity);
+
+        $source = collect(app(SupplierInvoiceIntakeSourceService::class)->project($this->property->id))
+            ->firstWhere('id', $fixture['purchase_order_id']);
+        $receipt = collect($source['receipts'])->firstWhere('id', $fixture['goods_receipt_id']);
+        $this->assertSame('6.000', $receipt['remaining_quantity']);
+
+        $beforeOverclaim = $this->invoiceEvidenceCounts();
+        try {
+            $this->service->registerAndMatch(
+                $this->invoicePayload($fixture, [], ['quantity' => 7]),
+                $this->actor
+            );
+            $this->fail('Supplier invoice must not exceed remaining receipt capacity.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('remaining receipt capacity', $exception->getMessage());
+        }
+        $this->assertSame($beforeOverclaim, $this->invoiceEvidenceCounts());
+
+        $second = $this->service->registerFromSource([
+            'property_id' => $this->property->id,
+            'purchase_order_id' => $fixture['purchase_order_id'],
+            'goods_receipt_id' => $fixture['goods_receipt_id'],
+            'invoice_number' => 'SINV-REMAINING-001',
+            'invoice_date' => '2026-06-30',
+            'registration_idempotency_key' => 'remaining-capacity-001',
+        ], $this->actor);
+
+        $this->assertEquals('6.000', $second['invoice']->lines->first()->quantity);
+
+        $projectedAfterExhaustion = collect(app(SupplierInvoiceIntakeSourceService::class)->project($this->property->id))
+            ->firstWhere('id', $fixture['purchase_order_id']);
+        $this->assertNull(
+            collect($projectedAfterExhaustion['receipts'])->firstWhere('id', $fixture['goods_receipt_id'])
+        );
+
+        $beforeExhausted = $this->invoiceEvidenceCounts();
+        try {
+            $this->service->registerFromSource([
+                'property_id' => $this->property->id,
+                'purchase_order_id' => $fixture['purchase_order_id'],
+                'goods_receipt_id' => $fixture['goods_receipt_id'],
+                'invoice_number' => 'SINV-EXHAUSTED-001',
+                'invoice_date' => '2026-06-30',
+                'registration_idempotency_key' => 'exhausted-capacity-001',
+            ], $this->actor);
+            $this->fail('Exhausted receipt capacity must fail closed.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('no invoiceable lines', $exception->getMessage());
+        }
+        $this->assertSame($beforeExhausted, $this->invoiceEvidenceCounts());
+    }
+
+    public function test_rejected_invoice_releases_receipt_capacity_without_deleting_history(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $first = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $rejected = $this->approvalService->reject(
+            $first['invoice']->id,
+            $this->actor,
+            'Rejected source invoice releases receipt capacity.'
+        );
+
+        $second = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+
+        $this->assertSame(SupplierInvoice::STATUS_REJECTED, $rejected->status);
+        $this->assertSame(SupplierInvoice::STATUS_REGISTERED, $second['invoice']->status);
+        $this->assertEquals('10.000', $second['invoice']->lines->first()->quantity);
+        $this->assertSame(2, DB::table('vendor_invoices')->count());
+        $this->assertSame(2, DB::table('vendor_invoice_lines')->count());
+        $this->assertDatabaseHas('vendor_invoice_lines', [
+            'vendor_invoice_id' => $rejected->id,
+            'goods_receipt_line_id' => $fixture['goods_receipt_line_id'],
+        ]);
     }
 
     public function test_registration_failure_leaves_no_partial_header_line_or_match_evidence(): void

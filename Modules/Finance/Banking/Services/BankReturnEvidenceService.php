@@ -66,6 +66,7 @@ class BankReturnEvidenceService
                 || $returnLine->direction !== ControlledBankStatementLineDirectionEnum::INFLOW
                 || $returnLine->currency_code !== $execution->currency_code
                 || $this->amount($returnLine->amount) !== $this->amount($execution->source_amount)
+                || ($returnLine->vendor_reference !== null && $returnLine->vendor_reference !== $execution->vendor_id)
                 || $returnLine->external_reference === ''
                 || $returnLine->source_reference === '') {
                 throw new DomainException('Independent bank-return statement evidence conflicts with the original payment.');
@@ -80,6 +81,7 @@ class BankReturnEvidenceService
                 'return_statement_line_id' => $returnLine->id,
                 'return_external_reference' => $returnLine->external_reference,
                 'return_source_reference' => $returnLine->source_reference,
+                'return_vendor_reference' => $returnLine->vendor_reference,
                 'reason_code' => $reasonCode,
                 'recorded_by' => $actor->id,
             ];

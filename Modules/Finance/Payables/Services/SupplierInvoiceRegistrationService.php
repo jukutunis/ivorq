@@ -25,8 +25,20 @@ class SupplierInvoiceRegistrationService
             'Supplier invoice property is required.'
         );
 
+        $this->assertActorMayRegister($actor, $propertyId);
+
         return DB::transaction(function () use ($propertyId, $input, $actor): array {
-            $resolved = $this->intakeSourceService->resolve($propertyId, $input);
+            $idempotencyKey = $this->nullableString($input['registration_idempotency_key'] ?? null);
+            $replay = $idempotencyKey === null
+                ? null
+                : SupplierInvoice::with('lines')
+                    ->where('property_id', $propertyId)
+                    ->where('registration_idempotency_key', $idempotencyKey)
+                    ->lockForUpdate()
+                    ->first();
+            $resolved = $replay
+                ? $this->replayPayload($replay, $input)
+                : $this->intakeSourceService->resolve($propertyId, $input);
 
             return $this->registerAndMatch($resolved, $actor);
         });
@@ -67,6 +79,8 @@ class SupplierInvoiceRegistrationService
                     return $replay;
                 }
             }
+
+            $this->intakeSourceService->assertReceiptCapacity($normalized);
 
             $existing = SupplierInvoice::with('lines')
                 ->where('property_id', $normalized['property_id'])
@@ -138,6 +152,33 @@ class SupplierInvoiceRegistrationService
         if (! $hasPropertyAccess) {
             throw new AuthorizationException('Supplier invoice registration requires active property access.');
         }
+    }
+
+    private function replayPayload(SupplierInvoice $replay, array $input): array
+    {
+        return [
+            'property_id' => $replay->property_id,
+            'vendor_id' => $replay->vendor_id,
+            'purchase_order_id' => $input['purchase_order_id'] ?? null,
+            'goods_receipt_id' => $input['goods_receipt_id'] ?? null,
+            'invoice_number' => $input['invoice_number'] ?? null,
+            'invoice_date' => $input['invoice_date'] ?? null,
+            'due_date' => $input['due_date'] ?? null,
+            'currency_code' => $replay->currency_code,
+            'tax_amount' => $replay->tax_amount,
+            'discount_amount' => $replay->discount_amount,
+            'remarks' => $input['remarks'] ?? null,
+            'registration_idempotency_key' => $input['registration_idempotency_key'] ?? null,
+            'lines' => $replay->lines->map(fn ($line): array => [
+                'purchase_order_line_id' => $line->purchase_order_line_id,
+                'goods_receipt_line_id' => $line->goods_receipt_line_id,
+                'inventory_item_id' => $line->inventory_item_id,
+                'description' => $line->description,
+                'quantity' => $line->quantity,
+                'unit_price' => $line->unit_price,
+                'line_total' => $line->line_total,
+            ])->all(),
+        ];
     }
 
     private function assertSourceScope(array $data): void
