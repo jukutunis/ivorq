@@ -12,25 +12,25 @@ class RoleSeeder extends Seeder
     {
         // Super Admin — global, no property scope
         $superAdmin = Role::firstOrCreate([
-            'name' => 'super-admin',
+            'name'       => 'super-admin',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         $superAdmin->syncPermissions(Permission::all());
 
         // Property Admin — gets all permissions within their property
         $propertyAdmin = Role::firstOrCreate([
-            'name' => 'property-admin',
+            'name'       => 'property-admin',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         $propertyAdmin->syncPermissions(Permission::all());
 
         // General Manager — operational management permissions
         $generalManager = Role::firstOrCreate([
-            'name' => 'general-manager',
+            'name'       => 'general-manager',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         $generalManager->syncPermissions([
             // Foundation
@@ -80,9 +80,9 @@ class RoleSeeder extends Seeder
 
         // Staff — basic operational access
         $staff = Role::firstOrCreate([
-            'name' => 'staff',
+            'name'       => 'staff',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         $staff->syncPermissions([
             'activity.view',
@@ -106,85 +106,69 @@ class RoleSeeder extends Seeder
 
         // Department Head — department level management
         $departmentHead = Role::firstOrCreate([
-            'name' => 'department-head',
+            'name'       => 'department-head',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         // Give same permissions as general-manager for demo
         $departmentHead->syncPermissions($generalManager->permissions);
 
         // Supervisor — supervisory roles
         $supervisor = Role::firstOrCreate([
-            'name' => 'supervisor',
+            'name'       => 'supervisor',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         // Give staff permissions plus some extras for demo
         $supervisor->syncPermissions($staff->permissions);
 
         // FX operational Finance roles
         $accountsPayableOfficer = Role::firstOrCreate([
-            'name' => 'accounts-payable-officer',
+            'name'       => 'accounts-payable-officer',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         $accountsPayableOfficer->syncPermissions([
             'finance.fx-adjustment.view',
             'finance.payables.ap-settlement.allocate',
             'finance.fx-adjustment-candidate.create',
-            'finance.fx-rate.record',
         ]);
 
         $financeController = Role::firstOrCreate([
-            'name' => 'finance-controller',
+            'name'       => 'finance-controller',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         $financeController->syncPermissions([
             'finance.fx-adjustment.view',
             'finance.journal-candidate.review',
             'finance.journal-candidate.materialize-draft',
-            'finance.fx-rate.approve',
-            'generalledger.trialbalance.view',
-            'generalledger.profitloss.view',
-            'generalledger.balancesheet.view',
-            'generalledger.cashflow.view',
             'finance.banking.migration.view',
             'finance.banking.migration.mapping.review',
             'finance.banking.migration.pilot.authorization.review',
         ]);
 
         $financeManager = Role::firstOrCreate([
-            'name' => 'finance-manager',
+            'name'       => 'finance-manager',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         $financeManager->syncPermissions([
             'finance.fx-adjustment.view',
             'finance.journal-entry-draft.authorize-finalization',
-            'generalledger.period.manage',
-            'generalledger.trialbalance.view',
-            'generalledger.profitloss.view',
-            'generalledger.balancesheet.view',
-            'generalledger.cashflow.view',
             'finance.banking.migration.view',
             'finance.banking.migration.manage',
             'finance.banking.migration.pilot.execution.execute',
         ]);
 
         $generalLedgerAccountant = Role::firstOrCreate([
-            'name' => 'general-ledger-accountant',
+            'name'       => 'general-ledger-accountant',
             'guard_name' => 'web',
-            'property_id' => null,
+            'property_id'    => null,
         ]);
         $generalLedgerAccountant->syncPermissions([
             'finance.fx-adjustment.view',
             'finance.journal-entry.post',
-            'finance.fx-rate.record',
-            'generalledger.trialbalance.view',
-            'generalledger.profitloss.view',
-            'generalledger.balancesheet.view',
-            'generalledger.cashflow.view',
         ]);
     }
 }
