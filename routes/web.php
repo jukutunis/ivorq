@@ -29,6 +29,7 @@ use Modules\Finance\GeneralLedger\Http\Controllers\FinancialPeriodControlWorkspa
 use Modules\Finance\GeneralLedger\Http\Controllers\FinancialReportingWorkspaceController;
 use Modules\Finance\GeneralLedger\Http\Controllers\GeneralLedgerOperationsWorkspaceController;
 use Modules\Finance\GeneralLedger\Http\Controllers\GrniControlWorkspaceController;
+use Modules\Finance\Http\Controllers\FinancePlanningController;
 use Modules\Finance\Payables\Http\Controllers\ApGrniSettlementControlWorkspaceController;
 use Modules\Finance\Payables\Http\Controllers\PaymentProposalControlWorkspaceController;
 use Modules\Finance\Payables\Http\Controllers\SupplierInvoiceControlWorkspaceController;
@@ -191,7 +192,23 @@ Route::middleware(['auth', 'active.property'])->group(function () {
         Route::post('/payables/supplier-invoices/{invoice}/resolve-exception', [SupplierInvoiceControlWorkspaceController::class, 'resolveException'])
             ->name('finance.payables.supplier-invoices.resolve-exception');
         Route::get('/accounts-receivable', [FinanceController::class, 'accountsReceivable']);
+        Route::get('/treasury', [FinanceController::class, 'treasury'])
+            ->name('finance.treasury.index');
         Route::get('/budget-watch', [FinanceController::class, 'budgetWatch']);
+        Route::get('/forecasting', [FinanceController::class, 'forecasting'])
+            ->name('finance.forecasting.index');
+        Route::post('/budgeting', [FinancePlanningController::class, 'createBudget'])
+            ->name('finance.budgeting.store');
+        Route::post('/budgeting/versions/{version}/lines', [FinancePlanningController::class, 'addBudgetLine'])
+            ->name('finance.budgeting.lines.store');
+        Route::post('/budgeting/versions/{version}/transition', [FinancePlanningController::class, 'transitionBudget'])
+            ->name('finance.budgeting.versions.transition');
+        Route::post('/forecasting', [FinancePlanningController::class, 'createForecast'])
+            ->name('finance.forecasting.store');
+        Route::post('/forecasting/versions/{version}/lines', [FinancePlanningController::class, 'addForecastLine'])
+            ->name('finance.forecasting.lines.store');
+        Route::post('/forecasting/versions/{version}/transition', [FinancePlanningController::class, 'transitionForecast'])
+            ->name('finance.forecasting.versions.transition');
         Route::get('/general-ledger/grni-control', [GrniControlWorkspaceController::class, 'index'])
             ->name('finance.general-ledger.grni-control');
         Route::get('/general-ledger/operations', [GeneralLedgerOperationsWorkspaceController::class, 'index'])

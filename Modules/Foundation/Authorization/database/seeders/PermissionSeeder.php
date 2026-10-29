@@ -67,6 +67,7 @@ class PermissionSeeder extends Seeder
             'accounting.ar.guest-transfer.accept',
             'accounting.ar.guest-transfer.reject',
             'accounting.ar.guest-transfer.reverse',
+            'accounting.ar.view',
 
             // Business Date — Authoritative Property Foundation
             'business-date.current.view',
@@ -123,6 +124,17 @@ class PermissionSeeder extends Seeder
             'finance.fx-adjustment.view',
             'finance.payment-adjustment-config.record',
             'finance.payment-adjustment-config.approve',
+            'finance.treasury.view',
+            'budget.view',
+            'budget.create',
+            'budget.edit',
+            'budget.submit',
+            'budget.approve',
+            'forecast.view',
+            'forecast.create',
+            'forecast.edit',
+            'forecast.submit',
+            'forecast.approve',
 
             // Banking — Migration Control Plane
             'finance.banking.migration.view',
