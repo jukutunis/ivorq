@@ -3,26 +3,27 @@
 namespace Tests\Feature\Finance\Budgeting;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use Tests\TestCase;
+use Modules\Finance\Budgeting\Enums\BudgetVersionStatusEnum;
 use Modules\Finance\Budgeting\Services\BudgetService;
 use Modules\Finance\Budgeting\Services\BudgetVarianceService;
-use Modules\Finance\Budgeting\Enums\BudgetVersionStatusEnum;
-use Modules\Finance\Budgeting\Models\BudgetApproval;
-use Modules\Finance\GeneralLedger\Models\Account;
-use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\AccountCategoryEnum;
+use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
 use Modules\Finance\GeneralLedger\Enums\NormalBalanceEnum;
-use Illuminate\Support\Facades\Cache;
+use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Finance\GeneralLedger\Models\LedgerBalance;
+use Tests\TestCase;
 
 class BudgetFoundationTest extends TestCase
 {
     use RefreshDatabase;
 
     protected string $propertyId;
+
     protected BudgetService $service;
+
     protected BudgetVarianceService $varianceService;
 
     protected function setUp(): void
@@ -47,7 +48,7 @@ class BudgetFoundationTest extends TestCase
 
         return Account::create([
             'property_id' => $this->propertyId,
-            'code' => 'B-' . rand(1000, 9999),
+            'code' => 'B-'.rand(1000, 9999),
             'name' => 'Budget Account',
             'normal_balance' => NormalBalanceEnum::Debit,
             'account_type' => $type,
@@ -60,7 +61,7 @@ class BudgetFoundationTest extends TestCase
     {
         $budget = $this->service->createBudget($this->propertyId, 2027, 'Test');
         $version = $budget->versions->first();
-        
+
         $revAccount = $this->createAccount(AccountTypeEnum::Revenue);
         $expAccount = $this->createAccount(AccountTypeEnum::Expense);
 
@@ -84,7 +85,7 @@ class BudgetFoundationTest extends TestCase
     {
         $budget = $this->service->createBudget($this->propertyId, 2027, 'Test');
         $v1 = $budget->versions->first();
-        $this->service->approveVersion($v1->id, 'sys');
+        $this->submitAndApprove($v1->id);
 
         $v2 = $budget->versions()->create([
             'version_number' => 2,
@@ -92,14 +93,15 @@ class BudgetFoundationTest extends TestCase
         ]);
 
         $this->expectException(ValidationException::class);
-        $this->service->approveVersion($v2->id, 'sys');
+        $this->service->submitVersion($v2->id, 'maker-2');
+        $this->service->approveVersion($v2->id, 'checker-2');
     }
 
     public function test_locked_budget_is_immutable()
     {
         $budget = $this->service->createBudget($this->propertyId, 2027, 'Test');
         $v1 = $budget->versions->first();
-        $this->service->lockVersion($v1->id, 'sys');
+        $this->submitAndApprove($v1->id);
 
         $account = $this->createAccount(AccountTypeEnum::Expense);
 
@@ -113,7 +115,7 @@ class BudgetFoundationTest extends TestCase
         $v1 = $budget->versions->first();
         $account = $this->createAccount(AccountTypeEnum::Expense);
         $this->service->addLine($v1->id, null, $account->id, 1, 1000);
-        $this->service->approveVersion($v1->id, 'sys');
+        $this->submitAndApprove($v1->id);
 
         LedgerBalance::create([
             'property_id' => $this->propertyId,
@@ -127,7 +129,7 @@ class BudgetFoundationTest extends TestCase
 
         $initialCount = LedgerBalance::count();
         $variance = $this->varianceService->getVariance($this->propertyId, 2027, 1);
-        
+
         $this->assertCount(1, $variance);
         $this->assertEquals(800, $variance[0]['actual_amount']);
         $this->assertEquals(200, $variance[0]['variance_amount']);
@@ -152,7 +154,7 @@ class BudgetFoundationTest extends TestCase
         $v1 = $budget->versions->first();
 
         $this->service->submitVersion($v1->id, 'maker123');
-        
+
         $this->assertDatabaseHas('budget_budget_approvals', [
             'budget_version_id' => $v1->id,
             'action_by_id' => 'maker123',
@@ -163,7 +165,7 @@ class BudgetFoundationTest extends TestCase
     public function test_budget_property_isolation()
     {
         $budget1 = $this->service->createBudget($this->propertyId, 2027, 'Prop1');
-        
+
         $otherProp = (string) Str::ulid();
         $budget2 = $this->service->createBudget($otherProp, 2027, 'Prop2');
 
@@ -185,10 +187,16 @@ class BudgetFoundationTest extends TestCase
     {
         $budget = $this->service->createBudget($this->propertyId, 2027, 'Test');
         $v1 = $budget->versions->first();
-        
-        $this->service->approveVersion($v1->id, 'sys');
-        
+
+        $this->submitAndApprove($v1->id);
+
         $cacheKey = "budget:active:{$this->propertyId}:2027";
         $this->assertEquals($v1->id, Cache::get($cacheKey));
+    }
+
+    private function submitAndApprove(string $versionId): void
+    {
+        $this->service->submitVersion($versionId, 'maker');
+        $this->service->approveVersion($versionId, 'checker');
     }
 }

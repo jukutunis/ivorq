@@ -3,27 +3,30 @@
 namespace Tests\Feature\Finance\Forecasting;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use Tests\TestCase;
+use Modules\Finance\Budgeting\Services\BudgetService;
+use Modules\Finance\Forecasting\Enums\ForecastVersionStatusEnum;
 use Modules\Finance\Forecasting\Services\ForecastService;
 use Modules\Finance\Forecasting\Services\ForecastVarianceService;
-use Modules\Finance\Forecasting\Enums\ForecastVersionStatusEnum;
-use Modules\Finance\Budgeting\Services\BudgetService;
+use Modules\Finance\GeneralLedger\Enums\AccountCategoryEnum;
+use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
+use Modules\Finance\GeneralLedger\Enums\NormalBalanceEnum;
 use Modules\Finance\GeneralLedger\Models\Account;
 use Modules\Finance\GeneralLedger\Models\LedgerBalance;
-use Modules\Finance\GeneralLedger\Enums\AccountTypeEnum;
-use Modules\Finance\GeneralLedger\Enums\AccountCategoryEnum;
-use Modules\Finance\GeneralLedger\Enums\NormalBalanceEnum;
-use Illuminate\Support\Facades\Cache;
+use Tests\TestCase;
 
 class ForecastFoundationTest extends TestCase
 {
     use RefreshDatabase;
 
     protected string $propertyId;
+
     protected ForecastService $service;
+
     protected ForecastVarianceService $varianceService;
+
     protected BudgetService $budgetService;
 
     protected function setUp(): void
@@ -49,7 +52,7 @@ class ForecastFoundationTest extends TestCase
 
         return Account::create([
             'property_id' => $this->propertyId,
-            'code' => 'F-' . rand(1000, 9999),
+            'code' => 'F-'.rand(1000, 9999),
             'name' => 'Forecast Account',
             'normal_balance' => NormalBalanceEnum::Debit,
             'account_type' => $type,
@@ -61,7 +64,7 @@ class ForecastFoundationTest extends TestCase
     public function test_forecast_auto_seed_actual_plus_budget()
     {
         $account = $this->createAccount(AccountTypeEnum::Expense);
-        
+
         LedgerBalance::create([
             'property_id' => $this->propertyId,
             'account_id' => $account->id,
@@ -76,14 +79,15 @@ class ForecastFoundationTest extends TestCase
         $bVersion = $budget->versions->first();
         $this->budgetService->addLine($bVersion->id, null, $account->id, 1, 200);
         $this->budgetService->addLine($bVersion->id, null, $account->id, 2, 300);
-        $this->budgetService->approveVersion($bVersion->id, 'sys');
+        $this->budgetService->submitVersion($bVersion->id, 'budget-maker');
+        $this->budgetService->approveVersion($bVersion->id, 'budget-checker');
 
         $forecast = $this->service->createForecast($this->propertyId, 2027, 'Forecast 2027');
         $fVersion = $forecast->versions->first();
 
         $lines = $fVersion->lines;
         $this->assertCount(2, $lines);
-        
+
         $m1 = $lines->where('period_month', 1)->first();
         $this->assertEquals(100, $m1->amount);
 
@@ -95,7 +99,7 @@ class ForecastFoundationTest extends TestCase
     {
         $forecast = $this->service->createForecast($this->propertyId, 2027, 'Test');
         $version = $forecast->versions->first();
-        
+
         $revAccount = $this->createAccount(AccountTypeEnum::Revenue);
         $this->service->addLine($version->id, null, $revAccount->id, 1, 1000);
 
@@ -106,7 +110,7 @@ class ForecastFoundationTest extends TestCase
     {
         $forecast = $this->service->createForecast($this->propertyId, 2027, 'Test');
         $version = $forecast->versions->first();
-        
+
         $assetAccount = $this->createAccount(AccountTypeEnum::Asset);
 
         $this->expectException(ValidationException::class);
@@ -117,7 +121,7 @@ class ForecastFoundationTest extends TestCase
     {
         $forecast = $this->service->createForecast($this->propertyId, 2027, 'Test');
         $v1 = $forecast->versions->first();
-        $this->service->approveVersion($v1->id, 'sys');
+        $this->submitAndApprove($v1->id);
 
         $v2 = $forecast->versions()->create([
             'version_number' => 2,
@@ -125,14 +129,15 @@ class ForecastFoundationTest extends TestCase
         ]);
 
         $this->expectException(ValidationException::class);
-        $this->service->approveVersion($v2->id, 'sys');
+        $this->service->submitVersion($v2->id, 'maker-2');
+        $this->service->approveVersion($v2->id, 'checker-2');
     }
 
     public function test_locked_forecast_is_immutable()
     {
         $forecast = $this->service->createForecast($this->propertyId, 2027, 'Test');
         $v1 = $forecast->versions->first();
-        $this->service->lockVersion($v1->id, 'sys');
+        $this->submitAndApprove($v1->id);
 
         $account = $this->createAccount(AccountTypeEnum::Expense);
 
@@ -144,11 +149,11 @@ class ForecastFoundationTest extends TestCase
     {
         $forecast = $this->service->createForecast($this->propertyId, 2027, 'Test');
         $v1 = $forecast->versions->first();
-        $this->service->approveVersion($v1->id, 'sys');
+        $this->submitAndApprove($v1->id);
 
         $initialCount = LedgerBalance::count();
         $variance = $this->varianceService->getVariance($this->propertyId, 2027);
-        
+
         $this->assertEquals($initialCount, LedgerBalance::count());
     }
 
@@ -177,7 +182,7 @@ class ForecastFoundationTest extends TestCase
         $v1 = $forecast->versions->first();
 
         $this->service->submitVersion($v1->id, 'maker123');
-        
+
         $this->assertDatabaseHas('forecast_forecast_approvals', [
             'forecast_version_id' => $v1->id,
             'action_by_id' => 'maker123',
@@ -189,10 +194,16 @@ class ForecastFoundationTest extends TestCase
     {
         $forecast = $this->service->createForecast($this->propertyId, 2027, 'Test');
         $v1 = $forecast->versions->first();
-        
-        $this->service->approveVersion($v1->id, 'sys');
-        
+
+        $this->submitAndApprove($v1->id);
+
         $cacheKey = "forecast:active:{$this->propertyId}:2027";
         $this->assertEquals($v1->id, Cache::get($cacheKey));
+    }
+
+    private function submitAndApprove(string $versionId): void
+    {
+        $this->service->submitVersion($versionId, 'maker');
+        $this->service->approveVersion($versionId, 'checker');
     }
 }

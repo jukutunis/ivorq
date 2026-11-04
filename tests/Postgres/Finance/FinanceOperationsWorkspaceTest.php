@@ -127,7 +127,13 @@ class FinanceOperationsWorkspaceTest extends PostgresTestCase
         $this->grant($this->glfActor, ['budget.approve']);
         $this->acting()->post(route('finance.budgeting.versions.transition', $version), ['action' => 'approve'])
             ->assertRedirect()
-            ->assertSessionHasNoErrors()
+            ->assertSessionHasErrors('checker');
+
+        $checker = UserFactory::new()->withProperty($this->glfProperty)->create(['is_active' => true]);
+        $this->grant($checker, ['budget.approve']);
+        $this->flushSession();
+        $this->acting($checker)->post(route('finance.budgeting.versions.transition', $version), ['action' => 'approve'])
+            ->assertRedirect()
             ->assertSessionHas('success', 'Budget version updated.');
 
         $this->assertSame('Locked', $version->fresh()->status->value);
@@ -151,7 +157,15 @@ class FinanceOperationsWorkspaceTest extends PostgresTestCase
         $this->grant($this->glfActor, ['forecast.approve']);
         $this->acting()->post(route('finance.forecasting.versions.transition', $version), ['action' => 'approve'])
             ->assertRedirect()
+            ->assertSessionHasErrors('checker');
+
+        $checker = UserFactory::new()->withProperty($this->glfProperty)->create(['is_active' => true]);
+        $this->grant($checker, ['forecast.approve']);
+        $this->flushSession();
+        $this->acting($checker)->post(route('finance.forecasting.versions.transition', $version), ['action' => 'approve'])
+            ->assertRedirect()
             ->assertSessionHas('success', 'Forecast version updated.');
+        $this->flushSession();
         $this->acting()->post(route('finance.forecasting.lines.store', $version), [
             'account_id' => $account->id, 'period_month' => 5, 'amount' => '1.00',
         ])->assertStatus(409);
