@@ -77,6 +77,11 @@ export default function AppLayout({ children }: PropsWithChildren) {
         can('inventory.transfer.view') ||
         can('inventory.adjustment.view');
 
+    const showProcurement =
+        can('purchasing.vendor.view') ||
+        can('purchasing.purchase-request.view') ||
+        can('purchasing.purchase-order.view');
+
     return (
         <div className="min-h-screen bg-gray-50 flex">
 
@@ -154,6 +159,17 @@ export default function AppLayout({ children }: PropsWithChildren) {
                             {can('inventory.issue.view')       && <SubNavItem href="/operations/inventory/issues"       label="Issues"       active={starts('/operations/inventory/issues')} />}
                             {can('inventory.transfer.view')    && <SubNavItem href="/operations/inventory/transfers"    label="Transfers"    active={starts('/operations/inventory/transfers')} />}
                             {can('inventory.adjustment.view')  && <SubNavItem href="/operations/inventory/adjustments"  label="Adjustments"  active={starts('/operations/inventory/adjustments')} />}
+                        </>
+                    )}
+
+                    {showProcurement && (
+                        <>
+                            <SectionLabel label="Procurement" />
+                            <NavItem
+                                href="/operations/procurement"
+                                label="Control plane"
+                                active={starts('/operations/procurement')}
+                            />
                         </>
                     )}
 
