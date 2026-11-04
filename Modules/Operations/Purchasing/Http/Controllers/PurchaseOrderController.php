@@ -59,6 +59,7 @@ class PurchaseOrderController extends Controller
     public function show(PurchaseOrder $purchaseOrder): JsonResponse
     {
         $po = $this->repository->find($purchaseOrder->id);
+        $po->loadMissing('revisionSnapshots');
 
         return response()->json([
             'data' => new PurchaseOrderResource($po),
@@ -115,6 +116,18 @@ class PurchaseOrderController extends Controller
 
         return response()->json([
             'message' => 'Purchase Order submitted successfully',
+            'data' => new PurchaseOrderResource($po),
+        ]);
+    }
+
+    public function revise(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
+    {
+        $this->authorize('revise', $purchaseOrder);
+
+        $po = $this->service->revise($purchaseOrder->id, $request->user());
+
+        return response()->json([
+            'message' => 'Purchase Order revision created successfully',
             'data' => new PurchaseOrderResource($po),
         ]);
     }

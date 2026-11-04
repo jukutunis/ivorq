@@ -14,9 +14,12 @@ use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryUnit;
 use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
+use Modules\Operations\Purchasing\Models\PurchaseOrderRevisionSnapshot;
 use Modules\Operations\Purchasing\Models\PurchaseRequest;
+use Modules\Operations\Purchasing\Models\PurchaseRequestRevisionSnapshot;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
+use Modules\Operations\Purchasing\Services\PurchaseOrderService;
 use Modules\Operations\Purchasing\Services\PurchaseRequestService;
 use Shared\Services\CurrentPropertyService;
 use Tests\Feature\Foundation\Concerns\CreatesFoundationData;
@@ -127,6 +130,63 @@ class ProcurementControlPlaneConcurrencyTest extends PostgresTestCase
             PurchaseRequestStatusEnum::Approved,
             PurchaseRequestStatusEnum::Rejected,
         ]);
+    }
+
+    public function test_real_workers_serialize_rejected_pr_and_po_revision_creation(): void
+    {
+        config()->set('app.key', 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=');
+
+        $company = $this->createCompany();
+        $property = $this->createProperty($company, ['currency' => 'IDR']);
+        app(CurrentPropertyService::class)->setPropertyId($property->id);
+        $maker = $this->user($property, 'revision-race-maker@example.test', false);
+        $reviser = $this->user($property, 'revision-race-reviser@example.test', true);
+        $rejector = $this->user($property, 'revision-race-rejector@example.test', true);
+        [$item, $unit, $vendor] = $this->commercialFixture($property);
+        $department = $this->createDepartment($property);
+
+        $this->workflow($property, PurchaseRequest::class);
+        $request = $this->draftRequest($property, $department->id, $item, $unit, $maker, 'revision-race-pr', '0');
+        $requestService = app(PurchaseRequestService::class);
+        $requestService->submit($request->id, $maker);
+        $requestService->reject($request->id, $rejector, 'Rejected before concurrent revision.');
+
+        $prJob = [
+            'mode' => 'revise_request',
+            'property_id' => $property->id,
+            'actor_id' => $reviser->id,
+            'purchase_request_id' => $request->id,
+        ];
+        $prResults = $this->spawnWorkers([$prJob, $prJob]);
+        $this->assertSuccessfulWorkers($prResults);
+        $this->assertSame(1, collect($prResults)->where('status', 'revised')->count());
+        $this->assertSame(1, collect($prResults)->where('status', 'business_error')->count());
+        $this->assertSame(2, $request->fresh()->revision_number);
+        $this->assertSame(1, PurchaseRequestRevisionSnapshot::query()->where('purchase_request_id', $request->id)->count());
+
+        $poSource = $this->draftRequest($property, $department->id, $item, $unit, $maker, 'revision-race-po-source');
+        $poSource->update(['status' => PurchaseRequestStatusEnum::Approved]);
+        $orderService = app(PurchaseOrderService::class);
+        $order = $orderService->createFromApprovedPR($poSource->id, $vendor->id, [
+            'expected_delivery_date' => now()->addWeek()->toDateString(),
+        ], $maker);
+        $this->workflow($property, PurchaseOrder::class);
+        $orderService->submit($order->id, $maker);
+        $orderService->reject($order->id, $rejector, 'Rejected before concurrent revision.');
+
+        $poJob = [
+            'mode' => 'revise_order',
+            'property_id' => $property->id,
+            'actor_id' => $reviser->id,
+            'purchase_order_id' => $order->id,
+        ];
+        $poResults = $this->spawnWorkers([$poJob, $poJob]);
+        $this->assertSuccessfulWorkers($poResults);
+        $this->assertSame(1, collect($poResults)->where('status', 'revised')->count());
+        $this->assertSame(1, collect($poResults)->where('status', 'business_error')->count());
+        $this->assertSame(2, $order->fresh()->revision_number);
+        $this->assertSame(1, PurchaseOrderRevisionSnapshot::query()->where('purchase_order_id', $order->id)->count());
+        $this->assertSame(1, PurchaseOrder::query()->where('purchase_request_id', $poSource->id)->count());
     }
 
     private function draftRequest(

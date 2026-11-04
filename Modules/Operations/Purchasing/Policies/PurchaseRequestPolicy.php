@@ -50,6 +50,12 @@ class PurchaseRequestPolicy
             && ($user->isSuperAdmin() || app(CurrentPropertyService::class)->getPropertyId() === $purchaseRequest->property_id);
     }
 
+    public function revise(User $user, PurchaseRequest $purchaseRequest): bool
+    {
+        return $purchaseRequest->status === PurchaseRequestStatusEnum::Rejected
+            && $this->update($user, $purchaseRequest);
+    }
+
     public function approve(User $user, PurchaseRequest $purchaseRequest): bool
     {
         return $user->hasPermissionTo('purchasing.purchase-request.approve')

@@ -14,6 +14,7 @@ use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryUnit;
 use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseRequest;
+use Modules\Operations\Purchasing\Models\PurchaseRequestRevisionSnapshot;
 use Modules\Operations\Purchasing\Repositories\PurchaseRequestLineRepository;
 use Shared\Exceptions\BusinessLogicException;
 use Shared\Services\CurrentPropertyService;
@@ -71,6 +72,8 @@ class PurchaseRequestService
                 'request_no' => $this->numberAllocator->allocate($property->id, 'PR', now()->year),
                 'creation_idempotency_key' => $idempotencyKey,
                 'source_fingerprint' => $fingerprint,
+                'revision_number' => 1,
+                'current_revision_created_by' => $actor->id,
                 'department_id' => $data['department_id'],
                 'requester_id' => $actor->id,
                 'required_date' => $data['required_date'],
@@ -139,7 +142,8 @@ class PurchaseRequestService
                 );
             }
 
-            $this->approvalEngine->submitForApproval($request, $request->requester_id);
+            $revisionMakerId = $this->revisionMakerId($request);
+            $this->approvalEngine->submitForApproval($request, $revisionMakerId);
             $request->update([
                 'status' => PurchaseRequestStatusEnum::PendingReview,
                 'updated_by' => $actor->id,
@@ -196,6 +200,98 @@ class PurchaseRequestService
         });
     }
 
+    public function revise(string $id, User $actor): PurchaseRequest
+    {
+        return DB::transaction(function () use ($id, $actor): PurchaseRequest {
+            $request = PurchaseRequest::query()->whereKey($id)->lockForUpdate()->firstOrFail();
+            $property = $this->assertRevisionAuthority($actor, $request->property_id);
+
+            if ($request->status !== PurchaseRequestStatusEnum::Rejected) {
+                throw new BusinessLogicException('Only a Rejected Purchase Request may be revised.');
+            }
+
+            $lines = $request->lines()
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            $approval = $this->rejectedApproval($request);
+            $revisionMakerId = $this->revisionMakerId($request);
+
+            if (! $request->rejected_by || ! $request->rejected_at || trim((string) $request->rejection_reason) === '') {
+                throw new BusinessLogicException('Purchase Request rejection evidence is incomplete.');
+            }
+
+            $header = [
+                'purchase_request_id' => $request->id,
+                'request_no' => $request->request_no,
+                'department_id' => $request->department_id,
+                'requester_id' => $request->requester_id,
+                'required_date' => $request->required_date?->toDateString(),
+                'currency_code' => $request->currency_code,
+                'exchange_rate' => (string) $request->exchange_rate,
+                'estimated_total' => (string) $request->estimated_total,
+                'remarks' => $request->remarks,
+                'rejected_by' => $request->rejected_by,
+                'rejected_at' => $request->rejected_at->toISOString(),
+                'rejection_reason' => $request->rejection_reason,
+                'approval_request_id' => $approval->id,
+            ];
+            $commercialLines = $lines->map(fn ($line): array => $line->only([
+                'id',
+                'purchase_request_id',
+                'inventory_item_id',
+                'description',
+                'quantity',
+                'unit_id',
+                'estimated_unit_cost',
+                'estimated_total_cost',
+                'remarks',
+            ]))->all();
+            $fingerprint = $this->fingerprint([
+                'revision_number' => (int) $request->revision_number,
+                'header' => $header,
+                'lines' => $commercialLines,
+            ]);
+
+            PurchaseRequestRevisionSnapshot::create([
+                'purchase_request_id' => $request->id,
+                'revision_number' => $request->revision_number,
+                'property_id' => $request->property_id,
+                'company_id' => $property->company_id,
+                'document_number' => $request->request_no,
+                'decision_status' => PurchaseRequestStatusEnum::Rejected->value,
+                'revision_maker_id' => $revisionMakerId,
+                'rejected_by' => $request->rejected_by,
+                'approval_request_id' => $approval->id,
+                'rejection_reason' => $request->rejection_reason,
+                'rejected_at' => $request->rejected_at,
+                'commercial_header' => $header,
+                'commercial_lines' => $commercialLines,
+                'source_fingerprint' => $fingerprint,
+            ]);
+
+            $request->update([
+                'revision_number' => ((int) $request->revision_number) + 1,
+                'current_revision_created_by' => $actor->id,
+                'status' => PurchaseRequestStatusEnum::Draft,
+                'approved_by' => null,
+                'approved_at' => null,
+                'rejected_by' => null,
+                'rejected_at' => null,
+                'rejection_reason' => null,
+                'updated_by' => $actor->id,
+            ]);
+
+            return $request->fresh([
+                'department',
+                'requester',
+                'lines.inventoryItem',
+                'lines.unit',
+                'revisionSnapshots',
+            ]);
+        });
+    }
+
     private function decide(string $id, User $actor, string $decision, ?string $remarks): PurchaseRequest
     {
         return DB::transaction(function () use ($id, $actor, $decision, $remarks): PurchaseRequest {
@@ -205,8 +301,8 @@ class PurchaseRequestService
                 throw new BusinessLogicException('Only a Pending Review Purchase Request may be decided.');
             }
 
-            if ($request->requester_id === $actor->id) {
-                throw new BusinessLogicException('The Purchase Request requester cannot approve or reject their own request.');
+            if ($this->revisionMakerId($request) === $actor->id) {
+                throw new BusinessLogicException('The Purchase Request requester cannot approve or reject their own request; this applies to the current revision maker.');
             }
 
             if (! $actor->can('purchasing.purchase-request.approve')) {
@@ -254,6 +350,49 @@ class PurchaseRequestService
         }
 
         return $approval;
+    }
+
+    private function rejectedApproval(PurchaseRequest $request): ApprovalRequest
+    {
+        $approval = ApprovalRequest::query()
+            ->where('approvable_type', PurchaseRequest::class)
+            ->where('approvable_id', $request->id)
+            ->where('status', 'Rejected')
+            ->latest('completed_at')
+            ->first();
+
+        if (! $approval) {
+            throw new BusinessLogicException('Rejected Purchase Request approval evidence was not found.');
+        }
+
+        return $approval;
+    }
+
+    private function revisionMakerId(PurchaseRequest $request): string
+    {
+        $makerId = $request->currentRevisionMakerId();
+
+        if (! $makerId) {
+            throw new BusinessLogicException('Purchase Request revision maker evidence is unavailable.');
+        }
+
+        return $makerId;
+    }
+
+    private function assertRevisionAuthority(User $actor, string $propertyId): Property
+    {
+        $property = $this->activeProperty();
+
+        if ($property->id !== $propertyId
+            || ! $actor->can('purchasing.purchase-request.edit')
+            || ! $actor->properties()
+                ->where('properties.id', $propertyId)
+                ->wherePivot('status', 'active')
+                ->exists()) {
+            throw new BusinessLogicException('Purchase Request revision requires edit authority and active Property membership.');
+        }
+
+        return $property;
     }
 
     private function activeProperty(): Property

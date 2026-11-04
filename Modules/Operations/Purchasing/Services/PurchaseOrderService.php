@@ -14,6 +14,7 @@ use Modules\Foundation\User\Models\User;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
+use Modules\Operations\Purchasing\Models\PurchaseOrderRevisionSnapshot;
 use Modules\Operations\Purchasing\Models\PurchaseRequest;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Shared\Enums\PriorityEnum;
@@ -92,6 +93,8 @@ class PurchaseOrderService
                 'po_no' => $this->numberAllocator->allocate($property->id, 'PO', now()->year),
                 'vendor_id' => $vendor->id,
                 'purchase_request_id' => $request->id,
+                'revision_number' => 1,
+                'current_revision_created_by' => $actor->id,
                 'issue_date' => null,
                 'expected_delivery_date' => $data['expected_delivery_date'],
                 'currency_code' => $request->currency_code,
@@ -180,7 +183,7 @@ class PurchaseOrderService
                 throw new BusinessLogicException('Only a Draft Purchase Order may be submitted.');
             }
 
-            $this->approvalEngine->submitForApproval($order, $order->created_by);
+            $this->approvalEngine->submitForApproval($order, $this->revisionMakerId($order));
             $order->update(['status' => PurchaseOrderStatusEnum::PendingReview, 'updated_by' => $actor->id]);
 
             return $order->fresh(['vendor', 'lines.inventoryItem', 'lines.unit', 'purchaseRequest']);
@@ -303,6 +306,113 @@ class PurchaseOrderService
         });
     }
 
+    public function revise(string $id, User $actor): PurchaseOrder
+    {
+        return DB::transaction(function () use ($id, $actor): PurchaseOrder {
+            $order = PurchaseOrder::query()->whereKey($id)->lockForUpdate()->firstOrFail();
+            $property = $this->assertRevisionAuthority($actor, $order->property_id);
+
+            if ($order->status !== PurchaseOrderStatusEnum::Rejected) {
+                throw new BusinessLogicException('Only a Rejected Purchase Order may be revised.');
+            }
+
+            $lines = $order->lines()
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            $receivingStarted = $lines->contains(fn ($line): bool => (float) $line->received_quantity > 0)
+                || DB::table('receiving_documents')
+                    ->where('purchase_order_id', $order->id)
+                    ->whereNull('deleted_at')
+                    ->exists();
+
+            if ($receivingStarted) {
+                throw new BusinessLogicException('Purchase Order cannot be revised after receiving has begun.');
+            }
+
+            $approval = $this->rejectedApproval($order);
+            $revisionMakerId = $this->revisionMakerId($order);
+
+            if (! $order->rejected_by || ! $order->rejected_at || trim((string) $order->rejection_reason) === '') {
+                throw new BusinessLogicException('Purchase Order rejection evidence is incomplete.');
+            }
+
+            $header = [
+                'purchase_order_id' => $order->id,
+                'po_no' => $order->po_no,
+                'purchase_request_id' => $order->purchase_request_id,
+                'vendor_id' => $order->vendor_id,
+                'expected_delivery_date' => $order->expected_delivery_date?->toDateString(),
+                'currency_code' => $order->currency_code,
+                'exchange_rate' => (string) $order->exchange_rate,
+                'subtotal' => (string) $order->subtotal,
+                'tax_amount' => (string) $order->tax_amount,
+                'total_amount' => (string) $order->total_amount,
+                'remarks' => $order->remarks,
+                'original_created_by' => $order->created_by,
+                'rejected_by' => $order->rejected_by,
+                'rejected_at' => $order->rejected_at->toISOString(),
+                'rejection_reason' => $order->rejection_reason,
+                'approval_request_id' => $approval->id,
+            ];
+            $commercialLines = $lines->map(fn ($line): array => $line->only([
+                'id',
+                'purchase_order_id',
+                'purchase_request_line_id',
+                'inventory_item_id',
+                'description',
+                'ordered_quantity',
+                'received_quantity',
+                'invoiced_quantity',
+                'unit_id',
+                'unit_cost',
+                'line_total',
+            ]))->all();
+            $fingerprint = $this->fingerprint([
+                'revision_number' => (int) $order->revision_number,
+                'header' => $header,
+                'lines' => $commercialLines,
+            ]);
+
+            PurchaseOrderRevisionSnapshot::create([
+                'purchase_order_id' => $order->id,
+                'revision_number' => $order->revision_number,
+                'property_id' => $order->property_id,
+                'company_id' => $property->company_id,
+                'document_number' => $order->po_no,
+                'decision_status' => PurchaseOrderStatusEnum::Rejected->value,
+                'revision_maker_id' => $revisionMakerId,
+                'rejected_by' => $order->rejected_by,
+                'approval_request_id' => $approval->id,
+                'rejection_reason' => $order->rejection_reason,
+                'rejected_at' => $order->rejected_at,
+                'commercial_header' => $header,
+                'commercial_lines' => $commercialLines,
+                'source_fingerprint' => $fingerprint,
+            ]);
+
+            $order->update([
+                'revision_number' => ((int) $order->revision_number) + 1,
+                'current_revision_created_by' => $actor->id,
+                'status' => PurchaseOrderStatusEnum::Draft,
+                'approved_by' => null,
+                'approved_at' => null,
+                'rejected_by' => null,
+                'rejected_at' => null,
+                'rejection_reason' => null,
+                'updated_by' => $actor->id,
+            ]);
+
+            return $order->fresh([
+                'vendor',
+                'lines.inventoryItem',
+                'lines.unit',
+                'purchaseRequest',
+                'revisionSnapshots',
+            ]);
+        });
+    }
+
     private function decide(string $id, User $actor, string $decision, ?string $remarks): PurchaseOrder
     {
         return DB::transaction(function () use ($id, $actor, $decision, $remarks): PurchaseOrder {
@@ -312,8 +422,8 @@ class PurchaseOrderService
                 throw new BusinessLogicException('Only a Pending Review Purchase Order may be decided.');
             }
 
-            if ($order->created_by === $actor->id) {
-                throw new BusinessLogicException('The Purchase Order creator cannot approve or reject their own order.');
+            if ($this->revisionMakerId($order) === $actor->id) {
+                throw new BusinessLogicException('The Purchase Order creator cannot approve or reject their own order; this applies to the current revision maker.');
             }
 
             if (! $actor->can('purchasing.purchase-order.approve')) {
@@ -361,6 +471,69 @@ class PurchaseOrderService
         }
 
         return $approval;
+    }
+
+    private function rejectedApproval(PurchaseOrder $order): ApprovalRequest
+    {
+        $approval = ApprovalRequest::query()
+            ->where('approvable_type', PurchaseOrder::class)
+            ->where('approvable_id', $order->id)
+            ->where('status', 'Rejected')
+            ->latest('completed_at')
+            ->first();
+
+        if (! $approval) {
+            throw new BusinessLogicException('Rejected Purchase Order approval evidence was not found.');
+        }
+
+        return $approval;
+    }
+
+    private function revisionMakerId(PurchaseOrder $order): string
+    {
+        $makerId = $order->currentRevisionMakerId();
+
+        if (! $makerId) {
+            throw new BusinessLogicException('Purchase Order revision maker evidence is unavailable.');
+        }
+
+        return $makerId;
+    }
+
+    private function assertRevisionAuthority(User $actor, string $propertyId): Property
+    {
+        $property = $this->activeProperty();
+
+        if ($property->id !== $propertyId
+            || ! $actor->can('purchasing.purchase-order.edit')
+            || ! $actor->properties()
+                ->where('properties.id', $propertyId)
+                ->wherePivot('status', 'active')
+                ->exists()) {
+            throw new BusinessLogicException('Purchase Order revision requires edit authority and active Property membership.');
+        }
+
+        return $property;
+    }
+
+    private function fingerprint(array $payload): string
+    {
+        return hash('sha256', json_encode($this->canonicalize($payload), JSON_THROW_ON_ERROR));
+    }
+
+    private function canonicalize(array $value): array
+    {
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = $this->canonicalize($item);
+            }
+        }
+
+        return $value;
     }
 
     private function activeProperty(): Property

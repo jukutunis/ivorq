@@ -3,6 +3,7 @@
 namespace Modules\Operations\Purchasing\Policies;
 
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Shared\Services\CurrentPropertyService;
 
@@ -46,6 +47,12 @@ class PurchaseOrderPolicy
     {
         return $user->hasPermissionTo('purchasing.purchase-order.edit')
             && ($user->isSuperAdmin() || app(CurrentPropertyService::class)->getPropertyId() === $purchaseOrder->property_id);
+    }
+
+    public function revise(User $user, PurchaseOrder $purchaseOrder): bool
+    {
+        return $purchaseOrder->status === PurchaseOrderStatusEnum::Rejected
+            && $this->update($user, $purchaseOrder);
     }
 
     public function approve(User $user, PurchaseOrder $purchaseOrder): bool

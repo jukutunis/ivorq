@@ -15,6 +15,8 @@ class PurchaseRequestResource extends JsonResource
             'request_no' => $this->request_no,
             'department_id' => $this->department_id,
             'requester_id' => $this->requester_id,
+            'revision_number' => $this->revision_number,
+            'current_revision_created_by' => $this->current_revision_created_by,
             'required_date' => $this->required_date?->format('Y-m-d'),
             'currency_code' => $this->currency_code,
             'exchange_rate' => $this->exchange_rate,
@@ -30,6 +32,7 @@ class PurchaseRequestResource extends JsonResource
             'cancelled_at' => $this->cancelled_at,
             'cancellation_reason' => $this->cancellation_reason,
             'lines' => PurchaseRequestLineResource::collection($this->whenLoaded('lines')),
+            'revision_history' => $this->whenLoaded('revisionSnapshots'),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

@@ -119,6 +119,26 @@ try {
             ? $service->approve((string) $args['purchase_request_id'], $actor, 'Concurrent approval')
             : $service->reject((string) $args['purchase_request_id'], $actor, 'Concurrent rejection');
         $result = ['status' => 'decided', 'decision' => $args['decision'], 'request_status' => $request->status->value];
+    } elseif ($mode === 'revise_request') {
+        $request = app(PurchaseRequestService::class)->revise(
+            (string) $args['purchase_request_id'],
+            User::query()->findOrFail((string) $args['actor_id']),
+        );
+        $result = [
+            'status' => 'revised',
+            'purchase_request_id' => $request->id,
+            'revision_number' => $request->revision_number,
+        ];
+    } elseif ($mode === 'revise_order') {
+        $order = app(PurchaseOrderService::class)->revise(
+            (string) $args['purchase_order_id'],
+            User::query()->findOrFail((string) $args['actor_id']),
+        );
+        $result = [
+            'status' => 'revised',
+            'purchase_order_id' => $order->id,
+            'revision_number' => $order->revision_number,
+        ];
     } else {
         throw new RuntimeException('Unknown concurrency worker mode.');
     }

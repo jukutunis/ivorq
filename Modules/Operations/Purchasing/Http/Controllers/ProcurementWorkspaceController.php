@@ -45,7 +45,7 @@ class ProcurementWorkspaceController extends Controller
 
         $requests = $canViewRequests
             ? PurchaseRequest::query()
-                ->with(['department', 'requester', 'lines.inventoryItem', 'lines.unit'])
+                ->with(['department', 'requester', 'lines.inventoryItem', 'lines.unit', 'revisionSnapshots'])
                 ->latest()
                 ->limit(150)
                 ->get()
@@ -53,7 +53,7 @@ class ProcurementWorkspaceController extends Controller
 
         $orders = $canViewOrders
             ? PurchaseOrder::query()
-                ->with(['vendor', 'purchaseRequest', 'lines.inventoryItem', 'lines.unit'])
+                ->with(['vendor', 'purchaseRequest', 'lines.inventoryItem', 'lines.unit', 'revisionSnapshots'])
                 ->latest()
                 ->limit(150)
                 ->get()

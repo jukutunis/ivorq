@@ -15,6 +15,8 @@ class PurchaseOrderResource extends JsonResource
             'po_no' => $this->po_no,
             'vendor_id' => $this->vendor_id,
             'purchase_request_id' => $this->purchase_request_id,
+            'revision_number' => $this->revision_number,
+            'current_revision_created_by' => $this->current_revision_created_by,
             'issue_date' => $this->issue_date,
             'expected_delivery_date' => $this->expected_delivery_date,
             'currency_code' => $this->currency_code,
@@ -38,6 +40,7 @@ class PurchaseOrderResource extends JsonResource
             'cancelled_at' => $this->cancelled_at,
             'cancellation_reason' => $this->cancellation_reason,
             'lines' => PurchaseOrderLineResource::collection($this->whenLoaded('lines')),
+            'revision_history' => $this->whenLoaded('revisionSnapshots'),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

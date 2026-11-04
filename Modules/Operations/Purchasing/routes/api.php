@@ -19,6 +19,7 @@ Route::middleware(['auth:sanctum', SubstituteBindings::class])->prefix('purchasi
     // Purchase Requests
     Route::post('purchase-requests/{purchase_request}/cancel', [PurchaseRequestController::class, 'cancel'])->name('purchase-requests.cancel');
     Route::post('purchase-requests/{purchase_request}/submit', [PurchaseRequestController::class, 'submit'])->name('purchase-requests.submit');
+    Route::post('purchase-requests/{purchase_request}/revise', [PurchaseRequestController::class, 'revise'])->name('purchase-requests.revise');
     Route::post('purchase-requests/{purchase_request}/approve', [PurchaseRequestController::class, 'approve'])->name('purchase-requests.approve');
     Route::post('purchase-requests/{purchase_request}/reject', [PurchaseRequestController::class, 'reject'])->name('purchase-requests.reject');
     Route::apiResource('purchase-requests', PurchaseRequestController::class);
@@ -26,6 +27,7 @@ Route::middleware(['auth:sanctum', SubstituteBindings::class])->prefix('purchasi
     // Purchase Orders
     Route::apiResource('purchase-orders', PurchaseOrderController::class)->except(['destroy']);
     Route::post('purchase-orders/{purchase_order}/submit', [PurchaseOrderController::class, 'submit'])->name('purchase-orders.submit');
+    Route::post('purchase-orders/{purchase_order}/revise', [PurchaseOrderController::class, 'revise'])->name('purchase-orders.revise');
     Route::post('purchase-orders/{purchase_order}/approve', [PurchaseOrderController::class, 'approve'])->name('purchase-orders.approve');
     Route::post('purchase-orders/{purchase_order}/reject', [PurchaseOrderController::class, 'reject'])->name('purchase-orders.reject');
     Route::post('purchase-orders/{purchase_order}/issue', [PurchaseOrderController::class, 'issue'])->name('purchase-orders.issue');

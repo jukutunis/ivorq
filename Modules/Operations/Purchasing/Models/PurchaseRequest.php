@@ -32,6 +32,8 @@ class PurchaseRequest extends Model implements ApprovableContract
         'request_no',
         'creation_idempotency_key',
         'source_fingerprint',
+        'revision_number',
+        'current_revision_created_by',
         'department_id',
         'requester_id',
         'required_date',
@@ -56,6 +58,7 @@ class PurchaseRequest extends Model implements ApprovableContract
         'required_date' => 'date',
         'exchange_rate' => 'decimal:4',
         'estimated_total' => 'decimal:2',
+        'revision_number' => 'integer',
         'status' => PurchaseRequestStatusEnum::class,
         'approved_at' => 'datetime',
         'rejected_at' => 'datetime',
@@ -87,6 +90,21 @@ class PurchaseRequest extends Model implements ApprovableContract
     public function lines(): HasMany
     {
         return $this->hasMany(PurchaseRequestLine::class, 'purchase_request_id');
+    }
+
+    public function revisionSnapshots(): HasMany
+    {
+        return $this->hasMany(PurchaseRequestRevisionSnapshot::class)
+            ->orderByDesc('revision_number');
+    }
+
+    public function currentRevisionMakerId(): ?string
+    {
+        if ((int) $this->revision_number > 1) {
+            return $this->current_revision_created_by;
+        }
+
+        return $this->current_revision_created_by ?? $this->requester_id;
     }
 
     protected static function newFactory()

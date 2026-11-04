@@ -32,6 +32,7 @@ class PurchaseOrder extends Model implements ApprovableContract
         'total_amount' => 'decimal:2',
         'received_total' => 'decimal:2',
         'exchange_rate' => 'decimal:4',
+        'revision_number' => 'integer',
         'status' => PurchaseOrderStatusEnum::class,
         'approved_at' => 'datetime',
         'rejected_at' => 'datetime',
@@ -47,6 +48,8 @@ class PurchaseOrder extends Model implements ApprovableContract
                 'po_no',
                 'vendor_id',
                 'purchase_request_id',
+                'revision_number',
+                'current_revision_created_by',
                 'issue_date',
                 'expected_delivery_date',
                 'currency_code',
@@ -83,6 +86,21 @@ class PurchaseOrder extends Model implements ApprovableContract
     public function lines(): HasMany
     {
         return $this->hasMany(PurchaseOrderLine::class);
+    }
+
+    public function revisionSnapshots(): HasMany
+    {
+        return $this->hasMany(PurchaseOrderRevisionSnapshot::class)
+            ->orderByDesc('revision_number');
+    }
+
+    public function currentRevisionMakerId(): ?string
+    {
+        if ((int) $this->revision_number > 1) {
+            return $this->current_revision_created_by;
+        }
+
+        return $this->current_revision_created_by ?? $this->created_by;
     }
 
     protected static function newFactory()

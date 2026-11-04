@@ -56,7 +56,7 @@ class PurchaseRequestController extends Controller
 
     public function show(PurchaseRequest $purchaseRequest): JsonResponse
     {
-        $purchaseRequest->load(['department', 'requester', 'lines.inventoryItem', 'lines.unit']);
+        $purchaseRequest->load(['department', 'requester', 'lines.inventoryItem', 'lines.unit', 'revisionSnapshots']);
 
         return response()->json([
             'data' => new PurchaseRequestResource($purchaseRequest),
@@ -114,6 +114,18 @@ class PurchaseRequestController extends Controller
 
         return response()->json([
             'message' => 'Purchase Request submitted successfully',
+            'data' => new PurchaseRequestResource($updatedPr),
+        ]);
+    }
+
+    public function revise(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->authorize('revise', $purchaseRequest);
+
+        $updatedPr = $this->service->revise($purchaseRequest->id, $request->user());
+
+        return response()->json([
+            'message' => 'Purchase Request revision created successfully',
             'data' => new PurchaseRequestResource($updatedPr),
         ]);
     }
