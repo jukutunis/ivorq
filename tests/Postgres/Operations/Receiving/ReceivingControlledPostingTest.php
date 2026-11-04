@@ -62,7 +62,7 @@ class ReceivingControlledPostingTest extends TestCase
         );
         
         $category = VendorCategory::firstOrCreate(['property_id' => $this->property->id, 'name' => 'Cat', 'category_code' => 'C']);
-        $this->vendor = Vendor::firstOrCreate(['property_id' => $this->property->id, 'vendor_category_id' => $category->id, 'name' => 'Test', 'vendor_code' => 'T']);
+        $this->vendor = Vendor::firstOrCreate(['company_id' => $this->property->company_id, 'vendor_category_id' => $category->id, 'name' => 'Test', 'vendor_code' => 'T']);
         
         $invCategory = InventoryCategory::firstOrCreate(['property_id' => $this->property->id, 'name' => 'General']);
         

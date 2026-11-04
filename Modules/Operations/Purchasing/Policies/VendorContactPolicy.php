@@ -2,8 +2,11 @@
 
 namespace Modules\Operations\Purchasing\Policies;
 
+use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorContact;
+use Shared\Services\CurrentPropertyService;
 
 class VendorContactPolicy
 {
@@ -14,10 +17,10 @@ class VendorContactPolicy
 
     public function view(User $user, VendorContact $contact): bool
     {
-        // Depends on the vendor's property
         $vendor = $contact->vendor;
+
         return $user->hasPermissionTo('purchasing.vendor-contact.view')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
+            && $this->isInCurrentCompany($user, $vendor);
     }
 
     public function create(User $user): bool
@@ -28,14 +31,28 @@ class VendorContactPolicy
     public function update(User $user, VendorContact $contact): bool
     {
         $vendor = $contact->vendor;
+
         return $user->hasPermissionTo('purchasing.vendor-contact.edit')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
+            && $this->isInCurrentCompany($user, $vendor);
     }
 
     public function delete(User $user, VendorContact $contact): bool
     {
         $vendor = $contact->vendor;
+
         return $user->hasPermissionTo('purchasing.vendor-contact.delete')
-            && ($user->isSuperAdmin() || $vendor->property_id === null || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $vendor->property_id);
+            && $this->isInCurrentCompany($user, $vendor);
+    }
+
+    private function isInCurrentCompany(User $user, Vendor $vendor): bool
+    {
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        $propertyId = app(CurrentPropertyService::class)->getPropertyId();
+
+        return $propertyId !== null
+            && Property::query()->whereKey($propertyId)->where('company_id', $vendor->company_id)->exists();
     }
 }

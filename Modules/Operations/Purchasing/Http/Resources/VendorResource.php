@@ -11,6 +11,7 @@ class VendorResource extends JsonResource
     {
         return [
             'id' => $this->id,
+            'company_id' => $this->company_id,
             'vendor_category_id' => $this->vendor_category_id,
             'category' => new VendorCategoryResource($this->whenLoaded('category')),
             'vendor_code' => $this->vendor_code,

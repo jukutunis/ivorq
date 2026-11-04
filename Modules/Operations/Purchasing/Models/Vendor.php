@@ -2,13 +2,12 @@
 
 namespace Modules\Operations\Purchasing\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Modules\Foundation\Property\Models\Property;
-use Modules\Foundation\Company\Models\Company;
-use Shared\Traits\BelongsToProperty;
+use Modules\Foundation\Property\Models\Company;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
@@ -16,12 +15,11 @@ use Spatie\Activitylog\Support\LogOptions;
 
 class Vendor extends Model
 {
-    use HasUlid, HasAuditColumns, BelongsToProperty, SoftDeletes, LogsActivity;
+    use HasAuditColumns, HasUlid, LogsActivity, SoftDeletes;
 
     protected $table = 'vendors';
 
     protected $fillable = [
-        'property_id',
         'company_id',
         'vendor_category_id',
         'vendor_code',
@@ -54,11 +52,6 @@ class Vendor extends Model
             ->logOnlyDirty();
     }
 
-    public function property(): BelongsTo
-    {
-        return $this->belongsTo(Property::class);
-    }
-
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);
@@ -77,5 +70,10 @@ class Vendor extends Model
     public function purchaseOrders(): HasMany
     {
         return $this->hasMany(PurchaseOrder::class);
+    }
+
+    public function scopeForCompany(Builder $query, string $companyId): Builder
+    {
+        return $query->where($this->qualifyColumn('company_id'), $companyId);
     }
 }

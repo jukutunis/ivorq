@@ -183,12 +183,12 @@ class SupplierInvoiceRegistrationService
 
     private function assertSourceScope(array $data): void
     {
-        $propertyExists = DB::table('properties')
+        $property = DB::table('properties')
             ->where('id', $data['property_id'])
             ->where('is_active', true)
-            ->exists();
+            ->first(['company_id']);
 
-        if (! $propertyExists) {
+        if (! $property) {
             throw new DomainException('Supplier invoice property is not active or does not exist.');
         }
 
@@ -199,7 +199,7 @@ class SupplierInvoiceRegistrationService
             ->where('is_approved', true)
             ->first();
 
-        if (! $vendor || ($vendor->property_id !== null && $vendor->property_id !== $data['property_id'])) {
+        if (! $vendor || $vendor->company_id !== $property->company_id) {
             throw new DomainException('Supplier invoice vendor is outside the active property scope.');
         }
 

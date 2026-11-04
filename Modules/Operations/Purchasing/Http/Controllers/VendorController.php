@@ -2,10 +2,10 @@
 
 namespace Modules\Operations\Purchasing\Http\Controllers;
 
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Modules\Operations\Purchasing\Http\Requests\StoreVendorRequest;
 use Modules\Operations\Purchasing\Http\Requests\UpdateVendorRequest;
 use Modules\Operations\Purchasing\Http\Resources\VendorResource;
@@ -42,8 +42,6 @@ class VendorController extends Controller
     public function store(StoreVendorRequest $request): JsonResponse
     {
         $data = $request->validated();
-        $data['property_id'] = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
-        
         $contacts = $data['contacts'] ?? [];
         unset($data['contacts']);
 
@@ -58,6 +56,7 @@ class VendorController extends Controller
     public function show(Vendor $vendor): JsonResponse
     {
         $vendor->load(['category', 'contacts']);
+
         return response()->json([
             'data' => new VendorResource($vendor),
         ]);
@@ -66,7 +65,7 @@ class VendorController extends Controller
     public function update(UpdateVendorRequest $request, Vendor $vendor): JsonResponse
     {
         $data = $request->validated();
-        
+
         $contacts = null;
         if (array_key_exists('contacts', $data)) {
             $contacts = $data['contacts'];
@@ -93,11 +92,11 @@ class VendorController extends Controller
     public function approve(Vendor $vendor): JsonResponse
     {
         $this->authorize('approve', $vendor);
-        
-        $updatedVendor = $this->service->toggleApproval($vendor->id);
+
+        $updatedVendor = $this->service->approve($vendor->id);
 
         return response()->json([
-            'message' => 'Vendor approval toggled successfully',
+            'message' => 'Vendor approved successfully',
             'data' => new VendorResource($updatedVendor),
         ]);
     }

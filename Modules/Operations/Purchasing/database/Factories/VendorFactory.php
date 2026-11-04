@@ -3,9 +3,9 @@
 namespace Modules\Operations\Purchasing\Database\Factories;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Modules\Foundation\Property\Models\Company;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorCategory;
-use Modules\Foundation\Property\Models\Property;
 
 class VendorFactory extends Factory
 {
@@ -14,10 +14,9 @@ class VendorFactory extends Factory
     public function definition(): array
     {
         return [
-            'property_id' => Property::factory(),
-            'company_id' => null,
+            'company_id' => Company::factory(),
             'vendor_category_id' => VendorCategory::factory(),
-            'vendor_code' => 'VND-' . $this->faker->unique()->numerify('####'),
+            'vendor_code' => 'VND-'.$this->faker->unique()->numerify('####'),
             'name' => $this->faker->company(),
             'tax_id' => $this->faker->numerify('##.###.###.#-###.###'),
             'tax_number' => $this->faker->numerify('TAX-####-####'),

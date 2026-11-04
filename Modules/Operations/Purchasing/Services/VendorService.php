@@ -5,8 +5,8 @@ namespace Modules\Operations\Purchasing\Services;
 use Illuminate\Support\Facades\DB;
 use Modules\Operations\Purchasing\Models\Vendor;
 use Modules\Operations\Purchasing\Models\VendorContact;
-use Modules\Operations\Purchasing\Repositories\VendorRepository;
 use Modules\Operations\Purchasing\Repositories\VendorContactRepository;
+use Modules\Operations\Purchasing\Repositories\VendorRepository;
 
 class VendorService
 {
@@ -20,11 +20,11 @@ class VendorService
         return DB::transaction(function () use ($vendorData, $contactsData) {
             $vendor = $this->vendorRepository->create($vendorData);
 
-            if (!empty($contactsData)) {
+            if (! empty($contactsData)) {
                 foreach ($contactsData as $index => $contactData) {
                     $contactData['vendor_id'] = $vendor->id;
                     // First contact is primary if not specified
-                    if (!isset($contactData['is_primary'])) {
+                    if (! isset($contactData['is_primary'])) {
                         $contactData['is_primary'] = ($index === 0);
                     }
                     $this->vendorContactRepository->create($contactData);
@@ -45,7 +45,7 @@ class VendorService
                 // For this foundation, we sync by updating existing (if id provided) or creating new.
                 // Contacts not in the payload might be deleted depending on requirements, but let's just do upsert.
                 $existingContactIds = collect($contactsData)->pluck('id')->filter()->toArray();
-                
+
                 // Remove contacts not in payload
                 VendorContact::where('vendor_id', $vendorId)
                     ->whereNotIn('id', $existingContactIds)
@@ -53,7 +53,7 @@ class VendorService
 
                 foreach ($contactsData as $contactData) {
                     $contactData['vendor_id'] = $vendorId;
-                    if (!empty($contactData['id'])) {
+                    if (! empty($contactData['id'])) {
                         $this->vendorContactRepository->update($contactData['id'], $contactData);
                     } else {
                         $this->vendorContactRepository->create($contactData);
@@ -65,12 +65,18 @@ class VendorService
         });
     }
 
-    public function toggleApproval(string $vendorId): Vendor
+    public function approve(string $vendorId): Vendor
     {
-        $vendor = $this->vendorRepository->findOrFail($vendorId);
-        
-        return $this->vendorRepository->update($vendorId, [
-            'is_approved' => !$vendor->is_approved
-        ]);
+        $this->vendorRepository->findOrFail($vendorId);
+
+        return DB::transaction(function () use ($vendorId) {
+            $vendor = Vendor::query()->whereKey($vendorId)->lockForUpdate()->firstOrFail();
+
+            if (! $vendor->is_approved) {
+                $vendor->update(['is_approved' => true]);
+            }
+
+            return $vendor->fresh(['category', 'contacts']);
+        });
     }
 }

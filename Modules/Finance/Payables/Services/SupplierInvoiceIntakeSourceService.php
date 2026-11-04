@@ -101,6 +101,10 @@ class SupplierInvoiceIntakeSourceService
             throw new DomainException('Purchase order source is unavailable in the active property or lifecycle.');
         }
 
+        $propertyCompanyId = DB::table('properties')
+            ->where('id', $propertyId)
+            ->value('company_id');
+
         $vendor = DB::table('vendors')
             ->where('id', $purchaseOrder->vendor_id)
             ->whereNull('deleted_at')
@@ -109,7 +113,7 @@ class SupplierInvoiceIntakeSourceService
             ->lockForUpdate()
             ->first();
 
-        if (! $vendor || ($vendor->property_id !== null && $vendor->property_id !== $propertyId)) {
+        if (! $vendor || $propertyCompanyId === null || $vendor->company_id !== $propertyCompanyId) {
             throw new DomainException('Purchase order supplier is not active and approved for the property.');
         }
 

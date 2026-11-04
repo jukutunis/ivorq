@@ -15,7 +15,7 @@ class DemoReceivingSeeder extends Seeder
         $property = Property::first();
         if (!$property) return;
 
-        $vendor = Vendor::where('property_id', $property->id)->first();
+        $vendor = Vendor::where('company_id', $property->company_id)->first();
         if (!$vendor) return;
 
         $po = PurchaseOrder::where('property_id', $property->id)->first();

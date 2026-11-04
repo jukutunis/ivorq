@@ -179,6 +179,52 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertNotNull($first['invoice']->source_fingerprint);
     }
 
+    public function test_vendor_company_scope_is_shared_by_registration_intake_and_grni_eligibility(): void
+    {
+        $fixture = $this->makePurchasingFixture($this->property);
+        $this->assertSame(
+            $fixture['vendor_id'],
+            app(SupplierInvoiceIntakeSourceService::class)->resolve($this->property->id, [
+                'purchase_order_id' => $fixture['purchase_order_id'],
+                'goods_receipt_id' => $fixture['goods_receipt_id'],
+                'invoice_number' => 'SAME-COMPANY-SOURCE',
+                'invoice_date' => '2026-06-30',
+            ])['vendor_id']
+        );
+
+        $result = $this->service->registerAndMatch($this->invoicePayload($fixture), $this->actor);
+        $invoice = $this->approvalService->approve($result['invoice']->id, $this->actor);
+
+        $otherCompanyProperty = $this->makeProperty();
+        DB::table('vendors')->where('id', $fixture['vendor_id'])->update([
+            'company_id' => $otherCompanyProperty->company_id,
+        ]);
+
+        try {
+            app(SupplierInvoiceIntakeSourceService::class)->resolve($this->property->id, [
+                'purchase_order_id' => $fixture['purchase_order_id'],
+                'goods_receipt_id' => $fixture['goods_receipt_id'],
+                'invoice_number' => 'CROSS-COMPANY-SOURCE',
+                'invoice_date' => '2026-06-30',
+            ]);
+            $this->fail('Cross-Company Vendor intake must fail closed.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('not active and approved for the property', $exception->getMessage());
+        }
+
+        $eligibility = $this->grniEligibilityService->evaluate($invoice->id);
+        $this->assertContains('vendor_scope_mismatch', $eligibility['blockers']);
+
+        try {
+            $this->service->register($this->invoicePayload($fixture, [
+                'invoice_number' => 'CROSS-COMPANY-REGISTRATION',
+            ]), $this->actor);
+            $this->fail('Cross-Company Vendor registration must fail closed.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('outside the active property scope', $exception->getMessage());
+        }
+    }
+
     public function test_source_intake_conflicting_replay_and_cross_property_source_fail_closed(): void
     {
         $fixture = $this->makePurchasingFixture($this->property);
@@ -2131,7 +2177,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
 
         DB::table('vendors')->insert([
             'id' => $vendorId,
-            'property_id' => $property->id,
+            'company_id' => $property->company_id,
             'vendor_category_id' => $categoryId,
             'vendor_code' => $code,
             'name' => 'Vendor '.$code,

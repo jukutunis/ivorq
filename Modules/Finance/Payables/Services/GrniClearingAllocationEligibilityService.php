@@ -111,8 +111,11 @@ class GrniClearingAllocationEligibilityService
         $vendor = DB::table('vendors')
             ->where('id', $invoice->vendor_id)
             ->first();
+        $propertyCompanyId = DB::table('properties')
+            ->where('id', $invoice->property_id)
+            ->value('company_id');
 
-        if (!$vendor || $vendor->property_id !== $invoice->property_id) {
+        if (!$vendor || $propertyCompanyId === null || $vendor->company_id !== $propertyCompanyId) {
             $blockers[] = 'vendor_scope_mismatch';
         }
 
