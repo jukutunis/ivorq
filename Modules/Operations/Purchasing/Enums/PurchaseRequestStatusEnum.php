@@ -9,4 +9,5 @@ enum PurchaseRequestStatusEnum: string
     case Approved = 'APPROVED';
     case Rejected = 'REJECTED';
     case Converted = 'CONVERTED';
+    case Cancelled = 'CANCELLED';
 }

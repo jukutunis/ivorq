@@ -3,175 +3,353 @@
 namespace Modules\Operations\Purchasing\Services;
 
 use Illuminate\Support\Facades\DB;
+use Modules\Finance\Budgeting\Services\BudgetVarianceService;
+use Modules\Foundation\Approval\Models\ApprovalAction;
+use Modules\Foundation\Approval\Models\ApprovalRequest;
+use Modules\Foundation\Approval\Services\ApprovalEngineService;
+use Modules\Foundation\Department\Models\Department;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Models\InventoryItem;
+use Modules\Operations\Inventory\Models\InventoryUnit;
 use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseRequest;
 use Modules\Operations\Purchasing\Repositories\PurchaseRequestLineRepository;
-use Modules\Operations\Purchasing\Repositories\PurchaseRequestRepository;
-use Modules\Foundation\Approval\Services\ApprovalEngineService;
-use Modules\Foundation\User\Models\User;
-use Modules\Finance\Budgeting\Services\BudgetVarianceService;
 use Shared\Exceptions\BusinessLogicException;
+use Shared\Services\CurrentPropertyService;
 
 class PurchaseRequestService
 {
     public function __construct(
-        protected PurchaseRequestRepository $repository,
-        protected PurchaseRequestLineRepository $lineRepository,
-        protected ApprovalEngineService $approvalEngine,
-        protected BudgetVarianceService $budgetVarianceService
+        private PurchaseRequestLineRepository $lineRepository,
+        private ApprovalEngineService $approvalEngine,
+        private BudgetVarianceService $budgetVarianceService,
+        private PurchasingDocumentNumberAllocator $numberAllocator,
+        private CurrentPropertyService $currentProperty,
     ) {}
 
-    public function createWithLines(array $data, array $lines): PurchaseRequest
+    public function createWithLines(array $data, array $lines, User $actor): PurchaseRequest
     {
-        return DB::transaction(function () use ($data, $lines) {
-            $data['estimated_total'] = 0; // will calculate below
-            
-            $pr = $this->repository->create($data);
-            
-            $total = 0;
-            foreach ($lines as $lineData) {
-                $lineData['purchase_request_id'] = $pr->id;
-                
-                // Calculate line total
-                $qty = $lineData['quantity'] ?? 0;
-                $cost = $lineData['estimated_unit_cost'] ?? 0;
-                $lineData['estimated_total_cost'] = $qty * $cost;
-                
-                $this->lineRepository->create($lineData);
-                $total += $lineData['estimated_total_cost'];
+        return DB::transaction(function () use ($data, $lines, $actor): PurchaseRequest {
+            $property = $this->activeProperty();
+            $canonicalLines = $this->canonicalLines($lines, $property->id);
+            $this->assertDepartment($data['department_id'], $property->id);
+
+            $idempotencyKey = $this->nullableString($data['idempotency_key'] ?? null);
+            $fingerprint = $this->fingerprint([
+                'property_id' => $property->id,
+                'requester_id' => $actor->id,
+                'department_id' => $data['department_id'],
+                'required_date' => $data['required_date'],
+                'remarks' => $data['remarks'] ?? null,
+                'currency_code' => $property->currency,
+                'lines' => $canonicalLines,
+            ]);
+
+            if ($idempotencyKey !== null) {
+                DB::select('SELECT pg_advisory_xact_lock(hashtext(?))', [
+                    "purchasing:purchase-request:{$property->id}:{$idempotencyKey}",
+                ]);
+
+                $replay = PurchaseRequest::query()
+                    ->where('property_id', $property->id)
+                    ->where('creation_idempotency_key', $idempotencyKey)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($replay) {
+                    if (! hash_equals((string) $replay->source_fingerprint, $fingerprint)) {
+                        throw new BusinessLogicException('Purchase Request idempotency key was already used for different content.');
+                    }
+
+                    return $replay->load(['department', 'requester', 'lines.inventoryItem', 'lines.unit']);
+                }
             }
-            
-            $this->repository->update($pr->id, ['estimated_total' => $total]);
-            
-            return $pr->fresh(['department', 'requester', 'lines.inventoryItem', 'lines.unit']);
+
+            $request = PurchaseRequest::create([
+                'property_id' => $property->id,
+                'request_no' => $this->numberAllocator->allocate($property->id, 'PR', now()->year),
+                'creation_idempotency_key' => $idempotencyKey,
+                'source_fingerprint' => $fingerprint,
+                'department_id' => $data['department_id'],
+                'requester_id' => $actor->id,
+                'required_date' => $data['required_date'],
+                'currency_code' => strtoupper((string) $property->currency),
+                'exchange_rate' => 1,
+                'estimated_total' => 0,
+                'status' => PurchaseRequestStatusEnum::Draft,
+                'remarks' => $data['remarks'] ?? null,
+                'created_by' => $actor->id,
+                'updated_by' => $actor->id,
+            ]);
+
+            $total = $this->persistLines($request, $canonicalLines, $actor);
+            $request->update(['estimated_total' => $total]);
+
+            return $request->fresh(['department', 'requester', 'lines.inventoryItem', 'lines.unit']);
         });
     }
 
-    public function updateWithLines(string $id, array $data, ?array $lines): PurchaseRequest
+    public function updateWithLines(string $id, array $data, ?array $lines, User $actor): PurchaseRequest
     {
-        return DB::transaction(function () use ($id, $data, $lines) {
-            $pr = $this->repository->findOrFail($id);
-            
-            if ($pr->status->value !== PurchaseRequestStatusEnum::Draft->value) {
-                throw new BusinessLogicException('Cannot update a Purchase Request that is not in Draft status.');
+        return DB::transaction(function () use ($id, $data, $lines, $actor): PurchaseRequest {
+            $request = PurchaseRequest::query()->whereKey($id)->lockForUpdate()->firstOrFail();
+
+            if ($request->status !== PurchaseRequestStatusEnum::Draft) {
+                throw new BusinessLogicException('Only a Draft Purchase Request may be edited.');
+            }
+
+            if (isset($data['department_id'])) {
+                $this->assertDepartment($data['department_id'], $request->property_id);
             }
 
             if ($lines !== null) {
-                $this->lineRepository->deleteByPurchaseRequestId($id);
-                
-                $total = 0;
-                foreach ($lines as $lineData) {
-                    $lineData['purchase_request_id'] = $pr->id;
-                    $qty = $lineData['quantity'] ?? 0;
-                    $cost = $lineData['estimated_unit_cost'] ?? 0;
-                    $lineData['estimated_total_cost'] = $qty * $cost;
-                    
-                    $this->lineRepository->create($lineData);
-                    $total += $lineData['estimated_total_cost'];
-                }
-                
-                $data['estimated_total'] = $total;
+                $canonicalLines = $this->canonicalLines($lines, $request->property_id);
+                $this->lineRepository->deleteByPurchaseRequestId($request->id);
+                $data['estimated_total'] = $this->persistLines($request, $canonicalLines, $actor);
             }
 
-            return $this->repository->update($id, $data);
+            $data['updated_by'] = $actor->id;
+            $request->update($data);
+
+            return $request->fresh(['department', 'requester', 'lines.inventoryItem', 'lines.unit']);
         });
     }
 
-    public function cancel(string $id): PurchaseRequest
+    public function submit(string $id, User $actor): PurchaseRequest
     {
-        $pr = $this->repository->findOrFail($id);
-        
-        if (in_array($pr->status->value, [PurchaseRequestStatusEnum::Cancelled->value, PurchaseRequestStatusEnum::ConvertedToPO->value])) {
-            throw new BusinessLogicException('Purchase Request cannot be cancelled from its current status.');
-        }
+        return DB::transaction(function () use ($id, $actor): PurchaseRequest {
+            $request = PurchaseRequest::query()->whereKey($id)->lockForUpdate()->firstOrFail();
 
-        return $this->repository->update($id, [
-            'status' => PurchaseRequestStatusEnum::Cancelled->value
-        ]);
-    }
-
-    public function submit(string $id): PurchaseRequest
-    {
-        return DB::transaction(function () use ($id) {
-            $pr = $this->repository->findOrFail($id);
-            
-            if ($pr->status->value !== PurchaseRequestStatusEnum::Draft->value) {
-                throw new BusinessLogicException('Only Draft Purchase Requests can be submitted.');
+            if ($request->status !== PurchaseRequestStatusEnum::Draft) {
+                throw new BusinessLogicException('Only a Draft Purchase Request may be submitted.');
             }
 
-            // Enforce Budget Control
-            if ($pr->department_id && $pr->estimated_total > 0) {
+            if ($request->lines()->count() === 0) {
+                throw new BusinessLogicException('A Purchase Request must contain at least one line.');
+            }
+
+            if ($request->department_id && (float) $request->estimated_total > 0) {
                 $this->budgetVarianceService->validateDepartmentBudget(
-                    $pr->property_id,
-                    $pr->department_id,
-                    $pr->required_date->year,
-                    $pr->required_date->month,
-                    $pr->estimated_total
+                    $request->property_id,
+                    $request->department_id,
+                    $request->required_date->year,
+                    $request->required_date->month,
+                    $request->estimated_total
                 );
             }
 
-            // Evaluate workflow
-            $step = $this->approvalEngine->submitForApproval($pr, $pr->requester_id);
-
-            $pr = $this->repository->update($id, [
-                'status' => PurchaseRequestStatusEnum::PendingReview->value
+            $this->approvalEngine->submitForApproval($request, $request->requester_id);
+            $request->update([
+                'status' => PurchaseRequestStatusEnum::PendingReview,
+                'updated_by' => $actor->id,
             ]);
 
-            return $pr;
+            return $request->fresh(['department', 'requester', 'lines.inventoryItem', 'lines.unit']);
         });
     }
 
-    public function approve(string $id, User $user, ?string $remarks = null): PurchaseRequest
+    public function approve(string $id, User $actor, ?string $remarks = null): PurchaseRequest
     {
-        return DB::transaction(function () use ($id, $user, $remarks) {
-            $pr = $this->repository->findOrFail($id);
-            
-            if ($pr->status->value !== PurchaseRequestStatusEnum::PendingReview->value) {
-                throw new BusinessLogicException('Only Submitted Purchase Requests can be approved.');
+        return $this->decide($id, $actor, 'approve', $remarks);
+    }
+
+    public function reject(string $id, User $actor, ?string $remarks = null): PurchaseRequest
+    {
+        if ($this->nullableString($remarks) === null) {
+            throw new BusinessLogicException('A rejection reason is required.');
+        }
+
+        return $this->decide($id, $actor, 'reject', $remarks);
+    }
+
+    public function cancel(string $id, User $actor, string $reason): PurchaseRequest
+    {
+        return DB::transaction(function () use ($id, $actor, $reason): PurchaseRequest {
+            $request = PurchaseRequest::query()->whereKey($id)->lockForUpdate()->firstOrFail();
+
+            if (! in_array($request->status, [
+                PurchaseRequestStatusEnum::Draft,
+                PurchaseRequestStatusEnum::PendingReview,
+            ], true)) {
+                throw new BusinessLogicException('Purchase Request cannot be cancelled from its current status.');
             }
 
-            $nextStep = $this->approvalEngine->approve(
-                $pr, 
-                'purchasing', 
-                $pr->estimated_total, 
-                $user->id, 
-                $user->name, 
-                null, // roleName can be fetched if needed
-                $remarks
-            );
-
-            if (!$nextStep) {
-                // Fully approved
-                $pr = $this->repository->update($id, [
-                    'status' => PurchaseRequestStatusEnum::Approved->value
-                ]);
+            $reason = trim($reason);
+            if ($reason === '') {
+                throw new BusinessLogicException('A cancellation reason is required.');
             }
 
-            return $pr;
+            if ($request->status === PurchaseRequestStatusEnum::PendingReview) {
+                $this->approvalEngine->cancel($this->activeApproval($request), $actor->id, $reason);
+            }
+
+            $request->update([
+                'status' => PurchaseRequestStatusEnum::Cancelled,
+                'cancelled_by' => $actor->id,
+                'cancelled_at' => now(),
+                'cancellation_reason' => $reason,
+                'updated_by' => $actor->id,
+            ]);
+
+            return $request->fresh(['department', 'requester', 'lines.inventoryItem', 'lines.unit']);
         });
     }
 
-    public function reject(string $id, User $user, ?string $remarks = null): PurchaseRequest
+    private function decide(string $id, User $actor, string $decision, ?string $remarks): PurchaseRequest
     {
-        return DB::transaction(function () use ($id, $user, $remarks) {
-            $pr = $this->repository->findOrFail($id);
-            
-            if ($pr->status->value !== PurchaseRequestStatusEnum::PendingReview->value) {
-                throw new BusinessLogicException('Only Submitted Purchase Requests can be rejected.');
+        return DB::transaction(function () use ($id, $actor, $decision, $remarks): PurchaseRequest {
+            $request = PurchaseRequest::query()->whereKey($id)->lockForUpdate()->firstOrFail();
+
+            if ($request->status !== PurchaseRequestStatusEnum::PendingReview) {
+                throw new BusinessLogicException('Only a Pending Review Purchase Request may be decided.');
             }
 
-            $this->approvalEngine->reject(
-                $pr, 
-                'purchasing', 
-                $user->id, 
-                $user->name, 
-                null, 
-                $remarks
-            );
+            if ($request->requester_id === $actor->id) {
+                throw new BusinessLogicException('The Purchase Request requester cannot approve or reject their own request.');
+            }
 
-            return $this->repository->update($id, [
-                'status' => PurchaseRequestStatusEnum::Rejected->value
-            ]);
+            if (! $actor->can('purchasing.purchase-request.approve')) {
+                throw new BusinessLogicException('Purchase Request approval permission is required.');
+            }
+
+            if (! $actor->properties()
+                ->where('properties.id', $request->property_id)
+                ->wherePivot('status', 'active')
+                ->exists()) {
+                throw new BusinessLogicException('Purchase Request decision requires active Property membership.');
+            }
+
+            $approval = $this->activeApproval($request);
+
+            if (ApprovalAction::query()
+                ->where('approval_request_id', $approval->id)
+                ->where('approval_step_id', $approval->current_step_id)
+                ->where('user_id', $actor->id)
+                ->exists()) {
+                throw new BusinessLogicException('The checker has already recorded a decision for this approval step.');
+            }
+
+            if ($decision === 'approve') {
+                $this->approvalEngine->approve($approval, $actor->id, $remarks);
+            } else {
+                $this->approvalEngine->reject($approval, $actor->id, $remarks);
+            }
+
+            return $request->fresh(['department', 'requester', 'lines.inventoryItem', 'lines.unit']);
         });
+    }
+
+    private function activeApproval(PurchaseRequest $request): ApprovalRequest
+    {
+        $approval = ApprovalRequest::query()
+            ->where('approvable_type', PurchaseRequest::class)
+            ->where('approvable_id', $request->id)
+            ->whereIn('status', ['Pending', 'In Progress'])
+            ->latest('requested_at')
+            ->first();
+
+        if (! $approval) {
+            throw new BusinessLogicException('Active Purchase Request approval evidence was not found.');
+        }
+
+        return $approval;
+    }
+
+    private function activeProperty(): Property
+    {
+        return Property::query()
+            ->whereKey($this->currentProperty->resolveOrFail())
+            ->where('is_active', true)
+            ->firstOrFail();
+    }
+
+    private function assertDepartment(string $departmentId, string $propertyId): void
+    {
+        if (! Department::query()->withoutGlobalScope('property')
+            ->whereKey($departmentId)
+            ->where('property_id', $propertyId)
+            ->where('is_active', true)
+            ->exists()) {
+            throw new BusinessLogicException('Purchase Request department is outside the active Property.');
+        }
+    }
+
+    private function canonicalLines(array $lines, string $propertyId): array
+    {
+        return collect($lines)->map(function (array $line) use ($propertyId): array {
+            if (! is_numeric($line['quantity'] ?? null)
+                || (float) $line['quantity'] <= 0
+                || ! is_numeric($line['estimated_unit_cost'] ?? null)
+                || (float) $line['estimated_unit_cost'] < 0) {
+                throw new BusinessLogicException('Purchase Request quantity and estimated unit cost are invalid.');
+            }
+
+            $item = InventoryItem::query()->withoutGlobalScope('property')
+                ->whereKey($line['inventory_item_id'])
+                ->where('property_id', $propertyId)
+                ->where('is_active', true)
+                ->first();
+            $unit = InventoryUnit::query()->withoutGlobalScope('property')
+                ->whereKey($line['unit_id'])
+                ->where('property_id', $propertyId)
+                ->first();
+
+            if (! $item || ! $unit) {
+                throw new BusinessLogicException('Purchase Request item or UOM is outside the active Property.');
+            }
+
+            return [
+                'inventory_item_id' => $item->id,
+                'description' => $item->name,
+                'quantity' => (string) $line['quantity'],
+                'unit_id' => $unit->id,
+                'estimated_unit_cost' => (string) $line['estimated_unit_cost'],
+                'remarks' => $line['remarks'] ?? null,
+            ];
+        })->values()->all();
+    }
+
+    private function persistLines(PurchaseRequest $request, array $lines, User $actor): float
+    {
+        $total = 0.0;
+
+        foreach ($lines as $line) {
+            $line['purchase_request_id'] = $request->id;
+            $line['estimated_total_cost'] = (float) $line['quantity'] * (float) $line['estimated_unit_cost'];
+            $line['created_by'] = $actor->id;
+            $line['updated_by'] = $actor->id;
+            $this->lineRepository->create($line);
+            $total += $line['estimated_total_cost'];
+        }
+
+        return $total;
+    }
+
+    private function fingerprint(array $payload): string
+    {
+        return hash('sha256', json_encode($this->canonicalize($payload), JSON_THROW_ON_ERROR));
+    }
+
+    private function canonicalize(array $value): array
+    {
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = $this->canonicalize($item);
+            }
+        }
+
+        return $value;
+    }
+
+    private function nullableString(mixed $value): ?string
+    {
+        $value = trim((string) ($value ?? ''));
+
+        return $value === '' ? null : $value;
     }
 }

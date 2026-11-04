@@ -2,10 +2,10 @@
 
 namespace Modules\Operations\Purchasing\Http\Controllers;
 
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Modules\Operations\Purchasing\Http\Requests\StorePurchaseRequestRequest;
 use Modules\Operations\Purchasing\Http\Requests\UpdatePurchaseRequestRequest;
 use Modules\Operations\Purchasing\Http\Resources\PurchaseRequestResource;
@@ -42,12 +42,11 @@ class PurchaseRequestController extends Controller
     public function store(StorePurchaseRequestRequest $request): JsonResponse
     {
         $data = $request->validated();
-        $data['property_id'] = app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
-        
+
         $lines = $data['lines'];
         unset($data['lines']);
 
-        $pr = $this->service->createWithLines($data, $lines);
+        $pr = $this->service->createWithLines($data, $lines, $request->user());
 
         return response()->json([
             'message' => 'Purchase Request created successfully',
@@ -58,6 +57,7 @@ class PurchaseRequestController extends Controller
     public function show(PurchaseRequest $purchaseRequest): JsonResponse
     {
         $purchaseRequest->load(['department', 'requester', 'lines.inventoryItem', 'lines.unit']);
+
         return response()->json([
             'data' => new PurchaseRequestResource($purchaseRequest),
         ]);
@@ -66,14 +66,14 @@ class PurchaseRequestController extends Controller
     public function update(UpdatePurchaseRequestRequest $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $data = $request->validated();
-        
+
         $lines = null;
         if (array_key_exists('lines', $data)) {
             $lines = $data['lines'];
             unset($data['lines']);
         }
 
-        $updatedPr = $this->service->updateWithLines($purchaseRequest->id, $data, $lines);
+        $updatedPr = $this->service->updateWithLines($purchaseRequest->id, $data, $lines, $request->user());
 
         return response()->json([
             'message' => 'Purchase Request updated successfully',
@@ -90,11 +90,15 @@ class PurchaseRequestController extends Controller
         ]);
     }
 
-    public function cancel(PurchaseRequest $purchaseRequest): JsonResponse
+    public function cancel(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->authorize('cancel', $purchaseRequest);
-        
-        $updatedPr = $this->service->cancel($purchaseRequest->id);
+
+        $updatedPr = $this->service->cancel(
+            $purchaseRequest->id,
+            $request->user(),
+            (string) $request->input('reason', 'Cancelled by requester.')
+        );
 
         return response()->json([
             'message' => 'Purchase Request cancelled successfully',
@@ -102,11 +106,11 @@ class PurchaseRequestController extends Controller
         ]);
     }
 
-    public function submit(PurchaseRequest $purchaseRequest): JsonResponse
+    public function submit(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->authorize('submit', $purchaseRequest);
 
-        $updatedPr = $this->service->submit($purchaseRequest->id);
+        $updatedPr = $this->service->submit($purchaseRequest->id, $request->user());
 
         return response()->json([
             'message' => 'Purchase Request submitted successfully',
@@ -131,7 +135,7 @@ class PurchaseRequestController extends Controller
     {
         $this->authorize('reject', $purchaseRequest);
 
-        $remarks = $request->input('remarks');
+        $remarks = $request->input('remarks', $request->input('reason'));
         $updatedPr = $this->service->reject($purchaseRequest->id, $request->user(), $remarks);
 
         return response()->json([

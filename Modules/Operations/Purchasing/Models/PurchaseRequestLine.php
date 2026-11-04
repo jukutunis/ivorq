@@ -2,18 +2,19 @@
 
 namespace Modules\Operations\Purchasing\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryUnit;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Modules\Operations\Purchasing\Database\Factories\PurchaseRequestLineFactory;
 use Shared\Traits\HasAuditColumns;
 use Shared\Traits\HasUlid;
 
 class PurchaseRequestLine extends Model
 {
-    use HasFactory, HasUlid, HasAuditColumns, SoftDeletes;
+    use HasAuditColumns, HasFactory, HasUlid, SoftDeletes;
 
     protected $table = 'purchase_request_lines';
 
@@ -26,6 +27,8 @@ class PurchaseRequestLine extends Model
         'estimated_unit_cost',
         'estimated_total_cost',
         'remarks',
+        'created_by',
+        'updated_by',
     ];
 
     protected $casts = [
@@ -51,6 +54,6 @@ class PurchaseRequestLine extends Model
 
     protected static function newFactory()
     {
-        return \Modules\Operations\Purchasing\Database\Factories\PurchaseRequestLineFactory::new();
+        return PurchaseRequestLineFactory::new();
     }
 }

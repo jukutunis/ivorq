@@ -35,6 +35,7 @@ class PurchasingPermissionSeeder extends Seeder
             'purchasing.purchase-request.edit',
             'purchasing.purchase-request.delete',
             'purchasing.purchase-request.cancel',
+            'purchasing.purchase-request.approve',
 
             // Purchase Orders
             'purchasing.purchase-order.view',

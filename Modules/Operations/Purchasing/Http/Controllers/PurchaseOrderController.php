@@ -2,10 +2,10 @@
 
 namespace Modules\Operations\Purchasing\Http\Controllers;
 
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Modules\Operations\Purchasing\Http\Requests\StorePurchaseOrderRequest;
 use Modules\Operations\Purchasing\Http\Requests\UpdatePurchaseOrderRequest;
 use Modules\Operations\Purchasing\Http\Resources\PurchaseOrderResource;
@@ -42,7 +42,7 @@ class PurchaseOrderController extends Controller
     public function store(StorePurchaseOrderRequest $request): JsonResponse
     {
         $data = $request->validated();
-        
+
         $po = $this->service->createFromApprovedPR(
             $data['purchase_request_id'],
             $data['vendor_id'],
@@ -59,6 +59,7 @@ class PurchaseOrderController extends Controller
     public function show(PurchaseOrder $purchaseOrder): JsonResponse
     {
         $po = $this->repository->find($purchaseOrder->id);
+
         return response()->json([
             'data' => new PurchaseOrderResource($po),
         ]);
@@ -81,8 +82,11 @@ class PurchaseOrderController extends Controller
     public function issue(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
         $this->authorize('issue', $purchaseOrder);
-        
-        $po = $this->service->issue($purchaseOrder->id, $request->user());
+
+        $validated = $request->validate([
+            'idempotency_key' => ['required', 'string', 'max:120'],
+        ]);
+        $po = $this->service->issue($purchaseOrder->id, $request->user(), $validated['idempotency_key']);
 
         return response()->json([
             'message' => 'Purchase Order issued successfully',
@@ -93,11 +97,48 @@ class PurchaseOrderController extends Controller
     public function cancel(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
         $this->authorize('cancel', $purchaseOrder);
-        
-        $po = $this->service->cancel($purchaseOrder->id, $request->user());
+
+        $validated = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        $po = $this->service->cancel($purchaseOrder->id, $request->user(), $validated['reason']);
 
         return response()->json([
             'message' => 'Purchase Order cancelled successfully',
+            'data' => new PurchaseOrderResource($po),
+        ]);
+    }
+
+    public function submit(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
+    {
+        $this->authorize('submit', $purchaseOrder);
+
+        $po = $this->service->submit($purchaseOrder->id, $request->user());
+
+        return response()->json([
+            'message' => 'Purchase Order submitted successfully',
+            'data' => new PurchaseOrderResource($po),
+        ]);
+    }
+
+    public function approve(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
+    {
+        $this->authorize('approve', $purchaseOrder);
+        $validated = $request->validate(['remarks' => ['nullable', 'string', 'max:1000']]);
+        $po = $this->service->approve($purchaseOrder->id, $request->user(), $validated['remarks'] ?? null);
+
+        return response()->json([
+            'message' => 'Purchase Order approved successfully',
+            'data' => new PurchaseOrderResource($po),
+        ]);
+    }
+
+    public function reject(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
+    {
+        $this->authorize('reject', $purchaseOrder);
+        $validated = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        $po = $this->service->reject($purchaseOrder->id, $request->user(), $validated['reason']);
+
+        return response()->json([
+            'message' => 'Purchase Order rejected successfully',
             'data' => new PurchaseOrderResource($po),
         ]);
     }
