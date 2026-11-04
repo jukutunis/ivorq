@@ -21,7 +21,7 @@ This record freezes current canonical source reality. It does not activate `PROC
 - Receiving owns `ReceivingDocument` evidence where that aggregate is used, but it is not currently exposed as a registered operational workspace or HTTP entry path.
 - Inventory owns controlled Goods Receipt posting, physical quantity movements, source identity, idempotency, and the bounded ledger universes governed by current Inventory records.
 - CostControl owns monetary valuation state and Cost Ledger effects. Existing enrolled delivery is `SYNCHRONOUS_TRANSITIONAL_ACTIVE`; deferred delivery is `INACTIVE_FUTURE_CANDIDATE`.
-- Finance/Payables owns supplier-invoice intake, the three-way matching decision, exception handling, GRNI/AP interpretation, and any future clearing candidate. It may validate Procurement evidence but must not rewrite it.
+- Finance/Payables owns supplier-invoice intake, the three-way matching decision, exception handling, GRNI/AP candidate interpretation, and the current controlled candidate-to-posting lifecycle. It may validate Procurement evidence but must not rewrite it.
 
 ## Canonical source map
 
@@ -69,7 +69,7 @@ The repository does not prove one end-to-end canonical receipt fact shared by co
 | 20 | Synchronous CostControl valuation for enrolled transaction paths | `COMPLETE` | Current `InventoryTransaction`-sourced enrolled Receipt/Receiving paths synchronously apply durable CostControl state and Cost Ledger effects inside the controlled transaction. This is the current transitional canonical path and must not be expanded by Procurement. |
 | 21 | Deferred CostControl delivery | `DEFERRED` | Inventory outbox foundation exists, but no production deferred consumer is active. Consumer, queue, worker, replay, watermark cutover, and synchronous retirement remain unauthorized. |
 | 22 | Finance supplier-invoice intake and three-way match consumption | `COMPLETE` | FIN-P01 source validates Property, vendor, PO, receipt and line provenance, cumulative receiving capacity, row locking, and claimed quantities. Finance owns the matching decision and exception interpretation; Procurement must not rebuild it. |
-| 23 | GRNI clearing and AP liability runtime | `BLOCKED_BY_OTHER_DOMAIN` | Accepted ADR-047 freezes the Finance-owned future candidate boundary and explicitly states runtime clearing/AP liability is not yet authorized. Procurement supplies immutable source facts only. Proposed ADR-011 is not independent runtime authorization. |
+| 23 | GRNI clearing and AP liability runtime | `COMPLETE` | Current canonical Finance implements approved-invoice eligibility, controlled GRNI/AP liability candidate creation, review, `JournalEntry` materialization, finalization authorization, and controlled posting. Procurement does not own or modify this runtime; it supplies immutable PO/receipt source evidence consumed by Finance. This classification does not include unsupported tax, PPV, landed-cost, credit/debit-note, unrealized-FX, or other deferred accounting semantics. |
 | 24 | Posted receipt correction, reversal, and supplier return | `BLOCKED_BY_ADR` | ADR-080 explicitly excludes posted receipt reversal, edit, cancellation, and supplier return. Any future correction must coordinate Inventory quantity, CostControl valuation, Finance/GRNI, provenance, and Business Date/Financial Period rules. |
 | 25 | Landed cost, tax apportionment, and PPV runtime | `BLOCKED_BY_ADR` | ADR-014 and ADR-015 remain Proposed. Their accounting and valuation semantics must not be introduced through Procurement source changes. |
 | 26 | Procurement permission, role, approval, and audit composition | `PARTIAL` | Granular permissions and activity logging exist, but approval authorization is inconsistent and registered operational paths do not compose all intended permissions/maker-checker rules. `RoleSeeder` is outside PROC-R1 and must not be changed opportunistically. |
@@ -81,11 +81,11 @@ The repository does not prove one end-to-end canonical receipt fact shared by co
 
 | Roll-up | Count |
 |---|---:|
-| `COMPLETE` | 4 |
+| `COMPLETE` | 5 |
 | `PARTIAL` | 11 |
 | `MISSING` | 5 |
 | `LEGACY_ACTIVE` or `DUPLICATE_BOUNDARY_REQUIRES_CONSOLIDATION` | 3 |
-| `BLOCKED_BY_ADR`, `BLOCKED_BY_OTHER_DOMAIN`, or `DEFERRED` | 5 |
+| `BLOCKED_BY_ADR`, `BLOCKED_BY_OTHER_DOMAIN`, or `DEFERRED` | 4 |
 | `OUT_OF_SCOPE` | 1 |
 | **Total material capabilities** | **29** |
 
@@ -109,7 +109,7 @@ Controlled Goods Receipt creates one immutable `InventoryStockMovement` per post
 
 ### Finance, three-way match, and GRNI
 
-Procurement owns Vendor/PO/receipt source facts. Finance owns invoice evidence, match decisions, exceptions, GRNI/AP candidate interpretation, and future clearing. FIN-P01 is not reopened. The material Procurement gap is the ambiguous receipt source contract feeding Finance, not the matching engine itself.
+Procurement owns Vendor, Purchase Order, and receipt source facts. Finance owns supplier-invoice evidence, three-way-match decisions, exception decisions, GRNI/AP candidate interpretation, and the controlled candidate-to-`JournalEntry`-to-posting lifecycle. Current canonical Finance already implements that controlled GRNI/AP runtime through later accepted Finance packages. FIN-P01 and the Finance posting lifecycle are not reopened or rebuilt. The material Procurement gap is receipt-source provenance and convergence feeding Finance, not absence of a matching or GRNI/AP accounting runtime.
 
 ## Runtime package sequence
 
@@ -136,7 +136,7 @@ Exact frozen scope:
 
 ### PROC-P02 — Receiving Source Authority and Finance Evidence Convergence
 
-Freeze and implement one governed receipt-evidence contract without merging Inventory ledgers. Retire the broken Purchasing goods-receipt route/service. Decide whether Finance reads a read-only adapter over controlled Inventory Goods Receipt or whether a separately governed transition makes one source authoritative. Preserve source IDs, partial/multiple receipt capacity, immutable commercial evidence, wrong-PO/Property/vendor/UOM protections, and current synchronous CostControl ownership. Prove no dual-write and no duplicate receipt/movement/Finance capacity.
+Freeze and implement one governed receipt-evidence contract without merging Inventory ledgers. Retire the broken Purchasing goods-receipt route/service. Decide whether Finance reads a read-only adapter over controlled Inventory Goods Receipt or whether a separately governed transition makes one source authoritative. Preserve source identity, partial/multiple receipt capacity, provenance compatibility, immutable commercial evidence, wrong-PO/Property/vendor/UOM protections, and current synchronous CostControl ownership. Prove no dual-write and no duplicate receipt, movement, or Finance capacity. Consume the existing Finance GRNI/AP runtime boundary; do not build or duplicate GRNI/AP candidate, journal, finalization, or posting behavior.
 
 This package requires explicit Inventory and Finance boundary review before implementation. It must not activate deferred CostControl delivery or claim unified stock authority.
 
@@ -153,7 +153,7 @@ After PROC-P02 source authority is accepted, deliver discrepancy, damage/short r
 | ADR-014 | Proposed; PPV/variance runtime blocked. |
 | ADR-015 | Proposed; landed-cost/tax runtime blocked. |
 | ADR-032 | Proposed; informative domain model, not independent runtime authority. |
-| ADR-047 | Accepted; Finance-owned GRNI/AP candidate boundary, with clearing runtime explicitly not yet authorized. |
+| ADR-047 | Accepted; the ADR originally established the candidate-first Finance-owned GRNI/AP liability architecture and did not itself authorize source implementation. Subsequent accepted Finance packages implemented the controlled runtime consistent with that architecture. Procurement must consume this boundary and must not create a parallel GRNI/AP posting path. |
 | ADR-080 | Accepted; governs the narrow PR -> PO -> controlled Goods Receipt -> movement chain and its non-goals. |
 | ADR-083 | Active; governs immutable receipt commercial evidence and bounded valuation eligibility; foreign-currency valuation remains deferred. |
 | Current Inventory/Cost records | Parallel bounded ledger universes remain frozen; synchronous enrolled CostControl delivery remains active; deferred consumer remains inactive. |
