@@ -3,6 +3,7 @@
 namespace Modules\Operations\Purchasing\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 use Modules\Foundation\Department\Models\Department;
@@ -11,6 +12,7 @@ use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryUnit;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
+use Modules\Operations\Purchasing\Enums\ReceiptSourceType;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\PurchaseRequest;
 use Modules\Operations\Purchasing\Models\Vendor;
@@ -53,6 +55,12 @@ class ProcurementWorkspaceController extends Controller
 
         $orders = $canViewOrders
             ? PurchaseOrder::query()
+                ->addSelect([
+                    'receipt_source_type' => DB::table('purchase_order_receipt_source_authorities')
+                        ->select('source_type')
+                        ->whereColumn('purchase_order_id', 'purchase_orders.id')
+                        ->limit(1),
+                ])
                 ->with(['vendor', 'purchaseRequest', 'lines.inventoryItem', 'lines.unit', 'revisionSnapshots'])
                 ->latest()
                 ->limit(150)
@@ -60,7 +68,12 @@ class ProcurementWorkspaceController extends Controller
                 ->map(function (PurchaseOrder $order): PurchaseOrder {
                     $order->setAttribute(
                         'receiving_url',
-                        in_array($order->status, [PurchaseOrderStatusEnum::Approved, PurchaseOrderStatusEnum::Issued], true)
+                        in_array($order->status, [
+                            PurchaseOrderStatusEnum::Approved,
+                            PurchaseOrderStatusEnum::Issued,
+                            PurchaseOrderStatusEnum::PartiallyReceived,
+                        ], true)
+                            && $order->getAttribute('receipt_source_type') === ReceiptSourceType::InventoryGoodsReceipt->value
                             ? route('operations.inventory.goods-receipts.index', ['purchase_order_id' => $order->id])
                             : null
                     );

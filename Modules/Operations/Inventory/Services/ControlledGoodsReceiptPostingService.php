@@ -5,6 +5,9 @@ namespace Modules\Operations\Inventory\Services;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
@@ -13,10 +16,11 @@ use Modules\Operations\Inventory\Models\GoodsReceiptLine;
 use Modules\Operations\Inventory\Models\GoodsReceiptLineCommercialEvidence;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
+use Modules\Operations\Purchasing\Contracts\ProcurementReceiptEvidenceProvider;
+use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
+use Modules\Operations\Purchasing\Enums\ReceiptSourceType;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
-use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
-use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use RuntimeException;
 
 class ControlledGoodsReceiptPostingService
@@ -24,6 +28,7 @@ class ControlledGoodsReceiptPostingService
     public function __construct(
         private readonly InventoryLedgerPostingService $ledgerPostingService,
         private readonly SensitiveActionConfirmationService $confirmationService,
+        private readonly ProcurementReceiptEvidenceProvider $receiptEvidence,
     ) {}
 
     public function createDraft(string $purchaseOrderId, array $lines, string $actorId): GoodsReceipt
@@ -38,11 +43,12 @@ class ControlledGoodsReceiptPostingService
             }
 
             $propertyId = $po->property_id;
+            $this->assertControlledReceiptAuthority($propertyId, $po->id);
 
-            $receiptNumber = 'GRN-' . now()->format('Ymd') . '-' . strtoupper(Str::random(6));
+            $receiptNumber = 'GRN-'.now()->format('Ymd').'-'.strtoupper(Str::random(6));
             $now = Carbon::now();
 
-            $receipt = new GoodsReceipt();
+            $receipt = new GoodsReceipt;
             $receipt->setAttribute('id', (string) Str::ulid());
             $receipt->setAttribute('property_id', $propertyId);
             $receipt->setAttribute('purchase_order_id', $purchaseOrderId);
@@ -74,7 +80,7 @@ class ControlledGoodsReceiptPostingService
 
                 $item = InventoryItem::findOrFail($poLine->inventory_item_id);
 
-                $receiptLine = new GoodsReceiptLine();
+                $receiptLine = new GoodsReceiptLine;
                 $receiptLine->setAttribute('id', (string) Str::ulid());
                 $receiptLine->setAttribute('goods_receipt_id', $receipt->id);
                 $receiptLine->setAttribute('property_id', $propertyId);
@@ -98,7 +104,7 @@ class ControlledGoodsReceiptPostingService
         $poLine = PurchaseOrderLine::findOrFail($line->purchase_order_line_id);
         $po = PurchaseOrder::findOrFail($receipt->purchase_order_id);
 
-        $property = \Modules\Foundation\Property\Models\Property::findOrFail($receipt->property_id);
+        $property = Property::findOrFail($receipt->property_id);
 
         $fields = [
             'property_id' => $receipt->property_id,
@@ -119,7 +125,7 @@ class ControlledGoodsReceiptPostingService
 
         $payload = '';
         foreach ($fields as $value) {
-            $payload .= (string) $value . '|';
+            $payload .= (string) $value.'|';
         }
 
         return hash('sha256', $payload);
@@ -133,11 +139,11 @@ class ControlledGoodsReceiptPostingService
     ): GoodsReceiptLineCommercialEvidence {
         $poLine = PurchaseOrderLine::findOrFail($line->purchase_order_line_id);
         $po = PurchaseOrder::findOrFail($receipt->purchase_order_id);
-        $property = \Modules\Foundation\Property\Models\Property::findOrFail($receipt->property_id);
+        $property = Property::findOrFail($receipt->property_id);
 
         $hash = $this->resolveCommercialEvidenceHash($receipt, $line);
 
-        $evidence = new GoodsReceiptLineCommercialEvidence();
+        $evidence = new GoodsReceiptLineCommercialEvidence;
         $evidence->setAttribute('id', (string) Str::ulid());
         $evidence->setAttribute('property_id', $receipt->property_id);
         $evidence->setAttribute('goods_receipt_id', $receipt->id);
@@ -167,7 +173,7 @@ class ControlledGoodsReceiptPostingService
 
         $propertyId = $receipt->property_id;
         $po = PurchaseOrder::findOrFail($receipt->purchase_order_id);
-        $user = \Modules\Foundation\User\Models\User::findOrFail($actorId);
+        $user = User::findOrFail($actorId);
 
         if ($user->id === $po->approved_by) {
             throw new RuntimeException('Goods receiver cannot be the Purchase Order approver.');
@@ -188,6 +194,7 @@ class ControlledGoodsReceiptPostingService
         )['commercial_evidence_hash'] ?? null;
 
         return DB::transaction(function () use ($receipt, $po, $propertyId, $actorId, $confirmationHash) {
+            $this->assertControlledReceiptAuthority($propertyId, $po->id);
             $now = Carbon::now();
 
             foreach ($receipt->lines as $line) {
@@ -222,7 +229,7 @@ class ControlledGoodsReceiptPostingService
 
                 $location = InventoryLocation::findOrFail($line->inventory_location_id);
 
-                $correlationId = 'corr-' . (string) Str::ulid();
+                $correlationId = 'corr-'.(string) Str::ulid();
 
                 $this->createCommercialSnapshot($receipt, $line, $actorId, $now);
 
@@ -238,7 +245,7 @@ class ControlledGoodsReceiptPostingService
                     'source_type' => GoodsReceiptLine::class,
                     'source_id' => $line->id,
                     'correlation_id' => $correlationId,
-                    'idempotency_key' => 'ledger-' . $line->idempotency_key,
+                    'idempotency_key' => 'ledger-'.$line->idempotency_key,
                     'occurred_at' => $now,
                     'created_by' => $actorId,
                 ]);
@@ -275,5 +282,14 @@ class ControlledGoodsReceiptPostingService
 
             return $receipt->fresh(['lines.stockMovement']);
         });
+    }
+
+    private function assertControlledReceiptAuthority(string $propertyId, string $purchaseOrderId): void
+    {
+        $sourceType = $this->receiptEvidence->sourceType($propertyId, $purchaseOrderId, true);
+
+        if ($sourceType !== ReceiptSourceType::InventoryGoodsReceipt->value) {
+            throw new RuntimeException('CONTROLLED_GOODS_RECEIPT_NOT_AUTHORIZED_FOR_PURCHASE_ORDER_SOURCE');
+        }
     }
 }

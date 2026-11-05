@@ -207,6 +207,16 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
             'updated_at' => now(),
         ]);
 
+        DB::table('purchase_order_receipt_source_authorities')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $this->property->id,
+            'purchase_order_id' => $this->poId,
+            'source_type' => 'inventory_goods_receipt',
+            'binding_reason' => 'controlled_goods_receipt_evidence_test',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
         $this->poLineId = (string) Str::ulid();
         DB::table('purchase_order_lines')->insert([
             'id' => $this->poLineId,

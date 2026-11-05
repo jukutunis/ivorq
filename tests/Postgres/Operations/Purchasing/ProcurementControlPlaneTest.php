@@ -4,6 +4,7 @@ namespace Tests\Postgres\Operations\Purchasing;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
 use Modules\Foundation\Approval\Models\ApprovalStep;
 use Modules\Foundation\Approval\Models\ApprovalWorkflow;
@@ -261,6 +262,41 @@ class ProcurementControlPlaneTest extends TestCase
 
         $approved = $service->approve($order->id, $this->checker);
         $this->assertSame(PurchaseOrderStatusEnum::Approved, $approved->status);
+
+        $this->actingAs($this->checker)
+            ->withSession([
+                'current_property_id' => $this->property->id,
+                'active_property_id' => $this->property->id,
+            ])
+            ->get('/operations/procurement')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('purchaseOrders.0.id', $order->id)
+                ->where(
+                    'purchaseOrders.0.receiving_url',
+                    route('operations.inventory.goods-receipts.index', ['purchase_order_id' => $order->id])
+                )
+            );
+
+        DB::table('purchase_order_receipt_source_authorities')
+            ->where('purchase_order_id', $order->id)
+            ->update(['source_type' => 'legacy_receiving_document']);
+
+        $this->actingAs($this->checker)
+            ->withSession([
+                'current_property_id' => $this->property->id,
+                'active_property_id' => $this->property->id,
+            ])
+            ->get('/operations/procurement')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('purchaseOrders.0.id', $order->id)
+                ->where('purchaseOrders.0.receiving_url', null)
+            );
+
+        DB::table('purchase_order_receipt_source_authorities')
+            ->where('purchase_order_id', $order->id)
+            ->update(['source_type' => 'inventory_goods_receipt']);
 
         $issued = $service->issue($order->id, $this->checker, 'issue-1');
         $taskCount = Task::query()->where('taskable_id', $order->id)->where('title', 'like', 'PO Issued:%')->count();

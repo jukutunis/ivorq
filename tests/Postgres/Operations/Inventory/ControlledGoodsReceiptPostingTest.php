@@ -8,6 +8,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Inertia\Testing\AssertableInertia as Assert;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Models\Role;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
@@ -29,6 +30,7 @@ use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
 use Shared\Services\CurrentPropertyService;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\PostgresTestCase;
 
 class ControlledGoodsReceiptPostingTest extends PostgresTestCase
@@ -66,6 +68,8 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        config()->set('app.key', 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=');
 
         $this->companyId = (string) Str::ulid();
         DB::table('companies')->insert([
@@ -216,6 +220,8 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
         Permission::firstOrCreate(['name' => 'inventory.purchasing.goods-receipt.receive', 'guard_name' => 'web']);
         Permission::firstOrCreate(['name' => 'inventory.ledger.view', 'guard_name' => 'web']);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        setPermissionsTeamId($this->property->id);
 
         $this->receiver->givePermissionTo('inventory.purchasing.goods-receipt.receive');
     }
@@ -269,6 +275,16 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         ]);
         $this->po = PurchaseOrder::find($poId);
 
+        DB::table('purchase_order_receipt_source_authorities')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $propertyId,
+            'purchase_order_id' => $poId,
+            'source_type' => 'inventory_goods_receipt',
+            'binding_reason' => 'controlled_goods_receipt_test',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
         $poLineId = (string) Str::ulid();
         DB::table('purchase_order_lines')->insert([
             'id' => $poLineId,
@@ -318,6 +334,95 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
     }
 
     // ── 3.1 Authorization and actor separation ──────────────────────────────
+
+    public function test_legacy_authority_cannot_create_controlled_receipt_and_leaves_source_unchanged(): void
+    {
+        DB::table('purchase_order_receipt_source_authorities')
+            ->where('purchase_order_id', $this->po->id)
+            ->update(['source_type' => 'legacy_receiving_document']);
+        $this->createLegacyReceivingDocument($this->po);
+
+        $before = $this->controlledWriteSnapshot();
+
+        try {
+            $this->postingService()->createDraft(
+                $this->po->id,
+                [[
+                    'purchase_order_line_id' => $this->poLine->id,
+                    'inventory_location_id' => $this->location->id,
+                    'inventory_unit_id' => $this->unitId,
+                    'received_quantity' => 1.000,
+                    'idempotency_key' => (string) Str::ulid(),
+                ]],
+                $this->receiver->id,
+            );
+            $this->fail('Legacy receipt authority must reject controlled draft creation.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame(
+                'CONTROLLED_GOODS_RECEIPT_NOT_AUTHORIZED_FOR_PURCHASE_ORDER_SOURCE',
+                $exception->getMessage()
+            );
+        }
+
+        $this->assertSame($before, $this->controlledWriteSnapshot());
+    }
+
+    public function test_mixed_source_introduced_between_draft_and_post_fails_before_any_posting_mutation(): void
+    {
+        $receipt = $this->postingService()->createDraft(
+            $this->po->id,
+            [[
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => 1.000,
+                'idempotency_key' => (string) Str::ulid(),
+            ]],
+            $this->receiver->id,
+        );
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->save();
+        $this->confirm($this->receiver);
+        $this->createLegacyReceivingDocument($this->po);
+
+        $before = $this->controlledWriteSnapshot();
+
+        try {
+            $this->postingService()->post($receipt, $this->receiver->id);
+            $this->fail('Mixed receipt sources must reject controlled posting.');
+        } catch (\DomainException $exception) {
+            $this->assertSame('RECEIPT_SOURCE_CONFLICT_REQUIRES_MANUAL_RESOLUTION', $exception->getMessage());
+        }
+
+        $this->assertSame($before, $this->controlledWriteSnapshot());
+        $this->assertSame(GoodsReceiptStatusEnum::ConfirmationPending, $receipt->fresh()->status);
+    }
+
+    public function test_goods_receipt_workspace_only_projects_controlled_authority_purchase_orders(): void
+    {
+        $controlledOrderId = $this->po->id;
+        $this->createApprovedPO();
+        $legacyOrder = $this->po;
+        DB::table('purchase_order_receipt_source_authorities')
+            ->where('purchase_order_id', $legacyOrder->id)
+            ->update(['source_type' => 'legacy_receiving_document']);
+        $this->createLegacyReceivingDocument($legacyOrder);
+
+        $this->assertTrue($this->receiver->fresh()->hasPermissionTo('inventory.purchasing.goods-receipt.receive'));
+
+        $this->actingAs($this->receiver)
+            ->withSession([
+                'current_property_id' => $this->property->id,
+                'active_property_id' => $this->property->id,
+            ])
+            ->get(route('operations.inventory.goods-receipts.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Operations/Inventory/GoodsReceiptWorkspace')
+                ->has('approvedPos', 1)
+                ->where('approvedPos.0.id', $controlledOrderId)
+            );
+    }
 
     public function test_unauthenticated_create_denied(): void
     {
@@ -1324,6 +1429,39 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         ]);
 
         return User::find($userId);
+    }
+
+    private function createLegacyReceivingDocument(PurchaseOrder $order): void
+    {
+        DB::table('receiving_documents')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $order->property_id,
+            'vendor_id' => $order->vendor_id,
+            'purchase_order_id' => $order->id,
+            'grn_number' => 'LEGACY-GRN-'.Str::random(8),
+            'status' => 'approved',
+            'received_at' => now(),
+            'received_by' => $this->receiver->id,
+            'created_by' => $this->receiver->id,
+            'updated_by' => $this->receiver->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function controlledWriteSnapshot(): array
+    {
+        $order = PurchaseOrder::withoutGlobalScope('property')->findOrFail($this->po->id);
+        $line = PurchaseOrderLine::findOrFail($this->poLine->id);
+
+        return [
+            'goods_receipts' => GoodsReceipt::withoutGlobalScope('property')->count(),
+            'goods_receipt_lines' => GoodsReceiptLine::withoutGlobalScope('property')->count(),
+            'stock_movements' => InventoryStockMovement::withoutGlobalScope('property')->count(),
+            'commercial_evidence' => DB::table('goods_receipt_line_commercial_evidences')->count(),
+            'po_status' => $order->status->value,
+            'po_line_received_quantity' => (string) $line->received_quantity,
+        ];
     }
 
     private function createOtherPOLine(): PurchaseOrderLine
