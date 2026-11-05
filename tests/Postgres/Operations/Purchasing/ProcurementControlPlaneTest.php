@@ -236,6 +236,12 @@ class ProcurementControlPlaneTest extends TestCase
         ], $this->maker);
         $this->assertMatchesRegularExpression('/^PO-\d{4}-\d{6}$/', $order->po_no);
         $this->assertSame(PurchaseOrderStatusEnum::Draft, $order->status);
+        $this->assertDatabaseHas('purchase_order_receipt_source_authorities', [
+            'property_id' => $this->property->id,
+            'purchase_order_id' => $order->id,
+            'source_type' => 'inventory_goods_receipt',
+            'binding_reason' => 'controlled_default_new_purchase_order',
+        ]);
 
         try {
             $service->issue($order->id, $this->checker, 'issue-1');

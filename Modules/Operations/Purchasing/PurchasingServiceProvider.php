@@ -8,13 +8,15 @@ use Modules\Foundation\Approval\Events\ApprovalApproved;
 use Modules\Foundation\Approval\Events\ApprovalCancelled;
 use Modules\Foundation\Approval\Events\ApprovalRejected;
 use Modules\Foundation\Approval\Events\ApprovalRequested;
+use Modules\Operations\Purchasing\Contracts\ProcurementReceiptEvidenceProvider;
 use Modules\Operations\Purchasing\Listeners\PurchasingApprovalListener;
+use Modules\Operations\Purchasing\Services\ProcurementReceiptEvidenceResolver;
 
 class PurchasingServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        $this->app->bind(ProcurementReceiptEvidenceProvider::class, ProcurementReceiptEvidenceResolver::class);
     }
 
     public function boot(): void

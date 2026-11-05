@@ -3,6 +3,7 @@
 namespace Modules\Operations\Purchasing\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Foundation\Approval\Models\ApprovalAction;
 use Modules\Foundation\Approval\Models\ApprovalRequest;
 use Modules\Foundation\Approval\Services\ApprovalEngineService;
@@ -13,6 +14,7 @@ use Modules\Foundation\Task\Services\TaskService;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
+use Modules\Operations\Purchasing\Enums\ReceiptSourceType;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\PurchaseOrderRevisionSnapshot;
 use Modules\Operations\Purchasing\Models\PurchaseRequest;
@@ -107,6 +109,16 @@ class PurchaseOrderService
                 'remarks' => $data['remarks'] ?? null,
                 'created_by' => $actor->id,
                 'updated_by' => $actor->id,
+            ]);
+
+            DB::table('purchase_order_receipt_source_authorities')->insert([
+                'id' => (string) Str::ulid(),
+                'property_id' => $property->id,
+                'purchase_order_id' => $order->id,
+                'source_type' => ReceiptSourceType::InventoryGoodsReceipt->value,
+                'binding_reason' => 'controlled_default_new_purchase_order',
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
 
             $subtotal = 0.0;
