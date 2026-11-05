@@ -112,6 +112,7 @@ class PurchaseRequestService
                 $data['estimated_total'] = $this->persistLines($request, $canonicalLines, $actor);
             }
 
+            $data['current_revision_created_by'] = $actor->id;
             $data['updated_by'] = $actor->id;
             $request->update($data);
 

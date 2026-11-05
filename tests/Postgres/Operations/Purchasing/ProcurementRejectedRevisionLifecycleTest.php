@@ -202,6 +202,72 @@ class ProcurementRejectedRevisionLifecycleTest extends TestCase
         $this->assertSame(1, PurchaseOrder::query()->where('purchase_request_id', $request->id)->count());
     }
 
+    public function test_purchase_request_draft_edit_rebinds_current_revision_maker_before_approval(): void
+    {
+        $editor = $this->user('pr-current-maker-editor@example.test');
+        $service = app(PurchaseRequestService::class);
+        $request = $this->draftRequest('pr-current-maker-proof');
+
+        $edited = $service->updateWithLines($request->id, [
+            'remarks' => 'Commercial draft edited by delegated maker.',
+        ], [[
+            'inventory_item_id' => $this->item->id,
+            'unit_id' => $this->unit->id,
+            'quantity' => '4',
+            'estimated_unit_cost' => '0',
+        ]], $editor);
+
+        $this->assertSame($this->maker->id, $edited->requester_id);
+        $this->assertSame($this->maker->id, $edited->created_by);
+        $this->assertSame($editor->id, $edited->current_revision_created_by);
+        $this->assertSame($editor->id, $edited->updated_by);
+
+        $service->submit($request->id, $editor);
+        $this->expectBusinessFailure(
+            fn () => $service->approve($request->id, $editor),
+            'requester cannot'
+        );
+
+        $approved = $service->approve($request->id, $this->checker);
+        $this->assertSame(PurchaseRequestStatusEnum::Approved, $approved->status);
+        $this->assertSame($this->checker->id, $approved->approved_by);
+    }
+
+    public function test_purchase_order_draft_edit_rebinds_current_revision_maker_before_approval(): void
+    {
+        $editor = $this->user('po-current-maker-editor@example.test');
+        $request = $this->draftRequest('po-current-maker-source');
+        $request->update(['status' => PurchaseRequestStatusEnum::Approved]);
+        $service = app(PurchaseOrderService::class);
+        $order = $service->createFromApprovedPR($request->id, $this->vendor->id, [
+            'expected_delivery_date' => now()->addWeek()->toDateString(),
+        ], $this->maker);
+        $lineId = $order->lines->first()->id;
+
+        $edited = $service->update($order->id, [
+            'remarks' => 'Commercial PO edited by delegated maker.',
+        ], $editor, [[
+            'id' => $lineId,
+            'ordered_quantity' => '3',
+            'unit_cost' => '7',
+        ]]);
+
+        $this->assertSame($this->maker->id, $edited->created_by);
+        $this->assertSame($editor->id, $edited->current_revision_created_by);
+        $this->assertSame($editor->id, $edited->updated_by);
+        $this->assertSame(21.0, (float) $edited->total_amount);
+
+        $service->submit($order->id, $editor);
+        $this->expectBusinessFailure(
+            fn () => $service->approve($order->id, $editor),
+            'creator cannot'
+        );
+
+        $approved = $service->approve($order->id, $this->checker);
+        $this->assertSame(PurchaseOrderStatusEnum::Approved, $approved->status);
+        $this->assertSame($this->checker->id, $approved->approved_by);
+    }
+
     private function draftRequest(string $idempotencyKey): PurchaseRequest
     {
         $department = $this->createDepartment($this->property);

@@ -167,6 +167,7 @@ class PurchaseOrderService
                 $data['total_amount'] = $subtotal + (float) $order->tax_amount;
             }
 
+            $data['current_revision_created_by'] = $actor->id;
             $data['updated_by'] = $actor->id;
             $order->update($data);
 
