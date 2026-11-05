@@ -56,11 +56,38 @@ class GoodsReceiptLineException extends Model
         static::deleting(fn () => throw new RuntimeException('Goods Receipt exception evidence cannot be deleted.'));
     }
 
-    public function property() { return $this->belongsTo(Property::class); }
-    public function goodsReceipt() { return $this->belongsTo(GoodsReceipt::class); }
-    public function goodsReceiptLine() { return $this->belongsTo(GoodsReceiptLine::class); }
-    public function purchaseOrder() { return $this->belongsTo(PurchaseOrder::class); }
-    public function purchaseOrderLine() { return $this->belongsTo(PurchaseOrderLine::class); }
-    public function reporter() { return $this->belongsTo(User::class, 'reported_by'); }
-    public function resolver() { return $this->belongsTo(User::class, 'resolved_by'); }
+    public function property()
+    {
+        return $this->belongsTo(Property::class);
+    }
+
+    public function goodsReceipt()
+    {
+        return $this->belongsTo(GoodsReceipt::class);
+    }
+
+    public function goodsReceiptLine()
+    {
+        return $this->belongsTo(GoodsReceiptLine::class);
+    }
+
+    public function purchaseOrder()
+    {
+        return $this->belongsTo(PurchaseOrder::class);
+    }
+
+    public function purchaseOrderLine()
+    {
+        return $this->belongsTo(PurchaseOrderLine::class);
+    }
+
+    public function reporter()
+    {
+        return $this->belongsTo(User::class, 'reported_by');
+    }
+
+    public function resolver()
+    {
+        return $this->belongsTo(User::class, 'resolved_by');
+    }
 }

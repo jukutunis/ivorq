@@ -8,6 +8,8 @@ use Illuminate\Support\Str;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Enums\GoodsReceiptExceptionStatusEnum;
+use Modules\Operations\Inventory\Enums\GoodsReceiptLinePostingDispositionEnum;
 use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
@@ -89,6 +91,7 @@ class ControlledGoodsReceiptPostingService
                 $receiptLine->setAttribute('inventory_location_id', $line['inventory_location_id']);
                 $receiptLine->setAttribute('inventory_unit_id', $poLine->unit_id ?? $line['inventory_unit_id']);
                 $receiptLine->setAttribute('received_quantity', $receivedQty);
+                $receiptLine->setAttribute('posting_disposition', GoodsReceiptLinePostingDispositionEnum::Accepted->value);
                 $receiptLine->setAttribute('idempotency_key', $line['idempotency_key'] ?? (string) Str::ulid());
                 $receiptLine->setAttribute('created_by', $actorId);
                 $receiptLine->setAttribute('created_at', $now);
@@ -194,10 +197,31 @@ class ControlledGoodsReceiptPostingService
         )['commercial_evidence_hash'] ?? null;
 
         return DB::transaction(function () use ($receipt, $po, $propertyId, $actorId, $confirmationHash) {
+            $receipt = GoodsReceipt::withoutGlobalScope('property')->lockForUpdate()->findOrFail($receipt->id);
+            if ($receipt->status !== GoodsReceiptStatusEnum::ConfirmationPending) {
+                throw new RuntimeException('Receipt must be in confirmation pending state to post.');
+            }
+
             $this->assertControlledReceiptAuthority($propertyId, $po->id);
+
+            if ($receipt->exceptions()->where('status', GoodsReceiptExceptionStatusEnum::Open->value)->exists()) {
+                throw new RuntimeException('Open Goods Receipt exceptions must be resolved before posting.');
+            }
+
+            $acceptedLines = GoodsReceiptLine::withoutGlobalScope('property')
+                ->where('goods_receipt_id', $receipt->id)
+                ->where('posting_disposition', GoodsReceiptLinePostingDispositionEnum::Accepted->value)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($acceptedLines->isEmpty()) {
+                throw new RuntimeException('Goods Receipt requires at least one accepted line for posting.');
+            }
+
             $now = Carbon::now();
 
-            foreach ($receipt->lines as $line) {
+            foreach ($acceptedLines as $line) {
                 $existingByIdempotency = GoodsReceiptLine::withoutGlobalScope('property')
                     ->where('property_id', $propertyId)
                     ->where('idempotency_key', $line->idempotency_key)

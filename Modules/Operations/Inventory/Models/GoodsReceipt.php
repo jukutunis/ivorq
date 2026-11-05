@@ -13,8 +13,8 @@ use Shared\Traits\HasUlid;
 
 class GoodsReceipt extends Model
 {
-    use HasUlid;
     use BelongsToProperty;
+    use HasUlid;
 
     public $timestamps = false;
 

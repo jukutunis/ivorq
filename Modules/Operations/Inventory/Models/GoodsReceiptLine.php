@@ -5,8 +5,8 @@ namespace Modules\Operations\Inventory\Models;
 use Illuminate\Database\Eloquent\Model;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
-use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Inventory\Enums\GoodsReceiptLinePostingDispositionEnum;
+use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
 use RuntimeException;
 use Shared\Traits\BelongsToProperty;
@@ -14,8 +14,8 @@ use Shared\Traits\HasUlid;
 
 class GoodsReceiptLine extends Model
 {
-    use HasUlid;
     use BelongsToProperty;
+    use HasUlid;
 
     public $timestamps = false;
 

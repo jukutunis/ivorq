@@ -5,21 +5,27 @@ namespace Modules\Operations\Inventory\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
-use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
+use Modules\Operations\Inventory\Enums\GoodsReceiptExceptionResolutionTypeEnum;
 use Modules\Operations\Inventory\Models\GoodsReceipt;
+use Modules\Operations\Inventory\Models\GoodsReceiptLineException;
+use Modules\Operations\Inventory\Services\ControlledGoodsReceiptExceptionService;
 use Modules\Operations\Inventory\Services\ControlledGoodsReceiptPostingService;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Enums\ReceiptSourceType;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
+use Modules\Operations\Receiving\Enums\DiscrepancyTypeEnum;
+use Modules\Operations\Receiving\Enums\InspectionResultEnum;
 use Shared\Services\CurrentPropertyService;
 
 class GoodsReceiptController extends Controller
 {
     public function __construct(
         private readonly ControlledGoodsReceiptPostingService $postingService,
+        private readonly ControlledGoodsReceiptExceptionService $exceptionService,
         private readonly SensitiveActionConfirmationService $confirmationService,
     ) {}
 
@@ -82,12 +88,26 @@ class GoodsReceiptController extends Controller
             'lines.inventoryLocation',
             'lines.inventoryUnit',
             'lines.stockMovement',
+            'lines.exceptions.reporter',
+            'lines.exceptions.resolver',
+            'exceptions.reporter',
+            'exceptions.resolver',
             'receivedBy',
             'createdBy',
+            'voidedBy',
         ]);
 
         return Inertia::render('Operations/Inventory/GoodsReceiptDetail', [
             'receipt' => $goodsReceipt,
+            'capabilities' => [
+                'canReport' => auth()->user()->hasPermissionTo(ControlledGoodsReceiptExceptionService::REPORT_PERMISSION),
+                'canResolve' => auth()->user()->hasPermissionTo(ControlledGoodsReceiptExceptionService::RESOLVE_PERMISSION),
+            ],
+            'exceptionOptions' => [
+                'discrepancyTypes' => array_map(fn ($case) => $case->value, DiscrepancyTypeEnum::cases()),
+                'inspectionResults' => array_map(fn ($case) => $case->value, InspectionResultEnum::cases()),
+                'resolutionTypes' => array_map(fn ($case) => $case->value, GoodsReceiptExceptionResolutionTypeEnum::cases()),
+            ],
         ]);
     }
 
@@ -123,8 +143,7 @@ class GoodsReceiptController extends Controller
             abort(403, 'Unauthorized.');
         }
 
-        $goodsReceipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
-        $goodsReceipt->save();
+        $goodsReceipt = $this->exceptionService->submitForConfirmation($goodsReceipt, auth()->user());
 
         return redirect()->route('operations.inventory.goods-receipts.show', $goodsReceipt->id);
     }
@@ -137,6 +156,67 @@ class GoodsReceiptController extends Controller
 
         $actorId = auth()->id();
         $receipt = $this->postingService->post($goodsReceipt, $actorId);
+
+        return redirect()->route('operations.inventory.goods-receipts.show', $receipt->id);
+    }
+
+    public function reportException(GoodsReceipt $goodsReceipt, Request $request): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo(ControlledGoodsReceiptExceptionService::REPORT_PERMISSION)) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $validated = $request->validate([
+            'goods_receipt_line_id' => ['required', 'string'],
+            'discrepancy_type' => ['nullable', Rule::in(array_column(DiscrepancyTypeEnum::cases(), 'value'))],
+            'inspection_result' => ['nullable', Rule::in(array_column(InspectionResultEnum::cases(), 'value'))],
+            'observed_quantity' => ['required', 'numeric', 'gt:0'],
+            'reason' => ['required', 'string', 'max:2000'],
+            'notes' => ['nullable', 'string', 'max:4000'],
+            'idempotency_key' => ['required', 'string', 'max:120'],
+        ]);
+
+        $this->exceptionService->report(
+            $goodsReceipt,
+            $validated['goods_receipt_line_id'],
+            $validated,
+            auth()->user(),
+        );
+
+        return redirect()->route('operations.inventory.goods-receipts.show', $goodsReceipt->id);
+    }
+
+    public function resolveException(GoodsReceiptLineException $exception, Request $request): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo(ControlledGoodsReceiptExceptionService::RESOLVE_PERMISSION)) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $validated = $request->validate([
+            'resolution_type' => ['required', Rule::in(array_column(GoodsReceiptExceptionResolutionTypeEnum::cases(), 'value'))],
+            'accepted_quantity' => ['nullable', 'numeric', 'gt:0'],
+            'reason' => ['required', 'string', 'max:2000'],
+        ]);
+
+        $resolved = $this->exceptionService->resolve(
+            $exception,
+            GoodsReceiptExceptionResolutionTypeEnum::from($validated['resolution_type']),
+            isset($validated['accepted_quantity']) ? (string) $validated['accepted_quantity'] : null,
+            $validated['reason'],
+            auth()->user(),
+        );
+
+        return redirect()->route('operations.inventory.goods-receipts.show', $resolved->goods_receipt_id);
+    }
+
+    public function voidReceipt(GoodsReceipt $goodsReceipt, Request $request): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo(ControlledGoodsReceiptExceptionService::RESOLVE_PERMISSION)) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $validated = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+        $receipt = $this->exceptionService->voidReceipt($goodsReceipt, $validated['reason'], auth()->user());
 
         return redirect()->route('operations.inventory.goods-receipts.show', $receipt->id);
     }
