@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
+use Modules\Operations\Inventory\Enums\GoodsReceiptLinePostingDispositionEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
 use RuntimeException;
 use Shared\Traits\BelongsToProperty;
@@ -30,6 +31,7 @@ class GoodsReceiptLine extends Model
     {
         return [
             'received_quantity' => 'decimal:3',
+            'posting_disposition' => GoodsReceiptLinePostingDispositionEnum::class,
             'created_at' => 'datetime',
         ];
     }
@@ -45,6 +47,9 @@ class GoodsReceiptLine extends Model
             if ($status === GoodsReceiptStatusEnum::Posted->value) {
                 throw new RuntimeException('Line of a posted Goods Receipt is immutable and cannot be updated.');
             }
+            if ($status === GoodsReceiptStatusEnum::Voided->value) {
+                throw new RuntimeException('Line of a voided Goods Receipt is immutable and cannot be updated.');
+            }
         });
 
         static::deleting(function (GoodsReceiptLine $line) {
@@ -55,6 +60,9 @@ class GoodsReceiptLine extends Model
             }
             if ($status === GoodsReceiptStatusEnum::Posted->value) {
                 throw new RuntimeException('Line of a posted Goods Receipt is immutable and cannot be deleted.');
+            }
+            if ($status === GoodsReceiptStatusEnum::Voided->value) {
+                throw new RuntimeException('Line of a voided Goods Receipt is immutable and cannot be deleted.');
             }
         });
     }
@@ -97,5 +105,10 @@ class GoodsReceiptLine extends Model
     public function stockMovement()
     {
         return $this->belongsTo(InventoryStockMovement::class, 'stock_movement_id');
+    }
+
+    public function exceptions()
+    {
+        return $this->hasMany(GoodsReceiptLineException::class);
     }
 }

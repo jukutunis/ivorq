@@ -152,6 +152,7 @@ class PermissionSeeder extends Seeder
             'inventory.purchasing.purchase-order.create',
             'inventory.purchasing.purchase-order.approve',
             'inventory.purchasing.goods-receipt.receive',
+            'inventory.purchasing.goods-receipt.exception.resolve',
 
             // Inventory — Transfers
             'inventory.transfer.create',
