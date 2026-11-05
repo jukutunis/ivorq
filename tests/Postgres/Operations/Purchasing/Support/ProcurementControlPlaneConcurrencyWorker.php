@@ -4,6 +4,9 @@ use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Enums\GoodsReceiptExceptionResolutionTypeEnum;
+use Modules\Operations\Inventory\Models\GoodsReceiptLineException;
+use Modules\Operations\Inventory\Services\ControlledGoodsReceiptExceptionService;
 use Modules\Operations\Purchasing\Services\PurchaseOrderService;
 use Modules\Operations\Purchasing\Services\PurchaseRequestService;
 use Modules\Operations\Purchasing\Services\PurchasingDocumentNumberAllocator;
@@ -73,6 +76,7 @@ try {
     $pgPid = (int) DB::selectOne('SELECT pg_backend_pid() AS pid')->pid;
     $propertyId = (string) ($args['property_id'] ?? '');
     app(CurrentPropertyService::class)->setPropertyId($propertyId);
+    setPermissionsTeamId($propertyId);
 
     if (! empty($args['actor_id'])) {
         Auth::login(User::query()->findOrFail((string) $args['actor_id']));
@@ -139,6 +143,22 @@ try {
             'purchase_order_id' => $order->id,
             'revision_number' => $order->revision_number,
         ];
+    } elseif ($mode === 'resolve_receipt_exception') {
+        $actor = User::query()->findOrFail((string) $args['actor_id']);
+        $resolution = GoodsReceiptExceptionResolutionTypeEnum::from((string) $args['resolution']);
+        $resolved = app(ControlledGoodsReceiptExceptionService::class)->resolve(
+            GoodsReceiptLineException::withoutGlobalScope('property')->findOrFail((string) $args['exception_id']),
+            $resolution,
+            isset($args['accepted_quantity']) ? (string) $args['accepted_quantity'] : null,
+            'Concurrent '.$resolution->value.' proof',
+            $actor,
+        );
+        $result = [
+            'status' => 'resolved',
+            'actor_id' => $actor->id,
+            'resolution' => $resolved->resolution_type->value,
+            'exception_status' => $resolved->status->value,
+        ];
     } else {
         throw new RuntimeException('Unknown concurrency worker mode.');
     }
@@ -149,6 +169,14 @@ try {
         'pg_backend_pid' => $pgPid,
     ], JSON_THROW_ON_ERROR));
 } catch (BusinessLogicException $exception) {
+    file_put_contents($resultFile, json_encode([
+        'status' => 'business_error',
+        'worker_id' => $workerId,
+        'php_pid' => getmypid(),
+        'pg_backend_pid' => $pgPid,
+        'error' => $exception->getMessage(),
+    ], JSON_THROW_ON_ERROR));
+} catch (DomainException $exception) {
     file_put_contents($resultFile, json_encode([
         'status' => 'business_error',
         'worker_id' => $workerId,
