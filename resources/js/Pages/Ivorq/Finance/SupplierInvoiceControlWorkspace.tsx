@@ -30,6 +30,8 @@ interface Invoice {
   status: string;
   status_label: string;
   payment_status: string | null;
+  receipt_source_type: string | null;
+  receipt_source_label: string;
   approved_at: string | null;
   rejected_at: string | null;
   rejection_reason: string | null;
@@ -43,6 +45,9 @@ interface IntakeReceipt {
   grn_number: string;
   status: string;
   received_at: string | null;
+  source_type: 'inventory_goods_receipt' | 'legacy_receiving_document';
+  source_label: string;
+  remaining_quantity: string;
 }
 
 interface IntakeSource {
@@ -211,6 +216,7 @@ function SupplierInvoiceIntake({ sources, canRegister }: { sources: IntakeSource
   const form = useForm({
     purchase_order_id: '',
     goods_receipt_id: '',
+    receipt_source_type: '',
     invoice_number: '',
     invoice_date: new Date().toISOString().slice(0, 10),
     due_date: '',
@@ -245,7 +251,12 @@ function SupplierInvoiceIntake({ sources, canRegister }: { sources: IntakeSource
                 className="form-input"
                 value={form.data.purchase_order_id}
                 onChange={(event) => {
-                  form.setData({ ...form.data, purchase_order_id: event.target.value, goods_receipt_id: '' });
+                  form.setData({
+                    ...form.data,
+                    purchase_order_id: event.target.value,
+                    goods_receipt_id: '',
+                    receipt_source_type: '',
+                  });
                 }}
                 required
               >
@@ -258,11 +269,22 @@ function SupplierInvoiceIntake({ sources, canRegister }: { sources: IntakeSource
               <select
                 className="form-input"
                 value={form.data.goods_receipt_id}
-                onChange={(event) => form.setData('goods_receipt_id', event.target.value)}
+                onChange={(event) => {
+                  const receipt = selectedSource?.receipts.find((candidate) => candidate.id === event.target.value);
+                  form.setData({
+                    ...form.data,
+                    goods_receipt_id: event.target.value,
+                    receipt_source_type: receipt?.source_type ?? '',
+                  });
+                }}
                 disabled={!selectedSource}
               >
                 <option value="">No receipt (will raise match exception)</option>
-                {selectedSource?.receipts.map((receipt) => <option key={receipt.id} value={receipt.id}>{receipt.grn_number} — {receipt.status}</option>)}
+                {selectedSource?.receipts.map((receipt) => (
+                  <option key={`${receipt.source_type}:${receipt.id}`} value={receipt.id}>
+                    {receipt.source_label} — {receipt.grn_number} — {receipt.status} — {receipt.remaining_quantity} remaining
+                  </option>
+                ))}
               </select>
             </label>
             <label>
@@ -315,6 +337,7 @@ function InvoiceEvidence({ invoice }: { invoice: Invoice }) {
         <EvidenceCell label="Due Date" value={invoice.due_date || 'N/A'} />
         <EvidenceCell label="Grand Total" value={invoice.grand_total_amount} />
         <EvidenceCell label="Payment Status" value={invoice.payment_status || 'N/A'} />
+        <EvidenceCell label="Receipt Source" value={invoice.receipt_source_label} />
       </div>
 
       <div className="finance-evidence-section">

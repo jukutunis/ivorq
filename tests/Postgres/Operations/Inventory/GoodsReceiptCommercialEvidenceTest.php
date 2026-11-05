@@ -2,25 +2,26 @@
 
 namespace Tests\Postgres\Operations\Inventory;
 
-use Carbon\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Tests\PostgresTestCase;
 use Modules\Foundation\Authorization\Models\Permission;
+use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Inventory\Models\GoodsReceipt;
-use Modules\Operations\Inventory\Models\GoodsReceiptLine;
 use Modules\Operations\Inventory\Models\GoodsReceiptLineCommercialEvidence;
 use Modules\Operations\Inventory\Models\InventoryCategory;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
 use Modules\Operations\Inventory\Models\InventoryUnit;
 use Modules\Operations\Inventory\Services\ControlledGoodsReceiptPostingService;
-use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use RuntimeException;
+use Shared\Services\CurrentPropertyService;
+use Tests\PostgresTestCase;
 
 class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
 {
@@ -29,19 +30,33 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
     protected $seed = true;
 
     private Property $property;
+
     private User $user;
+
     private User $approver;
+
     private User $receiver;
+
     private InventoryItem $item;
+
     private InventoryLocation $location;
+
     private InventoryUnit $unit;
+
     private InventoryCategory $category;
+
     private string $vendorId;
+
     private string $vendorCategoryId;
+
     private string $deptId;
+
     private string $poId;
+
     private string $poLineId;
+
     private ControlledGoodsReceiptPostingService $postingService;
+
     private SensitiveActionConfirmationService $confirmationService;
 
     protected function setUp(): void
@@ -51,13 +66,13 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
         $this->property = Property::first();
         $this->user = User::first();
 
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->property->id);
+        app(CurrentPropertyService::class)->setPropertyId($this->property->id);
 
         $this->approver = User::create([
             'company_id' => $this->property->company_id,
             'property_id' => $this->property->id,
             'name' => 'GR Approver',
-            'email' => 'gr-approver-' . Str::random(4) . '@test.com',
+            'email' => 'gr-approver-'.Str::lower(Str::random(4)).'@test.com',
             'password' => bcrypt('password'),
         ]);
 
@@ -65,7 +80,7 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
             'company_id' => $this->property->company_id,
             'property_id' => $this->property->id,
             'name' => 'GR Receiver',
-            'email' => 'gr-receiver-' . Str::random(4) . '@test.com',
+            'email' => 'gr-receiver-'.Str::lower(Str::random(4)).'@test.com',
             'password' => bcrypt('password'),
         ]);
 
@@ -109,7 +124,7 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
         DB::table('vendor_categories')->insert([
             'id' => $this->vendorCategoryId,
             'property_id' => $this->property->id,
-            'category_code' => 'GEC-' . Str::random(4),
+            'category_code' => 'GEC-'.Str::random(4),
             'name' => 'GR Evidence VC',
             'created_at' => now(),
             'updated_at' => now(),
@@ -118,8 +133,7 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
         $this->vendorId = (string) Str::ulid();
         DB::table('vendors')->insert([
             'id' => $this->vendorId,
-            'property_id' => $this->property->id,
-            'vendor_code' => 'V-GEC-' . Str::random(4),
+            'vendor_code' => 'V-GEC-'.Str::random(4),
             'name' => 'GR Evidence Vendor',
             'vendor_category_id' => $this->vendorCategoryId,
             'company_id' => $this->property->company_id,
@@ -134,7 +148,7 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
             'id' => $this->deptId,
             'property_id' => $this->property->id,
             'name' => 'GR Evidence Dept',
-            'code' => 'GEC' . Str::random(4),
+            'code' => 'GEC'.Str::random(4),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -151,7 +165,7 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
         DB::table('purchase_requests')->insert([
             'id' => $prId,
             'property_id' => $this->property->id,
-            'request_no' => 'PR-GEC-' . Str::random(4),
+            'request_no' => 'PR-GEC-'.Str::random(4),
             'department_id' => $this->deptId,
             'requester_id' => $this->user->id,
             'status' => 'APPROVED',
@@ -178,7 +192,7 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
         DB::table('purchase_orders')->insert([
             'id' => $this->poId,
             'property_id' => $this->property->id,
-            'po_no' => 'PO-GEC-' . Str::random(8),
+            'po_no' => 'PO-GEC-'.Str::random(8),
             'purchase_request_id' => $prId,
             'vendor_id' => $this->vendorId,
             'issue_date' => now(),
@@ -223,7 +237,7 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
             ],
         ], $this->receiver->id);
 
-        $receipt->status = \Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum::ConfirmationPending;
+        $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
         $receipt->save();
 
         $this->confirmationService->confirm(
@@ -339,7 +353,7 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
         $line = $receipt->lines->first();
         $evidence = GoodsReceiptLineCommercialEvidence::where('goods_receipt_line_id', $line->id)->first();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         DB::table('goods_receipt_line_commercial_evidences')
             ->where('id', $evidence->id)
@@ -355,7 +369,7 @@ class GoodsReceiptCommercialEvidenceTest extends PostgresTestCase
         $line = $receipt->lines->first();
         $evidence = GoodsReceiptLineCommercialEvidence::where('goods_receipt_line_id', $line->id)->first();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         DB::table('goods_receipt_line_commercial_evidences')
             ->where('id', $evidence->id)

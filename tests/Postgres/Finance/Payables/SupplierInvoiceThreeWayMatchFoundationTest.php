@@ -165,6 +165,10 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         ];
 
         $first = $this->service->registerFromSource($input, $this->actor);
+        $legacyFingerprint = $this->legacyPreDiscriminatorFingerprint($first['invoice']->fresh(['lines']));
+        DB::table('vendor_invoices')->where('id', $first['invoice']->id)->update([
+            'source_fingerprint' => $legacyFingerprint,
+        ]);
         $beforeReplay = $this->invoiceEvidenceCounts();
         $replay = $this->service->registerFromSource($input, $this->actor);
 
@@ -172,11 +176,12 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
         $this->assertSame($first['match']->id, $replay['match']->id);
         $this->assertSame($beforeReplay, $this->invoiceEvidenceCounts());
         $this->assertSame($fixture['vendor_id'], $first['invoice']->vendor_id);
+        $this->assertSame('legacy_receiving_document', $first['invoice']->receipt_source_type);
         $this->assertSame('IDR', $first['invoice']->currency_code);
         $this->assertEquals('125.00', $first['invoice']->grand_total);
         $this->assertEquals('10.000', $first['invoice']->lines->first()->quantity);
         $this->assertEquals('12.50', $first['invoice']->lines->first()->unit_price);
-        $this->assertNotNull($first['invoice']->source_fingerprint);
+        $this->assertSame($legacyFingerprint, $replay['invoice']->source_fingerprint);
     }
 
     public function test_vendor_company_scope_is_shared_by_registration_intake_and_grni_eligibility(): void
@@ -2146,6 +2151,16 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'updated_at' => $timestamp,
         ]);
 
+        DB::table('purchase_order_receipt_source_authorities')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $property->id,
+            'purchase_order_id' => $purchaseOrderId,
+            'source_type' => 'legacy_receiving_document',
+            'binding_reason' => 'test_legacy_evidence',
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
         return [
             'property_id' => $property->id,
             'vendor_id' => $vendorId,
@@ -2207,6 +2222,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'vendor_id' => $fixture['vendor_id'],
             'purchase_order_id' => $fixture['purchase_order_id'],
             'goods_receipt_id' => $fixture['goods_receipt_id'],
+            'receipt_source_type' => 'legacy_receiving_document',
             'invoice_number' => 'SINV-'.$this->sequence++,
             'invoice_date' => '2026-06-30',
             'currency_code' => $fixture['currency_code'],
@@ -2216,6 +2232,7 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'lines' => [[
                 'purchase_order_line_id' => $fixture['purchase_order_line_id'],
                 'goods_receipt_line_id' => $fixture['goods_receipt_line_id'],
+                'receipt_commercial_evidence_hash' => null,
                 'inventory_item_id' => $fixture['inventory_item_id'],
                 'description' => 'Supplier invoice test item',
                 'quantity' => $quantity,
@@ -2226,6 +2243,16 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
 
         $payload = array_replace($payload, $headerOverrides);
         $payload['lines'][0] = array_replace($payload['lines'][0], $lineOverrides);
+
+        if ($payload['goods_receipt_id'] === null
+            && ! array_key_exists('receipt_source_type', $headerOverrides)) {
+            $payload['receipt_source_type'] = null;
+        }
+
+        if ($payload['lines'][0]['goods_receipt_line_id'] === null
+            && ! array_key_exists('receipt_commercial_evidence_hash', $lineOverrides)) {
+            $payload['lines'][0]['receipt_commercial_evidence_hash'] = null;
+        }
 
         return $payload;
     }
@@ -2238,6 +2265,39 @@ class SupplierInvoiceThreeWayMatchFoundationTest extends PostgresTestCase
             'three_way_matches' => DB::table('three_way_matches')->count(),
             'three_way_match_lines' => DB::table('three_way_match_lines')->count(),
         ];
+    }
+
+    private function legacyPreDiscriminatorFingerprint(SupplierInvoice $invoice): string
+    {
+        $evidence = [
+            'property_id' => $invoice->property_id,
+            'vendor_id' => $invoice->vendor_id,
+            'purchase_order_id' => $invoice->purchase_order_id,
+            'goods_receipt_id' => $invoice->goods_receipt_id,
+            'invoice_number' => $invoice->invoice_number,
+            'invoice_date' => $invoice->invoice_date->toDateString(),
+            'due_date' => $invoice->due_date?->toDateString(),
+            'currency_code' => $invoice->currency_code,
+            'subtotal' => (float) $invoice->subtotal,
+            'tax_amount' => (float) $invoice->tax_amount,
+            'discount_amount' => (float) $invoice->discount_amount,
+            'grand_total' => (float) $invoice->grand_total,
+            'remarks' => $invoice->remarks,
+            'lines' => $invoice->lines->map(fn ($line): array => [
+                'purchase_order_line_id' => $line->purchase_order_line_id,
+                'goods_receipt_line_id' => $line->goods_receipt_line_id,
+                'inventory_item_id' => $line->inventory_item_id,
+                'description' => $line->description,
+                'quantity' => (float) $line->quantity,
+                'unit_price' => (float) $line->unit_price,
+                'line_total' => (float) $line->line_total,
+            ])->all(),
+        ];
+
+        return hash(
+            'sha256',
+            json_encode($evidence, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)
+        );
     }
 
     private function controlledSnapshot(): array

@@ -96,7 +96,7 @@ class SupplierInvoiceReceiptCapacityConcurrencyTest extends PostgresTestCase
         ]);
         DB::table('vendors')->insert([
             'id' => $vendorId,
-            'property_id' => $property->id,
+            'company_id' => $property->company_id,
             'vendor_category_id' => $vendorCategoryId,
             'vendor_code' => 'VND-CONC',
             'name' => 'Concurrency Vendor',
@@ -206,35 +206,57 @@ class SupplierInvoiceReceiptCapacityConcurrencyTest extends PostgresTestCase
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
         ]);
-        DB::table('receiving_documents')->insert([
-            'id' => $receiptId,
+        DB::table('purchase_order_receipt_source_authorities')->insert([
+            'id' => (string) Str::ulid(),
             'property_id' => $property->id,
-            'vendor_id' => $vendorId,
             'purchase_order_id' => $purchaseOrderId,
-            'grn_number' => 'GRN-CONC',
-            'status' => 'approved',
-            'received_at' => '2026-10-29 00:00:00',
-            'received_by' => $actor->id,
-            'created_by' => $actor->id,
-            'updated_by' => $actor->id,
+            'source_type' => 'inventory_goods_receipt',
+            'binding_reason' => 'test_controlled_evidence',
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
         ]);
-        DB::table('receiving_lines')->insert([
+        DB::table('goods_receipts')->insert([
+            'id' => $receiptId,
+            'property_id' => $property->id,
+            'purchase_order_id' => $purchaseOrderId,
+            'receipt_number' => 'GRN-CONC',
+            'status' => 'POSTED',
+            'received_at' => '2026-10-29 00:00:00',
+            'posted_at' => '2026-10-29 00:00:00',
+            'received_by' => $actor->id,
+            'created_by' => $actor->id,
+            'created_at' => $timestamp,
+        ]);
+        DB::table('goods_receipt_lines')->insert([
             'id' => $receiptLineId,
-            'receiving_document_id' => $receiptId,
+            'goods_receipt_id' => $receiptId,
+            'property_id' => $property->id,
             'purchase_order_line_id' => $purchaseOrderLineId,
             'inventory_item_id' => $itemId,
             'inventory_unit_id' => $unitId,
-            'destination_location_id' => $locationId,
-            'description' => 'Concurrency Item',
+            'inventory_location_id' => $locationId,
             'received_quantity' => 1,
-            'unit_cost' => 10,
-            'line_total' => 10,
+            'idempotency_key' => 'SINV-CONC-RECEIPT-LINE',
             'created_by' => $actor->id,
-            'updated_by' => $actor->id,
             'created_at' => $timestamp,
-            'updated_at' => $timestamp,
+        ]);
+        DB::table('goods_receipt_line_commercial_evidences')->insert([
+            'id' => (string) Str::ulid(),
+            'property_id' => $property->id,
+            'goods_receipt_id' => $receiptId,
+            'goods_receipt_line_id' => $receiptLineId,
+            'purchase_order_id' => $purchaseOrderId,
+            'purchase_order_line_id' => $purchaseOrderLineId,
+            'inventory_item_id' => $itemId,
+            'inventory_unit_id' => $unitId,
+            'property_base_currency_code_snapshot' => 'IDR',
+            'purchase_order_currency_code_snapshot' => 'IDR',
+            'purchase_order_unit_cost_snapshot' => 10,
+            'purchase_order_exchange_rate_snapshot' => 1,
+            'commercial_evidence_hash' => hash('sha256', 'SINV-CONC-RECEIPT-LINE'),
+            'captured_at' => $timestamp,
+            'created_by' => $actor->id,
+            'created_at' => $timestamp,
         ]);
 
         return [

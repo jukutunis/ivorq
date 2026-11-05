@@ -5,17 +5,17 @@ namespace Modules\Finance\Payables\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Finance\Payables\Models\SupplierInvoice;
+use Modules\Operations\Purchasing\Contracts\ProcurementReceiptEvidenceProvider;
 
 class SupplierInvoiceIntakeSourceService
 {
     private const ELIGIBLE_PURCHASE_ORDER_STATUSES = [
-        'APPROVED',
-        'ISSUED',
-        'PARTIALLY_RECEIVED',
-        'FULLY_RECEIVED',
+        'APPROVED', 'ISSUED', 'PARTIALLY_RECEIVED', 'FULLY_RECEIVED',
     ];
 
-    private const ELIGIBLE_RECEIVING_STATUSES = ['submitted', 'approved'];
+    public function __construct(
+        private readonly ProcurementReceiptEvidenceProvider $receiptEvidence,
+    ) {}
 
     public function project(string $propertyId): array
     {
@@ -33,21 +33,22 @@ class SupplierInvoiceIntakeSourceService
                 'po.id', 'po.po_no', 'po.vendor_id', 'v.name as vendor_name',
                 'po.currency_code', 'po.subtotal', 'po.tax_amount', 'po.total_amount', 'po.status',
             ])
-            ->map(function (object $purchaseOrder): array {
-                $receipts = DB::table('receiving_documents')
-                    ->where('purchase_order_id', $purchaseOrder->id)
-                    ->whereIn('status', self::ELIGIBLE_RECEIVING_STATUSES)
-                    ->whereNull('deleted_at')
-                    ->orderByDesc('received_at')
-                    ->get(['id', 'grn_number', 'status', 'received_at'])
-                    ->map(function (object $receipt) use ($purchaseOrder): ?array {
-                        $invoiceableLines = $this->receiptLines($receipt->id, $purchaseOrder->id);
+            ->map(function (object $purchaseOrder) use ($propertyId): array {
+                $receipts = collect($this->receiptEvidence->receipts($propertyId, $purchaseOrder->id))
+                    ->map(function (array $receipt) use ($propertyId, $purchaseOrder): ?array {
+                        $invoiceableLines = $this->receiptLines(
+                            $propertyId,
+                            $purchaseOrder->id,
+                            $receipt['id'],
+                            $receipt['source_type']
+                        );
 
                         if ($invoiceableLines === []) {
                             return null;
                         }
 
-                        return (array) $receipt + [
+                        return $receipt + [
+                            'grn_number' => $receipt['receipt_number'],
                             'remaining_quantity' => number_format(
                                 array_sum(array_map(
                                     fn (array $line): float => (float) $line['quantity'],
@@ -73,6 +74,7 @@ class SupplierInvoiceIntakeSourceService
                     'tax_amount' => (string) $purchaseOrder->tax_amount,
                     'total_amount' => (string) $purchaseOrder->total_amount,
                     'status' => $purchaseOrder->status,
+                    'receipt_source_type' => $this->receiptEvidence->sourceType($propertyId, $purchaseOrder->id),
                     'receipts' => $receipts,
                 ];
             })
@@ -84,6 +86,7 @@ class SupplierInvoiceIntakeSourceService
     {
         $purchaseOrderId = trim((string) ($input['purchase_order_id'] ?? ''));
         $receiptId = $this->nullableString($input['goods_receipt_id'] ?? null);
+        $requestedSourceType = $this->nullableString($input['receipt_source_type'] ?? null);
 
         if ($purchaseOrderId === '') {
             throw new DomainException('A purchase order source is required.');
@@ -101,10 +104,7 @@ class SupplierInvoiceIntakeSourceService
             throw new DomainException('Purchase order source is unavailable in the active property or lifecycle.');
         }
 
-        $propertyCompanyId = DB::table('properties')
-            ->where('id', $propertyId)
-            ->value('company_id');
-
+        $propertyCompanyId = DB::table('properties')->where('id', $propertyId)->value('company_id');
         $vendor = DB::table('vendors')
             ->where('id', $purchaseOrder->vendor_id)
             ->whereNull('deleted_at')
@@ -121,25 +121,31 @@ class SupplierInvoiceIntakeSourceService
             throw new DomainException('Tax-bearing purchase orders are not supported by this intake path.');
         }
 
+        $sourceType = null;
         $receipt = null;
         if ($receiptId !== null) {
-            $receipt = DB::table('receiving_documents')
-                ->where('id', $receiptId)
-                ->where('property_id', $propertyId)
-                ->where('purchase_order_id', $purchaseOrder->id)
-                ->where('vendor_id', $purchaseOrder->vendor_id)
-                ->whereIn('status', self::ELIGIBLE_RECEIVING_STATUSES)
-                ->whereNull('deleted_at')
-                ->lockForUpdate()
-                ->first();
+            $sourceType = $this->receiptEvidence->sourceType($propertyId, $purchaseOrder->id, true);
 
-            if (! $receipt) {
+            if ($requestedSourceType !== null && $requestedSourceType !== $sourceType) {
+                throw new DomainException('Supplier invoice receipt source type conflicts with Purchase Order authority.');
+            }
+
+            $receipt = $this->receiptEvidence->receipt(
+                $propertyId,
+                $purchaseOrder->id,
+                $receiptId,
+                true
+            );
+
+            if (! $receipt || $receipt['vendor_id'] !== $purchaseOrder->vendor_id) {
                 throw new DomainException('Receiving evidence does not belong to the selected purchase order and property.');
             }
+        } elseif ($requestedSourceType !== null) {
+            throw new DomainException('Receipt source type cannot be supplied without receipt evidence.');
         }
 
         $lines = $receipt
-            ? $this->receiptLines($receipt->id, $purchaseOrder->id, true)
+            ? $this->receiptLines($propertyId, $purchaseOrder->id, $receipt['id'], $sourceType, true)
             : $this->purchaseOrderLines($purchaseOrder->id);
 
         if ($lines === []) {
@@ -150,7 +156,8 @@ class SupplierInvoiceIntakeSourceService
             'property_id' => $propertyId,
             'vendor_id' => $purchaseOrder->vendor_id,
             'purchase_order_id' => $purchaseOrder->id,
-            'goods_receipt_id' => $receipt?->id,
+            'goods_receipt_id' => $receipt['id'] ?? null,
+            'receipt_source_type' => $sourceType,
             'invoice_number' => $input['invoice_number'] ?? null,
             'invoice_date' => $input['invoice_date'] ?? null,
             'due_date' => $input['due_date'] ?? null,
@@ -165,6 +172,7 @@ class SupplierInvoiceIntakeSourceService
 
     public function assertReceiptCapacity(array $data): void
     {
+        $sourceType = $data['receipt_source_type'];
         $requested = [];
 
         foreach ($data['lines'] as $line) {
@@ -172,6 +180,10 @@ class SupplierInvoiceIntakeSourceService
 
             if ($receiptLineId === null) {
                 continue;
+            }
+
+            if ($sourceType === null) {
+                throw new DomainException('Receipt source type is required for receipt-backed invoice lines.');
             }
 
             if (isset($requested[$receiptLineId])
@@ -192,37 +204,27 @@ class SupplierInvoiceIntakeSourceService
 
         $receiptLineIds = array_keys($requested);
         sort($receiptLineIds);
-
-        $receiptLines = DB::table('receiving_lines as rl')
-            ->join('receiving_documents as rd', 'rd.id', '=', 'rl.receiving_document_id')
-            ->whereIn('rl.id', $receiptLineIds)
-            ->whereNull('rd.deleted_at')
-            ->orderBy('rl.id')
-            ->lockForUpdate()
-            ->get([
-                'rl.id', 'rl.receiving_document_id', 'rl.purchase_order_line_id', 'rl.received_quantity',
-                'rd.property_id', 'rd.purchase_order_id',
-            ]);
-
-        if ($receiptLines->count() !== count($receiptLineIds)) {
-            throw new DomainException('Supplier invoice receiving capacity evidence is unavailable.');
-        }
-
-        $claimed = $this->claimedQuantities($receiptLineIds);
+        $receiptLines = $this->receiptEvidence->lines(
+            $data['property_id'],
+            $data['purchase_order_id'],
+            $data['goods_receipt_id'],
+            true,
+            $receiptLineIds
+        );
+        $claimed = $this->claimedQuantities($sourceType, $receiptLineIds);
 
         foreach ($receiptLines as $receiptLine) {
-            $lineRequest = $requested[$receiptLine->id];
+            $lineRequest = $requested[$receiptLine['id']];
 
-            if ($receiptLine->property_id !== $data['property_id']
-                || $receiptLine->purchase_order_id !== $data['purchase_order_id']
-                || $receiptLine->receiving_document_id !== $data['goods_receipt_id']
-                || $receiptLine->purchase_order_line_id !== $lineRequest['purchase_order_line_id']) {
+            if ($receiptLine['source_type'] !== $sourceType
+                || $receiptLine['receipt_id'] !== $data['goods_receipt_id']
+                || $receiptLine['purchase_order_line_id'] !== $lineRequest['purchase_order_line_id']) {
                 throw new DomainException('Supplier invoice receiving capacity conflicts with source provenance.');
             }
 
             $remaining = max(
                 0.0,
-                round((float) $receiptLine->received_quantity - ($claimed[$receiptLine->id] ?? 0.0), 3)
+                round((float) $receiptLine['received_quantity'] - ($claimed[$receiptLine['id']] ?? 0.0), 3)
             );
 
             if (round($lineRequest['quantity'], 3) - $remaining > 0.0005) {
@@ -232,33 +234,25 @@ class SupplierInvoiceIntakeSourceService
     }
 
     private function receiptLines(
-        string $receiptId,
+        string $propertyId,
         string $purchaseOrderId,
-        bool $lockForUpdate = false
+        string $receiptId,
+        string $sourceType,
+        bool $lockForUpdate = false,
     ): array {
-        $query = DB::table('receiving_lines as rl')
-            ->join('purchase_order_lines as pol', 'pol.id', '=', 'rl.purchase_order_line_id')
-            ->where('rl.receiving_document_id', $receiptId)
-            ->where('pol.purchase_order_id', $purchaseOrderId)
-            ->whereNull('pol.deleted_at')
-            ->orderBy('rl.id');
+        $lines = $this->receiptEvidence->lines(
+            $propertyId,
+            $purchaseOrderId,
+            $receiptId,
+            $lockForUpdate
+        );
+        $claimed = $this->claimedQuantities($sourceType, array_column($lines, 'id'));
 
-        if ($lockForUpdate) {
-            $query->lockForUpdate();
-        }
-
-        $lines = $query->get([
-            'pol.id as purchase_order_line_id', 'rl.id as goods_receipt_line_id',
-            'pol.inventory_item_id', 'pol.description', 'rl.received_quantity as quantity',
-            'pol.unit_cost',
-        ]);
-        $claimed = $this->claimedQuantities($lines->pluck('goods_receipt_line_id')->all());
-
-        return $lines
-            ->map(function (object $line) use ($claimed): ?array {
+        return collect($lines)
+            ->map(function (array $line) use ($claimed): ?array {
                 $remaining = max(
                     0.0,
-                    round((float) $line->quantity - ($claimed[$line->goods_receipt_line_id] ?? 0.0), 3)
+                    round((float) $line['received_quantity'] - ($claimed[$line['id']] ?? 0.0), 3)
                 );
 
                 if ($remaining <= 0.0) {
@@ -266,12 +260,13 @@ class SupplierInvoiceIntakeSourceService
                 }
 
                 return [
-                    'purchase_order_line_id' => $line->purchase_order_line_id,
-                    'goods_receipt_line_id' => $line->goods_receipt_line_id,
-                    'inventory_item_id' => $line->inventory_item_id,
-                    'description' => $line->description,
+                    'purchase_order_line_id' => $line['purchase_order_line_id'],
+                    'goods_receipt_line_id' => $line['id'],
+                    'receipt_commercial_evidence_hash' => $line['commercial_evidence_hash'],
+                    'inventory_item_id' => $line['inventory_item_id'],
+                    'description' => $line['description'],
                     'quantity' => number_format($remaining, 3, '.', ''),
-                    'unit_price' => (string) $line->unit_cost,
+                    'unit_price' => $line['unit_cost'],
                 ];
             })
             ->filter()
@@ -279,7 +274,7 @@ class SupplierInvoiceIntakeSourceService
             ->all();
     }
 
-    private function claimedQuantities(array $receiptLineIds): array
+    private function claimedQuantities(string $sourceType, array $receiptLineIds): array
     {
         if ($receiptLineIds === []) {
             return [];
@@ -287,6 +282,7 @@ class SupplierInvoiceIntakeSourceService
 
         return DB::table('vendor_invoice_lines as vil')
             ->join('vendor_invoices as vi', 'vi.id', '=', 'vil.vendor_invoice_id')
+            ->where('vi.receipt_source_type', $sourceType)
             ->whereIn('vil.goods_receipt_line_id', $receiptLineIds)
             ->whereIn('vi.status', [SupplierInvoice::STATUS_REGISTERED, SupplierInvoice::STATUS_APPROVED])
             ->whereNull('vi.deleted_at')
@@ -311,6 +307,7 @@ class SupplierInvoiceIntakeSourceService
             ->map(fn (object $line): array => [
                 'purchase_order_line_id' => $line->id,
                 'goods_receipt_line_id' => null,
+                'receipt_commercial_evidence_hash' => null,
                 'inventory_item_id' => $line->inventory_item_id,
                 'description' => $line->description,
                 'quantity' => (string) $line->ordered_quantity,

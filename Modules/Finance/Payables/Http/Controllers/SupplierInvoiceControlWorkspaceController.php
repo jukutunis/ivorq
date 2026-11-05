@@ -55,6 +55,12 @@ class SupplierInvoiceControlWorkspaceController extends Controller
                 'status_label' => $this->statusLabel($inv->status),
                 'payment_status' => null,
                 'match_status' => $inv->threeWayMatch?->match_status,
+                'receipt_source_type' => $inv->receipt_source_type,
+                'receipt_source_label' => match ($inv->receipt_source_type) {
+                    'inventory_goods_receipt' => 'Controlled Goods Receipt',
+                    'legacy_receiving_document' => 'Legacy Receiving Evidence',
+                    default => 'No receipt evidence',
+                },
                 'approved_at' => $inv->approved_at?->toIso8601String(),
                 'rejected_at' => $inv->rejected_at?->toIso8601String(),
                 'rejection_reason' => $inv->rejection_reason,
@@ -83,6 +89,11 @@ class SupplierInvoiceControlWorkspaceController extends Controller
         $validated = $request->validate([
             'purchase_order_id' => ['required', 'string', 'max:26'],
             'goods_receipt_id' => ['nullable', 'string', 'max:26'],
+            'receipt_source_type' => [
+                'nullable',
+                'string',
+                'in:inventory_goods_receipt,legacy_receiving_document',
+            ],
             'invoice_number' => ['required', 'string', 'max:255'],
             'invoice_date' => ['required', 'date'],
             'due_date' => ['nullable', 'date', 'after_or_equal:invoice_date'],

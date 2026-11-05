@@ -10,7 +10,7 @@ use Shared\Traits\HasUlid;
 
 class SupplierInvoiceLine extends Model
 {
-    use HasUlid, HasAuditColumns;
+    use HasAuditColumns, HasUlid;
 
     protected $table = 'vendor_invoice_lines';
 
@@ -18,6 +18,7 @@ class SupplierInvoiceLine extends Model
         'vendor_invoice_id',
         'purchase_order_line_id',
         'goods_receipt_line_id',
+        'receipt_commercial_evidence_hash',
         'inventory_item_id',
         'description',
         'quantity',

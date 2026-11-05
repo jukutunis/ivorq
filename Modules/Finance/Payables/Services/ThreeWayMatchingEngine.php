@@ -7,9 +7,14 @@ use Modules\Finance\Payables\Enums\MatchExceptionEnum;
 use Modules\Finance\Payables\Enums\MatchStatusEnum;
 use Modules\Finance\Payables\Models\SupplierInvoice;
 use Modules\Finance\Payables\Models\ThreeWayMatch;
+use Modules\Operations\Purchasing\Contracts\ProcurementReceiptEvidenceProvider;
 
 class ThreeWayMatchingEngine
 {
+    public function __construct(
+        private readonly ProcurementReceiptEvidenceProvider $receiptEvidence,
+    ) {}
+
     public function performMatch(SupplierInvoice $invoice): ThreeWayMatch
     {
         return DB::transaction(function () use ($invoice) {
@@ -40,7 +45,7 @@ class ThreeWayMatchingEngine
 
             $purchaseOrder = $this->purchaseOrder($invoice->purchase_order_id, $invoice->property_id);
 
-            if (!$purchaseOrder) {
+            if (! $purchaseOrder) {
                 return $this->recordMatch(
                     $invoice,
                     null,
@@ -73,9 +78,14 @@ class ThreeWayMatchingEngine
                 );
             }
 
-            $goodsReceipt = $this->goodsReceipt($invoice->goods_receipt_id, $invoice->property_id);
+            $goodsReceipt = $this->goodsReceipt(
+                $invoice->goods_receipt_id,
+                $invoice->property_id,
+                $invoice->purchase_order_id,
+                $invoice->receipt_source_type
+            );
 
-            if (!$goodsReceipt) {
+            if (! $goodsReceipt) {
                 return $this->recordMatch(
                     $invoice,
                     $purchaseOrder->id,
@@ -106,7 +116,7 @@ class ThreeWayMatchingEngine
             foreach ($invoice->lines as $invoiceLine) {
                 $purchaseOrderLine = $this->purchaseOrderLine($invoiceLine->purchase_order_line_id);
 
-                if (!$purchaseOrderLine || $purchaseOrderLine->purchase_order_id !== $purchaseOrder->id) {
+                if (! $purchaseOrderLine || $purchaseOrderLine->purchase_order_id !== $purchaseOrder->id) {
                     return $this->recordMatch(
                         $invoice,
                         $purchaseOrder->id,
@@ -130,9 +140,14 @@ class ThreeWayMatchingEngine
                     );
                 }
 
-                $goodsReceiptLine = $this->goodsReceiptLine($invoiceLine->goods_receipt_line_id);
+                $goodsReceiptLine = $this->goodsReceiptLine(
+                    $invoiceLine->goods_receipt_line_id,
+                    $invoice->property_id,
+                    $purchaseOrder->id,
+                    $goodsReceipt->id
+                );
 
-                if (!$goodsReceiptLine) {
+                if (! $goodsReceiptLine) {
                     $lineEvidence[] = $this->lineEvidence($invoiceLine, $purchaseOrderLine, null);
 
                     return $this->recordMatch(
@@ -203,8 +218,7 @@ class ThreeWayMatchingEngine
         float $totalQuantityVariance = 0.0,
         float $totalPriceVariance = 0.0,
         float $totalAmountVariance = 0.0,
-    ): ThreeWayMatch
-    {
+    ): ThreeWayMatch {
         $match = ThreeWayMatch::create([
             'property_id' => $invoice->property_id,
             'vendor_invoice_id' => $invoice->id,
@@ -295,27 +309,55 @@ class ThreeWayMatchingEngine
             ->first();
     }
 
-    private function goodsReceipt(?string $id, string $propertyId): ?object
-    {
-        if ($id === null) {
+    private function goodsReceipt(
+        ?string $id,
+        string $propertyId,
+        ?string $purchaseOrderId,
+        ?string $sourceType,
+    ): ?object {
+        if ($id === null || $purchaseOrderId === null || $sourceType === null) {
             return null;
         }
 
-        return DB::table('receiving_documents')
-            ->where('id', $id)
-            ->where('property_id', $propertyId)
-            ->whereNull('deleted_at')
-            ->first();
+        if ($this->receiptEvidence->sourceType($propertyId, $purchaseOrderId) !== $sourceType) {
+            return null;
+        }
+
+        $receipt = $this->receiptEvidence->receipt($propertyId, $purchaseOrderId, $id);
+
+        return $receipt ? (object) $receipt : null;
     }
 
-    private function goodsReceiptLine(?string $id): ?object
-    {
+    private function goodsReceiptLine(
+        ?string $id,
+        string $propertyId,
+        string $purchaseOrderId,
+        string $receiptId,
+    ): ?object {
         if ($id === null) {
             return null;
         }
 
-        return DB::table('receiving_lines')
-            ->where('id', $id)
-            ->first();
+        $lines = $this->receiptEvidence->lines(
+            $propertyId,
+            $purchaseOrderId,
+            $receiptId,
+            false,
+            [$id]
+        );
+
+        if ($lines === []) {
+            return null;
+        }
+
+        $line = $lines[0];
+
+        return (object) [
+            'id' => $line['id'],
+            'receiving_document_id' => $line['receipt_id'],
+            'purchase_order_line_id' => $line['purchase_order_line_id'],
+            'inventory_item_id' => $line['inventory_item_id'],
+            'received_quantity' => $line['received_quantity'],
+        ];
     }
 }

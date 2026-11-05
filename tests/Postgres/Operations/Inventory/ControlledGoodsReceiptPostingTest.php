@@ -2,49 +2,65 @@
 
 namespace Tests\Postgres\Operations\Inventory;
 
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Tests\PostgresTestCase;
-use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
-use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
-use Modules\Operations\Inventory\Enums\InventoryMovementSourceLegEnum;
-use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
-use Modules\Operations\Inventory\Models\GoodsReceipt;
-use Modules\Operations\Inventory\Models\GoodsReceiptLine;
-use Modules\Operations\Inventory\Models\InventoryStockMovement;
-use Modules\Operations\Inventory\Models\InventoryItem;
-use Modules\Operations\Inventory\Models\InventoryLocation;
-use Modules\Operations\Inventory\Models\InventoryUnit;
-use Modules\Operations\Inventory\Services\ControlledGoodsReceiptPostingService;
-use Modules\Operations\Inventory\Services\InventoryLedgerPostingService;
-use Modules\Operations\Purchasing\Models\PurchaseOrder;
-use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
-use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
-use Modules\Foundation\Property\Models\Property;
-use Modules\Foundation\User\Models\User;
 use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Models\Role;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
+use Modules\Foundation\Property\Models\Property;
+use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
+use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
+use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
+use Modules\Operations\Inventory\Models\GoodsReceipt;
+use Modules\Operations\Inventory\Models\GoodsReceiptLine;
+use Modules\Operations\Inventory\Models\InventoryItem;
+use Modules\Operations\Inventory\Models\InventoryLocation;
+use Modules\Operations\Inventory\Models\InventoryStock;
+use Modules\Operations\Inventory\Models\InventoryStockMovement;
+use Modules\Operations\Inventory\Models\InventoryTransaction;
+use Modules\Operations\Inventory\Models\InventoryUnit;
+use Modules\Operations\Inventory\Services\ControlledGoodsReceiptPostingService;
+use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
+use Modules\Operations\Purchasing\Models\PurchaseOrder;
+use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
+use Shared\Services\CurrentPropertyService;
+use Tests\PostgresTestCase;
 
 class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 {
     use RefreshDatabase;
 
     private Property $property;
+
     private Property $propertyB;
+
     private User $user;
+
     private User $approver;
+
     private User $receiver;
+
     private InventoryItem $item;
+
     private InventoryLocation $location;
+
     private InventoryUnit $unit;
+
     private PurchaseOrder $po;
+
     private PurchaseOrderLine $poLine;
+
     private string $companyId;
+
     private string $vendorId;
+
     private string $deptId;
+
     private string $unitId;
 
     protected function setUp(): void
@@ -55,7 +71,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('companies')->insert([
             'id' => $this->companyId,
             'name' => 'GR Test Company',
-            'slug' => 'gr-test-company-' . Str::random(4),
+            'slug' => 'gr-test-company-'.Str::random(4),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -65,8 +81,8 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
             'id' => $propertyId,
             'company_id' => $this->companyId,
             'name' => 'GR Test Property',
-            'slug' => 'gr-test-property-' . Str::random(4),
-            'code' => 'GRTP' . Str::random(2),
+            'slug' => 'gr-test-property-'.Str::random(4),
+            'code' => 'GRTP'.Str::random(2),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -77,8 +93,8 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
             'id' => $propertyBId,
             'company_id' => $this->companyId,
             'name' => 'GR Property B',
-            'slug' => 'gr-property-b-' . Str::random(4),
-            'code' => 'GRPB' . Str::random(2),
+            'slug' => 'gr-property-b-'.Str::random(4),
+            'code' => 'GRPB'.Str::random(2),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -88,7 +104,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $userId,
             'name' => 'GR Test User',
-            'email' => 'gr-user-' . Str::random(6) . '@test.com',
+            'email' => 'gr-user-'.Str::lower(Str::random(6)).'@test.com',
             'password' => bcrypt('password'),
             'created_at' => now(),
             'updated_at' => now(),
@@ -99,7 +115,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $approverId,
             'name' => 'GR Approver',
-            'email' => 'gr-approver-' . Str::random(6) . '@test.com',
+            'email' => 'gr-approver-'.Str::lower(Str::random(6)).'@test.com',
             'password' => bcrypt('password'),
             'created_at' => now(),
             'updated_at' => now(),
@@ -110,14 +126,14 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $receiverId,
             'name' => 'GR Receiver',
-            'email' => 'gr-receiver-' . Str::random(6) . '@test.com',
+            'email' => 'gr-receiver-'.Str::lower(Str::random(6)).'@test.com',
             'password' => bcrypt('password'),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
         $this->receiver = User::find($receiverId);
 
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($propertyId);
+        app(CurrentPropertyService::class)->setPropertyId($propertyId);
 
         $catId = (string) Str::ulid();
         DB::table('inventory_categories')->insert([
@@ -128,13 +144,13 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
             'updated_at' => now(),
         ]);
 
-        $this->item = new InventoryItem();
+        $this->item = new InventoryItem;
         $this->item->timestamps = false;
         $this->item->setRawAttributes([
             'id' => (string) Str::ulid(),
             'property_id' => $propertyId,
             'category_id' => $catId,
-            'sku' => 'GR-ITM-' . Str::random(4),
+            'sku' => 'GR-ITM-'.Str::random(4),
             'name' => 'GR Test Item',
             'inventory_type' => 'goods',
             'weighted_average_cost' => 0,
@@ -142,7 +158,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         ]);
         $this->item->save();
 
-        $this->location = new InventoryLocation();
+        $this->location = new InventoryLocation;
         $this->location->timestamps = false;
         $this->location->setRawAttributes([
             'id' => (string) Str::ulid(),
@@ -156,7 +172,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('inventory_units')->insert([
             'id' => $this->unitId,
             'property_id' => $propertyId,
-            'code' => 'GR-UOM-' . Str::random(3),
+            'code' => 'GR-UOM-'.Str::random(3),
             'name' => 'GR Test UOM',
             'created_at' => now(),
             'updated_at' => now(),
@@ -167,7 +183,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('vendor_categories')->insert([
             'id' => $vcId,
             'property_id' => $propertyId,
-            'category_code' => 'VGC-' . Str::random(3),
+            'category_code' => 'VGC-'.Str::random(3),
             'name' => 'GR Vendor Cat',
             'created_at' => now(),
             'updated_at' => now(),
@@ -176,8 +192,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->vendorId = (string) Str::ulid();
         DB::table('vendors')->insert([
             'id' => $this->vendorId,
-            'property_id' => $propertyId,
-            'vendor_code' => 'V-GR-' . Str::random(4),
+            'vendor_code' => 'V-GR-'.Str::random(4),
             'name' => 'GR Vendor',
             'vendor_category_id' => $vcId,
             'company_id' => $this->companyId,
@@ -192,7 +207,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
             'id' => $this->deptId,
             'property_id' => $propertyId,
             'name' => 'GR Test Dept',
-            'code' => 'GR' . Str::random(4),
+            'code' => 'GR'.Str::random(4),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -205,7 +220,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->receiver->givePermissionTo('inventory.purchasing.goods-receipt.receive');
     }
 
-    private function createApprovedPO(string $propertyId = null): void
+    private function createApprovedPO(?string $propertyId = null): void
     {
         $propertyId = $propertyId ?? $this->property->id;
 
@@ -213,7 +228,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('purchase_requests')->insert([
             'id' => $prId,
             'property_id' => $propertyId,
-            'request_no' => 'PR-GR-' . Str::random(4),
+            'request_no' => 'PR-GR-'.Str::random(4),
             'department_id' => $this->deptId,
             'requester_id' => $this->user->id,
             'status' => 'APPROVED',
@@ -240,7 +255,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('purchase_orders')->insert([
             'id' => $poId,
             'property_id' => $propertyId,
-            'po_no' => 'PO-GR-' . Str::random(8),
+            'po_no' => 'PO-GR-'.Str::random(8),
             'purchase_request_id' => $prId,
             'vendor_id' => $this->vendorId,
             'issue_date' => now(),
@@ -298,6 +313,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $receipt->status = GoodsReceiptStatusEnum::ConfirmationPending;
         $receipt->save();
         $this->confirm($this->receiver);
+
         return $this->postingService()->post($receipt, $this->receiver->id);
     }
 
@@ -388,9 +404,9 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
     public function test_cross_property_po_fails_closed(): void
     {
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->propertyB->id);
+        app(CurrentPropertyService::class)->setPropertyId($this->propertyB->id);
 
-        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->expectException(ModelNotFoundException::class);
         $this->postingService()->createDraft(
             $this->po->id,
             [[
@@ -471,7 +487,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $receipt->save();
         $this->confirm($this->receiver);
 
-        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->expectException(ModelNotFoundException::class);
         $this->postingService()->post($receipt, $this->receiver->id);
     }
 
@@ -691,7 +707,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
                 'inventory_location_id' => $this->location->id,
                 'inventory_unit_id' => $this->unitId,
                 'received_quantity' => 3.000,
-                'idempotency_key' => 'different-' . (string) Str::ulid(),
+                'idempotency_key' => 'different-'.(string) Str::ulid(),
             ]],
             $this->receiver->id,
         );
@@ -727,7 +743,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->createPostedReceipt(3.000);
         $movement = InventoryStockMovement::first();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         DB::table('inventory_stock_movements')->insert([
             'id' => (string) Str::ulid(),
             'property_id' => $movement->property_id,
@@ -753,7 +769,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->createPostedReceipt(3.000);
         $movement = InventoryStockMovement::first();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         DB::table('inventory_stock_movements')->insert([
             'id' => (string) Str::ulid(),
             'property_id' => $movement->property_id,
@@ -809,9 +825,9 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
     public function test_receipt_does_not_mutate_inventory_stock(): void
     {
-        $countBefore = \Modules\Operations\Inventory\Models\InventoryStock::count();
+        $countBefore = InventoryStock::count();
         $this->createPostedReceipt(3.000);
-        $this->assertEquals($countBefore, \Modules\Operations\Inventory\Models\InventoryStock::count());
+        $this->assertEquals($countBefore, InventoryStock::count());
     }
 
     public function test_no_cost_fields_in_stock_movement(): void
@@ -907,11 +923,11 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
     public function test_no_inventory_reversal_records_mutated(): void
     {
-        $txBefore = \Modules\Operations\Inventory\Models\InventoryTransaction::count();
+        $txBefore = InventoryTransaction::count();
 
         $this->createPostedReceipt(3.000);
 
-        $txAfter = \Modules\Operations\Inventory\Models\InventoryTransaction::count();
+        $txAfter = InventoryTransaction::count();
         $this->assertEquals($txBefore, $txAfter);
     }
 
@@ -920,7 +936,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->createPostedReceipt(3.000);
         $movement = InventoryStockMovement::first();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         DB::table('inventory_stock_movements')
             ->where('id', $movement->id)
             ->delete();
@@ -928,9 +944,9 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
     public function test_active_property_context_required_for_posting(): void
     {
-        app(\Shared\Services\CurrentPropertyService::class)->setPropertyId($this->propertyB->id);
+        app(CurrentPropertyService::class)->setPropertyId($this->propertyB->id);
 
-        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->expectException(ModelNotFoundException::class);
         $this->postingService()->createDraft(
             $this->po->id,
             [[
@@ -948,8 +964,8 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
     {
         $itemNameBefore = $this->item->name;
         $locationNameBefore = $this->location->name;
-        $stockCountBefore = \Modules\Operations\Inventory\Models\InventoryStock::count();
-        $txCountBefore = \Modules\Operations\Inventory\Models\InventoryTransaction::count();
+        $stockCountBefore = InventoryStock::count();
+        $txCountBefore = InventoryTransaction::count();
 
         $this->createPostedReceipt(3.000);
 
@@ -958,8 +974,8 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
         $this->assertEquals($itemNameBefore, $itemRefetched->name);
         $this->assertEquals($locationNameBefore, $locationRefetched->name);
-        $this->assertEquals($stockCountBefore, \Modules\Operations\Inventory\Models\InventoryStock::count());
-        $this->assertEquals($txCountBefore, \Modules\Operations\Inventory\Models\InventoryTransaction::count());
+        $this->assertEquals($stockCountBefore, InventoryStock::count());
+        $this->assertEquals($txCountBefore, InventoryTransaction::count());
     }
 
     // ── Confirmation replay and context mismatch ──────────────────────────
@@ -1053,7 +1069,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $exceptionThrown = false;
         try {
             $this->postingService()->post($receipt, $this->receiver->id);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             $exceptionThrown = true;
         }
         $this->assertTrue($exceptionThrown, 'Should have thrown ModelNotFoundException');
@@ -1120,7 +1136,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
         $countBefore = InventoryStockMovement::count();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         DB::table('inventory_stock_movements')->insert([
             'id' => (string) Str::ulid(),
             'property_id' => $movement->property_id,
@@ -1277,7 +1293,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->confirm($this->receiver);
         $this->postingService()->post($receipt, $this->receiver->id);
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         DB::table('goods_receipt_lines')->insert([
             'id' => (string) Str::ulid(),
             'goods_receipt_id' => $receipt->id,
@@ -1301,11 +1317,12 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('users')->insert([
             'id' => $userId,
             'name' => "{$prefix} User",
-            'email' => strtolower($prefix) . '-' . Str::random(4) . '@test.com',
+            'email' => strtolower($prefix).'-'.Str::lower(Str::random(4)).'@test.com',
             'password' => bcrypt('password'),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
         return User::find($userId);
     }
 
@@ -1315,7 +1332,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('purchase_requests')->insert([
             'id' => $prId,
             'property_id' => $this->property->id,
-            'request_no' => 'PR-OTH-' . Str::random(4),
+            'request_no' => 'PR-OTH-'.Str::random(4),
             'department_id' => $this->deptId,
             'requester_id' => $this->user->id,
             'status' => 'APPROVED',
@@ -1329,7 +1346,7 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         DB::table('purchase_orders')->insert([
             'id' => $otherPoId,
             'property_id' => $this->property->id,
-            'po_no' => 'PO-OTH-' . Str::random(8),
+            'po_no' => 'PO-OTH-'.Str::random(8),
             'purchase_request_id' => $prId,
             'vendor_id' => $this->vendorId,
             'issue_date' => now(),

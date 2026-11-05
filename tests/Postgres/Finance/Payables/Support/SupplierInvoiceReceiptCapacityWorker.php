@@ -88,6 +88,7 @@ try {
             'property_id' => $propertyId,
             'purchase_order_id' => $purchaseOrderId,
             'goods_receipt_id' => $goodsReceiptId,
+            'receipt_source_type' => 'inventory_goods_receipt',
             'invoice_number' => 'SINV-CONC-'.strtoupper($workerId),
             'invoice_date' => '2026-10-29',
             'registration_idempotency_key' => 'fin-p01-r1-'.$workerId,

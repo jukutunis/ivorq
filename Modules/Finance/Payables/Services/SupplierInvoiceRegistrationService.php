@@ -8,6 +8,8 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Modules\Finance\Payables\Models\SupplierInvoice;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Purchasing\Contracts\ProcurementReceiptEvidenceProvider;
+use Modules\Operations\Purchasing\Enums\ReceiptSourceType;
 
 class SupplierInvoiceRegistrationService
 {
@@ -16,6 +18,7 @@ class SupplierInvoiceRegistrationService
     public function __construct(
         private readonly ThreeWayMatchingEngine $matchingEngine,
         private readonly SupplierInvoiceIntakeSourceService $intakeSourceService,
+        private readonly ProcurementReceiptEvidenceProvider $receiptEvidence,
     ) {}
 
     public function registerFromSource(array $input, User $actor): array
@@ -72,7 +75,8 @@ class SupplierInvoiceRegistrationService
                     ->first();
 
                 if ($replay) {
-                    if (! hash_equals((string) $replay->source_fingerprint, $normalized['source_fingerprint'])) {
+                    if (! hash_equals((string) $replay->source_fingerprint, $normalized['source_fingerprint'])
+                        && ! $this->matchesLegacyPreDiscriminatorFingerprint($replay, $normalized)) {
                         throw new DomainException('Supplier invoice registration key was already used for different source evidence.');
                     }
 
@@ -98,6 +102,7 @@ class SupplierInvoiceRegistrationService
                 'vendor_id' => $normalized['vendor_id'],
                 'purchase_order_id' => $normalized['purchase_order_id'],
                 'goods_receipt_id' => $normalized['goods_receipt_id'],
+                'receipt_source_type' => $normalized['receipt_source_type'],
                 'invoice_number' => $normalized['invoice_number'],
                 'registration_idempotency_key' => $normalized['registration_idempotency_key'],
                 'source_fingerprint' => $normalized['source_fingerprint'],
@@ -118,6 +123,7 @@ class SupplierInvoiceRegistrationService
                 $invoice->lines()->create([
                     'purchase_order_line_id' => $line['purchase_order_line_id'],
                     'goods_receipt_line_id' => $line['goods_receipt_line_id'],
+                    'receipt_commercial_evidence_hash' => $line['receipt_commercial_evidence_hash'],
                     'inventory_item_id' => $line['inventory_item_id'],
                     'description' => $line['description'],
                     'quantity' => $line['quantity'],
@@ -161,6 +167,7 @@ class SupplierInvoiceRegistrationService
             'vendor_id' => $replay->vendor_id,
             'purchase_order_id' => $input['purchase_order_id'] ?? null,
             'goods_receipt_id' => $input['goods_receipt_id'] ?? null,
+            'receipt_source_type' => $input['receipt_source_type'] ?? $replay->receipt_source_type,
             'invoice_number' => $input['invoice_number'] ?? null,
             'invoice_date' => $input['invoice_date'] ?? null,
             'due_date' => $input['due_date'] ?? null,
@@ -172,6 +179,7 @@ class SupplierInvoiceRegistrationService
             'lines' => $replay->lines->map(fn ($line): array => [
                 'purchase_order_line_id' => $line->purchase_order_line_id,
                 'goods_receipt_line_id' => $line->goods_receipt_line_id,
+                'receipt_commercial_evidence_hash' => $line->receipt_commercial_evidence_hash,
                 'inventory_item_id' => $line->inventory_item_id,
                 'description' => $line->description,
                 'quantity' => $line->quantity,
@@ -212,15 +220,40 @@ class SupplierInvoiceRegistrationService
             throw new DomainException('Supplier invoice purchase order is outside the active property scope.');
         }
 
+        $receiptLines = [];
         if ($data['goods_receipt_id'] !== null) {
-            $goodsReceipt = DB::table('receiving_documents')
-                ->where('id', $data['goods_receipt_id'])
-                ->whereNull('deleted_at')
-                ->first();
+            $authority = $this->receiptEvidence->sourceType(
+                $data['property_id'],
+                $data['purchase_order_id']
+            );
 
-            if (! $goodsReceipt || $goodsReceipt->property_id !== $data['property_id']) {
+            if ($data['receipt_source_type'] !== $authority) {
+                throw new DomainException('Supplier invoice receipt source type conflicts with Purchase Order authority.');
+            }
+
+            $receipt = $this->receiptEvidence->receipt(
+                $data['property_id'],
+                $data['purchase_order_id'],
+                $data['goods_receipt_id']
+            );
+
+            if (! $receipt) {
                 throw new DomainException('Supplier invoice receiving evidence is outside the active property scope.');
             }
+
+            $lineIds = array_values(array_filter(array_map(
+                fn (array $line): ?string => $line['goods_receipt_line_id'],
+                $data['lines']
+            )));
+            $receiptLines = collect($this->receiptEvidence->lines(
+                $data['property_id'],
+                $data['purchase_order_id'],
+                $data['goods_receipt_id'],
+                false,
+                $lineIds
+            ))->keyBy('id');
+        } elseif ($data['receipt_source_type'] !== null) {
+            throw new DomainException('Supplier invoice receipt source type requires receipt evidence.');
         }
 
         foreach ($data['lines'] as $line) {
@@ -240,14 +273,12 @@ class SupplierInvoiceRegistrationService
                 continue;
             }
 
-            $goodsReceiptLine = DB::table('receiving_lines')
-                ->join('receiving_documents', 'receiving_documents.id', '=', 'receiving_lines.receiving_document_id')
-                ->where('receiving_lines.id', $line['goods_receipt_line_id'])
-                ->whereNull('receiving_documents.deleted_at')
-                ->select('receiving_documents.property_id')
-                ->first();
+            $goodsReceiptLine = $receiptLines->get($line['goods_receipt_line_id']);
 
-            if (! $goodsReceiptLine || $goodsReceiptLine->property_id !== $data['property_id']) {
+            if (! $goodsReceiptLine
+                || $goodsReceiptLine['purchase_order_line_id'] !== $line['purchase_order_line_id']
+                || $goodsReceiptLine['inventory_item_id'] !== $line['inventory_item_id']
+                || $goodsReceiptLine['commercial_evidence_hash'] !== $line['receipt_commercial_evidence_hash']) {
                 throw new DomainException('Supplier invoice receiving line is outside the active property scope.');
             }
         }
@@ -300,6 +331,9 @@ class SupplierInvoiceRegistrationService
             $normalizedLines[] = [
                 'purchase_order_line_id' => $this->nullableString($line['purchase_order_line_id'] ?? null),
                 'goods_receipt_line_id' => $this->nullableString($line['goods_receipt_line_id'] ?? null),
+                'receipt_commercial_evidence_hash' => $this->nullableString(
+                    $line['receipt_commercial_evidence_hash'] ?? null
+                ),
                 'inventory_item_id' => $this->nullableString($line['inventory_item_id'] ?? null),
                 'description' => trim((string) ($line['description'] ?? '')),
                 'quantity' => $quantity,
@@ -328,6 +362,7 @@ class SupplierInvoiceRegistrationService
             'vendor_id' => $this->requiredString($data['vendor_id'] ?? null, 'Supplier invoice vendor is required.'),
             'purchase_order_id' => $this->requiredString($data['purchase_order_id'] ?? null, 'Supplier invoice purchase order is required.'),
             'goods_receipt_id' => $this->nullableString($data['goods_receipt_id'] ?? null),
+            'receipt_source_type' => $this->nullableString($data['receipt_source_type'] ?? null),
             'invoice_number' => $invoiceNumber,
             'invoice_date' => CarbonImmutable::parse($data['invoice_date'] ?? null)->toDateString(),
             'due_date' => isset($data['due_date']) ? CarbonImmutable::parse($data['due_date'])->toDateString() : null,
@@ -344,6 +379,26 @@ class SupplierInvoiceRegistrationService
         if ($normalized['registration_idempotency_key'] !== null
             && strlen($normalized['registration_idempotency_key']) > 96) {
             throw new DomainException('Supplier invoice registration key exceeds the supported length.');
+        }
+
+        if ($normalized['goods_receipt_id'] === null) {
+            if ($normalized['receipt_source_type'] !== null
+                || collect($normalized['lines'])->contains(
+                    fn (array $line): bool => $line['goods_receipt_line_id'] !== null
+                        || $line['receipt_commercial_evidence_hash'] !== null
+                )) {
+                throw new DomainException('Receipt provenance cannot be supplied without receipt evidence.');
+            }
+        } else {
+            if (ReceiptSourceType::tryFrom((string) $normalized['receipt_source_type']) === null) {
+                throw new DomainException('Supplier invoice receipt source type is invalid.');
+            }
+
+            foreach ($normalized['lines'] as $line) {
+                if ($line['goods_receipt_line_id'] === null) {
+                    throw new DomainException('Receipt-backed supplier invoice line requires receipt-line provenance.');
+                }
+            }
         }
 
         $fingerprintEvidence = $normalized;
@@ -365,6 +420,37 @@ class SupplierInvoiceRegistrationService
         }
 
         return $normalized;
+    }
+
+    private function matchesLegacyPreDiscriminatorFingerprint(
+        SupplierInvoice $replay,
+        array $normalized,
+    ): bool {
+        if ($replay->receipt_source_type !== ReceiptSourceType::LegacyReceivingDocument->value
+            || $replay->lines->contains(
+                fn ($line): bool => $line->receipt_commercial_evidence_hash !== null
+            )) {
+            return false;
+        }
+
+        $legacyEvidence = $normalized;
+        unset(
+            $legacyEvidence['registration_idempotency_key'],
+            $legacyEvidence['source_fingerprint'],
+            $legacyEvidence['receipt_source_type']
+        );
+
+        foreach ($legacyEvidence['lines'] as &$line) {
+            unset($line['receipt_commercial_evidence_hash']);
+        }
+        unset($line);
+
+        $legacyFingerprint = hash(
+            'sha256',
+            json_encode($legacyEvidence, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)
+        );
+
+        return hash_equals((string) $replay->source_fingerprint, $legacyFingerprint);
     }
 
     private function nullableString(mixed $value): ?string

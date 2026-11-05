@@ -32,6 +32,7 @@ class SupplierInvoice extends Model
         'vendor_id',
         'purchase_order_id',
         'goods_receipt_id',
+        'receipt_source_type',
         'invoice_number',
         'registration_idempotency_key',
         'source_fingerprint',
