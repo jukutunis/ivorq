@@ -13,8 +13,8 @@ use Shared\Traits\HasUlid;
 
 class GoodsReceipt extends Model
 {
-    use HasUlid;
     use BelongsToProperty;
+    use HasUlid;
 
     public $timestamps = false;
 
@@ -32,6 +32,7 @@ class GoodsReceipt extends Model
             'status' => GoodsReceiptStatusEnum::class,
             'received_at' => 'datetime',
             'posted_at' => 'datetime',
+            'voided_at' => 'datetime',
             'created_at' => 'datetime',
         ];
     }
@@ -46,6 +47,9 @@ class GoodsReceipt extends Model
             if ($original === GoodsReceiptStatusEnum::Posted->value) {
                 throw new RuntimeException('Posted Goods Receipt is immutable and cannot be updated.');
             }
+            if ($original === GoodsReceiptStatusEnum::Voided->value) {
+                throw new RuntimeException('Voided Goods Receipt is immutable and cannot be updated.');
+            }
         });
 
         static::deleting(function (GoodsReceipt $receipt) {
@@ -55,6 +59,9 @@ class GoodsReceipt extends Model
             }
             if ($original === GoodsReceiptStatusEnum::Posted->value) {
                 throw new RuntimeException('Posted Goods Receipt is immutable and cannot be deleted.');
+            }
+            if ($original === GoodsReceiptStatusEnum::Voided->value) {
+                throw new RuntimeException('Voided Goods Receipt is immutable and cannot be deleted.');
             }
         });
     }
@@ -82,5 +89,15 @@ class GoodsReceipt extends Model
     public function lines()
     {
         return $this->hasMany(GoodsReceiptLine::class);
+    }
+
+    public function exceptions()
+    {
+        return $this->hasMany(GoodsReceiptLineException::class);
+    }
+
+    public function voidedBy()
+    {
+        return $this->belongsTo(User::class, 'voided_by');
     }
 }

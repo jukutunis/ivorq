@@ -2,6 +2,7 @@
 
 namespace Tests\Postgres\Operations\Inventory;
 
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -14,21 +15,27 @@ use Modules\Foundation\Authorization\Models\Role;
 use Modules\Foundation\Authorization\Services\SensitiveActionConfirmationService;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Enums\GoodsReceiptExceptionResolutionTypeEnum;
+use Modules\Operations\Inventory\Enums\GoodsReceiptLinePostingDispositionEnum;
 use Modules\Operations\Inventory\Enums\GoodsReceiptStatusEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementDirectionEnum;
 use Modules\Operations\Inventory\Enums\InventoryMovementTypeEnum;
 use Modules\Operations\Inventory\Models\GoodsReceipt;
 use Modules\Operations\Inventory\Models\GoodsReceiptLine;
+use Modules\Operations\Inventory\Models\GoodsReceiptLineException;
 use Modules\Operations\Inventory\Models\InventoryItem;
 use Modules\Operations\Inventory\Models\InventoryLocation;
 use Modules\Operations\Inventory\Models\InventoryStock;
 use Modules\Operations\Inventory\Models\InventoryStockMovement;
 use Modules\Operations\Inventory\Models\InventoryTransaction;
 use Modules\Operations\Inventory\Models\InventoryUnit;
+use Modules\Operations\Inventory\Services\ControlledGoodsReceiptExceptionService;
 use Modules\Operations\Inventory\Services\ControlledGoodsReceiptPostingService;
+use Modules\Operations\Purchasing\Contracts\ProcurementReceiptEvidenceProvider;
 use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\PurchaseOrderLine;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Shared\Services\CurrentPropertyService;
 use Spatie\Permission\PermissionRegistrar;
 use Tests\PostgresTestCase;
@@ -139,6 +146,14 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
         app(CurrentPropertyService::class)->setPropertyId($propertyId);
 
+        foreach ([$this->receiver, $this->approver] as $member) {
+            $member->properties()->attach($propertyId, [
+                'is_default' => true,
+                'status' => 'active',
+                'joined_at' => now(),
+            ]);
+        }
+
         $catId = (string) Str::ulid();
         DB::table('inventory_categories')->insert([
             'id' => $catId,
@@ -220,10 +235,12 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
         Permission::firstOrCreate(['name' => 'inventory.purchasing.goods-receipt.receive', 'guard_name' => 'web']);
         Permission::firstOrCreate(['name' => 'inventory.ledger.view', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => ControlledGoodsReceiptExceptionService::RESOLVE_PERMISSION, 'guard_name' => 'web']);
         app(PermissionRegistrar::class)->forgetCachedPermissions();
         setPermissionsTeamId($this->property->id);
 
         $this->receiver->givePermissionTo('inventory.purchasing.goods-receipt.receive');
+        $this->approver->givePermissionTo(ControlledGoodsReceiptExceptionService::RESOLVE_PERMISSION);
     }
 
     private function createApprovedPO(?string $propertyId = null): void
@@ -307,6 +324,11 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         return app(ControlledGoodsReceiptPostingService::class);
     }
 
+    private function exceptionService(): ControlledGoodsReceiptExceptionService
+    {
+        return app(ControlledGoodsReceiptExceptionService::class);
+    }
+
     private function confirm(User $user): void
     {
         $svc = app(SensitiveActionConfirmationService::class);
@@ -331,6 +353,41 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->confirm($this->receiver);
 
         return $this->postingService()->post($receipt, $this->receiver->id);
+    }
+
+    private function createDraftReceipt(array $quantities = [3.000]): GoodsReceipt
+    {
+        return $this->postingService()->createDraft(
+            $this->po->id,
+            array_map(fn ($quantity) => [
+                'purchase_order_line_id' => $this->poLine->id,
+                'inventory_location_id' => $this->location->id,
+                'inventory_unit_id' => $this->unitId,
+                'received_quantity' => $quantity,
+                'idempotency_key' => (string) Str::ulid(),
+            ], $quantities),
+            $this->receiver->id,
+        );
+    }
+
+    private function reportException(
+        GoodsReceipt $receipt,
+        GoodsReceiptLine $line,
+        string $discrepancy = 'SHORTAGE',
+        ?string $inspection = null,
+        string $observedQuantity = '3.000',
+        ?string $key = null,
+    ): GoodsReceiptLineException {
+        $this->actingAs($this->receiver);
+
+        return $this->exceptionService()->report($receipt, $line->id, [
+            'discrepancy_type' => $discrepancy,
+            'inspection_result' => $inspection,
+            'observed_quantity' => $observedQuantity,
+            'reason' => 'Controlled receiving observation',
+            'notes' => 'Source-backed test evidence',
+            'idempotency_key' => $key ?? (string) Str::ulid(),
+        ], $this->receiver);
     }
 
     // ── 3.1 Authorization and actor separation ──────────────────────────────
@@ -422,6 +479,261 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
                 ->has('approvedPos', 1)
                 ->where('approvedPos.0.id', $controlledOrderId)
             );
+    }
+
+    public function test_draft_exception_is_source_authoritative_idempotent_and_blocks_confirmation(): void
+    {
+        $receipt = $this->createDraftReceipt();
+        $line = $receipt->lines->firstOrFail();
+        $key = (string) Str::ulid();
+
+        $exception = $this->reportException($receipt, $line, 'SHORTAGE', 'CONDITIONAL', '4.000', $key);
+        $replay = $this->reportException($receipt, $line, 'SHORTAGE', 'CONDITIONAL', '4.000', $key);
+
+        $this->assertSame($exception->id, $replay->id);
+        $this->assertSame($this->property->id, $exception->property_id);
+        $this->assertSame($receipt->id, $exception->goods_receipt_id);
+        $this->assertSame($line->id, $exception->goods_receipt_line_id);
+        $this->assertSame($this->po->id, $exception->purchase_order_id);
+        $this->assertSame($this->poLine->id, $exception->purchase_order_line_id);
+        $this->assertSame($this->receiver->id, $exception->reported_by);
+
+        try {
+            $this->reportException($receipt, $line, 'SHORTAGE', 'CONDITIONAL', '2.000', $key);
+            $this->fail('Conflicting exception replay must fail closed.');
+        } catch (\DomainException $exceptionError) {
+            $this->assertSame('GOODS_RECEIPT_EXCEPTION_IDEMPOTENCY_CONFLICT', $exceptionError->getMessage());
+        }
+
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Open Goods Receipt exceptions must be resolved before confirmation.');
+        $this->exceptionService()->submitForConfirmation($receipt, $this->receiver);
+    }
+
+    #[DataProvider('controlledExceptionVocabulary')]
+    public function test_controlled_exception_vocabulary_records_discrepancy_and_inspection(
+        string $discrepancy,
+        string $inspection,
+    ): void {
+        $receipt = $this->createDraftReceipt();
+        $exception = $this->reportException(
+            $receipt,
+            $receipt->lines->firstOrFail(),
+            $discrepancy,
+            $inspection,
+        );
+
+        $this->assertSame($discrepancy, $exception->discrepancy_type);
+        $this->assertSame($inspection, $exception->inspection_result);
+    }
+
+    public static function controlledExceptionVocabulary(): array
+    {
+        return [
+            'shortage-pass' => ['SHORTAGE', 'PASS'],
+            'overage-conditional' => ['OVERAGE', 'CONDITIONAL'],
+            'damaged-fail' => ['DAMAGED', 'FAIL'],
+            'wrong-item-fail' => ['WRONG_ITEM', 'FAIL'],
+            'expired-fail' => ['EXPIRED', 'FAIL'],
+            'quality-conditional' => ['QUALITY_ISSUE', 'CONDITIONAL'],
+        ];
+    }
+
+    public function test_exception_resolution_enforces_maker_checker_and_reduces_draft_quantity(): void
+    {
+        $receipt = $this->createDraftReceipt();
+        $line = $receipt->lines->firstOrFail();
+        $exception = $this->reportException($receipt, $line, 'SHORTAGE', null, '3.000');
+
+        $this->receiver->givePermissionTo(ControlledGoodsReceiptExceptionService::RESOLVE_PERMISSION);
+        try {
+            $this->exceptionService()->resolve(
+                $exception,
+                GoodsReceiptExceptionResolutionTypeEnum::AdjustAcceptedQuantity,
+                '2.000',
+                'Accept verified quantity',
+                $this->receiver,
+            );
+            $this->fail('Reporter must not resolve its own exception.');
+        } catch (AuthorizationException) {
+            $this->assertTrue(true);
+        }
+
+        $this->actingAs($this->approver);
+        $resolved = $this->exceptionService()->resolve(
+            $exception,
+            GoodsReceiptExceptionResolutionTypeEnum::AdjustAcceptedQuantity,
+            '2.000',
+            'Independent quantity verification',
+            $this->approver,
+        );
+
+        $this->assertSame('RESOLVED', $resolved->status->value);
+        $this->assertSame('2.000', $resolved->accepted_quantity);
+        $this->assertSame('2.000', $line->fresh()->received_quantity);
+        $this->assertSame($this->approver->id, $resolved->resolved_by);
+
+        try {
+            $this->exceptionService()->resolve(
+                $resolved,
+                GoodsReceiptExceptionResolutionTypeEnum::RejectLine,
+                null,
+                'Competing terminal decision',
+                $this->approver,
+            );
+            $this->fail('Only one serialized exception resolution may win.');
+        } catch (\DomainException $alreadyResolved) {
+            $this->assertSame('Goods Receipt exception is already resolved.', $alreadyResolved->getMessage());
+        }
+
+        $secondReceipt = $this->createDraftReceipt();
+        $second = $this->reportException($secondReceipt, $secondReceipt->lines->firstOrFail(), 'OVERAGE', null, '4.000');
+        $this->actingAs($this->approver);
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Accepted quantity must reduce');
+        $this->exceptionService()->resolve(
+            $second,
+            GoodsReceiptExceptionResolutionTypeEnum::AdjustAcceptedQuantity,
+            '4.000',
+            'Invalid increase',
+            $this->approver,
+        );
+    }
+
+    public function test_mixed_accepted_and_rejected_lines_post_accepted_only(): void
+    {
+        $receipt = $this->createDraftReceipt([2.000, 1.000]);
+        $accepted = $receipt->lines->firstOrFail();
+        $rejected = $receipt->lines->last();
+        $exception = $this->reportException($receipt, $rejected, 'DAMAGED', 'FAIL', '1.000');
+
+        $this->actingAs($this->approver);
+        $this->exceptionService()->resolve(
+            $exception,
+            GoodsReceiptExceptionResolutionTypeEnum::RejectLine,
+            null,
+            'Supplier line rejected before posting',
+            $this->approver,
+        );
+
+        $this->actingAs($this->receiver);
+        $receipt = $this->exceptionService()->submitForConfirmation($receipt, $this->receiver);
+        $this->confirm($this->receiver);
+        $posted = $this->postingService()->post($receipt, $this->receiver->id);
+
+        $this->assertSame(GoodsReceiptStatusEnum::Posted, $posted->status);
+        $this->assertNotNull($accepted->fresh()->stock_movement_id);
+        $this->assertNull($rejected->fresh()->stock_movement_id);
+        $this->assertSame(GoodsReceiptLinePostingDispositionEnum::Rejected, $rejected->fresh()->posting_disposition);
+        $this->assertDatabaseCount('inventory_stock_movements', 1);
+        $this->assertDatabaseCount('goods_receipt_line_commercial_evidences', 1);
+        $this->assertDatabaseMissing('goods_receipt_line_commercial_evidences', ['goods_receipt_line_id' => $rejected->id]);
+        $this->assertSame('2.000', $this->poLine->fresh()->received_quantity);
+
+        $financeLines = app(ProcurementReceiptEvidenceProvider::class)->lines(
+            $this->property->id,
+            $this->po->id,
+            $receipt->id,
+        );
+        $this->assertCount(1, $financeLines);
+        $this->assertSame($accepted->id, $financeLines[0]['id']);
+    }
+
+    public function test_all_rejected_receipt_cannot_confirm_or_post(): void
+    {
+        $receipt = $this->createDraftReceipt();
+        $exception = $this->reportException($receipt, $receipt->lines->firstOrFail(), 'WRONG_ITEM', 'FAIL');
+        $this->actingAs($this->approver);
+        $this->exceptionService()->resolve(
+            $exception,
+            GoodsReceiptExceptionResolutionTypeEnum::RejectLine,
+            null,
+            'Wrong item rejected',
+            $this->approver,
+        );
+
+        $this->actingAs($this->receiver);
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('at least one accepted line');
+        $this->exceptionService()->submitForConfirmation($receipt, $this->receiver);
+    }
+
+    public function test_draft_and_confirmation_pending_void_are_terminal_and_zero_posting(): void
+    {
+        $draft = $this->createDraftReceipt();
+        $this->actingAs($this->approver);
+        $voided = $this->exceptionService()->voidReceipt($draft, 'Supplier rejected delivery', $this->approver);
+
+        $this->assertSame(GoodsReceiptStatusEnum::Voided, $voided->status);
+        $this->assertSame($this->approver->id, $voided->voided_by);
+        $this->assertNotNull($voided->voided_at);
+        $this->assertDatabaseCount('inventory_stock_movements', 0);
+        $this->assertDatabaseCount('goods_receipt_line_commercial_evidences', 0);
+        $this->assertSame([], app(ProcurementReceiptEvidenceProvider::class)->receipts($this->property->id, $this->po->id));
+
+        $pending = $this->createDraftReceipt();
+        $this->actingAs($this->receiver);
+        $pending = $this->exceptionService()->submitForConfirmation($pending, $this->receiver);
+        $this->actingAs($this->approver);
+        $pending = $this->exceptionService()->voidReceipt($pending, 'Correction required after confirmation', $this->approver);
+        $this->assertSame(GoodsReceiptStatusEnum::Voided, $pending->status);
+
+        $this->expectException(\RuntimeException::class);
+        $this->postingService()->post($pending, $this->receiver->id);
+    }
+
+    public function test_posted_receipt_cannot_accept_exception_or_void(): void
+    {
+        $this->actingAs($this->receiver);
+        $posted = $this->createPostedReceipt();
+
+        try {
+            $this->reportException($posted, $posted->lines->firstOrFail(), 'QUALITY_ISSUE', 'FAIL');
+            $this->fail('Posted receipt exception reporting must fail.');
+        } catch (\DomainException $exception) {
+            $this->assertStringContainsString('DRAFT', $exception->getMessage());
+        }
+
+        $this->actingAs($this->approver);
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Only a non-posted Goods Receipt may be voided.');
+        $this->exceptionService()->voidReceipt($posted, 'Forbidden posted void', $this->approver);
+    }
+
+    public function test_exception_lifecycle_fails_closed_for_cross_property_context(): void
+    {
+        $receipt = $this->createDraftReceipt();
+        $line = $receipt->lines->firstOrFail();
+        app(CurrentPropertyService::class)->setPropertyId($this->propertyB->id);
+        $this->actingAs($this->receiver);
+
+        $this->expectException(AuthorizationException::class);
+        $this->exceptionService()->report($receipt, $line->id, [
+            'discrepancy_type' => 'SHORTAGE',
+            'observed_quantity' => '2.000',
+            'reason' => 'Wrong active Property',
+            'idempotency_key' => (string) Str::ulid(),
+        ], $this->receiver);
+    }
+
+    public function test_exception_lifecycle_fails_closed_for_legacy_or_mixed_source(): void
+    {
+        $receipt = $this->createDraftReceipt();
+        $line = $receipt->lines->firstOrFail();
+        DB::table('purchase_order_receipt_source_authorities')
+            ->where('purchase_order_id', $this->po->id)
+            ->update(['source_type' => 'legacy_receiving_document']);
+        $this->createLegacyReceivingDocument($this->po);
+        $this->actingAs($this->receiver);
+
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('RECEIPT_SOURCE_CONFLICT_REQUIRES_MANUAL_RESOLUTION');
+        $this->exceptionService()->report($receipt, $line->id, [
+            'discrepancy_type' => 'SHORTAGE',
+            'observed_quantity' => '2.000',
+            'reason' => 'Legacy source must fail',
+            'idempotency_key' => (string) Str::ulid(),
+        ], $this->receiver);
     }
 
     public function test_unauthenticated_create_denied(): void

@@ -4,15 +4,18 @@ use Illuminate\Support\Facades\Route;
 use Modules\Operations\Inventory\Http\Controllers\GoodsReceiptController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryAdjustmentController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryCategoryController;
+use Modules\Operations\Inventory\Http\Controllers\InventoryCostControlWorkspaceController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryDashboardController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryIssueController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryItemController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryLedgerWorkspaceController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryLocationController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryReceiptController;
+use Modules\Operations\Inventory\Http\Controllers\InventoryReversalExecutionController;
+use Modules\Operations\Inventory\Http\Controllers\InventoryReversalRequestController;
+use Modules\Operations\Inventory\Http\Controllers\InventoryReversalWorkspaceController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryStockCardController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryTransferController;
-use Modules\Operations\Inventory\Http\Controllers\InventoryCostControlWorkspaceController;
 use Modules\Operations\Inventory\Http\Controllers\InventoryUnitController;
 
 Route::middleware(['web', 'auth'])
@@ -87,7 +90,7 @@ Route::middleware(['web', 'auth'])
             ->name('adjustments.cancel');
 
         // ── Stock Cards (read-only) ───────────────────────────────────────────
-        Route::get('stock-cards',        [InventoryStockCardController::class, 'index'])->name('stock-cards.index');
+        Route::get('stock-cards', [InventoryStockCardController::class, 'index'])->name('stock-cards.index');
         Route::get('stock-cards/{card}', [InventoryStockCardController::class, 'show'])->name('stock-cards.show');
 
         // ── Controlled Inventory Ledger ────────────────────────────────────────
@@ -105,6 +108,12 @@ Route::middleware(['web', 'auth'])
             ->name('goods-receipts.confirm');
         Route::post('goods-receipts/{goodsReceipt}/post', [GoodsReceiptController::class, 'post'])
             ->name('goods-receipts.post');
+        Route::post('goods-receipts/{goodsReceipt}/exceptions', [GoodsReceiptController::class, 'reportException'])
+            ->name('goods-receipts.exceptions.report');
+        Route::post('goods-receipt-exceptions/{exception}/resolve', [GoodsReceiptController::class, 'resolveException'])
+            ->name('goods-receipts.exceptions.resolve');
+        Route::post('goods-receipts/{goodsReceipt}/void', [GoodsReceiptController::class, 'voidReceipt'])
+            ->name('goods-receipts.void');
 
         // ── Cost Control (read-only) ────────────────────────────────────────────
         Route::get('cost-control', [InventoryCostControlWorkspaceController::class, 'index'])
@@ -114,12 +123,12 @@ Route::middleware(['web', 'auth'])
             ->name('cost-control.project');
 
         // ── Reversals ─────────────────────────────────────────────────────────
-        Route::get('reversals/{transaction}', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalWorkspaceController::class, 'index'])
+        Route::get('reversals/{transaction}', [InventoryReversalWorkspaceController::class, 'index'])
             ->name('reversals.show');
 
-        Route::post('reversals/request', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalRequestController::class, 'request'])
+        Route::post('reversals/request', [InventoryReversalRequestController::class, 'request'])
             ->name('reversals.request');
 
-        Route::post('reversals/{approvalRequest}/execute', [\Modules\Operations\Inventory\Http\Controllers\InventoryReversalExecutionController::class, 'execute'])
+        Route::post('reversals/{approvalRequest}/execute', [InventoryReversalExecutionController::class, 'execute'])
             ->name('reversals.execute');
     });

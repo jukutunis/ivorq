@@ -3,15 +3,22 @@
 namespace Tests\Postgres\Operations\Purchasing;
 
 use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Foundation\Approval\Models\ApprovalStep;
 use Modules\Foundation\Approval\Models\ApprovalWorkflow;
+use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
+use Modules\Operations\Inventory\Enums\GoodsReceiptLinePostingDispositionEnum;
 use Modules\Operations\Inventory\Models\InventoryCategory;
 use Modules\Operations\Inventory\Models\InventoryItem;
+use Modules\Operations\Inventory\Models\InventoryLocation;
 use Modules\Operations\Inventory\Models\InventoryUnit;
+use Modules\Operations\Inventory\Services\ControlledGoodsReceiptExceptionService;
+use Modules\Operations\Inventory\Services\ControlledGoodsReceiptPostingService;
+use Modules\Operations\Purchasing\Enums\PurchaseOrderStatusEnum;
 use Modules\Operations\Purchasing\Enums\PurchaseRequestStatusEnum;
 use Modules\Operations\Purchasing\Models\PurchaseOrder;
 use Modules\Operations\Purchasing\Models\PurchaseOrderRevisionSnapshot;
@@ -22,6 +29,7 @@ use Modules\Operations\Purchasing\Models\VendorCategory;
 use Modules\Operations\Purchasing\Services\PurchaseOrderService;
 use Modules\Operations\Purchasing\Services\PurchaseRequestService;
 use Shared\Services\CurrentPropertyService;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\Feature\Foundation\Concerns\CreatesFoundationData;
 use Tests\PostgresTestCase;
 
@@ -187,6 +195,107 @@ class ProcurementControlPlaneConcurrencyTest extends PostgresTestCase
         $this->assertSame(2, $order->fresh()->revision_number);
         $this->assertSame(1, PurchaseOrderRevisionSnapshot::query()->where('purchase_order_id', $order->id)->count());
         $this->assertSame(1, PurchaseOrder::query()->where('purchase_request_id', $poSource->id)->count());
+    }
+
+    public function test_real_workers_serialize_competing_goods_receipt_exception_resolutions(): void
+    {
+        config()->set('app.key', 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=');
+
+        $company = $this->createCompany();
+        $property = $this->createProperty($company, ['currency' => 'IDR']);
+        app(CurrentPropertyService::class)->setPropertyId($property->id);
+        setPermissionsTeamId($property->id);
+
+        $receiver = $this->user($property, 'receipt-race-receiver@example.test', false);
+        $adjuster = $this->user($property, 'receipt-race-adjuster@example.test', false);
+        $rejector = $this->user($property, 'receipt-race-rejector@example.test', false);
+
+        Permission::firstOrCreate([
+            'name' => ControlledGoodsReceiptExceptionService::REPORT_PERMISSION,
+            'guard_name' => 'web',
+        ]);
+        Permission::firstOrCreate([
+            'name' => ControlledGoodsReceiptExceptionService::RESOLVE_PERMISSION,
+            'guard_name' => 'web',
+        ]);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        $receiver->givePermissionTo(ControlledGoodsReceiptExceptionService::REPORT_PERMISSION);
+        $adjuster->givePermissionTo(ControlledGoodsReceiptExceptionService::RESOLVE_PERMISSION);
+        $rejector->givePermissionTo(ControlledGoodsReceiptExceptionService::RESOLVE_PERMISSION);
+
+        [$item, $unit, $vendor] = $this->commercialFixture($property);
+        $department = $this->createDepartment($property);
+        $request = $this->draftRequest($property, $department->id, $item, $unit, $receiver, 'receipt-resolution-race');
+        $request->update(['status' => PurchaseRequestStatusEnum::Approved]);
+        $order = app(PurchaseOrderService::class)->createFromApprovedPR(
+            $request->id,
+            $vendor->id,
+            ['expected_delivery_date' => now()->addWeek()->toDateString()],
+            $receiver,
+        );
+        $order->update(['status' => PurchaseOrderStatusEnum::Approved]);
+
+        $location = InventoryLocation::create([
+            'property_id' => $property->id,
+            'name' => 'Receipt race location',
+            'type' => 'internal',
+        ]);
+        $orderLine = $order->lines()->firstOrFail();
+        $receipt = app(ControlledGoodsReceiptPostingService::class)->createDraft($order->id, [[
+            'purchase_order_line_id' => $orderLine->id,
+            'inventory_location_id' => $location->id,
+            'inventory_unit_id' => $unit->id,
+            'received_quantity' => '2.000',
+            'idempotency_key' => 'receipt-race-line',
+        ]], $receiver->id);
+
+        Auth::login($receiver);
+        $line = $receipt->lines()->firstOrFail();
+        $exception = app(ControlledGoodsReceiptExceptionService::class)->report($receipt, $line->id, [
+            'discrepancy_type' => 'SHORTAGE',
+            'inspection_result' => null,
+            'observed_quantity' => '2.000',
+            'reason' => 'Concurrent resolution proof',
+            'idempotency_key' => 'receipt-resolution-race',
+        ], $receiver);
+
+        $results = $this->spawnWorkers([
+            [
+                'mode' => 'resolve_receipt_exception',
+                'property_id' => $property->id,
+                'actor_id' => $adjuster->id,
+                'exception_id' => $exception->id,
+                'resolution' => 'ADJUST_ACCEPTED_QUANTITY',
+                'accepted_quantity' => '1.000',
+            ],
+            [
+                'mode' => 'resolve_receipt_exception',
+                'property_id' => $property->id,
+                'actor_id' => $rejector->id,
+                'exception_id' => $exception->id,
+                'resolution' => 'REJECT_LINE',
+                'accepted_quantity' => null,
+            ],
+        ]);
+
+        $this->assertSuccessfulWorkers($results);
+        $this->assertSame(1, collect($results)->where('status', 'resolved')->count());
+        $this->assertSame(1, collect($results)->where('status', 'business_error')->count());
+        $this->assertSame('Goods Receipt exception is already resolved.', collect($results)->firstWhere('status', 'business_error')['error']);
+
+        $winner = collect($results)->firstWhere('status', 'resolved');
+        $this->assertSame($winner['actor_id'], $exception->fresh()->resolved_by);
+        $this->assertSame($winner['resolution'], $exception->fresh()->resolution_type->value);
+        $this->assertSame('RESOLVED', $exception->fresh()->status->value);
+
+        $resolvedLine = $line->fresh();
+        if ($winner['resolution'] === 'REJECT_LINE') {
+            $this->assertSame(GoodsReceiptLinePostingDispositionEnum::Rejected, $resolvedLine->posting_disposition);
+            $this->assertSame('2.000', $resolvedLine->received_quantity);
+        } else {
+            $this->assertSame(GoodsReceiptLinePostingDispositionEnum::Accepted, $resolvedLine->posting_disposition);
+            $this->assertSame('1.000', $resolvedLine->received_quantity);
+        }
     }
 
     private function draftRequest(
