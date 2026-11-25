@@ -41,13 +41,6 @@ class ControlledGoodsReceiptExceptionService
     ): GoodsReceiptLineException {
         return DB::transaction(function () use ($receipt, $lineId, $evidence, $actor) {
             $lockedReceipt = GoodsReceipt::withoutGlobalScope('property')->lockForUpdate()->findOrFail($receipt->id);
-            $this->assertActor($actor, self::REPORT_PERMISSION, $lockedReceipt->property_id);
-            $this->assertControlledAuthority($lockedReceipt);
-
-            if ($lockedReceipt->status !== GoodsReceiptStatusEnum::Draft) {
-                throw new DomainException('Goods Receipt exceptions may only be reported while the receipt is DRAFT.');
-            }
-
             $line = GoodsReceiptLine::withoutGlobalScope('property')->lockForUpdate()->findOrFail($lineId);
             $poLine = PurchaseOrderLine::query()->findOrFail($line->purchase_order_line_id);
 
@@ -56,6 +49,8 @@ class ControlledGoodsReceiptExceptionService
                 || $poLine->purchase_order_id !== $lockedReceipt->purchase_order_id) {
                 throw new DomainException('Goods Receipt exception provenance is inconsistent.');
             }
+
+            $this->assertActor($actor, self::REPORT_PERMISSION, $lockedReceipt->property_id);
 
             $discrepancy = isset($evidence['discrepancy_type']) && $evidence['discrepancy_type'] !== ''
                 ? DiscrepancyTypeEnum::tryFrom((string) $evidence['discrepancy_type'])
@@ -89,6 +84,7 @@ class ControlledGoodsReceiptExceptionService
             }
 
             $fingerprint = $this->fingerprint([
+                'property_id' => $lockedReceipt->property_id,
                 'goods_receipt_id' => $lockedReceipt->id,
                 'goods_receipt_line_id' => $line->id,
                 'purchase_order_id' => $lockedReceipt->purchase_order_id,
@@ -98,6 +94,7 @@ class ControlledGoodsReceiptExceptionService
                 'observed_quantity' => $observedQuantity,
                 'reason' => $reason,
                 'notes' => trim((string) ($evidence['notes'] ?? '')),
+                'reported_by' => $actor->id,
             ]);
 
             $existing = GoodsReceiptLineException::withoutGlobalScope('property')
@@ -106,11 +103,18 @@ class ControlledGoodsReceiptExceptionService
                 ->first();
 
             if ($existing) {
-                if (! hash_equals($existing->source_fingerprint, $fingerprint)) {
+                if ((string) $existing->reported_by !== (string) $actor->id
+                    || ! hash_equals($existing->source_fingerprint, $fingerprint)) {
                     throw new DomainException('GOODS_RECEIPT_EXCEPTION_IDEMPOTENCY_CONFLICT');
                 }
 
                 return $existing;
+            }
+
+            $this->assertControlledAuthority($lockedReceipt);
+
+            if ($lockedReceipt->status !== GoodsReceiptStatusEnum::Draft) {
+                throw new DomainException('Goods Receipt exceptions may only be reported while the receipt is DRAFT.');
             }
 
             return GoodsReceiptLineException::withoutGlobalScope('property')->create([
@@ -184,6 +188,16 @@ class ControlledGoodsReceiptExceptionService
                 $line->posting_disposition = GoodsReceiptLinePostingDispositionEnum::Rejected;
                 $line->save();
             } elseif ($resolution === GoodsReceiptExceptionResolutionTypeEnum::VoidReceipt) {
+                $otherOpenExceptionExists = GoodsReceiptLineException::withoutGlobalScope('property')
+                    ->where('goods_receipt_id', $receipt->id)
+                    ->where('status', GoodsReceiptExceptionStatusEnum::Open->value)
+                    ->where('id', '!=', $locked->id)
+                    ->exists();
+
+                if ($otherOpenExceptionExists) {
+                    throw new DomainException('OTHER_OPEN_GOODS_RECEIPT_EXCEPTIONS_MUST_BE_RESOLVED_BEFORE_VOID');
+                }
+
                 $resolvedAcceptedQuantity = '0.000';
                 $this->applyVoid($receipt, $reason, $actor);
             }

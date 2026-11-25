@@ -510,6 +510,73 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
         $this->exceptionService()->submitForConfirmation($receipt, $this->receiver);
     }
 
+    public function test_exact_exception_replay_survives_lifecycle_advancement(): void
+    {
+        $receipt = $this->createDraftReceipt();
+        $line = $receipt->lines->firstOrFail();
+        $key = (string) Str::ulid();
+        $exception = $this->reportException($receipt, $line, 'SHORTAGE', 'CONDITIONAL', '3.000', $key);
+
+        $this->actingAs($this->approver);
+        $resolved = $this->exceptionService()->resolve(
+            $exception,
+            GoodsReceiptExceptionResolutionTypeEnum::AcceptAsIs,
+            null,
+            'Independent source verification',
+            $this->approver,
+        );
+        $resolutionEvidence = [
+            'status' => $resolved->status,
+            'resolution_type' => $resolved->resolution_type,
+            'resolution_reason' => $resolved->resolution_reason,
+            'resolved_by' => $resolved->resolved_by,
+            'resolved_at' => $resolved->resolved_at?->toISOString(),
+        ];
+
+        $this->actingAs($this->receiver);
+        $receipt = $this->exceptionService()->submitForConfirmation($receipt, $this->receiver);
+        $replay = $this->reportException($receipt, $line, 'SHORTAGE', 'CONDITIONAL', '3.000', $key);
+
+        $this->assertSame($exception->id, $replay->id);
+        $this->assertSame(GoodsReceiptStatusEnum::ConfirmationPending, $receipt->fresh()->status);
+        $this->assertSame(1, GoodsReceiptLineException::withoutGlobalScope('property')->where('goods_receipt_id', $receipt->id)->count());
+        $this->assertSame($resolutionEvidence, [
+            'status' => $replay->status,
+            'resolution_type' => $replay->resolution_type,
+            'resolution_reason' => $replay->resolution_reason,
+            'resolved_by' => $replay->resolved_by,
+            'resolved_at' => $replay->resolved_at?->toISOString(),
+        ]);
+    }
+
+    public function test_same_key_and_payload_from_different_reporter_fails_closed(): void
+    {
+        $receipt = $this->createDraftReceipt();
+        $line = $receipt->lines->firstOrFail();
+        $key = (string) Str::ulid();
+        $exception = $this->reportException($receipt, $line, 'SHORTAGE', 'CONDITIONAL', '3.000', $key);
+
+        $this->approver->givePermissionTo(ControlledGoodsReceiptExceptionService::REPORT_PERMISSION);
+        $this->actingAs($this->approver);
+
+        try {
+            $this->exceptionService()->report($receipt, $line->id, [
+                'discrepancy_type' => 'SHORTAGE',
+                'inspection_result' => 'CONDITIONAL',
+                'observed_quantity' => '3.000',
+                'reason' => 'Controlled receiving observation',
+                'notes' => 'Source-backed test evidence',
+                'idempotency_key' => $key,
+            ], $this->approver);
+            $this->fail('A different reporter must not receive another actor\'s idempotent result.');
+        } catch (\DomainException $conflict) {
+            $this->assertSame('GOODS_RECEIPT_EXCEPTION_IDEMPOTENCY_CONFLICT', $conflict->getMessage());
+        }
+
+        $this->assertSame($this->receiver->id, $exception->fresh()->reported_by);
+        $this->assertSame(1, GoodsReceiptLineException::withoutGlobalScope('property')->where('goods_receipt_id', $receipt->id)->count());
+    }
+
     #[DataProvider('controlledExceptionVocabulary')]
     public function test_controlled_exception_vocabulary_records_discrepancy_and_inspection(
         string $discrepancy,
@@ -680,6 +747,59 @@ class ControlledGoodsReceiptPostingTest extends PostgresTestCase
 
         $this->expectException(\RuntimeException::class);
         $this->postingService()->post($pending, $this->receiver->id);
+    }
+
+    public function test_terminal_void_requires_other_open_exceptions_to_be_resolved(): void
+    {
+        $receipt = $this->createDraftReceipt();
+        $line = $receipt->lines->firstOrFail();
+        $first = $this->reportException($receipt, $line, 'SHORTAGE', null, '3.000');
+        $second = $this->reportException($receipt, $line, 'QUALITY_ISSUE', 'CONDITIONAL', '3.000');
+
+        $this->actingAs($this->approver);
+        try {
+            $this->exceptionService()->resolve(
+                $first,
+                GoodsReceiptExceptionResolutionTypeEnum::VoidReceipt,
+                null,
+                'Void after controlled exception review',
+                $this->approver,
+            );
+            $this->fail('Terminal void must fail while another OPEN exception exists.');
+        } catch (\DomainException $otherOpen) {
+            $this->assertSame(
+                'OTHER_OPEN_GOODS_RECEIPT_EXCEPTIONS_MUST_BE_RESOLVED_BEFORE_VOID',
+                $otherOpen->getMessage(),
+            );
+        }
+
+        $this->assertSame(GoodsReceiptStatusEnum::Draft, $receipt->fresh()->status);
+        $this->assertSame('OPEN', $first->fresh()->status->value);
+        $this->assertSame('OPEN', $second->fresh()->status->value);
+        $this->assertNull($receipt->fresh()->voided_at);
+        $this->assertDatabaseCount('inventory_stock_movements', 0);
+        $this->assertDatabaseCount('goods_receipt_line_commercial_evidences', 0);
+
+        $second = $this->exceptionService()->resolve(
+            $second,
+            GoodsReceiptExceptionResolutionTypeEnum::AcceptAsIs,
+            null,
+            'Independent quality evidence accepted',
+            $this->approver,
+        );
+        $first = $this->exceptionService()->resolve(
+            $first,
+            GoodsReceiptExceptionResolutionTypeEnum::VoidReceipt,
+            null,
+            'Void after all exception evidence was resolved',
+            $this->approver,
+        );
+
+        $this->assertSame(GoodsReceiptStatusEnum::Voided, $receipt->fresh()->status);
+        $this->assertSame('RESOLVED', $first->status->value);
+        $this->assertSame('RESOLVED', $second->status->value);
+        $this->assertDatabaseCount('inventory_stock_movements', 0);
+        $this->assertDatabaseCount('goods_receipt_line_commercial_evidences', 0);
     }
 
     public function test_posted_receipt_cannot_accept_exception_or_void(): void
