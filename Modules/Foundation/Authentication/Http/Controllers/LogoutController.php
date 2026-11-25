@@ -38,11 +38,6 @@ class LogoutController extends Controller
         // Revoke all Sanctum tokens regardless of channel.
         $this->authService->logoutAllDevices($request->user());
 
-        // Invalidate "Remember Me" sessions
-        $user = $request->user();
-        $user->setRememberToken(\Illuminate\Support\Str::random(60));
-        $user->save();
-
         if ($request->wantsJson()) {
             return response()->json(['message' => 'Logged out from all devices.']);
         }

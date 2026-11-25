@@ -54,12 +54,13 @@ class PasswordService
                             'property_id' => $activation->property_id,
                             'activation_id' => $activation->id,
                         ]);
-                        $this->revocation->revokeAll($locked, 'PASSWORD_RESET', [
-                            'actor_user_id' => $locked->id,
-                            'company_id' => $activation->company_id,
-                            'property_id' => $activation->property_id,
-                        ]);
                     }
+
+                    $this->revocation->revokeAll($locked, 'PASSWORD_RESET', [
+                        'actor_user_id' => $locked->id,
+                        'company_id' => $activation?->company_id,
+                        'property_id' => $activation?->property_id,
+                    ]);
 
                     return $locked->fresh();
                 });

@@ -126,16 +126,11 @@ class AuthService
     public function logoutAllDevices(User $user): void
     {
         $activation = OwnerActivation::query()->where('user_id', $user->id)->where('status', OwnerActivationStatus::Active->value)->first();
-        if ($activation) {
-            $this->revocation->revokeAll($user, 'LOGOUT_ALL', [
-                'actor_user_id' => $user->id,
-                'company_id' => $activation->company_id,
-                'property_id' => $activation->property_id,
-            ]);
-        } else {
-            $user->tokens()->delete();
-            $this->sessionRepository->revokeAllForUser($user->id);
-        }
+        $this->revocation->revokeAll($user, 'LOGOUT_ALL', [
+            'actor_user_id' => $user->id,
+            'company_id' => $activation?->company_id,
+            'property_id' => $activation?->property_id,
+        ]);
 
         event(new UserLoggedOut($user));
     }

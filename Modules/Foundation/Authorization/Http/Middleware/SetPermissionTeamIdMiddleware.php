@@ -4,6 +4,7 @@ namespace Modules\Foundation\Authorization\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Shared\Services\CurrentPropertyService;
 use Symfony\Component\HttpFoundation\Response;
 
 class SetPermissionTeamIdMiddleware
@@ -29,10 +30,7 @@ class SetPermissionTeamIdMiddleware
     public function handle(Request $request, Closure $next): Response
     {
         if ($user = $request->user()) {
-            // property_id is null for super-admins — Spatie treats null as "no team
-            // filter", which allows super-admins to bypass all team-scoped checks.
-            $teamId = $user->isSuperAdmin() ? null : app(\Shared\Services\CurrentPropertyService::class)->getPropertyId();
-            \Illuminate\Support\Facades\Log::info("Setting team ID for user {$user->id} to " . var_export($teamId, true));
+            $teamId = app(CurrentPropertyService::class)->resolveOrFail();
             setPermissionsTeamId($teamId);
         }
 

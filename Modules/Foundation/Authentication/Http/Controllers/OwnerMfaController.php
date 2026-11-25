@@ -100,6 +100,7 @@ class OwnerMfaController extends Controller
         $request->session()->regenerate();
         $request->session()->put([
             'active_company_id' => $verified->companyId,
+            'current_property_id' => $verified->propertyId,
             'active_property_id' => $verified->propertyId,
             'auth_epoch' => $user->auth_epoch,
         ]);

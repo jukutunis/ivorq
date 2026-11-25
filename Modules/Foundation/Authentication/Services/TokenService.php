@@ -14,13 +14,23 @@ use Modules\Foundation\User\Models\UserSession;
 
 class TokenService
 {
+    public const ORDINARY_TOKEN_ABILITY = 'ivorq.authenticated';
+
+    public const TOKEN_TTL_HOURS = 8;
+
     public function createForPasswordAuthentication(User $user, string $propertyId, string $deviceName = 'api'): string
     {
         if (OwnerActivation::query()->where('user_id', $user->id)->where('status', OwnerActivationStatus::Active->value)->exists()) {
             throw ValidationException::withMessages(['mfa' => ['Multi-factor authentication is required.']]);
         }
 
-        return $this->issue($user, $propertyId, $deviceName, null);
+        return $this->issue(
+            $user,
+            $propertyId,
+            $deviceName,
+            now()->addHours(self::TOKEN_TTL_HOURS),
+            [self::ORDINARY_TOKEN_ABILITY],
+        );
     }
 
     public function createForVerifiedOwner(VerifiedMfaAuthentication $authentication, string $deviceName = 'api'): string
@@ -28,7 +38,7 @@ class TokenService
         return DB::transaction(function () use ($authentication, $deviceName): string {
             $user = $this->claimVerifiedOwner($authentication);
 
-            return $this->issue($user, $authentication->propertyId, $deviceName, now()->addHours(8));
+            return $this->issue($user, $authentication->propertyId, $deviceName, now()->addHours(self::TOKEN_TTL_HOURS), ['*']);
         });
     }
 
@@ -58,7 +68,7 @@ class TokenService
             'property_id' => $propertyId,
             'token_id' => null,
             'web_session_digest' => hash('sha256', "IVORQ-WEB-SESSION-V1\0".$sessionId),
-            'auth_epoch' => $user->auth_epoch,
+            'auth_epoch' => (int) $user->auth_epoch,
             'channel' => 'web',
             'device_name' => $deviceName,
             'ip_address' => request()->ip(),
@@ -120,11 +130,11 @@ class TokenService
         return $user;
     }
 
-    private function issue(User $user, string $propertyId, string $deviceName, mixed $expiresAt): string
+    private function issue(User $user, string $propertyId, string $deviceName, mixed $expiresAt, array $abilities): string
     {
-        $token = $user->createToken($deviceName, ['*'], $expiresAt);
+        $token = $user->createToken($deviceName, $abilities, $expiresAt);
         $token->accessToken->forceFill([
-            'auth_epoch' => $user->auth_epoch,
+            'auth_epoch' => (int) $user->auth_epoch,
             'property_id' => $propertyId,
         ])->save();
 
@@ -149,7 +159,7 @@ class TokenService
             'user_id' => $user->id,
             'property_id' => $propertyId,
             'token_id' => $token->accessToken->id,
-            'auth_epoch' => $user->auth_epoch,
+            'auth_epoch' => (int) $user->auth_epoch,
             'channel' => 'api',
             'device_name' => $deviceName,
             'ip_address' => request()->ip(),

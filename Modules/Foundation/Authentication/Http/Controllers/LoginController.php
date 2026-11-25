@@ -16,6 +16,7 @@ use Modules\Foundation\Authentication\Services\AuthService;
 use Modules\Foundation\Authentication\Services\TokenService;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\User\Http\Resources\UserResource;
+use Modules\Foundation\User\Models\User;
 
 class LoginController extends Controller
 {
@@ -147,6 +148,7 @@ class LoginController extends Controller
             return response()->json([
                 'user' => new UserResource($user),
                 'token' => $this->tokenService->createForPasswordAuthentication($user, $property->id, $request->device_name ?? 'api'),
+                'expires_in' => 28800,
             ]);
         }
 
@@ -155,9 +157,7 @@ class LoginController extends Controller
 
         if ($eligibleProperties->count() === 1) {
             $property = $eligibleProperties->first();
-            $request->session()->put('active_property_id', $property->id);
-            $request->session()->put('active_company_id', $tenantId);
-            $request->session()->put('auth_epoch', $user->auth_epoch);
+            $this->establishWebSecurityContext($request, $user, $property->id, $property->company_id);
             $this->tokenService->recordWebSession($user, $property->id, $request->session()->getId());
 
             return redirect()->intended('/frontdesk');
@@ -165,9 +165,7 @@ class LoginController extends Controller
 
         $defaultProperty = $eligibleProperties->firstWhere('pivot.is_default', true);
         if ($defaultProperty) {
-            $request->session()->put('active_property_id', $defaultProperty->id);
-            $request->session()->put('active_company_id', $tenantId);
-            $request->session()->put('auth_epoch', $user->auth_epoch);
+            $this->establishWebSecurityContext($request, $user, $defaultProperty->id, $defaultProperty->company_id);
             $this->tokenService->recordWebSession($user, $defaultProperty->id, $request->session()->getId());
 
             return redirect()->intended('/frontdesk');
@@ -205,13 +203,21 @@ class LoginController extends Controller
             return back()->withErrors(['property_id' => 'Invalid or unauthorized property selected.']);
         }
 
-        $request->session()->put('active_property_id', $selected->id);
-        $request->session()->put('active_company_id', $tenantId);
-        $request->session()->put('auth_epoch', $user->auth_epoch);
+        $this->establishWebSecurityContext($request, $user, $selected->id, $selected->company_id);
         $this->tokenService->recordWebSession($user, $selected->id, $request->session()->getId());
 
         $request->session()->forget(['login.requires_property_selection']);
 
         return redirect()->intended('/frontdesk');
+    }
+
+    private function establishWebSecurityContext(Request $request, User $user, string $propertyId, string $companyId): void
+    {
+        $request->session()->put([
+            'current_property_id' => $propertyId,
+            'active_property_id' => $propertyId,
+            'active_company_id' => $companyId,
+            'auth_epoch' => $user->auth_epoch,
+        ]);
     }
 }

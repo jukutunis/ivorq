@@ -15,6 +15,11 @@ class CurrentPropertyService
         $this->propertyId = $propertyId;
     }
 
+    public function getExplicitPropertyId(): ?string
+    {
+        return $this->propertyId;
+    }
+
     public function getPropertyId(): ?string
     {
         // Tier 1: explicit override
@@ -45,7 +50,7 @@ class CurrentPropertyService
         $propertyId = $this->getPropertyId();
 
         if ($propertyId === null) {
-            throw new PropertyNotResolvedException();
+            throw new PropertyNotResolvedException;
         }
 
         return $propertyId;

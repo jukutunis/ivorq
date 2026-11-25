@@ -31,10 +31,11 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleInertiaRequests::class,
             AddLinkHeadersForPreloadedAssets::class,
             // Must run after StartSession so Auth::user() resolves from the session.
-            // Sets Spatie Permission team context (property_id) for every web request.
-            SetPermissionTeamIdMiddleware::class,
             AuthenticateSession::class,
             EnsureAuthenticatedSecurity::class,
+            // Security validation establishes the canonical Property before
+            // Spatie resolves any team-scoped role or permission.
+            SetPermissionTeamIdMiddleware::class,
         ]);
 
         $middleware->api(prepend: ['throttle:api']);
