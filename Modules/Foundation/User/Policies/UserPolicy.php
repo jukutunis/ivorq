@@ -24,10 +24,6 @@ class UserPolicy
 
     public function update(User $user, User $model): bool
     {
-        if ($user->id === $model->id) {
-            return true;
-        }
-
         return $user->hasPermissionTo('user.edit')
             && ($user->isSuperAdmin() || $user->properties->pluck('id')->intersect($model->properties->pluck('id'))->isNotEmpty());
     }

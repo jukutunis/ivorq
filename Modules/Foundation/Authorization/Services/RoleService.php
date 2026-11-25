@@ -3,8 +3,8 @@
 namespace Modules\Foundation\Authorization\Services;
 
 use Illuminate\Database\Eloquent\Collection;
-use Modules\Foundation\Authorization\Repositories\RoleRepository;
 use Modules\Foundation\Authorization\Models\Role;
+use Modules\Foundation\Authorization\Repositories\RoleRepository;
 
 class RoleService
 {
@@ -17,9 +17,9 @@ class RoleService
         return $this->roleRepository->allForProperty($propertyId);
     }
 
-    public function find(string $id): Role
+    public function findForProperty(string $id, string $propertyId): Role
     {
-        return $this->roleRepository->find($id);
+        return $this->roleRepository->findForProperty($id, $propertyId);
     }
 
     public function create(string $name, ?string $propertyId = null): Role
@@ -27,21 +27,21 @@ class RoleService
         setPermissionsTeamId($propertyId);
 
         return $this->roleRepository->create([
-            'name'       => $name,
+            'name' => $name,
             'guard_name' => 'web',
-            'property_id'    => $propertyId,
+            'property_id' => $propertyId,
         ]);
     }
 
-    public function syncPermissions(string $roleId, array $permissions): Role
+    public function syncPermissionsForProperty(string $roleId, string $propertyId, array $permissions): Role
     {
-        $role = $this->find($roleId);
+        $role = $this->findForProperty($roleId, $propertyId);
 
         return $this->roleRepository->syncPermissions($role, $permissions);
     }
 
-    public function delete(string $id): bool
+    public function deleteForProperty(string $id, string $propertyId): bool
     {
-        return $this->roleRepository->delete($id);
+        return $this->roleRepository->deleteForProperty($id, $propertyId);
     }
 }

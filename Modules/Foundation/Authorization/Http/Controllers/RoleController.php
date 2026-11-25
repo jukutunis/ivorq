@@ -10,8 +10,10 @@ use Modules\Foundation\Authorization\Http\Requests\StoreRoleRequest;
 use Modules\Foundation\Authorization\Http\Requests\UpdateRoleRequest;
 use Modules\Foundation\Authorization\Http\Resources\PermissionResource;
 use Modules\Foundation\Authorization\Http\Resources\RoleResource;
+use Modules\Foundation\Authorization\Models\Role;
 use Modules\Foundation\Authorization\Services\PermissionService;
 use Modules\Foundation\Authorization\Services\RoleService;
+use Shared\Services\CurrentPropertyService;
 
 class RoleController extends Controller
 {
@@ -22,10 +24,10 @@ class RoleController extends Controller
 
     public function index(): Response
     {
-        $this->authorize('viewAny', \Modules\Foundation\Authorization\Models\Role::class);
+        $this->authorize('viewAny', Role::class);
 
-        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getId();
-        $roles      = $this->roleService->allForProperty($propertyId);
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        $roles = $this->roleService->allForProperty($propertyId);
 
         return Inertia::render('Foundation/Role/Index', [
             'roles' => RoleResource::collection($roles),
@@ -34,7 +36,7 @@ class RoleController extends Controller
 
     public function create(): Response
     {
-        $this->authorize('create', \Modules\Foundation\Authorization\Models\Role::class);
+        $this->authorize('create', Role::class);
 
         return Inertia::render('Foundation/Role/Create', [
             'permissions' => PermissionResource::collection(
@@ -45,11 +47,11 @@ class RoleController extends Controller
 
     public function store(StoreRoleRequest $request): RedirectResponse
     {
-        $propertyId = app(\Shared\Services\CurrentPropertyService::class)->getId();
-        $role       = $this->roleService->create($request->name, $propertyId);
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        $role = $this->roleService->create($request->name, $propertyId);
 
         if ($request->filled('permissions')) {
-            $this->roleService->syncPermissions($role->id, $request->permissions);
+            $this->roleService->syncPermissionsForProperty($role->id, $propertyId, $request->permissions);
         }
 
         return redirect()->route('roles.index')
@@ -58,10 +60,12 @@ class RoleController extends Controller
 
     public function edit(string $id): Response
     {
-        $this->authorize('update', \Modules\Foundation\Authorization\Models\Role::class);
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        $role = $this->roleService->findForProperty($id, $propertyId);
+        $this->authorize('update', $role);
 
         return Inertia::render('Foundation/Role/Edit', [
-            'role'        => new RoleResource($this->roleService->find($id)),
+            'role' => new RoleResource($role),
             'permissions' => PermissionResource::collection(
                 $this->permissionService->all()
             ),
@@ -70,7 +74,10 @@ class RoleController extends Controller
 
     public function update(UpdateRoleRequest $request, string $id): RedirectResponse
     {
-        $this->roleService->syncPermissions($id, $request->permissions);
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        $role = $this->roleService->findForProperty($id, $propertyId);
+        $this->authorize('update', $role);
+        $this->roleService->syncPermissionsForProperty($id, $propertyId, $request->permissions);
 
         return redirect()->route('roles.index')
             ->with('success', 'Role permissions updated successfully.');
@@ -78,9 +85,11 @@ class RoleController extends Controller
 
     public function destroy(string $id): RedirectResponse
     {
-        $this->authorize('delete', \Modules\Foundation\Authorization\Models\Role::class);
+        $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
+        $role = $this->roleService->findForProperty($id, $propertyId);
+        $this->authorize('delete', $role);
 
-        $this->roleService->delete($id);
+        $this->roleService->deleteForProperty($id, $propertyId);
 
         return redirect()->route('roles.index')
             ->with('success', 'Role deleted successfully.');

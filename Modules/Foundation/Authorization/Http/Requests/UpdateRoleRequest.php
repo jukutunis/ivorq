@@ -8,13 +8,13 @@ class UpdateRoleRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->can('update', \Modules\Foundation\Authorization\Models\Role::class);
+        return $this->user()->hasPermissionTo('role.edit');
     }
 
     public function rules(): array
     {
         return [
-            'permissions'   => ['required', 'array'],
+            'permissions' => ['required', 'array'],
             'permissions.*' => ['string', 'exists:permissions,name'],
         ];
     }

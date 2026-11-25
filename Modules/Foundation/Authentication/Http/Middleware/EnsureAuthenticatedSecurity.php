@@ -7,12 +7,16 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Laravel\Sanctum\PersonalAccessToken;
 use Modules\Foundation\Authentication\Services\AuthenticatedSecurityService;
+use Modules\Foundation\Authentication\Services\SessionGovernanceService;
 use Modules\Foundation\User\Models\UserSession;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureAuthenticatedSecurity
 {
-    public function __construct(private AuthenticatedSecurityService $security) {}
+    public function __construct(
+        private AuthenticatedSecurityService $security,
+        private SessionGovernanceService $sessions,
+    ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -23,6 +27,8 @@ class EnsureAuthenticatedSecurity
 
         $token = $user->currentAccessToken();
         if ($this->security->valid($user, $request, $token)) {
+            $this->sessions->touchCurrent($user, $request, $token);
+
             return $next($request);
         }
 

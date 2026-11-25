@@ -11,14 +11,17 @@ class RoleRepository
     {
         return Role::when(
             $propertyId,
-            fn($q) => $q->where('property_id', $propertyId),
-            fn($q) => $q->whereNull('property_id')
+            fn ($q) => $q->where('property_id', $propertyId),
+            fn ($q) => $q->whereNull('property_id')
         )->with('permissions')->get();
     }
 
-    public function find(string $id): Role
+    public function findForProperty(string $id, string $propertyId): Role
     {
-        return Role::with('permissions')->findOrFail($id);
+        return Role::query()
+            ->where('property_id', $propertyId)
+            ->with('permissions')
+            ->findOrFail($id);
     }
 
     public function create(array $data): Role
@@ -33,8 +36,8 @@ class RoleRepository
         return $role->fresh('permissions');
     }
 
-    public function delete(string $id): bool
+    public function deleteForProperty(string $id, string $propertyId): bool
     {
-        return Role::findOrFail($id)->delete();
+        return $this->findForProperty($id, $propertyId)->delete();
     }
 }

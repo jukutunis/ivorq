@@ -10,12 +10,16 @@ class UserService
 {
     public function __construct(
         private UserRepository $userRepository,
-        private \Modules\Foundation\User\Repositories\UserSessionRepository $sessionRepository
     ) {}
 
-    public function paginate(int $perPage = 15): LengthAwarePaginator
+    public function paginateForProperty(string $propertyId, int $perPage = 15): LengthAwarePaginator
     {
-        return $this->userRepository->paginate($perPage);
+        return $this->userRepository->paginateForProperty($propertyId, $perPage);
+    }
+
+    public function findForProperty(string $id, string $propertyId): User
+    {
+        return $this->userRepository->findForProperty($id, $propertyId);
     }
 
     public function find(string $id): User
@@ -33,32 +37,24 @@ class UserService
         if ($propertyId) {
             $user->properties()->attach($propertyId, [
                 'is_default' => true,
-                'status'     => 'active',
-                'joined_at'  => now(),
+                'status' => 'active',
+                'joined_at' => now(),
             ]);
         }
 
         return $user;
     }
 
-    public function update(string $id, array $data): User
+    public function updateForProperty(string $id, string $propertyId, array $data): User
     {
-        $data = array_filter($data, fn($value) => !is_null($value) || $value === false);
+        $data = array_filter($data, fn ($value) => ! is_null($value) || $value === false);
 
-        $user = $this->userRepository->update($id, $data);
-
-        if (array_key_exists('is_active', $data) && $data['is_active'] === false) {
-            $user->tokens()->delete();
-            $this->sessionRepository->revokeAllForUser($id);
-            event(new \Modules\Foundation\Authentication\Events\UserLoggedOut($user));
-        }
-
-        return $user;
+        return $this->userRepository->updateForProperty($id, $propertyId, $data);
     }
 
-    public function delete(string $id): bool
+    public function deleteForProperty(string $id, string $propertyId): bool
     {
-        return $this->userRepository->delete($id);
+        return $this->userRepository->deleteForProperty($id, $propertyId);
     }
 
     public function assignRole(string $userId, string $role, ?string $propertyId = null): void

@@ -5,6 +5,7 @@ use Modules\Foundation\Authentication\Http\Controllers\LoginController;
 use Modules\Foundation\Authentication\Http\Controllers\LogoutController;
 use Modules\Foundation\Authentication\Http\Controllers\OwnerMfaController;
 use Modules\Foundation\Authentication\Http\Controllers\PasswordResetController;
+use Modules\Foundation\User\Http\Controllers\ProfileSessionController;
 
 Route::prefix('auth')->middleware(['throttle:auth'])->group(function () {
     Route::post('/login', [LoginController::class, 'login'])->name('api.login');
@@ -16,6 +17,7 @@ Route::prefix('auth')->middleware(['throttle:auth'])->group(function () {
     Route::middleware(['auth:sanctum', 'auth.security', 'permission.team'])->group(function () {
         Route::post('/logout', [LogoutController::class, 'logout'])->name('api.logout');
         Route::post('/logout/all', [LogoutController::class, 'logoutAll']);
+        Route::delete('/sessions/{session}', [ProfileSessionController::class, 'destroy']);
     });
 });
 

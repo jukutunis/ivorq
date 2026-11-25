@@ -9,11 +9,30 @@ use Shared\Exceptions\NotFoundException;
 
 class UserRepository
 {
-    public function paginate(int $perPage = 15): LengthAwarePaginator
+    public function paginateForProperty(string $propertyId, int $perPage = 15): LengthAwarePaginator
     {
-        return User::with(['department', 'position'])
+        return User::query()
+            ->whereHas('properties', fn ($query) => $query
+                ->where('properties.id', $propertyId)
+                ->where('property_user.status', 'active'))
+            ->with(['department', 'position'])
             ->latest()
             ->paginate($perPage);
+    }
+
+    public function findForProperty(string $id, string $propertyId): User
+    {
+        $user = User::query()
+            ->whereHas('properties', fn ($query) => $query
+                ->where('properties.id', $propertyId)
+                ->where('property_user.status', 'active'))
+            ->with(['department', 'position', 'roles'])
+            ->whereKey($id)
+            ->first();
+
+        throw_if(! $user, new NotFoundException('User'));
+
+        return $user;
     }
 
     public function find(string $id): User
@@ -42,7 +61,10 @@ class UserRepository
 
     public function allForProperty(string $propertyId): Collection
     {
-        return User::forProperty($propertyId)
+        return User::query()
+            ->whereHas('properties', fn ($query) => $query
+                ->where('properties.id', $propertyId)
+                ->where('property_user.status', 'active'))
             ->with(['department', 'position'])
             ->get();
     }
@@ -60,10 +82,23 @@ class UserRepository
         return $user->fresh();
     }
 
+    public function updateForProperty(string $id, string $propertyId, array $data): User
+    {
+        $user = $this->findForProperty($id, $propertyId);
+        $user->update($data);
+
+        return $user->fresh();
+    }
+
     public function delete(string $id): bool
     {
         $user = $this->find($id);
 
         return $user->delete();
+    }
+
+    public function deleteForProperty(string $id, string $propertyId): bool
+    {
+        return $this->findForProperty($id, $propertyId)->delete();
     }
 }

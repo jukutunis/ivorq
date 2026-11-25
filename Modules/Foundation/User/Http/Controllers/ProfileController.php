@@ -5,8 +5,10 @@ namespace Modules\Foundation\User\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
+use Modules\Foundation\Authentication\Services\SessionGovernanceService;
 use Modules\Foundation\User\Http\Requests\ChangePasswordRequest;
 use Modules\Foundation\User\Http\Requests\UpdateProfileRequest;
 use Modules\Foundation\User\Http\Resources\UserResource;
@@ -15,13 +17,15 @@ use Modules\Foundation\User\Services\ProfileService;
 class ProfileController extends Controller
 {
     public function __construct(
-        private ProfileService $profileService
+        private ProfileService $profileService,
+        private SessionGovernanceService $sessions,
     ) {}
 
-    public function show(): Response
+    public function show(Request $request): Response
     {
         return Inertia::render('Foundation/Profile/Show', [
             'user' => new UserResource(auth()->user()),
+            'sessions' => $this->sessions->actorSessions($request->user(), $request),
         ]);
     }
 

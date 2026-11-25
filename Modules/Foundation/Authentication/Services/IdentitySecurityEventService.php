@@ -80,8 +80,38 @@ class IdentitySecurityEventService
         'SESSIONS_REVOKED' => [
             'outcomes' => ['SUCCESS'],
             'context' => ['actor_user_id', 'subject_user_id', 'company_id', 'property_id', 'reason_code'],
-            'reason_codes' => ['IDENTITY_COMPROMISE', 'RECOVERY_CODES_REGENERATED', 'PASSWORD_RESET', 'PASSWORD_CHANGE', 'LOGOUT_ALL'],
+            'reason_codes' => ['IDENTITY_COMPROMISE', 'RECOVERY_CODES_REGENERATED', 'PASSWORD_RESET', 'PASSWORD_CHANGE', 'LOGOUT_ALL', 'USER_DEACTIVATED', 'USER_OFFBOARDED', 'MEMBERSHIP_CHANGED'],
             'metadata' => ['auth_epoch' => ['integer' => [0, PHP_INT_MAX]]],
+        ],
+        'USER_DEACTIVATED' => [
+            'outcomes' => ['SUCCESS'],
+            'context' => ['actor_user_id', 'subject_user_id', 'company_id', 'property_id'],
+            'metadata' => [],
+        ],
+        'USER_REACTIVATED' => [
+            'outcomes' => ['SUCCESS'],
+            'context' => ['actor_user_id', 'subject_user_id', 'company_id', 'property_id'],
+            'metadata' => [],
+        ],
+        'USER_OFFBOARDED' => [
+            'outcomes' => ['SUCCESS'],
+            'context' => ['actor_user_id', 'subject_user_id', 'company_id', 'property_id'],
+            'metadata' => [],
+        ],
+        'PROPERTY_MEMBERSHIP_REMOVED' => [
+            'outcomes' => ['SUCCESS'],
+            'context' => ['actor_user_id', 'subject_user_id', 'company_id', 'property_id'],
+            'metadata' => [],
+        ],
+        'DEFAULT_PROPERTY_CHANGED' => [
+            'outcomes' => ['SUCCESS'],
+            'context' => ['actor_user_id', 'subject_user_id', 'company_id', 'property_id'],
+            'metadata' => [],
+        ],
+        'SESSION_REVOKED' => [
+            'outcomes' => ['SUCCESS'],
+            'context' => ['actor_user_id', 'subject_user_id', 'company_id', 'property_id'],
+            'metadata' => ['channel' => ['enum' => ['web', 'api']]],
         ],
         'OWNER_MFA_RESET_REQUESTED' => [
             'outcomes' => ['FAILURE'],

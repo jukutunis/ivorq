@@ -2,8 +2,8 @@
 
 namespace Modules\Foundation\Authorization\Policies;
 
-use Modules\Foundation\User\Models\User;
 use Modules\Foundation\Authorization\Models\Role;
+use Modules\Foundation\User\Models\User;
 
 class RolePolicy
 {
@@ -19,11 +19,15 @@ class RolePolicy
 
     public function update(User $user, ?Role $role = null): bool
     {
-        return $user->hasPermissionTo('role.edit');
+        return $role !== null
+            && $role->property_id !== null
+            && $user->hasPermissionTo('role.edit');
     }
 
     public function delete(User $user, ?Role $role = null): bool
     {
-        return $user->hasPermissionTo('role.delete');
+        return $role !== null
+            && $role->property_id !== null
+            && $user->hasPermissionTo('role.delete');
     }
 }
