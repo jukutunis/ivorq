@@ -9,6 +9,7 @@ use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Modules\Foundation\Authentication\Models\IdentitySecurityEvent;
+use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Models\Role;
 use Modules\Foundation\User\Models\UserSession;
 use Modules\Foundation\User\Services\UserLifecycleService;
@@ -67,8 +68,15 @@ class SecP01UserLifecycleTest extends PostgresTestCase
         $otherProperty = PropertyFactory::new()->create(['company_id' => $property->company_id]);
         $target->properties()->attach($otherProperty->id, ['is_default' => false, 'status' => 'active', 'joined_at' => now()]);
         $role = Role::query()->create(['name' => 'offboard-role', 'guard_name' => 'web', 'property_id' => $property->id]);
+        $permission = Permission::query()->create(['name' => 'offboard.direct', 'guard_name' => 'web']);
         DB::table('model_has_roles')->insert([
             'role_id' => $role->id,
+            'model_id' => $target->id,
+            'model_type' => $target->getMorphClass(),
+            'property_id' => $property->id,
+        ]);
+        DB::table('model_has_permissions')->insert([
+            'permission_id' => $permission->id,
             'model_id' => $target->id,
             'model_type' => $target->getMorphClass(),
             'property_id' => $property->id,
@@ -81,6 +89,7 @@ class SecP01UserLifecycleTest extends PostgresTestCase
         $this->assertSame(0, DB::table('property_user')->where('user_id', $target->id)->where('status', 'active')->count());
         $this->assertSame(0, DB::table('property_user')->where('user_id', $target->id)->where('is_default', true)->count());
         $this->assertSame(0, DB::table('model_has_roles')->where('model_id', $target->id)->count());
+        $this->assertSame(0, DB::table('model_has_permissions')->where('model_id', $target->id)->count());
         $this->assertSame(1, IdentitySecurityEvent::query()->where('event_type', 'USER_OFFBOARDED')->count());
 
         $this->expectException(DomainException::class);

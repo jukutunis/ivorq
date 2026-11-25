@@ -47,6 +47,7 @@ use Modules\Foundation\Property\Models\Property;
 use Modules\Foundation\User\Models\User;
 use Modules\Foundation\User\Models\UserSession;
 use Modules\Foundation\User\Services\ProfileService;
+use Modules\Foundation\User\Services\UserLifecycleService;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService;
@@ -1035,6 +1036,32 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
 
         $this->assertFalse($service->hasValidConfirmation($owner, 'administrative-sensitive-action', $company->id, $property->id));
         $this->assertNull($service->confirmationMetadataFor($owner, 'administrative-sensitive-action', $company->id, $property->id));
+    }
+
+    public function test_authoritative_full_revocation_invalidates_sensitive_action_confirmation(): void
+    {
+        [, $owner, $company, $property] = $this->activeOwner();
+        $service = app(SensitiveActionConfirmationService::class);
+        $service->confirm($owner, 'administrative-sensitive-action', self::PASSWORD, $company->id, $property->id);
+        $this->assertTrue($service->hasValidConfirmation($owner, 'administrative-sensitive-action', $company->id, $property->id));
+
+        $revoked = app(SessionRevocationService::class)->revokeAll($owner, 'IDENTITY_COMPROMISE', [
+            'actor_user_id' => $owner->id,
+            'company_id' => $company->id,
+            'property_id' => $property->id,
+        ]);
+
+        $this->assertFalse($service->hasValidConfirmation($revoked, 'administrative-sensitive-action', $company->id, $property->id));
+    }
+
+    public function test_ordinary_lifecycle_cannot_offboard_active_installation_owner(): void
+    {
+        [, $owner, , $property] = $this->activeOwner();
+        $actor = UserFactory::new()->withProperty($property)->create(['is_active' => true]);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('INSTALLATION_OWNER_REQUIRES_HIGH_ASSURANCE_IDENTITY_GOVERNANCE');
+        app(UserLifecycleService::class)->offboard($actor, $owner->id, $property->id);
     }
 
     public function test_auth_epoch_change_invalidates_checkout_confirmation_before_consumption(): void

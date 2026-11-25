@@ -111,6 +111,23 @@ class SecP01SessionGovernanceTest extends PostgresTestCase
         app(SessionGovernanceService::class)->revokeOne($actor, $otherRow->id, $request);
     }
 
+    public function test_revoke_current_web_session_is_identified_safely(): void
+    {
+        $property = PropertyFactory::new()->create();
+        $actor = UserFactory::new()->withProperty($property)->create();
+        $request = $this->webRequest($actor, $property->id, 'current-web-session');
+        $row = UserSession::query()->create([
+            'user_id' => $actor->id,
+            'property_id' => $property->id,
+            'web_session_digest' => $this->digest($request->session()->getId()),
+            'auth_epoch' => 0,
+            'channel' => 'web',
+        ]);
+
+        $this->assertTrue(app(SessionGovernanceService::class)->revokeOne($actor, $row->id, $request));
+        $this->assertDatabaseMissing('user_sessions', ['id' => $row->id]);
+    }
+
     private function webRequest($user, string $propertyId, string $sessionId): Request
     {
         $session = app('session.store');
