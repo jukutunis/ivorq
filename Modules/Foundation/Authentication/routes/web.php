@@ -7,6 +7,7 @@ use Modules\Foundation\Authentication\Http\Controllers\LogoutController;
 use Modules\Foundation\Authentication\Http\Controllers\OwnerActivationController;
 use Modules\Foundation\Authentication\Http\Controllers\OwnerMfaController;
 use Modules\Foundation\Authentication\Http\Controllers\PasswordResetController;
+use Modules\Foundation\Authentication\Http\Controllers\SecurityOperationsController;
 use Modules\Foundation\Authentication\Http\Middleware\EnsureAuthenticatedSecurity;
 use Modules\Foundation\Authorization\Http\Middleware\SetPermissionTeamIdMiddleware;
 
@@ -57,3 +58,7 @@ Route::middleware(['web', 'throttle:auth'])->group(function () {
         Route::post('/logout/all', [LogoutController::class, 'logoutAll'])->name('logout.all');
     });
 });
+
+Route::middleware(['web', 'auth', 'verified', 'auth.security', 'active.property'])
+    ->get('/security/operations', [SecurityOperationsController::class, 'index'])
+    ->name('security.operations.index');

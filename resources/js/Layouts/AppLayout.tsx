@@ -106,6 +106,7 @@ export default function AppLayout({ children }: PropsWithChildren) {
                     {can('user.view')        && <NavItem href="/users"       label="Users"        active={starts('/users')} />}
                     {can('role.view')        && <NavItem href="/roles"       label="Roles"        active={starts('/roles')} />}
                     {can('audit.view')       && <NavItem href="/audit"       label="Audit Log"    active={starts('/audit')} />}
+                    {can('audit.view')       && <NavItem href="/security/operations" label="Security Events" active={starts('/security/operations')} />}
                     {can('activity.view')    && <NavItem href="/activity"    label="Activity Log" active={starts('/activity')} />}
 
                     {/* Housekeeping */}

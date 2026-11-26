@@ -74,10 +74,6 @@ class UserService
 
     public function assignRole(string $userId, string $role, ?string $propertyId = null): void
     {
-        $user = $this->find($userId);
-        $teamId = $propertyId ?? $user->defaultProperty()?->id;
-
-        setPermissionsTeamId($teamId);
-        $user->assignRole($role);
+        throw new DomainException('ROLE_ASSIGNMENT_REQUIRES_GOVERNED_WORKFLOW');
     }
 }

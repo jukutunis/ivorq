@@ -8,6 +8,33 @@ use Shared\Exceptions\NotFoundException;
 
 class AuditLogRepository
 {
+    private const SECURITY_OPERATION_EVENTS = [
+        'sensitive_action_confirmed',
+        'sensitive_action_invalidated',
+        'fx_operational_role_assign',
+        'fx_operational_role_revoke',
+        'fx_break_glass_activated',
+        'fx_break_glass_deactivated',
+    ];
+
+    public function securityOperationsForProperty(string $propertyId): LengthAwarePaginator
+    {
+        return AuditLog::query()
+            ->where('property_id', $propertyId)
+            ->whereIn('event', self::SECURITY_OPERATION_EVENTS)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->paginate(20, ['id', 'event', 'user_id', 'auditable_id', 'created_at'], 'audit_page')
+            ->withQueryString()
+            ->through(fn (AuditLog $log): array => [
+                'id' => $log->id,
+                'event' => $log->event,
+                'actor_user_id' => $log->user_id,
+                'subject_id' => $log->auditable_id,
+                'occurred_at' => $log->created_at?->toIso8601String(),
+            ]);
+    }
+
     public function paginateForProperty(string $propertyId, array $filters = [], int $perPage = 30): LengthAwarePaginator
     {
         return AuditLog::query()

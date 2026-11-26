@@ -4,6 +4,7 @@ namespace Modules\Foundation\Authorization\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 use Modules\Foundation\Authorization\Http\Requests\StoreRoleRequest;
@@ -48,11 +49,12 @@ class RoleController extends Controller
     public function store(StoreRoleRequest $request): RedirectResponse
     {
         $propertyId = app(CurrentPropertyService::class)->resolveOrFail();
-        $role = $this->roleService->create($request->name, $propertyId);
-
-        if ($request->filled('permissions')) {
-            $this->roleService->syncPermissionsForProperty($role->id, $propertyId, $request->permissions);
-        }
+        DB::transaction(function () use ($request, $propertyId): void {
+            $role = $this->roleService->create($request->name, $propertyId);
+            if ($request->filled('permissions')) {
+                $this->roleService->syncPermissionsForProperty($role->id, $propertyId, $request->permissions);
+            }
+        });
 
         return redirect()->route('roles.index')
             ->with('success', 'Role created successfully.');
