@@ -3,7 +3,9 @@
 namespace Modules\Foundation\Authorization\Services;
 
 use Illuminate\Validation\ValidationException;
+use Modules\Foundation\Authorization\Models\Permission;
 use Modules\Foundation\Authorization\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class ProtectedRoleGovernanceGuard
 {
@@ -43,15 +45,49 @@ class ProtectedRoleGovernanceGuard
         }
     }
 
-    public function assertGenericMutationAllowed(Role $role, array $requestedPermissions = []): void
+    public function assertGenericMutationAllowed(Role $role, array $requestedPermissions = []): array
     {
+        $canonicalNames = $this->canonicalPermissionNames($role, $requestedPermissions);
+
         if (in_array($role->name, self::PROTECTED_ROLE_NAMES, true)
             || $role->property_id === null
             || array_intersect($role->loadMissing('permissions')->permissions->pluck('name')->all(), self::PROTECTED_PERMISSIONS) !== []
-            || array_intersect($requestedPermissions, self::PROTECTED_PERMISSIONS) !== []) {
+            || array_intersect($canonicalNames, self::PROTECTED_PERMISSIONS) !== []) {
             throw ValidationException::withMessages([
                 'permissions' => 'This role or permission requires its governed authority path.',
             ]);
         }
+
+        return $canonicalNames;
+    }
+
+    private function canonicalPermissionNames(Role $role, array $requestedPermissions): array
+    {
+        if ($role->guard_name !== 'web' || ! array_is_list($requestedPermissions)) {
+            throw ValidationException::withMessages([
+                'permissions' => 'Permissions must be existing canonical web permission names.',
+            ]);
+        }
+
+        foreach ($requestedPermissions as $permission) {
+            if (! is_string($permission) || $permission === ''
+                || trim($permission) !== $permission || PermissionRegistrar::isUid($permission)) {
+                throw ValidationException::withMessages([
+                    'permissions' => 'Permissions must be existing canonical web permission names.',
+                ]);
+            }
+        }
+
+        $names = array_values(array_unique($requestedPermissions));
+        if ($names !== [] && Permission::query()
+            ->where('guard_name', 'web')
+            ->whereIn('name', $names)
+            ->count() !== count($names)) {
+            throw ValidationException::withMessages([
+                'permissions' => 'Permissions must be existing canonical web permission names.',
+            ]);
+        }
+
+        return $names;
     }
 }

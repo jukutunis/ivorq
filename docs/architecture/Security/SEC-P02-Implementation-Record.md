@@ -14,6 +14,10 @@
 | Security operations read view | Foundation Authentication identity event owner plus Foundation Audit repository read contract | A Property-scoped, `audit.view`-gated read view combines bounded identity-security events with selected existing security audit actions. Both repositories return explicit fields only. Identity metadata and audit old/new values, URLs, IP addresses, tokens, session IDs, MFA secrets, recovery codes, and confirmation material are not projected. No new ledger or permission was created. |
 | Interaction surface | Foundation Security Operations page | Read-only event grids, identity-event filter, pagination, clear Property scope, empty state, and permission-aware navigation. No role-grant control is shown. |
 
+## R1 protected permission representation correction
+
+Generic role permission synchronization now accepts only a flat list of non-empty, existing canonical `web` permission names. The Foundation Authorization guard rejects ULID/UUID identifiers, integers, permission objects, nested arrays, unknown names, and invalid guard mappings before Spatie can detach or grant a permission. It checks protected authority against that validated list, then passes the same list to the repository for synchronization. Existing protected role names, existing protected permissions, actor and Property checks, and HTTP creation rollback remain in place. Empty lists remain available for ordinary roles. This correction does not authorize a new role workflow or expand operational authority.
+
 ## Existing capabilities reused
 
 - SEC-P01 canonical `CurrentPropertyService`, `current_property_id`, `auth_epoch`, `user_sessions`, digest-bound web sessions, bounded Property-bound API tokens, lifecycle and offboarding guards, and credential-aware logout.

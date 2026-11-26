@@ -44,9 +44,9 @@ class RoleService
     {
         $this->assertActorAuthority($propertyId, 'role.edit');
         $role = $this->findForProperty($roleId, $propertyId);
-        $this->governanceGuard->assertGenericMutationAllowed($role, $permissions);
+        $canonicalNames = $this->governanceGuard->assertGenericMutationAllowed($role, $permissions);
 
-        return $this->roleRepository->syncPermissions($role, $permissions);
+        return $this->roleRepository->syncPermissions($role, $canonicalNames);
     }
 
     public function deleteForProperty(string $id, string $propertyId): bool

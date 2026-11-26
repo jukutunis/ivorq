@@ -48,6 +48,88 @@ class SecP02ProtectedRoleGovernanceTest extends PostgresTestCase
         $this->assertSame([$ordinary->name], $role->fresh('permissions')->permissions->pluck('name')->all());
     }
 
+    public function test_protected_permission_ulid_and_mixed_request_cannot_replace_existing_pivots(): void
+    {
+        $property = PropertyFactory::new()->create();
+        $this->actingRoleManager($property, ['role.create', 'role.edit']);
+        $ordinary = Permission::query()->firstOrCreate(['name' => 'task.view', 'guard_name' => 'web']);
+        $protected = Permission::query()->firstOrCreate(['name' => 'finance.fx-adjustment.view', 'guard_name' => 'web']);
+        $roles = app(RoleService::class);
+        $role = $roles->create('local-read-role', $property->id);
+        $roles->syncPermissionsForProperty($role->id, $property->id, [$ordinary->name]);
+        $before = $role->fresh('permissions')->permissions->pluck('id')->all();
+
+        foreach ([[$protected->id], [$ordinary->name, $protected->id]] as $requested) {
+            try {
+                $roles->syncPermissionsForProperty($role->id, $property->id, $requested);
+                $this->fail('A protected permission identifier bypassed generic role governance.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('permissions', $exception->errors());
+            }
+
+            $this->assertSame($before, $role->fresh('permissions')->permissions->pluck('id')->all());
+            $this->assertDatabaseMissing('role_has_permissions', [
+                'role_id' => $role->id,
+                'permission_id' => $protected->id,
+            ]);
+        }
+    }
+
+    public function test_unsupported_permission_representations_and_guard_mappings_fail_before_sync(): void
+    {
+        $property = PropertyFactory::new()->create();
+        $this->actingRoleManager($property, ['role.create', 'role.edit']);
+        $ordinary = Permission::query()->firstOrCreate(['name' => 'task.view', 'guard_name' => 'web']);
+        Permission::query()->firstOrCreate(['name' => 'api-only.view', 'guard_name' => 'api']);
+        $roles = app(RoleService::class);
+        $role = $roles->create('local-read-role', $property->id);
+        $roles->syncPermissionsForProperty($role->id, $property->id, [$ordinary->name]);
+        $before = $role->fresh('permissions')->permissions->pluck('id')->all();
+
+        foreach ([
+            [1],
+            [$ordinary],
+            [[$ordinary->name]],
+            ['missing.permission'],
+            ['api-only.view'],
+            [' '],
+            ['permission' => $ordinary->name],
+        ] as $requested) {
+            try {
+                $roles->syncPermissionsForProperty($role->id, $property->id, $requested);
+                $this->fail('An unsupported permission representation was accepted.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('permissions', $exception->errors());
+            }
+
+            $this->assertSame($before, $role->fresh('permissions')->permissions->pluck('id')->all());
+        }
+
+        $apiRole = Role::query()->create(['name' => 'local-api-role', 'guard_name' => 'api', 'property_id' => $property->id]);
+        try {
+            $roles->syncPermissionsForProperty($apiRole->id, $property->id, ['api-only.view']);
+            $this->fail('Generic role administration accepted an invalid role guard.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('permissions', $exception->errors());
+        }
+        $this->assertCount(0, $apiRole->fresh('permissions')->permissions);
+    }
+
+    public function test_canonical_ordinary_permission_names_and_empty_list_remain_supported(): void
+    {
+        $property = PropertyFactory::new()->create();
+        $this->actingRoleManager($property, ['role.create', 'role.edit']);
+        $ordinary = Permission::query()->firstOrCreate(['name' => 'task.view', 'guard_name' => 'web']);
+        $role = app(RoleService::class)->create('local-read-role', $property->id);
+
+        $granted = app(RoleService::class)->syncPermissionsForProperty($role->id, $property->id, [$ordinary->name, $ordinary->name]);
+        $this->assertSame([$ordinary->id], $granted->permissions->pluck('id')->all());
+
+        $cleared = app(RoleService::class)->syncPermissionsForProperty($role->id, $property->id, []);
+        $this->assertCount(0, $cleared->permissions);
+        $this->assertDatabaseMissing('role_has_permissions', ['role_id' => $role->id, 'permission_id' => $ordinary->id]);
+    }
+
     public function test_generic_paths_cannot_recreate_or_edit_protected_roles(): void
     {
         $property = PropertyFactory::new()->create();
