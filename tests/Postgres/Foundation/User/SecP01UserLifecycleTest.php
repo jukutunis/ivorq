@@ -129,7 +129,14 @@ class SecP01UserLifecycleTest extends PostgresTestCase
         [$actor, $target, $propertyA] = $this->usersInOneProperty();
         $companyB = CompanyFactory::new()->create();
         $propertyB = PropertyFactory::new()->create(['company_id' => $companyB->id]);
-        $target->properties()->attach($propertyB->id, ['is_default' => false, 'status' => 'active', 'joined_at' => now()]);
+        $target->properties()->attach($propertyB->id, ['is_default' => false, 'status' => 'inactive', 'joined_at' => now()]);
+        $role = Role::query()->create(['name' => 'company-b-role', 'guard_name' => 'web', 'property_id' => $propertyB->id]);
+        DB::table('model_has_roles')->insert([
+            'role_id' => $role->id,
+            'model_id' => $target->id,
+            'model_type' => $target->getMorphClass(),
+            'property_id' => $propertyB->id,
+        ]);
         $session = UserSession::query()->create([
             'user_id' => $target->id,
             'property_id' => $propertyB->id,
@@ -137,6 +144,8 @@ class SecP01UserLifecycleTest extends PostgresTestCase
             'auth_epoch' => 0,
             'web_session_digest' => hash('sha256', 'company-b-session'),
         ]);
+        $propertyB->forceFill(['is_active' => false])->save();
+        $propertyB->delete();
         $target->refresh();
         $before = $target->only(['name', 'email', 'is_active', 'auth_epoch', 'deleted_at']);
 
@@ -154,11 +163,26 @@ class SecP01UserLifecycleTest extends PostgresTestCase
             } catch (DomainException $exception) {
                 $this->assertSame('MULTI_COMPANY_IDENTITY_REQUIRES_GLOBAL_GOVERNANCE', $exception->getMessage());
             }
+
+            $this->assertSame($before, $target->fresh()->only(array_keys($before)));
+            $this->assertDatabaseHas('property_user', ['user_id' => $target->id, 'property_id' => $propertyB->id, 'status' => 'inactive', 'is_default' => false]);
+            $this->assertDatabaseHas('model_has_roles', ['model_id' => $target->id, 'role_id' => $role->id, 'property_id' => $propertyB->id]);
+            $this->assertDatabaseHas('user_sessions', ['id' => $session->id]);
         }
 
-        $this->assertSame($before, $target->fresh()->only(array_keys($before)));
-        $this->assertDatabaseHas('property_user', ['user_id' => $target->id, 'property_id' => $propertyB->id, 'status' => 'active']);
-        $this->assertDatabaseHas('user_sessions', ['id' => $session->id]);
+        $this->assertSoftDeleted('properties', ['id' => $propertyB->id]);
+    }
+
+    public function test_same_company_multi_property_identity_allows_ordinary_global_update(): void
+    {
+        [, $target, $property] = $this->usersInOneProperty();
+        $otherProperty = PropertyFactory::new()->create(['company_id' => $property->company_id]);
+        $target->properties()->attach($otherProperty->id, ['is_default' => false, 'status' => 'active', 'joined_at' => now()]);
+
+        $updated = app(UserService::class)->updateForProperty($target->id, $property->id, ['name' => 'Same Company Update']);
+
+        $this->assertSame('Same Company Update', $updated->name);
+        $this->assertDatabaseHas('property_user', ['user_id' => $target->id, 'property_id' => $otherProperty->id, 'status' => 'active']);
     }
 
     public function test_generic_update_rejects_security_fields_before_mutation(): void

@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Laravel\Sanctum\PersonalAccessToken;
 use Modules\Foundation\Authentication\Services\AuthService;
 use Modules\Foundation\Authentication\Services\SessionGovernanceService;
 
@@ -19,19 +20,20 @@ class LogoutController extends Controller
 
     public function logout(Request $request): JsonResponse|RedirectResponse
     {
-        if ($request->wantsJson()) {
-            // API path: revoke the current Sanctum token.
-            $this->authService->logout($request->user());
-
-            return response()->json(['message' => 'Logged out successfully.']);
+        $user = $request->user();
+        $token = $user->currentAccessToken();
+        if ($token instanceof PersonalAccessToken) {
+            $this->authService->logout($user, $token->id);
+        } else {
+            $this->sessions->revokeCurrentWebEvidence($user, $request);
+            Auth::guard('web')->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
         }
 
-        $this->sessions->revokeCurrentWebEvidence($request->user(), $request);
-        Auth::logout();
-        $request->session()->invalidate();
-        $request->session()->regenerateToken();
-
-        return redirect()->route('login');
+        return $request->wantsJson()
+            ? response()->json(['message' => 'Logged out successfully.'])
+            : redirect()->route('login');
     }
 
     public function logoutAll(Request $request): JsonResponse|RedirectResponse

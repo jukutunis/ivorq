@@ -233,6 +233,83 @@ class SecP01CredentialAuthorityTest extends PostgresTestCase
         $this->assertDatabaseHas('user_sessions', ['id' => $otherEvidence->id]);
     }
 
+    public function test_json_web_logout_terminates_only_current_web_credential(): void
+    {
+        $otherActor = UserFactory::new()->withProperty($this->property)->create();
+        $otherOwnSessionId = str_repeat('a', 40);
+        $otherActorSessionId = str_repeat('b', 40);
+        $otherActorEvidence = UserSession::query()->create([
+            'user_id' => $otherActor->id,
+            'property_id' => $this->property->id,
+            'web_session_digest' => hash('sha256', "IVORQ-WEB-SESSION-V1\0".$otherActorSessionId),
+            'auth_epoch' => 0,
+            'channel' => 'web',
+        ]);
+        $otherOwnEvidence = UserSession::query()->create([
+            'user_id' => $this->user->id,
+            'property_id' => $this->property->id,
+            'web_session_digest' => hash('sha256', "IVORQ-WEB-SESSION-V1\0".$otherOwnSessionId),
+            'auth_epoch' => 0,
+            'channel' => 'web',
+        ]);
+        $login = $this->withSession(['login.tenant_id' => $this->company->id])->post('/login', [
+            'email' => $this->user->email,
+            'password' => 'password',
+        ]);
+        $login->assertRedirect('/frontdesk');
+        $sessionCookie = $login->getCookie(config('session.cookie'));
+        $this->assertNotNull($sessionCookie);
+        $this->withCookie(config('session.cookie'), $sessionCookie->getValue());
+        $this->assertDatabaseCount('user_sessions', 3);
+
+        $this->withHeaders(['Accept' => 'application/json'])
+            ->post('/logout')
+            ->assertOk()
+            ->assertJsonPath('message', 'Logged out successfully.');
+
+        $this->assertGuest();
+        $this->assertDatabaseCount('user_sessions', 2);
+        $this->assertDatabaseHas('user_sessions', ['id' => $otherOwnEvidence->id]);
+        $this->assertDatabaseHas('user_sessions', ['id' => $otherActorEvidence->id]);
+
+        foreach ([[$this->user, $otherOwnSessionId], [$otherActor, $otherActorSessionId]] as [$actor, $sessionId]) {
+            $session = app('session.store');
+            $session->setId($sessionId);
+            $session->start();
+            $session->put([
+                'current_property_id' => $this->property->id,
+                'active_property_id' => $this->property->id,
+                'active_company_id' => $this->company->id,
+                'auth_epoch' => 0,
+            ]);
+            $request = Request::create('/security-check', 'GET');
+            $request->setLaravelSession($session);
+
+            app(CurrentPropertyService::class)->clear();
+            $this->assertTrue(app(AuthenticatedSecurityService::class)->valid($actor, $request));
+        }
+    }
+
+    public function test_api_token_logout_revokes_only_current_actor_credential(): void
+    {
+        $otherActor = UserFactory::new()->withProperty($this->property)->create();
+        $currentPlain = app(TokenService::class)->createForPasswordAuthentication($this->user, $this->property->id, 'current-api');
+        $otherOwnPlain = app(TokenService::class)->createForPasswordAuthentication($this->user, $this->property->id, 'other-own-api');
+        $otherActorPlain = app(TokenService::class)->createForPasswordAuthentication($otherActor, $this->property->id, 'other-actor-api');
+        $currentToken = PersonalAccessToken::findToken($currentPlain);
+        $otherOwnToken = PersonalAccessToken::findToken($otherOwnPlain);
+        $otherActorToken = PersonalAccessToken::findToken($otherActorPlain);
+
+        $this->withToken($currentPlain)->postJson('/auth/logout')->assertOk()->assertJsonPath('message', 'Logged out successfully.');
+
+        $this->assertDatabaseMissing('personal_access_tokens', ['id' => $currentToken->id]);
+        $this->assertDatabaseMissing('user_sessions', ['token_id' => $currentToken->id]);
+        $this->assertDatabaseHas('personal_access_tokens', ['id' => $otherOwnToken->id]);
+        $this->assertDatabaseHas('user_sessions', ['token_id' => $otherOwnToken->id]);
+        $this->assertDatabaseHas('personal_access_tokens', ['id' => $otherActorToken->id]);
+        $this->assertDatabaseHas('user_sessions', ['token_id' => $otherActorToken->id]);
+    }
+
     public function test_password_change_immediately_terminates_current_web_credential(): void
     {
         $login = $this->withSession(['login.tenant_id' => $this->company->id])->post('/login', [
