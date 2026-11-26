@@ -17,7 +17,6 @@ export default function ReservationCreate({ room_types, sources }: Props) {
         children:            '0',
         reservation_source:  '',
         reserved_room_type:  '',
-        assigned_room_id:    '',
         remarks:             '',
     });
 
@@ -160,17 +159,6 @@ export default function ReservationCreate({ room_types, sources }: Props) {
                             {errors.rate_plan_id && <p className="text-red-600 text-xs mt-1">{errors.rate_plan_id}</p>}
                         </div>
 
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Assigned Room ID</label>
-                            <input
-                                type="text"
-                                value={data.assigned_room_id}
-                                onChange={(e) => setData('assigned_room_id', e.target.value)}
-                                placeholder="Room ULID (optional)"
-                                className="border border-gray-300 rounded px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            />
-                            {errors.assigned_room_id && <p className="text-red-600 text-xs mt-1">{errors.assigned_room_id}</p>}
-                        </div>
                     </div>
 
                     <div>

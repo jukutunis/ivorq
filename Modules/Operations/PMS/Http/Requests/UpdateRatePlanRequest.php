@@ -23,19 +23,20 @@ class UpdateRatePlanRequest extends FormRequest
         $propertyId = app(CurrentPropertyService::class)->getId();
 
         return [
-            'rate_code'   => ['sometimes', 'string', 'max:20',
+            'property_id' => ['prohibited'],
+            'rate_code' => ['sometimes', 'string', 'max:20',
                 "unique:rate_plans,rate_code,{$ratePlanId},id,property_id,{$propertyId},deleted_at,NULL",
             ],
-            'rate_name'   => ['sometimes', 'string', 'max:255'],
-            'plan_type'   => ['sometimes', Rule::enum(RatePlanTypeEnum::class)],
-            'base_rate'   => ['sometimes', 'numeric', 'min:0'],
-            'currency'    => ['nullable', 'string', 'size:3'],
-            'is_active'   => ['nullable', 'boolean'],
+            'rate_name' => ['sometimes', 'string', 'max:255'],
+            'plan_type' => ['sometimes', Rule::enum(RatePlanTypeEnum::class)],
+            'base_rate' => ['sometimes', 'numeric', 'min:0'],
+            'currency' => ['nullable', 'string', 'size:3'],
+            'is_active' => ['nullable', 'boolean'],
             'description' => ['nullable', 'string'],
 
             // Audit columns are server-managed
-            'created_by'  => ['prohibited'],
-            'updated_by'  => ['prohibited'],
+            'created_by' => ['prohibited'],
+            'updated_by' => ['prohibited'],
         ];
     }
 }

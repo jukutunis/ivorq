@@ -2,73 +2,164 @@
 
 namespace Modules\Operations\PMS\Services;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use Modules\Operations\Housekeeping\Models\Room;
+use Modules\Foundation\Audit\Models\AuditLog;
+use Modules\Operations\FrontDesk\Services\FrontDeskReservationEvidence;
 use Modules\Operations\PMS\Enums\ReservationStatusEnum;
 use Modules\Operations\PMS\Events\ReservationCancelled;
 use Modules\Operations\PMS\Events\ReservationConfirmed;
 use Modules\Operations\PMS\Events\ReservationCreated;
+use Modules\Operations\PMS\Models\Folio;
+use Modules\Operations\PMS\Models\Guest;
+use Modules\Operations\PMS\Models\RatePlan;
 use Modules\Operations\PMS\Models\Reservation;
-use Modules\Operations\PMS\Repositories\ReservationRepository;
+use Modules\Operations\PMS\Models\Stay;
 
 class ReservationService
 {
+    private const WRITABLE = ['primary_guest_id', 'rate_plan_id', 'arrival_date',
+        'departure_date', 'adults', 'children', 'reservation_source', 'reserved_room_type', 'remarks'];
+
     public function __construct(
-        private ReservationRepository $reservationRepository,
-        private AvailabilityService   $availabilityService,
+        private PmsPropertyAuthority $authority,
+        private AvailabilityService $availabilityService,
+        private FrontDeskReservationEvidence $frontDeskEvidence,
     ) {}
 
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        return $this->reservationRepository->paginate($filters, $perPage);
+        [, $propertyId] = $this->authority->require('pms.reservation.view');
+
+        return Reservation::query()->where('property_id', $propertyId)
+            ->with(['primaryGuest', 'ratePlan'])
+            ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
+            ->when($filters['reservation_source'] ?? null, fn ($q, $v) => $q->where('reservation_source', $v))
+            ->when($filters['reserved_room_type'] ?? null, fn ($q, $v) => $q->where('reserved_room_type', $v))
+            ->when($filters['arrival_date'] ?? null, fn ($q, $v) => $q->whereDate('arrival_date', $v))
+            ->when($filters['departure_date'] ?? null, fn ($q, $v) => $q->whereDate('departure_date', $v))
+            ->latest()->paginate(min(max($perPage, 1), 100));
     }
 
     public function find(string $id): Reservation
     {
-        return $this->reservationRepository->find($id);
+        [, $propertyId] = $this->authority->require('pms.reservation.view');
+
+        return Reservation::query()->where('property_id', $propertyId)
+            ->with(['primaryGuest', 'guests', 'ratePlan'])->findOrFail($id);
+    }
+
+    public function capabilities(Reservation $reservation): array
+    {
+        [$actor, $propertyId] = $this->authority->require('pms.reservation.view');
+        abort_unless($reservation->property_id === $propertyId, 404);
+        $evidence = $this->hasEvidence($reservation, $propertyId);
+        $editable = $actor->hasPermissionTo('pms.reservation.edit') && ! $evidence;
+
+        return [
+            'can_edit' => $editable && in_array($reservation->status, [
+                ReservationStatusEnum::Tentative, ReservationStatusEnum::Confirmed,
+                ReservationStatusEnum::Waitlisted], true),
+            'can_confirm' => $editable && $reservation->status->canTransitionTo(ReservationStatusEnum::Confirmed),
+            'can_cancel' => $editable && $reservation->status->canTransitionTo(ReservationStatusEnum::Cancelled),
+            'can_no_show' => $editable && $reservation->status->canTransitionTo(ReservationStatusEnum::NoShow),
+            'can_manage_guests' => $editable && $actor->hasPermissionTo('pms.guest.view'),
+            'has_operational_evidence' => $evidence,
+        ];
     }
 
     public function create(array $data): Reservation
     {
-        $reservation = $this->reservationRepository->create($data);
+        [$actor, $propertyId] = $this->authority->require('pms.reservation.create');
+        $data = $this->withNights($this->allowed($data));
+        if (($data['reservation_source'] ?? null) === null) {
+            unset($data['reservation_source']);
+        }
+        $this->validateReferences($data, $propertyId);
+        $reservation = DB::transaction(function () use ($actor, $propertyId, $data) {
+            DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first();
+            $max = Reservation::query()->withTrashed()->where('property_id', $propertyId)
+                ->pluck('reservation_number')->reduce(function (int $max, string $number): int {
+                    return preg_match('/^RES-(\d+)$/', $number, $matches)
+                        ? max($max, (int) $matches[1]) : $max;
+                }, 0);
+            $reservation = Reservation::create($data + [
+                'property_id' => $propertyId,
+                'reservation_number' => sprintf('RES-%05d', $max + 1),
+                'status' => ReservationStatusEnum::Tentative->value,
+            ]);
+            $this->syncPrimaryGuest($reservation, $reservation->primary_guest_id);
+            $this->audit('pms_reservation_created', $reservation, $actor->id);
 
+            return $reservation->fresh();
+        });
         event(new ReservationCreated($reservation));
 
         return $reservation;
     }
 
-    /**
-     * Update reservation fields. Status changes must use confirm/cancel/noShow.
-     * Any 'status' key in $data is stripped.
-     */
     public function update(string $id, array $data): Reservation
     {
-        unset($data['status']);
+        [$actor, $propertyId] = $this->authority->require('pms.reservation.edit');
+        $data = $this->allowed($data);
 
-        return $this->reservationRepository->update($id, $data);
+        return DB::transaction(function () use ($id, $data, $actor, $propertyId) {
+            DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first();
+            $reservation = $this->locked($id, $propertyId);
+            $this->assertNoEvidence($reservation, $propertyId);
+            abort_unless(in_array($reservation->status, [ReservationStatusEnum::Tentative,
+                ReservationStatusEnum::Confirmed, ReservationStatusEnum::Waitlisted], true), 409);
+            $this->validateReferences($data, $propertyId);
+            $merged = array_merge($reservation->only(self::WRITABLE), $data);
+            $data['nights'] = $this->withNights($merged)['nights'];
+            if ($reservation->status === ReservationStatusEnum::Confirmed &&
+                (isset($data['arrival_date']) || isset($data['departure_date']) || isset($data['reserved_room_type']))) {
+                $candidate = clone $reservation;
+                $candidate->forceFill($data);
+                $this->validateAvailabilityBeforeConfirm($candidate);
+            }
+            $reservation->update($data);
+            if (array_key_exists('primary_guest_id', $data)) {
+                $this->syncPrimaryGuest($reservation, $data['primary_guest_id']);
+            }
+            $this->audit('pms_reservation_amended', $reservation, $actor->id, ['fields' => array_keys($data)]);
+
+            return $reservation->fresh();
+        });
     }
 
     public function delete(string $id): bool
     {
-        return $this->reservationRepository->delete($id);
+        [$actor, $propertyId] = $this->authority->require('pms.reservation.delete');
+
+        return DB::transaction(function () use ($id, $actor, $propertyId) {
+            DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first();
+            $reservation = $this->locked($id, $propertyId);
+            $this->assertNoEvidence($reservation, $propertyId);
+            abort_unless($reservation->status === ReservationStatusEnum::Tentative, 409);
+            $this->audit('pms_reservation_deleted', $reservation, $actor->id);
+
+            return $reservation->delete();
+        });
     }
 
     public function confirm(string $id): Reservation
     {
-        $reservation = $this->reservationRepository->findOrFail($id);
+        [$actor, $propertyId] = $this->authority->require('pms.reservation.edit');
+        $reservation = DB::transaction(function () use ($id, $actor, $propertyId) {
+            DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first();
+            $reservation = $this->locked($id, $propertyId);
+            $this->transition($reservation, ReservationStatusEnum::Confirmed);
+            $this->assertNoEvidence($reservation, $propertyId);
+            $this->validateAvailabilityBeforeConfirm($reservation);
+            $reservation->update(['status' => ReservationStatusEnum::Confirmed]);
+            $this->audit('pms_reservation_confirmed', $reservation, $actor->id);
 
-        if (! $reservation->status->canTransitionTo(ReservationStatusEnum::Confirmed)) {
-            throw ValidationException::withMessages([
-                'status' => ["Cannot confirm a reservation in {$reservation->status->label()} status."],
-            ]);
-        }
-
-        $this->validateAvailabilityBeforeConfirm($reservation);
-
-        $reservation->update(['status' => ReservationStatusEnum::Confirmed]);
-        $reservation = $reservation->fresh();
-
+            return $reservation->fresh();
+        });
         event(new ReservationConfirmed($reservation));
 
         return $reservation;
@@ -76,85 +167,153 @@ class ReservationService
 
     public function cancel(string $id, ?string $reason = null): Reservation
     {
-        $reservation = $this->reservationRepository->findOrFail($id);
+        [$actor, $propertyId] = $this->authority->require('pms.reservation.edit');
+        $reservation = DB::transaction(function () use ($id, $reason, $actor, $propertyId) {
+            DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first();
+            $reservation = $this->locked($id, $propertyId);
+            $this->transition($reservation, ReservationStatusEnum::Cancelled);
+            $this->assertNoEvidence($reservation, $propertyId);
+            $reservation->update(['status' => ReservationStatusEnum::Cancelled]);
+            $this->audit('pms_reservation_cancelled', $reservation, $actor->id,
+                ['reason' => $reason === null ? null : mb_substr(trim($reason), 0, 1000)]);
 
-        if (! $reservation->status->canTransitionTo(ReservationStatusEnum::Cancelled)) {
-            throw ValidationException::withMessages([
-                'status' => ["Cannot cancel a reservation in {$reservation->status->label()} status."],
-            ]);
-        }
-
-        $reservation->update(['status' => ReservationStatusEnum::Cancelled]);
-        $reservation = $reservation->fresh();
-
-        event(new ReservationCancelled($reservation, $reason));
+            return $reservation->fresh();
+        });
+        event(new ReservationCancelled($reservation, null));
 
         return $reservation;
     }
 
     public function noShow(string $id): Reservation
     {
-        $reservation = $this->reservationRepository->findOrFail($id);
+        [$actor, $propertyId] = $this->authority->require('pms.reservation.edit');
 
-        if (! $reservation->status->canTransitionTo(ReservationStatusEnum::NoShow)) {
-            throw ValidationException::withMessages([
-                'status' => ["Cannot mark a reservation as no-show in {$reservation->status->label()} status."],
-            ]);
-        }
+        return DB::transaction(function () use ($id, $actor, $propertyId) {
+            DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first();
+            $reservation = $this->locked($id, $propertyId);
+            $this->transition($reservation, ReservationStatusEnum::NoShow);
+            $this->assertNoEvidence($reservation, $propertyId);
+            $reservation->update(['status' => ReservationStatusEnum::NoShow]);
+            $this->audit('pms_reservation_no_show', $reservation, $actor->id);
 
-        $reservation->update(['status' => ReservationStatusEnum::NoShow]);
-
-        return $reservation->fresh();
+            return $reservation->fresh();
+        });
     }
 
     public function assignRoom(string $id, string $roomId): Reservation
     {
-        $room        = Room::findOrFail($roomId);
-        $reservation = $this->reservationRepository->findOrFail($id);
-
-        if (
-            $reservation->reserved_room_type !== null &&
-            $room->room_type !== $reservation->reserved_room_type
-        ) {
-            throw ValidationException::withMessages([
-                'room_id' => [
-                    sprintf(
-                        'Room type "%s" does not match the reserved room type "%s".',
-                        $room->room_type->label(),
-                        $reservation->reserved_room_type->label(),
-                    ),
-                ],
-            ]);
-        }
-
-        return $this->reservationRepository->update($id, [
-            'assigned_room_id' => $roomId,
-        ]);
+        $this->authority->require('pms.reservation.edit');
+        abort(409, 'Use the controlled Front Desk room assignment workspace.');
     }
 
-    /**
-     * Validate that at least one room of the reserved type is available
-     * for the reservation's dates. Excludes the reservation itself from the
-     * active-reservation count (it is tentative, so it already occupies a slot;
-     * we don't want to penalise it twice).
-     */
     public function validateAvailabilityBeforeConfirm(Reservation $reservation): void
     {
         if ($reservation->reserved_room_type === null) {
             return;
         }
-
-        $available = $this->availabilityService->isAvailable(
+        if (! $this->availabilityService->isAvailable(
             $reservation->reserved_room_type->value,
             $reservation->arrival_date->toDateString(),
             $reservation->departure_date->toDateString(),
             $reservation->id,
-        );
+            $reservation->property_id,
+        )) {
+            throw ValidationException::withMessages(['availability' => ['No rooms available for the requested type and dates.']]);
+        }
+    }
 
-        if (! $available) {
-            throw ValidationException::withMessages([
-                'availability' => ['No rooms available for the requested type and dates.'],
+    private function allowed(array $data): array
+    {
+        if (array_diff(array_keys($data), self::WRITABLE) !== []) {
+            throw ValidationException::withMessages(['reservation' => ['Unsupported reservation fields.']]);
+        }
+
+        return $data;
+    }
+
+    private function withNights(array $data): array
+    {
+        if (empty($data['arrival_date']) || empty($data['departure_date'])) {
+            throw ValidationException::withMessages(['dates' => ['Arrival and departure dates are required.']]);
+        }
+        try {
+            $arrival = CarbonImmutable::parse($data['arrival_date']);
+            $departure = CarbonImmutable::parse($data['departure_date']);
+        } catch (\Throwable) {
+            throw ValidationException::withMessages(['dates' => ['Valid arrival and departure dates are required.']]);
+        }
+        $nights = $arrival->diffInDays($departure, false);
+        if ($nights < 1 || $nights > 65535) {
+            throw ValidationException::withMessages(['dates' => ['Departure must follow arrival.']]);
+        }
+        $data['nights'] = (int) $nights;
+
+        return $data;
+    }
+
+    private function validateReferences(array $data, string $propertyId): void
+    {
+        if (isset($data['primary_guest_id']) && ! Guest::query()->where('property_id', $propertyId)
+            ->whereKey($data['primary_guest_id'])->exists()) {
+            throw ValidationException::withMessages(['primary_guest_id' => ['Invalid guest.']]);
+        }
+        if (isset($data['rate_plan_id']) && ! RatePlan::query()->where('property_id', $propertyId)
+            ->whereKey($data['rate_plan_id'])->exists()) {
+            throw ValidationException::withMessages(['rate_plan_id' => ['Invalid rate plan.']]);
+        }
+    }
+
+    private function locked(string $id, string $propertyId): Reservation
+    {
+        return Reservation::query()->where('property_id', $propertyId)->lockForUpdate()->findOrFail($id);
+    }
+
+    private function syncPrimaryGuest(Reservation $reservation, string $guestId): void
+    {
+        $rows = DB::table('reservation_guests')->where('property_id', $reservation->property_id)
+            ->where('reservation_id', $reservation->id);
+        $rows->where('is_primary', true)->where('guest_id', '!=', $guestId)->delete();
+        $existing = DB::table('reservation_guests')->where('reservation_id', $reservation->id)
+            ->where('guest_id', $guestId)->first();
+        if ($existing) {
+            DB::table('reservation_guests')->where('id', $existing->id)
+                ->update(['is_primary' => true, 'updated_at' => now()]);
+        } else {
+            DB::table('reservation_guests')->insert([
+                'id' => (string) Str::ulid(), 'property_id' => $reservation->property_id,
+                'reservation_id' => $reservation->id, 'guest_id' => $guestId,
+                'is_primary' => true, 'created_at' => now(), 'updated_at' => now(),
             ]);
         }
+    }
+
+    private function assertNoEvidence(Reservation $reservation, string $propertyId): void
+    {
+        abort_if($this->hasEvidence($reservation, $propertyId), 409,
+            'Operational or financial evidence prevents this reservation change.');
+    }
+
+    private function hasEvidence(Reservation $reservation, string $propertyId): bool
+    {
+        return $this->frontDeskEvidence->exists($propertyId, $reservation->id)
+            || Stay::query()->where('property_id', $propertyId)->where('reservation_id', $reservation->id)->exists()
+            || Folio::query()->where('property_id', $propertyId)->where('reservation_id', $reservation->id)->exists()
+            || $reservation->assigned_room_id !== null;
+    }
+
+    private function transition(Reservation $reservation, ReservationStatusEnum $to): void
+    {
+        if (! $reservation->status->canTransitionTo($to)) {
+            throw ValidationException::withMessages(['status' => ['Reservation status transition is not allowed.']]);
+        }
+    }
+
+    private function audit(string $event, Reservation $reservation, string $actorId, array $values = []): void
+    {
+        AuditLog::record([
+            'property_id' => $reservation->property_id, 'user_id' => $actorId,
+            'event' => $event, 'auditable_type' => Reservation::class,
+            'auditable_id' => $reservation->id, 'new_values' => $values, 'tags' => ['pms-p01'],
+        ]);
     }
 }

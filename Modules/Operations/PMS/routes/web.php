@@ -9,7 +9,7 @@ use Modules\Operations\PMS\Http\Controllers\RatePlanController;
 use Modules\Operations\PMS\Http\Controllers\ReservationController;
 use Modules\Operations\PMS\Http\Controllers\RoomBlockController;
 
-Route::middleware(['web', 'auth'])
+Route::middleware(['web', 'auth', 'active.property'])
     ->prefix('operations/pms')
     ->name('operations.pms.')
     ->group(function () {
@@ -23,6 +23,10 @@ Route::middleware(['web', 'auth'])
 
         // ── Reservations ──────────────────────────────────────────────────────
         Route::resource('reservations', ReservationController::class);
+        Route::post('reservations/{reservation}/guests', [ReservationController::class, 'addGuest'])
+            ->name('reservations.guests.store');
+        Route::delete('reservations/{reservation}/guests/{guest}', [ReservationController::class, 'removeGuest'])
+            ->name('reservations.guests.destroy');
 
         Route::post('reservations/{reservation}/confirm', [ReservationController::class, 'confirm'])
             ->name('reservations.confirm');

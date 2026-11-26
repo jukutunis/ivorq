@@ -15,7 +15,6 @@ use Modules\Operations\PMS\Http\Requests\UpdateRoomBlockRequest;
 use Modules\Operations\PMS\Http\Resources\RoomBlockResource;
 use Modules\Operations\PMS\Models\RoomBlock;
 use Modules\Operations\PMS\Services\RoomBlockService;
-use Shared\Services\CurrentPropertyService;
 
 class RoomBlockController extends Controller
 {
@@ -28,7 +27,7 @@ class RoomBlockController extends Controller
         $this->authorize('viewAny', RoomBlock::class);
 
         $filters = request()->only(['room_id', 'block_type', 'status']);
-        $blocks  = $this->roomBlockService->paginate($filters);
+        $blocks = $this->roomBlockService->paginate($filters);
 
         return Inertia::render('Operations/PMS/RoomBlocks/Index', [
             'room_blocks' => RoomBlockResource::collection($blocks),
@@ -58,12 +57,7 @@ class RoomBlockController extends Controller
 
     public function store(StoreRoomBlockRequest $request): RedirectResponse
     {
-        $data = array_merge($request->validated(), [
-            'property_id' => app(CurrentPropertyService::class)->getId(),
-            'status'      => \Modules\Operations\PMS\Enums\RoomBlockStatusEnum::Active->value,
-        ]);
-
-        $block = $this->roomBlockService->create($data);
+        $block = $this->roomBlockService->create($request->validated());
 
         return redirect()->route('operations.pms.room-blocks.show', $block->id)
             ->with('success', 'Room block created successfully.');
@@ -85,7 +79,7 @@ class RoomBlockController extends Controller
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/PMS/RoomBlocks/Edit', [
-            'room_block'  => new RoomBlockResource($model),
+            'room_block' => new RoomBlockResource($model),
             'block_types' => array_map(
                 fn (RoomBlockTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 RoomBlockTypeEnum::cases()
@@ -121,7 +115,7 @@ class RoomBlockController extends Controller
         $updated = $this->roomBlockService->release($room_block);
 
         return response()->json([
-            'message'    => 'Room block released.',
+            'message' => 'Room block released.',
             'room_block' => new RoomBlockResource($updated),
         ]);
     }

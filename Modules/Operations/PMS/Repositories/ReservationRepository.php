@@ -6,13 +6,17 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Modules\Operations\PMS\Enums\ReservationStatusEnum;
 use Modules\Operations\PMS\Models\Reservation;
+use Modules\Operations\PMS\Repositories\Concerns\ScopedPmsRepository;
 use Shared\Exceptions\NotFoundException;
 
 class ReservationRepository
 {
+    use ScopedPmsRepository;
+
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         $query = Reservation::with(['primaryGuest', 'ratePlan', 'assignedRoom'])
+            ->where('property_id', $this->propertyId())
             ->latest();
 
         if (! empty($filters['status'])) {
@@ -45,9 +49,7 @@ class ReservationRepository
             'guests',
             'ratePlan',
             'assignedRoom',
-            'stays.room',
-            'folios.items',
-        ])->find($id);
+        ])->where('property_id', $this->propertyId())->find($id);
 
         throw_if(! $reservation, new NotFoundException('Reservation'));
 
@@ -56,11 +58,13 @@ class ReservationRepository
 
     public function findOrFail(string $id): Reservation
     {
-        return Reservation::findOrFail($id);
+        return Reservation::where('property_id', $this->propertyId())->findOrFail($id);
     }
 
     public function create(array $data): Reservation
     {
+        abort_unless(($data['property_id'] ?? null) === $this->propertyId(), 403);
+
         return Reservation::create($data)->fresh();
     }
 
@@ -89,7 +93,7 @@ class ReservationRepository
         string $arrivalDate,
         string $departureDate
     ): Collection {
-        return Reservation::where('reserved_room_type', $roomType)
+        return Reservation::where('property_id', $this->propertyId())->where('reserved_room_type', $roomType)
             ->whereIn('status', [
                 ReservationStatusEnum::Tentative->value,
                 ReservationStatusEnum::Confirmed->value,
@@ -102,7 +106,7 @@ class ReservationRepository
 
     public function byStatus(ReservationStatusEnum $status): Collection
     {
-        return Reservation::where('status', $status)
+        return Reservation::where('property_id', $this->propertyId())->where('status', $status)
             ->with(['primaryGuest', 'ratePlan', 'assignedRoom'])
             ->latest()
             ->get();
@@ -110,7 +114,7 @@ class ReservationRepository
 
     public function arrivalsToday(): Collection
     {
-        return Reservation::whereDate('arrival_date', today())
+        return Reservation::where('property_id', $this->propertyId())->whereDate('arrival_date', today())
             ->whereIn('status', [
                 ReservationStatusEnum::Confirmed->value,
                 ReservationStatusEnum::CheckedIn->value,
@@ -122,7 +126,7 @@ class ReservationRepository
 
     public function departuresToday(): Collection
     {
-        return Reservation::whereDate('departure_date', today())
+        return Reservation::where('property_id', $this->propertyId())->whereDate('departure_date', today())
             ->where('status', ReservationStatusEnum::CheckedIn->value)
             ->with(['primaryGuest', 'assignedRoom', 'stays'])
             ->orderBy('departure_date')

@@ -5,13 +5,16 @@ namespace Modules\Operations\PMS\Repositories;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Modules\Operations\PMS\Models\RatePlan;
+use Modules\Operations\PMS\Repositories\Concerns\ScopedPmsRepository;
 use Shared\Exceptions\NotFoundException;
 
 class RatePlanRepository
 {
+    use ScopedPmsRepository;
+
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = RatePlan::latest();
+        $query = RatePlan::where('property_id', $this->propertyId())->latest();
 
         if (isset($filters['is_active'])) {
             $query->where('is_active', $filters['is_active']);
@@ -26,7 +29,7 @@ class RatePlanRepository
 
     public function find(string $id): RatePlan
     {
-        $ratePlan = RatePlan::find($id);
+        $ratePlan = RatePlan::where('property_id', $this->propertyId())->find($id);
 
         throw_if(! $ratePlan, new NotFoundException('RatePlan'));
 
@@ -35,11 +38,13 @@ class RatePlanRepository
 
     public function findOrFail(string $id): RatePlan
     {
-        return RatePlan::findOrFail($id);
+        return RatePlan::where('property_id', $this->propertyId())->findOrFail($id);
     }
 
     public function create(array $data): RatePlan
     {
+        abort_unless(($data['property_id'] ?? null) === $this->propertyId(), 403);
+
         return RatePlan::create($data)->fresh();
     }
 
@@ -58,13 +63,13 @@ class RatePlanRepository
 
     public function active(): Collection
     {
-        return RatePlan::where('is_active', true)
+        return RatePlan::where('property_id', $this->propertyId())->where('is_active', true)
             ->orderBy('rate_code')
             ->get();
     }
 
     public function findByCode(string $code): ?RatePlan
     {
-        return RatePlan::where('rate_code', $code)->first();
+        return RatePlan::where('property_id', $this->propertyId())->where('rate_code', $code)->first();
     }
 }

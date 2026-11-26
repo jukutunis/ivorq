@@ -23,20 +23,21 @@ class UpdateRoomBlockRequest extends FormRequest
         $propertyId = app(CurrentPropertyService::class)->getId();
 
         return [
-            'room_id'    => ['sometimes', 'string', 'size:26',
+            'property_id' => ['prohibited'],
+            'room_id' => ['sometimes', 'string', 'size:26',
                 Rule::exists('rooms', 'id')->where('property_id', $propertyId)->whereNull('deleted_at'),
             ],
             'block_type' => ['sometimes', Rule::enum(RoomBlockTypeEnum::class)],
-            'reason'     => ['nullable', Rule::enum(RoomBlockReasonEnum::class)],
-            'notes'      => ['nullable', 'string'],
-            'start_at'   => ['sometimes', 'date'],
-            'end_at'     => ['nullable', 'date'],
+            'reason' => ['nullable', Rule::enum(RoomBlockReasonEnum::class)],
+            'notes' => ['nullable', 'string'],
+            'start_at' => ['sometimes', 'date'],
+            'end_at' => ['nullable', 'date'],
 
             // Release tracking is server-controlled
             'released_at' => ['prohibited'],
             'released_by' => ['prohibited'],
             // Status transitions use dedicated endpoints
-            'status'      => ['prohibited'],
+            'status' => ['prohibited'],
         ];
     }
 }

@@ -19,21 +19,22 @@ class UpdateGuestRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'full_name'   => ['sometimes', 'string', 'max:255'],
-            'email'       => ['nullable', 'email', 'max:255'],
-            'phone'       => ['nullable', 'string', 'max:50'],
+            'property_id' => ['prohibited'],
+            'full_name' => ['sometimes', 'string', 'max:255'],
+            'email' => ['nullable', 'email', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:50'],
             'nationality' => ['nullable', 'string', 'max:100'],
-            'id_type'     => ['nullable', 'string', 'max:50'],
-            'id_number'   => ['nullable', 'string', 'max:100'],
-            'guest_type'  => ['sometimes', Rule::enum(GuestTypeEnum::class)],
-            'vip_level'   => ['nullable', 'integer', 'min:1', 'max:5'],
-            'notes'       => ['nullable', 'string'],
+            'id_type' => ['nullable', 'string', 'max:50'],
+            'id_number' => ['nullable', 'string', 'max:100'],
+            'guest_type' => ['sometimes', Rule::enum(GuestTypeEnum::class)],
+            'vip_level' => ['nullable', 'integer', 'min:1', 'max:5'],
+            'notes' => ['nullable', 'string'],
 
             // Immutable after creation
-            'guest_code'  => ['prohibited'],
+            'guest_code' => ['prohibited'],
             // Audit columns are server-managed
-            'created_by'  => ['prohibited'],
-            'updated_by'  => ['prohibited'],
+            'created_by' => ['prohibited'],
+            'updated_by' => ['prohibited'],
         ];
     }
 }
