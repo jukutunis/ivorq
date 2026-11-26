@@ -48,6 +48,7 @@ use Modules\Foundation\User\Models\User;
 use Modules\Foundation\User\Models\UserSession;
 use Modules\Foundation\User\Services\ProfileService;
 use Modules\Foundation\User\Services\UserLifecycleService;
+use Modules\Foundation\User\Services\UserService;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
 use Modules\Operations\FrontDesk\Models\FrontDeskStay;
 use Modules\Operations\FrontDesk\Services\FrontDeskCheckoutExecuteAuthorizationService;
@@ -1062,6 +1063,41 @@ class PrivilegedOwnerActivationMfaTest extends PostgresTestCase
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('INSTALLATION_OWNER_REQUIRES_HIGH_ASSURANCE_IDENTITY_GOVERNANCE');
         app(UserLifecycleService::class)->offboard($actor, $owner->id, $property->id);
+    }
+
+    public function test_owner_governance_guard_covers_all_statuses_and_ordinary_mutation_commands(): void
+    {
+        [$invitedActivation, $invitedOwner, , $invitedProperty] = $this->invitedActivation();
+        $actor = UserFactory::new()->withProperty($invitedProperty)->create(['is_active' => true]);
+        $membershipBefore = DB::table('property_user')->where('user_id', $invitedOwner->id)->get()->toArray();
+        $commands = [
+            fn () => app(UserLifecycleService::class)->activate($actor, $invitedOwner->id, $invitedProperty->id),
+            fn () => app(UserLifecycleService::class)->offboard($actor, $invitedOwner->id, $invitedProperty->id),
+            fn () => app(UserLifecycleService::class)->setDefaultProperty($actor, $invitedOwner->id, $invitedProperty->id, $invitedProperty->id),
+            fn () => app(UserLifecycleService::class)->removeMembership($actor, $invitedOwner->id, $invitedProperty->id, null),
+            fn () => app(UserService::class)->updateForProperty($invitedOwner->id, $invitedProperty->id, ['name' => 'forbidden']),
+        ];
+        foreach ($commands as $command) {
+            try {
+                $command();
+                $this->fail('Owner-governed identity mutation was accepted.');
+            } catch (DomainException $exception) {
+                $this->assertSame('INSTALLATION_OWNER_REQUIRES_HIGH_ASSURANCE_IDENTITY_GOVERNANCE', $exception->getMessage());
+            }
+        }
+        $this->assertSame($invitedActivation->status, $invitedActivation->fresh()->status);
+        $this->assertEquals($membershipBefore, DB::table('property_user')->where('user_id', $invitedOwner->id)->get()->toArray());
+
+        [, $activeOwner, , $activeProperty] = $this->activeOwner();
+        $activeActor = UserFactory::new()->withProperty($activeProperty)->create(['is_active' => true]);
+        foreach (['deactivate', 'offboard'] as $command) {
+            try {
+                app(UserLifecycleService::class)->{$command}($activeActor, $activeOwner->id, $activeProperty->id);
+                $this->fail('Active owner mutation was accepted.');
+            } catch (DomainException $exception) {
+                $this->assertSame('INSTALLATION_OWNER_REQUIRES_HIGH_ASSURANCE_IDENTITY_GOVERNANCE', $exception->getMessage());
+            }
+        }
     }
 
     public function test_auth_epoch_change_invalidates_checkout_confirmation_before_consumption(): void

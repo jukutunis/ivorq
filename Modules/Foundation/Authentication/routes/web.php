@@ -45,9 +45,12 @@ Route::middleware(['web', 'throttle:auth'])->group(function () {
         Route::post('/reset-password', [PasswordResetController::class, 'reset'])->name('password.update');
     });
 
-    Route::post('/login/property', [LoginController::class, 'selectProperty'])
-        ->middleware('auth')
-        ->withoutMiddleware([EnsureAuthenticatedSecurity::class, SetPermissionTeamIdMiddleware::class]);
+    Route::middleware('auth')
+        ->withoutMiddleware([EnsureAuthenticatedSecurity::class, SetPermissionTeamIdMiddleware::class])
+        ->group(function () {
+            Route::get('/login/property', [LoginController::class, 'showPropertySelection'])->name('login.property');
+            Route::post('/login/property', [LoginController::class, 'selectProperty']);
+        });
 
     Route::middleware(['auth', 'auth.security'])->group(function () {
         Route::post('/logout', [LogoutController::class, 'logout'])->name('logout');

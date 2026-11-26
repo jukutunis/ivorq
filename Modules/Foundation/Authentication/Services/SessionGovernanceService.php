@@ -100,6 +100,22 @@ class SessionGovernanceService
         $query->update(['last_active_at' => now()]);
     }
 
+    public function currentWebDigest(Request $request): ?string
+    {
+        return $request->hasSession() ? $this->digest($request->session()->getId()) : null;
+    }
+
+    public function revokeCurrentWebEvidence(User $actor, Request $request): bool
+    {
+        $digest = $this->currentWebDigest($request);
+
+        return $digest !== null
+            && UserSession::query()
+                ->where('user_id', $actor->id)
+                ->where('web_session_digest', $digest)
+                ->delete() > 0;
+    }
+
     private function deleteMatchingLaravelSession(User $actor, string $digest): void
     {
         DB::table('sessions')

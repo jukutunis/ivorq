@@ -21,7 +21,8 @@ class UpdateUserRequest extends FormRequest
         return [
             'name' => ['sometimes', 'string', 'max:255'],
             'email' => ['sometimes', 'email', Rule::unique('users', 'email')->ignore($userId)->whereNull('deleted_at')],
-            'password' => ['sometimes', 'string', 'min:8', 'confirmed'],
+            'password' => ['prohibited'],
+            'password_confirmation' => ['prohibited'],
             'phone' => ['nullable', 'string', 'max:50'],
             'department_id' => ['nullable', Rule::exists('departments', 'id')->where('property_id', $propertyId)->whereNull('deleted_at')],
             'position_id' => ['nullable', Rule::exists('positions', 'id')->where('property_id', $propertyId)],

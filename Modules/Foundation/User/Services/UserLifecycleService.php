@@ -4,8 +4,6 @@ namespace Modules\Foundation\User\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
-use Modules\Foundation\Authentication\Enums\OwnerActivationStatus;
-use Modules\Foundation\Authentication\Models\OwnerActivation;
 use Modules\Foundation\Authentication\Services\IdentitySecurityEventService;
 use Modules\Foundation\Authentication\Services\SessionRevocationService;
 use Modules\Foundation\Property\Models\Property;
@@ -17,6 +15,7 @@ class UserLifecycleService
     public function __construct(
         private SessionRevocationService $revocation,
         private IdentitySecurityEventService $events,
+        private UserAdministrationGuard $administrationGuard,
     ) {}
 
     public function deactivate(User $actor, string $targetId, string $propertyId): User
@@ -24,7 +23,7 @@ class UserLifecycleService
         return DB::transaction(function () use ($actor, $targetId, $propertyId): User {
             [$target, $property] = $this->lockScopedTarget($targetId, $propertyId);
             $this->denySelf($actor, $target, 'SELF_DEACTIVATION_NOT_ALLOWED');
-            $this->denyInstallationOwner($target);
+            $this->administrationGuard->assertOrdinaryMutationAllowed($target, $property);
 
             if (! $target->is_active) {
                 return $target;
@@ -42,6 +41,7 @@ class UserLifecycleService
     {
         return DB::transaction(function () use ($actor, $targetId, $propertyId): User {
             [$target, $property] = $this->lockScopedTarget($targetId, $propertyId);
+            $this->administrationGuard->assertOrdinaryMutationAllowed($target, $property);
             if ($target->is_active) {
                 return $target;
             }
@@ -71,12 +71,12 @@ class UserLifecycleService
     {
         return DB::transaction(function () use ($actor, $targetId, $propertyId): User {
             [$target, $property] = $this->lockScopedTarget($targetId, $propertyId, true);
+            $this->administrationGuard->assertOrdinaryMutationAllowed($target, $property);
             if ($target->trashed()) {
                 return $target;
             }
 
             $this->denySelf($actor, $target, 'SELF_OFFBOARDING_NOT_ALLOWED');
-            $this->denyInstallationOwner($target);
             $target->forceFill(['is_active' => false])->save();
             $target = $this->revocation->revokeAll($target, 'USER_OFFBOARDED', $this->context($actor, $target, $property));
 
@@ -97,6 +97,7 @@ class UserLifecycleService
     {
         return DB::transaction(function () use ($actor, $targetId, $propertyId, $replacementPropertyId): User {
             [$target, $property] = $this->lockScopedTarget($targetId, $propertyId);
+            $this->administrationGuard->assertOrdinaryMutationAllowed($target, $property);
             $memberships = DB::table('property_user')
                 ->join('properties', 'properties.id', '=', 'property_user.property_id')
                 ->where('property_user.user_id', $target->id)
@@ -142,6 +143,7 @@ class UserLifecycleService
     {
         return DB::transaction(function () use ($actor, $targetId, $currentPropertyId, $defaultPropertyId): User {
             [$target, $currentProperty] = $this->lockScopedTarget($targetId, $currentPropertyId);
+            $this->administrationGuard->assertOrdinaryMutationAllowed($target, $currentProperty);
             $replacement = Property::query()
                 ->whereKey($defaultPropertyId)
                 ->where('company_id', $currentProperty->company_id)
@@ -198,13 +200,6 @@ class UserLifecycleService
     {
         if ($actor->id === $target->id) {
             throw new DomainException($code);
-        }
-    }
-
-    private function denyInstallationOwner(User $target): void
-    {
-        if (OwnerActivation::query()->where('user_id', $target->id)->where('status', OwnerActivationStatus::Active->value)->exists()) {
-            throw new DomainException('INSTALLATION_OWNER_REQUIRES_HIGH_ASSURANCE_IDENTITY_GOVERNANCE');
         }
     }
 

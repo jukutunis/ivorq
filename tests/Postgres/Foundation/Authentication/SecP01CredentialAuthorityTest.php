@@ -7,6 +7,7 @@ use Database\Factories\PropertyFactory;
 use Database\Factories\UserFactory;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\PersonalAccessToken;
 use Modules\Foundation\Authentication\Services\AuthenticatedSecurityService;
@@ -138,6 +139,121 @@ class SecP01CredentialAuthorityTest extends PostgresTestCase
         $this->user->properties()->updateExistingPivot($this->property->id, ['status' => 'active']);
         $this->company->forceFill(['is_active' => false])->save();
         $this->assertFalse($security->valid($this->user, $request));
+    }
+
+    public function test_multi_property_login_uses_explicit_authenticated_transition_before_credential_establishment(): void
+    {
+        $otherProperty = PropertyFactory::new()->create(['company_id' => $this->company->id]);
+        $this->user->properties()->updateExistingPivot($this->property->id, ['is_default' => false]);
+        $this->user->properties()->attach($otherProperty->id, [
+            'is_default' => false,
+            'status' => 'active',
+            'joined_at' => now(),
+        ]);
+
+        $login = $this->withSession(['login.tenant_id' => $this->company->id])->post('/login', [
+            'email' => $this->user->email,
+            'password' => 'password',
+        ]);
+        $login->assertRedirect(route('login.property'));
+        $this->assertAuthenticatedAs($this->user);
+        $login->assertSessionHas('login.requires_property_selection', true);
+        $login->assertSessionHas('login.pending_auth_epoch', 0);
+        $login->assertSessionMissing('current_property_id');
+        $login->assertSessionMissing('active_property_id');
+        $this->assertDatabaseMissing('user_sessions', ['user_id' => $this->user->id]);
+
+        $sessionCookie = $login->getCookie(config('session.cookie'));
+        $this->assertNotNull($sessionCookie);
+        $this->withCookie(config('session.cookie'), $sessionCookie->getValue());
+
+        $this->get(route('login.property'))->assertOk();
+        $selection = $this->post('/login/property', ['property_id' => $otherProperty->id]);
+        $selection->assertRedirect('/frontdesk');
+        $selection->assertSessionHas('current_property_id', $otherProperty->id);
+        $selection->assertSessionHas('active_property_id', $otherProperty->id);
+        $selection->assertSessionHas('active_company_id', $this->company->id);
+        $selection->assertSessionHas('auth_epoch', 0);
+        $selection->assertSessionMissing('login.requires_property_selection');
+        $selection->assertSessionMissing('login.pending_auth_epoch');
+        $this->assertDatabaseHas('user_sessions', [
+            'user_id' => $this->user->id,
+            'property_id' => $otherProperty->id,
+            'auth_epoch' => 0,
+            'channel' => 'web',
+        ]);
+        $this->get('/profile')->assertOk();
+    }
+
+    public function test_multiple_active_defaults_fail_closed_before_authentication(): void
+    {
+        $otherProperty = PropertyFactory::new()->create(['company_id' => $this->company->id]);
+        $this->user->properties()->attach($otherProperty->id, [
+            'is_default' => true,
+            'status' => 'active',
+            'joined_at' => now(),
+        ]);
+
+        $response = $this->withSession(['login.tenant_id' => $this->company->id])->post('/login', [
+            'email' => $this->user->email,
+            'password' => 'password',
+        ]);
+
+        $response->assertSessionHasErrors('email');
+        $response->assertSessionMissing('current_property_id');
+        $response->assertSessionMissing('active_property_id');
+        $this->assertGuest();
+        $this->assertDatabaseMissing('user_sessions', ['user_id' => $this->user->id]);
+    }
+
+    public function test_web_logout_removes_only_matching_authoritative_session_evidence(): void
+    {
+        $other = UserFactory::new()->withProperty($this->property)->create();
+        $otherEvidence = UserSession::query()->create([
+            'user_id' => $other->id,
+            'property_id' => $this->property->id,
+            'web_session_digest' => hash('sha256', 'other-web-session'),
+            'auth_epoch' => 0,
+            'channel' => 'web',
+        ]);
+        $login = $this->withSession(['login.tenant_id' => $this->company->id])->post('/login', [
+            'email' => $this->user->email,
+            'password' => 'password',
+        ]);
+        $login->assertRedirect('/frontdesk');
+        $sessionCookie = $login->getCookie(config('session.cookie'));
+        $this->assertNotNull($sessionCookie);
+        $this->withCookie(config('session.cookie'), $sessionCookie->getValue());
+        $this->assertDatabaseCount('user_sessions', 2);
+
+        $this->post('/logout')->assertRedirect(route('login'));
+
+        $this->assertGuest();
+        $this->assertDatabaseMissing('user_sessions', ['user_id' => $this->user->id]);
+        $this->assertDatabaseHas('user_sessions', ['id' => $otherEvidence->id]);
+    }
+
+    public function test_password_change_immediately_terminates_current_web_credential(): void
+    {
+        $login = $this->withSession(['login.tenant_id' => $this->company->id])->post('/login', [
+            'email' => $this->user->email,
+            'password' => 'password',
+        ]);
+        $login->assertRedirect('/frontdesk');
+        $sessionCookie = $login->getCookie(config('session.cookie'));
+        $this->assertNotNull($sessionCookie);
+        $this->withCookie(config('session.cookie'), $sessionCookie->getValue());
+
+        $this->put('/profile/password', [
+            'current_password' => 'password',
+            'password' => 'new-secure-password',
+            'password_confirmation' => 'new-secure-password',
+        ])->assertRedirect(route('login'));
+
+        $this->assertGuest();
+        $this->assertTrue(Hash::check('new-secure-password', $this->user->fresh()->password));
+        $this->assertSame(1, $this->user->fresh()->auth_epoch);
+        $this->assertDatabaseMissing('user_sessions', ['user_id' => $this->user->id]);
     }
 
     private function webRequest(): array

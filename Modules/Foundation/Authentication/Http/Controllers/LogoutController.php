@@ -8,11 +8,13 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Modules\Foundation\Authentication\Services\AuthService;
+use Modules\Foundation\Authentication\Services\SessionGovernanceService;
 
 class LogoutController extends Controller
 {
     public function __construct(
-        private AuthService $authService
+        private AuthService $authService,
+        private SessionGovernanceService $sessions,
     ) {}
 
     public function logout(Request $request): JsonResponse|RedirectResponse
@@ -24,8 +26,7 @@ class LogoutController extends Controller
             return response()->json(['message' => 'Logged out successfully.']);
         }
 
-        // Web path: invalidate the session. The user may not have a Sanctum token
-        // (session-only login), so call Auth::logout() rather than revoking a token.
+        $this->sessions->revokeCurrentWebEvidence($request->user(), $request);
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();

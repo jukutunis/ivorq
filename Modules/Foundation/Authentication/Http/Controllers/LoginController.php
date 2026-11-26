@@ -13,48 +13,25 @@ use Inertia\Inertia;
 use Inertia\Response;
 use Modules\Foundation\Authentication\Http\Requests\LoginRequest;
 use Modules\Foundation\Authentication\Services\AuthService;
+use Modules\Foundation\Authentication\Services\SessionGovernanceService;
 use Modules\Foundation\Authentication\Services\TokenService;
 use Modules\Foundation\Property\Models\Company;
 use Modules\Foundation\User\Http\Resources\UserResource;
 use Modules\Foundation\User\Models\User;
+use Modules\Foundation\User\Models\UserSession;
 
 class LoginController extends Controller
 {
     public function __construct(
         private AuthService $authService,
         private TokenService $tokenService,
+        private SessionGovernanceService $sessions,
     ) {}
 
     public function showLoginForm(Request $request): Response
     {
         $tenantId = $request->hasSession() ? $request->session()->get('login.tenant_id') : null;
         $tenantId ??= $request->input('company_id');
-
-        if (Auth::check() && $request->session()->has('login.requires_property_selection')) {
-            $user = Auth::user();
-            $eligibleProperties = $user->properties()
-                ->where('company_id', $tenantId)
-                ->where('properties.is_active', true)
-                ->wherePivot('status', 'active')
-                ->get()
-                ->map(function ($p) {
-                    return [
-                        'id' => $p->id,
-                        'name' => $p->name,
-                        'code' => $p->code,
-                    ];
-                });
-
-            return Inertia::render('Foundation/Auth/Login', [
-                'step' => 'property',
-                'tenant' => [
-                    'id' => $tenantId,
-                    'name' => $request->session()->get('login.tenant_name'),
-                    'logo' => $request->session()->get('login.tenant_logo'),
-                ],
-                'properties' => $eligibleProperties,
-            ]);
-        }
 
         return Inertia::render('Foundation/Auth/Login', [
             'step' => $tenantId ? 'credentials' : 'cloud_name',
@@ -139,8 +116,15 @@ class LoginController extends Controller
             ]);
         }
 
+        $defaultProperties = $eligibleProperties->filter(fn ($property) => (bool) $property->pivot->is_default);
+        if ($defaultProperties->count() > 1) {
+            throw ValidationException::withMessages([
+                'email' => ['MULTIPLE_DEFAULT_PROPERTIES_REQUIRE_ADMINISTRATIVE_RESOLUTION'],
+            ]);
+        }
+
         if ($request->wantsJson()) {
-            $property = $eligibleProperties->firstWhere('pivot.is_default', true) ?? ($eligibleProperties->count() === 1 ? $eligibleProperties->first() : null);
+            $property = $defaultProperties->first() ?? ($eligibleProperties->count() === 1 ? $eligibleProperties->first() : null);
             if (! $property) {
                 throw ValidationException::withMessages(['email' => ['An explicit default property is required.']]);
             }
@@ -163,7 +147,7 @@ class LoginController extends Controller
             return redirect()->intended('/frontdesk');
         }
 
-        $defaultProperty = $eligibleProperties->firstWhere('pivot.is_default', true);
+        $defaultProperty = $defaultProperties->first();
         if ($defaultProperty) {
             $this->establishWebSecurityContext($request, $user, $defaultProperty->id, $defaultProperty->company_id);
             $this->tokenService->recordWebSession($user, $defaultProperty->id, $request->session()->getId());
@@ -172,25 +156,45 @@ class LoginController extends Controller
         }
 
         $request->session()->put('login.requires_property_selection', true);
-
-        // Re-store tenant context in the new session so the UI can still show it
         $request->session()->put('login.tenant_id', $tenantId);
-        $request->session()->put('login.tenant_name', $request->session()->get('login.tenant_name'));
-        $request->session()->put('login.tenant_logo', $request->session()->get('login.tenant_logo'));
+        $request->session()->put('login.pending_auth_epoch', $user->auth_epoch);
 
-        return redirect()->route('login');
+        return redirect()->route('login.property');
+    }
+
+    public function showPropertySelection(Request $request): Response|RedirectResponse
+    {
+        $context = $this->pendingPropertySelectionContext($request);
+        if ($context === null) {
+            return $this->rejectPendingPropertySelection($request);
+        }
+
+        return Inertia::render('Foundation/Auth/Login', [
+            'step' => 'property',
+            'tenant' => [
+                'id' => $context['company']->id,
+                'name' => $context['company']->name,
+                'logo' => $context['company']->logo,
+            ],
+            'properties' => $context['properties']->map(fn ($property): array => [
+                'id' => $property->id,
+                'name' => $property->name,
+                'code' => $property->code,
+            ]),
+        ]);
     }
 
     public function selectProperty(Request $request): RedirectResponse
     {
         $request->validate(['property_id' => 'required|string']);
 
-        if (! Auth::check() || ! $request->session()->has('login.requires_property_selection')) {
-            return redirect()->route('login');
+        $context = $this->pendingPropertySelectionContext($request);
+        if ($context === null) {
+            return $this->rejectPendingPropertySelection($request);
         }
 
-        $tenantId = $request->session()->get('login.tenant_id');
-        $user = Auth::user();
+        $tenantId = $context['company']->id;
+        $user = $context['user'];
 
         $selected = $user->properties()
             ->where('properties.id', $request->property_id)
@@ -206,7 +210,13 @@ class LoginController extends Controller
         $this->establishWebSecurityContext($request, $user, $selected->id, $selected->company_id);
         $this->tokenService->recordWebSession($user, $selected->id, $request->session()->getId());
 
-        $request->session()->forget(['login.requires_property_selection']);
+        $request->session()->forget([
+            'login.requires_property_selection',
+            'login.pending_auth_epoch',
+            'login.tenant_id',
+            'login.tenant_name',
+            'login.tenant_logo',
+        ]);
 
         return redirect()->intended('/frontdesk');
     }
@@ -219,5 +229,45 @@ class LoginController extends Controller
             'active_company_id' => $companyId,
             'auth_epoch' => $user->auth_epoch,
         ]);
+    }
+
+    private function pendingPropertySelectionContext(Request $request): ?array
+    {
+        $user = Auth::user() instanceof User ? User::query()->find(Auth::id()) : null;
+        $tenantId = $request->session()->get('login.tenant_id');
+        $digest = $this->sessions->currentWebDigest($request);
+        if (! $user || ! $user->is_active
+            || $request->session()->get('login.requires_property_selection') !== true
+            || ! is_string($tenantId)
+            || (int) $request->session()->get('login.pending_auth_epoch', -1) !== (int) $user->auth_epoch
+            || $request->session()->has('current_property_id')
+            || $request->session()->has('active_property_id')
+            || $request->session()->has('active_company_id')
+            || ($digest !== null && UserSession::query()->where('user_id', $user->id)->where('web_session_digest', $digest)->exists())) {
+            return null;
+        }
+
+        $company = Company::query()->whereKey($tenantId)->where('is_active', true)->whereNull('deleted_at')->first();
+        if (! $company) {
+            return null;
+        }
+
+        $properties = $user->properties()
+            ->where('company_id', $company->id)
+            ->where('properties.is_active', true)
+            ->whereNull('properties.deleted_at')
+            ->wherePivot('status', 'active')
+            ->get();
+
+        return $properties->isEmpty() ? null : compact('user', 'company', 'properties');
+    }
+
+    private function rejectPendingPropertySelection(Request $request): RedirectResponse
+    {
+        Auth::logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return redirect()->route('login');
     }
 }
