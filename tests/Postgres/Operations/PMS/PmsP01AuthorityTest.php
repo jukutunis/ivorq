@@ -16,6 +16,7 @@ use Modules\Operations\PMS\Models\Reservation;
 use Modules\Operations\PMS\Services\AvailabilityService;
 use Modules\Operations\PMS\Services\FolioService;
 use Modules\Operations\PMS\Services\FrontDeskService;
+use Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService;
 use Modules\Operations\PMS\Services\GuestService;
 use Modules\Operations\PMS\Services\RatePlanService;
 use Modules\Operations\PMS\Services\ReservationService;
@@ -455,5 +456,91 @@ class PmsP01AuthorityTest extends PostgresTestCase
         } catch (ValidationException) {
             $this->assertTrue(true);
         }
+    }
+
+    public function test_r2_historical_guest_relationship_conflicts_fail_closed_with_legacy_pivots_preserved(): void
+    {
+        [$property, $actor, $primary] = $this->fixture();
+        $foreign = $this->makePmsGuest($this->createProperty($this->createCompany()));
+        $local = $this->makePmsGuest($property);
+        $service = app(ReservationService::class);
+
+        $legacy = $this->makePmsReservation($property, $primary);
+        $this->assertSame('legacy', $service->update($legacy->id, ['remarks' => 'legacy'])->remarks);
+        app(GuestService::class)->addAccompanyingGuest($legacy->id, $local->id);
+        $this->assertSame('still valid', $service->update($legacy->id, ['remarks' => 'still valid'])->remarks);
+
+        $foreignPivot = $this->makePmsReservation($property, $primary);
+        $this->insertR2Pivot($property->id, $foreignPivot->id, $foreign->id, false);
+        $this->assertDenied(fn () => $service->update($foreignPivot->id, ['remarks' => 'bad']), 409);
+        $this->assertDenied(fn () => app(GuestService::class)
+            ->addAccompanyingGuest($foreignPivot->id, $local->id), 409);
+        $this->assertDenied(fn () => app(GuestLedgerFolioAggregateService::class)
+            ->openWindow($actor, $foreignPivot->id, 'r2-foreign-pivot'), 409);
+        $this->assertSame(0, DB::table('folios')->where('reservation_id', $foreignPivot->id)->count());
+
+        $deletedPivot = $this->makePmsReservation($property, $primary);
+        $deleted = $this->makePmsGuest($property);
+        $this->insertR2Pivot($property->id, $deletedPivot->id, $deleted->id, false);
+        DB::table('guests')->where('id', $deleted->id)->update(['deleted_at' => now()]);
+        $this->assertDenied(fn () => $service->update($deletedPivot->id, ['remarks' => 'bad']), 409);
+
+        $multiple = $this->makePmsReservation($property, $primary);
+        $this->insertR2Pivot($property->id, $multiple->id, $primary->id, true);
+        $this->insertR2Pivot($property->id, $multiple->id, $local->id, true);
+        $this->assertDenied(fn () => $service->update($multiple->id, ['remarks' => 'bad']), 409);
+
+        $contradictory = $this->makePmsReservation($property, $primary);
+        $this->insertR2Pivot($property->id, $contradictory->id, $local->id, true);
+        $this->assertDenied(fn () => $service->update($contradictory->id, ['remarks' => 'bad']), 409);
+
+        $foreignPrimary = $this->makePmsReservation($property, $primary);
+        DB::table('reservations')->where('id', $foreignPrimary->id)
+            ->update(['primary_guest_id' => $foreign->id]);
+        $this->assertDenied(fn () => $service->update($foreignPrimary->id, ['remarks' => 'bad']), 409);
+        foreach ([$foreignPivot, $deletedPivot, $multiple, $contradictory, $foreignPrimary] as $blocked) {
+            $this->assertNull($blocked->fresh()->remarks);
+            $this->assertSame(0, AuditLog::where('auditable_id', $blocked->id)
+                ->where('event', 'pms_reservation_amended')->count());
+        }
+    }
+
+    public function test_r2_room_block_merged_window_and_rate_plan_reference_remain_atomic(): void
+    {
+        [$property, , $guest] = $this->fixture();
+        $room = $this->makePmsRoom($property);
+        $blocks = app(RoomBlockService::class);
+        $first = $blocks->create(['room_id' => $room->id, 'block_type' => 'out_of_order',
+            'start_at' => '2026-12-10 10:00:00', 'end_at' => '2026-12-11 10:00:00']);
+        $second = $blocks->create(['room_id' => $room->id, 'block_type' => 'out_of_order',
+            'start_at' => '2026-12-12 10:00:00', 'end_at' => '2026-12-13 10:00:00']);
+        $this->expectInvalidDirectInput(fn () => $blocks->update($first->id, ['end_at' => '2026-12-12 11:00:00']));
+        $this->assertSame('2026-12-11 10:00:00', $first->fresh()->end_at->toDateTimeString());
+        $this->assertSame('released', $blocks->release($second->id)->status->value);
+        $this->assertSame('expired', $blocks->expire($first->id)->status->value);
+        $this->expectInvalidDirectInput(fn () => $blocks->release($first->id));
+
+        $rate = $this->makePmsRatePlan($property);
+        $reservation = app(ReservationService::class)->create($this->input($guest->id)
+            + ['rate_plan_id' => $rate->id]);
+        $this->expectInvalidDirectInput(fn () => app(RatePlanService::class)->delete($rate->id));
+        $this->assertNull($rate->fresh()->deleted_at);
+        $this->assertSame($rate->id, $reservation->fresh()->rate_plan_id);
+        $historicalRate = $this->makePmsRatePlan($property);
+        $historical = $this->makePmsReservation($property, $guest,
+            ['rate_plan_id' => $historicalRate->id]);
+        $historical->delete();
+        $this->expectInvalidDirectInput(fn () => app(RatePlanService::class)->delete($historicalRate->id));
+        $unused = $this->makePmsRatePlan($property);
+        $this->assertTrue(app(RatePlanService::class)->delete($unused->id));
+    }
+
+    private function insertR2Pivot(string $propertyId, string $reservationId, string $guestId, bool $primary): void
+    {
+        DB::table('reservation_guests')->insert([
+            'id' => (string) Str::ulid(), 'property_id' => $propertyId,
+            'reservation_id' => $reservationId, 'guest_id' => $guestId,
+            'is_primary' => $primary, 'created_at' => now(), 'updated_at' => now(),
+        ]);
     }
 }

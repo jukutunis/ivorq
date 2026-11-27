@@ -25,6 +25,7 @@ class ReservationService
         private PmsPropertyAuthority $authority,
         private AvailabilityService $availabilityService,
         private ReservationMutationEvidence $mutationEvidence,
+        private ReservationGuestRelationshipIntegrity $guestIntegrity,
         private PmsServiceInput $input,
     ) {}
 
@@ -268,14 +269,18 @@ class ReservationService
             throw ValidationException::withMessages(['primary_guest_id' => ['Invalid guest.']]);
         }
         if (isset($data['rate_plan_id']) && ! RatePlan::query()->where('property_id', $propertyId)
-            ->whereKey($data['rate_plan_id'])->exists()) {
+            ->whereKey($data['rate_plan_id'])->lockForUpdate()->first()) {
             throw ValidationException::withMessages(['rate_plan_id' => ['Invalid rate plan.']]);
         }
     }
 
     private function locked(string $id, string $propertyId): Reservation
     {
-        return Reservation::query()->where('property_id', $propertyId)->lockForUpdate()->findOrFail($id);
+        $reservation = Reservation::query()->where('property_id', $propertyId)
+            ->lockForUpdate()->findOrFail($id);
+        $this->guestIntegrity->assertConsistent($propertyId, $reservation->id, $reservation->primary_guest_id);
+
+        return $reservation;
     }
 
     private function syncPrimaryGuest(Reservation $reservation, string $guestId, ?string $previousPrimary = null): void

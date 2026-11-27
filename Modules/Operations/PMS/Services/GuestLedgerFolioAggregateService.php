@@ -14,7 +14,6 @@ use Modules\Operations\PMS\Events\FolioItemPosted;
 use Modules\Operations\PMS\Events\FolioItemVoided;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
-use Modules\Operations\PMS\Models\Guest;
 use Modules\Operations\PMS\Models\Reservation;
 use Modules\Operations\PMS\Repositories\FolioItemRepository;
 use Modules\Operations\PMS\Repositories\FolioRepository;
@@ -43,6 +42,7 @@ class GuestLedgerFolioAggregateService
         private FolioItemRepository         $folioItemRepository,
         private CurrentPropertyService      $currentProperty,
         private GuestLedgerFolioTotalsCalculator $calculator,
+        private ReservationGuestRelationshipIntegrity $guestIntegrity,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────
@@ -539,15 +539,9 @@ class GuestLedgerFolioAggregateService
             ]);
         }
 
-        $guest = Guest::withoutGlobalScope('property')->whereKey($reservation->primary_guest_id)
-            ->where('property_id', $propertyId)->lockForUpdate()->first();
-        if (! $guest) {
-            throw ValidationException::withMessages([
-                'reservation' => ['Reservation primary guest is unavailable.'],
-            ]);
-        }
+        $this->guestIntegrity->assertConsistent($propertyId, $reservation->id, $reservation->primary_guest_id);
 
-        return $guest->id;
+        return $reservation->primary_guest_id;
     }
 
     private function resolveItemType(mixed $itemType): FolioItemTypeEnum

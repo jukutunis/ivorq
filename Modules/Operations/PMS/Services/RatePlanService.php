@@ -4,6 +4,7 @@ namespace Modules\Operations\PMS\Services;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Operations\PMS\Models\RatePlan;
 
@@ -34,30 +35,50 @@ class RatePlanService
     public function create(array $data): RatePlan
     {
         [, $propertyId] = $this->authority->require('pms.rate-plan.manage');
-        $data = $this->input->ratePlan($this->allowed($data), true, $propertyId);
-        foreach (['currency', 'is_active'] as $field) {
-            if (array_key_exists($field, $data) && $data[$field] === null) {
-                unset($data[$field]);
-            }
-        }
+        $data = $this->allowed($data);
 
-        return RatePlan::create($data + ['property_id' => $propertyId])->fresh();
+        return DB::transaction(function () use ($propertyId, $data): RatePlan {
+            $this->lockProperty($propertyId);
+            $data = $this->input->ratePlan($data, true, $propertyId);
+            foreach (['currency', 'is_active'] as $field) {
+                if (array_key_exists($field, $data) && $data[$field] === null) {
+                    unset($data[$field]);
+                }
+            }
+
+            return RatePlan::create($data + ['property_id' => $propertyId])->fresh();
+        });
     }
 
     public function update(string $id, array $data): RatePlan
     {
         [, $propertyId] = $this->authority->require('pms.rate-plan.manage');
-        $model = RatePlan::query()->where('property_id', $propertyId)->findOrFail($id);
-        $model->update($this->input->ratePlan($this->allowed($data), false, $propertyId, $model->id));
+        $data = $this->allowed($data);
 
-        return $model->fresh();
+        return DB::transaction(function () use ($id, $propertyId, $data): RatePlan {
+            $this->lockProperty($propertyId);
+            $model = RatePlan::query()->where('property_id', $propertyId)->lockForUpdate()->findOrFail($id);
+            $model->update($this->input->ratePlan($data, false, $propertyId, $model->id));
+
+            return $model->fresh();
+        });
     }
 
     public function delete(string $id): bool
     {
         [, $propertyId] = $this->authority->require('pms.rate-plan.manage');
 
-        return RatePlan::query()->where('property_id', $propertyId)->findOrFail($id)->delete();
+        return DB::transaction(function () use ($id, $propertyId): bool {
+            $this->lockProperty($propertyId);
+            $model = RatePlan::query()->where('property_id', $propertyId)->lockForUpdate()->findOrFail($id);
+            if (DB::table('reservations')->where('rate_plan_id', $id)->exists()) {
+                throw ValidationException::withMessages([
+                    'rate_plan_id' => ['A rate plan referenced by a reservation cannot be deleted.'],
+                ]);
+            }
+
+            return $model->delete();
+        });
     }
 
     public function active(): Collection
@@ -81,5 +102,10 @@ class RatePlanService
         }
 
         return $data;
+    }
+
+    private function lockProperty(string $propertyId): void
+    {
+        abort_unless(DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first(), 403);
     }
 }

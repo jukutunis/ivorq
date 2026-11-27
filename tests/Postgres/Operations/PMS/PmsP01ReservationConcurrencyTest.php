@@ -130,6 +130,59 @@ class PmsP01ReservationConcurrencyTest extends PostgresTestCase
         }
     }
 
+    public function test_r2_room_block_and_rate_plan_commands_serialize_across_postgres_sessions(): void
+    {
+        $base = config('database.connections.pgsql');
+        $database = 'ivorq_pms_p01_r2_'.strtolower(Str::random(10));
+        $admin = new \PDO('pgsql:host='.$base['host'].';port='.$base['port'].';dbname=postgres',
+            $base['username'], $base['password'], [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+        $dir = sys_get_temp_dir().DIRECTORY_SEPARATOR.$database;
+        mkdir($dir, 0700, true);
+        $admin->exec('CREATE DATABASE "'.$database.'"');
+
+        try {
+            config()->set('database.connections.pgsql.database', $database);
+            DB::purge('pgsql');
+            $this->assertSame(0, Artisan::call('migrate', ['--force' => true, '--no-interaction' => true]));
+            $property = $this->createProperty($this->createCompany());
+            $actor = $this->createPropertyAdmin($property);
+            $room = $this->makePmsRoom($property);
+            $guest = $this->makePmsGuest($property);
+            $rate = $this->makePmsRatePlan($property);
+            $common = ['property_id' => $property->id, 'actor_id' => $actor->id];
+
+            $blocks = $this->raceR1($database, $dir, 'r2-block',
+                ['action' => 'room_block_create', 'room_id' => $room->id] + $common,
+                ['action' => 'room_block_create', 'room_id' => $room->id] + $common);
+            $this->assertSame(1, (int) $blocks[0]['ok'] + (int) $blocks[1]['ok']);
+            $this->assertStringContainsString('ValidationException',
+                $blocks[0]['ok'] ? $blocks[1]['error'] : $blocks[0]['error']);
+            $this->assertSame(1, DB::table('room_blocks')->where('property_id', $property->id)
+                ->where('room_id', $room->id)->where('status', 'active')->count());
+
+            $rateRace = $this->raceR1($database, $dir, 'r2-rate',
+                ['action' => 'rate_plan_delete', 'rate_plan_id' => $rate->id] + $common,
+                ['action' => 'create', 'guest_id' => $guest->id,
+                    'rate_plan_id' => $rate->id] + $common);
+            $this->assertSame(1, (int) $rateRace[0]['ok'] + (int) $rateRace[1]['ok']);
+            $this->assertStringContainsString('ValidationException',
+                $rateRace[0]['ok'] ? $rateRace[1]['error'] : $rateRace[0]['error']);
+            $this->assertSame($rateRace[1]['ok'], DB::table('reservations')
+                ->where('rate_plan_id', $rate->id)->exists());
+            $this->assertSame($rateRace[1]['ok'], DB::table('rate_plans')
+                ->where('id', $rate->id)->whereNull('deleted_at')->exists());
+        } finally {
+            app(CurrentPropertyService::class)->clear();
+            DB::purge('pgsql');
+            config()->set('database.connections.pgsql.database', $base['database']);
+            $admin->exec('DROP DATABASE IF EXISTS "'.$database.'" WITH (FORCE)');
+            foreach (glob($dir.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
+                unlink($file);
+            }
+            rmdir($dir);
+        }
+    }
+
     public function test_concurrent_create_allocates_distinct_numbers_and_complete_evidence(): void
     {
         $base = config('database.connections.pgsql');

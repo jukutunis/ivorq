@@ -58,6 +58,19 @@ Reviewed implementation parent: `0ac6c9269c49366be065537d75c445b15a22c313` (tree
 
 R1 focused PostgreSQL evidence: PMS authority and isolated concurrency classes **14 tests / 152 assertions passed**; Guest Ledger Folio aggregate **41 / 89 passed**; new payment/deposit terminal replay checks **2 / 4 passed**. Total: **57 tests / 245 assertions passed**. The earlier accepted Front Desk and Guest Ledger **47 / 104**, Package 9 **2 / 25**, syntax, frontend, and scoped secret evidence remain reused from the original PMS-P01 review; no broad regression or frontend build was repeated for R1. Changed PHP syntax and `git diff --check` passed. No schema migration, historical data repair, dependency, seeder, permission or frontend change was needed.
 
+## PMS-P01 R2 residual integrity correction
+
+Reviewed R1 parent: `b2cb49d1ebad72e7dc4d6d4a780f6395a242e801` (tree `e0e6165460d69d1f83f7c324ea6f1612b02d3dca`). Draft PR #102 remains the review vehicle. No accepted R1 behavior or separate package was reopened.
+
+| Finding | Correction |
+| --- | --- |
+| R2-01 historical guest relationship integrity | `ReservationGuestRelationshipIntegrity` is shared by reservation mutations, guest link/unlink commands, and new Guest Ledger Folio windows. Under Property and Reservation locks it locks all retained pivot rows, checks their Property, resolves every referenced Guest, rejects missing, soft-deleted, or foreign-Property guests, and rejects multiple or contradictory primary pivots. The reservation's primary Guest must itself be live and belong to the Property. Legacy reservations with no primary pivot, including those with accompanying pivots, remain operable when the stored primary identity is valid. No historical rows are repaired or removed. Guest deletion also sees retained reservation and pivot references even if their Property field is malformed. |
+| R2-02 atomic compatibility command validation | Room Block create, amendment, release, expiry, and overdue expiry now serialize on the Property row. Create and amendment validate inside the transaction; amendment locks the target and validates the fully merged window and room after the lock. Overlap is checked after serialization and before write. Rate Plan create, amendment, and soft-delete use the same Property lock; reservation reference validation locks the active Rate Plan. Soft-delete refuses any retained reservation reference, including a soft-deleted reservation, so competing creation and deletion cannot commit a dangling reference. No pricing, guarantee, or overbooking policy was added. |
+
+Focused PostgreSQL evidence: the three new R2 tests initially passed with **43 assertions**, including independent PHP/PostgreSQL sessions for two competing Room Block creates and Rate Plan delete versus reservation create. The affected authority, concurrency, and Guest Ledger Folio aggregate classes were run together: **58 tests, 57 passed, 279 assertions**, with one existing foreign-Room denial precedence test exposing a validation-order regression. The denial order was restored under the Property lock; that test and all three R2 tests were rerun and passed: **4 tests, 52 assertions**. A direct malformed-pivot Folio opening assertion was then added; its targeted historical-relationship test passed **1 test, 20 assertions**. The remaining tests from the combined run had already passed and were not repeated. This is targeted proof, not a claim of a fresh full-suite green run. No broad regression or frontend build was run.
+
+No migration, dependency, permission, seeder, frontend, or historical data change was required. Production/live writes remained 0/0.
+
 ## Deferred boundaries
 
 - PMS-P02: rate commitments, pricing, guarantee and cancellation policy, overbooking tolerance, waitlist conversion, and financial effects of stay-date changes. The existing source-supported room-type availability rule is the only confirmation inventory rule in PMS-P01.

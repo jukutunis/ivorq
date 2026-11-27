@@ -16,7 +16,7 @@ class GuestService
     private const WRITABLE = ['full_name', 'email', 'phone', 'nationality',
         'id_type', 'id_number', 'guest_type', 'vip_level', 'notes'];
 
-    public function __construct(private PmsPropertyAuthority $authority, private ReservationMutationEvidence $mutationEvidence, private PmsServiceInput $input) {}
+    public function __construct(private PmsPropertyAuthority $authority, private ReservationMutationEvidence $mutationEvidence, private ReservationGuestRelationshipIntegrity $guestIntegrity, private PmsServiceInput $input) {}
 
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
@@ -86,8 +86,8 @@ class GuestService
         return DB::transaction(function () use ($id, $actor, $propertyId) {
             DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first();
             $guest = Guest::query()->where('property_id', $propertyId)->lockForUpdate()->findOrFail($id);
-            $hasHistory = DB::table('reservations')->where('property_id', $propertyId)->where('primary_guest_id', $id)->exists()
-                || DB::table('reservation_guests')->where('property_id', $propertyId)->where('guest_id', $id)->exists()
+            $hasHistory = DB::table('reservations')->where('primary_guest_id', $id)->exists()
+                || DB::table('reservation_guests')->where('guest_id', $id)->exists()
                 || DB::table('stays')->where('property_id', $propertyId)->where('guest_id', $id)->exists()
                 || DB::table('front_desk_stays')->where('property_id', $propertyId)->where('guest_id', $id)->exists()
                 || DB::table('folios')->where('property_id', $propertyId)->where('guest_id', $id)->exists()
@@ -110,7 +110,7 @@ class GuestService
             $reservation = DB::table('reservations')->where('property_id', $propertyId)
                 ->where('id', $reservationId)->whereNull('deleted_at')->lockForUpdate()->first();
             abort_unless($reservation, 404);
-            $this->assertPivotProperty($reservationId, $propertyId);
+            $this->guestIntegrity->assertConsistent($propertyId, $reservationId, $reservation->primary_guest_id);
             abort_if($reservation->primary_guest_id === $guestId, 409, 'Primary guest is already linked.');
             abort_unless(Guest::query()->where('property_id', $propertyId)->whereKey($guestId)->lockForUpdate()->first(), 422);
             $this->assertRelationshipMutable($reservation, $propertyId);
@@ -135,7 +135,7 @@ class GuestService
             $reservation = DB::table('reservations')->where('property_id', $propertyId)
                 ->where('id', $reservationId)->whereNull('deleted_at')->lockForUpdate()->first();
             abort_unless($reservation, 404);
-            $this->assertPivotProperty($reservationId, $propertyId);
+            $this->guestIntegrity->assertConsistent($propertyId, $reservationId, $reservation->primary_guest_id);
             abort_if($reservation->primary_guest_id === $guestId, 409);
             abort_unless(Guest::query()->where('property_id', $propertyId)->whereKey($guestId)->lockForUpdate()->first(), 422);
             $this->assertRelationshipMutable($reservation, $propertyId);
@@ -177,13 +177,6 @@ class GuestService
         abort_unless(in_array($reservation->status, ['tentative', 'confirmed', 'waitlisted'], true), 409);
         abort_if($this->mutationEvidence->exists($propertyId, $reservation->id), 409,
             'Operational or financial evidence prevents guest relationship changes.');
-    }
-
-    private function assertPivotProperty(string $reservationId, string $propertyId): void
-    {
-        abort_if(DB::table('reservation_guests')->where('reservation_id', $reservationId)
-            ->where('property_id', '!=', $propertyId)->exists(), 409,
-            'Reservation guest relationship has an invalid Property.');
     }
 
     private function audit(string $event, Guest $guest, string $actorId, array $values = []): void
