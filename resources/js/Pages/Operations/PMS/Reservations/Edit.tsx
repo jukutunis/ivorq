@@ -18,7 +18,6 @@ export default function ReservationEdit({ reservation, room_types, sources }: Pr
         children:            String(reservation.children),
         reservation_source:  String(reservation.reservation_source.value),
         reserved_room_type:  String(reservation.reserved_room_type.value),
-        assigned_room_id:    reservation.assigned_room_id ?? '',
         remarks:             reservation.remarks ?? '',
     });
 
@@ -48,7 +47,7 @@ export default function ReservationEdit({ reservation, room_types, sources }: Pr
                         <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        To change reservation status, use the Front Desk actions on the reservation detail page.
+                        Reservation status changes use the supported actions on the detail page. Room assignment and stay operations use the controlled Front Desk workspace.
                     </div>
 
                     <div>
@@ -166,17 +165,6 @@ export default function ReservationEdit({ reservation, room_types, sources }: Pr
                             {errors.rate_plan_id && <p className="text-red-600 text-xs mt-1">{errors.rate_plan_id}</p>}
                         </div>
 
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Assigned Room ID</label>
-                            <input
-                                type="text"
-                                value={data.assigned_room_id}
-                                onChange={(e) => setData('assigned_room_id', e.target.value)}
-                                placeholder="Room ULID (optional)"
-                                className="border border-gray-300 rounded px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            />
-                            {errors.assigned_room_id && <p className="text-red-600 text-xs mt-1">{errors.assigned_room_id}</p>}
-                        </div>
                     </div>
 
                     <div>

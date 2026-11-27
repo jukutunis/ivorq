@@ -1,394 +1,149 @@
 import AppLayout from '@/Layouts/AppLayout';
 import { Link, router } from '@inertiajs/react';
-import { Reservation, Stay, Folio, EnumOption } from '@/Types';
+import { Reservation } from '@/Types';
 import { useState } from 'react';
-import axios from 'axios';
+
+interface Capabilities {
+    can_edit: boolean;
+    can_confirm: boolean;
+    can_cancel: boolean;
+    can_no_show: boolean;
+    can_manage_guests: boolean;
+    has_operational_evidence: boolean;
+}
 
 interface Props {
     reservation: Reservation;
+    capabilities: Capabilities;
+    guest_options: { id: string; name: string; code: string }[];
+    guest_search: string;
 }
 
-function statusBadge(status: EnumOption) {
-    const classes: Record<string, string> = {
-        tentative:   'bg-gray-100 text-gray-600',
-        confirmed:   'bg-blue-100 text-blue-700',
-        waitlisted:  'bg-yellow-100 text-yellow-700',
-        checked_in:  'bg-green-100 text-green-700',
-        checked_out: 'bg-purple-100 text-purple-700',
-        cancelled:   'bg-red-100 text-red-700',
-        no_show:     'bg-orange-100 text-orange-700',
-    };
-    const cls = classes[String(status.value)] ?? 'bg-gray-100 text-gray-700';
-    return (
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${cls}`}>
-            {status.label}
-        </span>
-    );
-}
+export default function ReservationShow({ reservation, capabilities, guest_options, guest_search }: Props) {
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+    const [reason, setReason] = useState('');
+    const [guestId, setGuestId] = useState('');
+    const [guestSearch, setGuestSearch] = useState(guest_search);
 
-function folioStatusBadge(status: EnumOption) {
-    const classes: Record<string, string> = {
-        open:   'bg-green-100 text-green-700',
-        closed: 'bg-gray-100 text-gray-600',
-        void:   'bg-red-100 text-red-700',
-    };
-    const cls = classes[String(status.value)] ?? 'bg-gray-100 text-gray-700';
-    return (
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${cls}`}>
-            {status.label}
-        </span>
-    );
-}
-
-export default function ReservationShow({ reservation }: Props) {
-    const [loading, setLoading]           = useState(false);
-    const [showAssignRoom, setShowAssignRoom] = useState(false);
-    const [roomId, setRoomId]             = useState('');
-    const [cancelReason, setCancelReason] = useState('');
-    const [showCancel, setShowCancel]     = useState(false);
-
-    const statusVal = String(reservation.status.value);
-    const stays     = reservation.stays ?? [];
-    const folios    = reservation.folios ?? [];
-    const activeStay = stays.find((s) => String(s.status.value) === 'checked_in') ?? null;
-
-    function doAction(url: string, payload: Record<string, unknown> = {}) {
-        if (loading) return;
-        setLoading(true);
-        axios
-            .post(url, payload)
-            .then(() => router.reload())
-            .finally(() => setLoading(false));
+    function command(action: 'confirm' | 'cancel' | 'no-show') {
+        if (busy) return;
+        setBusy(true);
+        setError('');
+        router.post(`/operations/pms/reservations/${reservation.id}/${action}`,
+            action === 'cancel' ? { reason } : {}, {
+                preserveScroll: true,
+                onError: () => setError('The reservation was not changed. Refresh and review its current eligibility.'),
+                onFinish: () => setBusy(false),
+            });
     }
 
-    function confirm_action(action: () => void, message: string) {
-        if (confirm(message)) action();
+    function addGuest() {
+        if (!guestId || busy) return;
+        setBusy(true);
+        router.post(`/operations/pms/reservations/${reservation.id}/guests`, { guest_id: guestId }, {
+            onError: () => setError('The guest could not be linked. Review the Property and reservation state.'),
+            onFinish: () => setBusy(false),
+        });
     }
+
+    const accompanying = (reservation.guests ?? []).filter((guest) => guest.id !== reservation.primary_guest_id);
+    const availableGuests = guest_options.filter((guest) =>
+        guest.id !== reservation.primary_guest_id && !accompanying.some((linked) => linked.id === guest.id));
 
     return (
         <AppLayout>
-            <div className="flex items-center gap-3 mb-6">
-                <Link href="/operations/pms/reservations" className="text-sm text-gray-500 hover:text-gray-700">
-                    ← Reservations
-                </Link>
+            <div className="mb-6">
+                <Link href="/operations/pms/reservations" className="text-sm text-blue-700 dark:text-blue-300">← Reservations</Link>
             </div>
-
-            <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3 flex-wrap">
-                    <h1 className="text-2xl font-bold text-gray-900">{reservation.reservation_number}</h1>
-                    {statusBadge(reservation.status)}
+            <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{reservation.reservation_number}</h1>
+                    <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                        Property {reservation.property_id} · {reservation.status.label}
+                    </p>
                 </div>
-                <Link
-                    href={`/operations/pms/reservations/${reservation.id}/edit`}
-                    className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200"
-                >
-                    Edit
-                </Link>
-            </div>
-
-            {/* Reservation Details */}
-            <div className="bg-white rounded-lg shadow p-6 mb-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Reservation Details</h2>
-                <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
-                    <div>
-                        <p className="text-xs text-gray-500 mb-1">Guest</p>
-                        <p className="text-sm text-gray-700">
-                            {reservation.primary_guest ? (
-                                <Link href={`/operations/pms/guests/${reservation.primary_guest.id}`} className="text-blue-600 hover:text-blue-800">
-                                    {reservation.primary_guest.full_name}
-                                </Link>
-                            ) : '—'}
-                        </p>
-                    </div>
-                    <div>
-                        <p className="text-xs text-gray-500 mb-1">Arrival</p>
-                        <p className="text-sm text-gray-700">{reservation.arrival_date}</p>
-                    </div>
-                    <div>
-                        <p className="text-xs text-gray-500 mb-1">Departure</p>
-                        <p className="text-sm text-gray-700">{reservation.departure_date}</p>
-                    </div>
-                    <div>
-                        <p className="text-xs text-gray-500 mb-1">Nights</p>
-                        <p className="text-sm text-gray-700">{reservation.nights}</p>
-                    </div>
-                    <div>
-                        <p className="text-xs text-gray-500 mb-1">Adults / Children</p>
-                        <p className="text-sm text-gray-700">{reservation.adults} / {reservation.children}</p>
-                    </div>
-                    <div>
-                        <p className="text-xs text-gray-500 mb-1">Room Type</p>
-                        <p className="text-sm text-gray-700">{reservation.reserved_room_type.label}</p>
-                    </div>
-                    <div>
-                        <p className="text-xs text-gray-500 mb-1">Source</p>
-                        <p className="text-sm text-gray-700">{reservation.reservation_source.label}</p>
-                    </div>
-                    <div>
-                        <p className="text-xs text-gray-500 mb-1">Rate Plan</p>
-                        <p className="text-sm text-gray-700">
-                            {reservation.rate_plan ? (
-                                <Link href={`/operations/pms/rate-plans/${reservation.rate_plan.id}`} className="text-blue-600 hover:text-blue-800">
-                                    {reservation.rate_plan.rate_name}
-                                </Link>
-                            ) : '—'}
-                        </p>
-                    </div>
-                    <div>
-                        <p className="text-xs text-gray-500 mb-1">Assigned Room</p>
-                        <p className="text-sm text-gray-700">
-                            {reservation.assigned_room ? (
-                                <span>{reservation.assigned_room.room_number}</span>
-                            ) : <span className="text-gray-400">Not assigned</span>}
-                        </p>
-                    </div>
-                </div>
-
-                {reservation.remarks && (
-                    <div className="mt-4 pt-4 border-t border-gray-100">
-                        <p className="text-xs text-gray-500 mb-1">Remarks</p>
-                        <p className="text-sm text-gray-700">{reservation.remarks}</p>
-                    </div>
-                )}
-
-                <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-400">
-                    Created {reservation.created_at}
-                </div>
-            </div>
-
-            {/* Front Desk Actions */}
-            {!['checked_out', 'cancelled', 'no_show'].includes(statusVal) && (
-                <div className="bg-white rounded-lg shadow p-6 mb-6">
-                    <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Front Desk Actions</h2>
-                    <div className="flex flex-wrap gap-3">
-
-                        {/* Confirm */}
-                        {statusVal === 'tentative' && (
-                            <button
-                                onClick={() => confirm_action(
-                                    () => doAction(`/operations/pms/reservations/${reservation.id}/confirm`),
-                                    'Confirm this reservation?'
-                                )}
-                                disabled={loading}
-                                className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-60"
-                            >
-                                {loading ? '…' : 'Confirm'}
-                            </button>
-                        )}
-
-                        {/* Assign Room */}
-                        {['tentative', 'confirmed', 'waitlisted'].includes(statusVal) && (
-                            <button
-                                onClick={() => setShowAssignRoom(!showAssignRoom)}
-                                className="bg-gray-600 text-white px-4 py-2 rounded text-sm hover:bg-gray-700"
-                            >
-                                Assign Room
-                            </button>
-                        )}
-
-                        {/* Check In */}
-                        {statusVal === 'confirmed' && (
-                            <button
-                                onClick={() => confirm_action(
-                                    () => doAction(`/operations/pms/reservations/${reservation.id}/check-in`),
-                                    'Check in this guest?'
-                                )}
-                                disabled={loading}
-                                className="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700 disabled:opacity-60"
-                            >
-                                {loading ? '…' : 'Check In'}
-                            </button>
-                        )}
-
-                        {/* Check Out (from active stay) */}
-                        {statusVal === 'checked_in' && activeStay && (
-                            <button
-                                onClick={() => confirm_action(
-                                    () => doAction(`/operations/pms/stays/${activeStay.id}/check-out`),
-                                    'Check out this guest?'
-                                )}
-                                disabled={loading}
-                                className="bg-purple-600 text-white px-4 py-2 rounded text-sm hover:bg-purple-700 disabled:opacity-60"
-                            >
-                                {loading ? '…' : 'Check Out'}
-                            </button>
-                        )}
-
-                        {/* No Show */}
-                        {statusVal === 'confirmed' && (
-                            <button
-                                onClick={() => confirm_action(
-                                    () => doAction(`/operations/pms/reservations/${reservation.id}/no-show`),
-                                    'Mark this reservation as No Show?'
-                                )}
-                                disabled={loading}
-                                className="bg-orange-100 text-orange-700 px-4 py-2 rounded text-sm hover:bg-orange-200 disabled:opacity-60"
-                            >
-                                {loading ? '…' : 'No Show'}
-                            </button>
-                        )}
-
-                        {/* Cancel */}
-                        {['tentative', 'confirmed', 'waitlisted'].includes(statusVal) && (
-                            <button
-                                onClick={() => setShowCancel(!showCancel)}
-                                className="bg-red-100 text-red-700 px-4 py-2 rounded text-sm hover:bg-red-200"
-                            >
-                                Cancel Reservation
-                            </button>
-                        )}
-                    </div>
-
-                    {/* Assign Room Form */}
-                    {showAssignRoom && (
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                            <p className="text-sm font-medium text-gray-700 mb-3">Assign Room</p>
-                            <div className="flex gap-3 items-end">
-                                <div className="flex-1">
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Room ID (ULID)</label>
-                                    <input
-                                        type="text"
-                                        value={roomId}
-                                        onChange={(e) => setRoomId(e.target.value)}
-                                        placeholder="Room ULID"
-                                        className="border border-gray-300 rounded px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
-                                <button
-                                    onClick={() => {
-                                        doAction(`/operations/pms/reservations/${reservation.id}/assign-room`, { room_id: roomId });
-                                        setShowAssignRoom(false);
-                                        setRoomId('');
-                                    }}
-                                    disabled={!roomId || loading}
-                                    className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-60"
-                                >
-                                    Assign
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Cancel Form */}
-                    {showCancel && (
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                            <p className="text-sm font-medium text-gray-700 mb-3">Cancel Reservation</p>
-                            <div className="flex gap-3 items-end">
-                                <div className="flex-1">
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Reason (optional)</label>
-                                    <input
-                                        type="text"
-                                        value={cancelReason}
-                                        onChange={(e) => setCancelReason(e.target.value)}
-                                        placeholder="Cancellation reason…"
-                                        className="border border-gray-300 rounded px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
-                                <button
-                                    onClick={() => {
-                                        doAction(`/operations/pms/reservations/${reservation.id}/cancel`, { reason: cancelReason });
-                                        setShowCancel(false);
-                                    }}
-                                    disabled={loading}
-                                    className="bg-red-600 text-white px-4 py-2 rounded text-sm hover:bg-red-700 disabled:opacity-60"
-                                >
-                                    Confirm Cancel
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Stays */}
-            {stays.length > 0 && (
-                <div className="bg-white rounded-lg shadow mb-6">
-                    <div className="px-6 py-4 border-b border-gray-100">
-                        <h2 className="text-sm font-semibold text-gray-700">
-                            Stays
-                            <span className="ml-2 bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-xs">{stays.length}</span>
-                        </h2>
-                    </div>
-                    <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Room</th>
-                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Check-In</th>
-                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Check-Out</th>
-                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {stays.map((stay) => (
-                                <tr key={stay.id} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 text-gray-700">{stay.room?.room_number ?? '—'}</td>
-                                    <td className="px-6 py-4 text-gray-600 text-xs">{stay.check_in_at}</td>
-                                    <td className="px-6 py-4 text-gray-600 text-xs">{stay.check_out_at ?? '—'}</td>
-                                    <td className="px-6 py-4">
-                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
-                                            {stay.status.label}
-                                        </span>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                    </div>
-                </div>
-            )}
-
-            {/* Folios */}
-            <div className="bg-white rounded-lg shadow">
-                <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-gray-700">
-                        Folios
-                        {folios.length > 0 && (
-                            <span className="ml-2 bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-xs">{folios.length}</span>
-                        )}
-                    </h2>
-                    <Link
-                        href={`/operations/pms/reservations/${reservation.id}/folios`}
-                        method="post"
-                        as="button"
-                        className="text-blue-600 hover:text-blue-800 text-xs"
-                    >
-                        New Folio
+                {capabilities.can_edit && (
+                    <Link href={`/operations/pms/reservations/${reservation.id}/edit`}
+                        className="rounded bg-gray-100 px-4 py-2 text-sm text-gray-800 dark:bg-gray-700 dark:text-white">
+                        Edit reservation
                     </Link>
-                </div>
-
-                {folios.length === 0 ? (
-                    <div className="px-6 py-8 text-center text-gray-400 text-sm">No folios yet.</div>
-                ) : (
-                    <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Number</th>
-                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Charges</th>
-                                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Balance</th>
-                                <th className="px-6 py-3"></th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {folios.map((folio) => (
-                                <tr key={folio.id} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 font-mono text-xs text-gray-600">{folio.folio_number}</td>
-                                    <td className="px-6 py-4">{folioStatusBadge(folio.status)}</td>
-                                    <td className="px-6 py-4 text-gray-700">{folio.currency} {folio.total_charges.toFixed(2)}</td>
-                                    <td className="px-6 py-4 text-gray-700 font-medium">{folio.currency} {folio.balance.toFixed(2)}</td>
-                                    <td className="px-6 py-4 text-right">
-                                        <Link href={`/operations/pms/folios/${folio.id}`} className="text-blue-600 hover:text-blue-800 text-sm">
-                                            View
-                                        </Link>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                    </div>
                 )}
+            </div>
+
+            {error && <div role="alert" className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
+            {capabilities.has_operational_evidence && (
+                <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                    Operational or financial evidence exists. Commercial changes are locked. Continue in the controlled Front Desk workspace.
+                </div>
+            )}
+            <section className="mb-6 rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+                <h2 className="mb-4 font-semibold text-gray-900 dark:text-white">Reservation details</h2>
+                <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                    <div><dt className="text-gray-500">Primary guest</dt><dd>{reservation.primary_guest?.full_name ?? '—'}</dd></div>
+                    <div><dt className="text-gray-500">Arrival</dt><dd>{reservation.arrival_date}</dd></div>
+                    <div><dt className="text-gray-500">Departure</dt><dd>{reservation.departure_date}</dd></div>
+                    <div><dt className="text-gray-500">Nights</dt><dd>{reservation.nights}</dd></div>
+                    <div><dt className="text-gray-500">Room type</dt><dd>{reservation.reserved_room_type.label}</dd></div>
+                    <div><dt className="text-gray-500">Source</dt><dd>{reservation.reservation_source.label}</dd></div>
+                    <div><dt className="text-gray-500">Rate plan</dt><dd>{reservation.rate_plan?.rate_name ?? '—'}</dd></div>
+                    <div><dt className="text-gray-500">Guests</dt><dd>{reservation.adults} adults, {reservation.children} children</dd></div>
+                </dl>
+                {reservation.remarks && <p className="mt-4 border-t pt-4 text-sm text-gray-600 dark:text-gray-300">{reservation.remarks}</p>}
+            </section>
+
+            {(capabilities.can_confirm || capabilities.can_cancel || capabilities.can_no_show) && (
+                <section className="mb-6 rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+                    <h2 className="mb-3 font-semibold text-gray-900 dark:text-white">Reservation actions</h2>
+                    <div className="flex flex-wrap items-end gap-3">
+                        {capabilities.can_confirm && <button disabled={busy} onClick={() => command('confirm')}
+                            className="rounded bg-blue-700 px-4 py-2 text-sm text-white disabled:opacity-50">Confirm</button>}
+                        {capabilities.can_no_show && <button disabled={busy} onClick={() => command('no-show')}
+                            className="rounded bg-amber-100 px-4 py-2 text-sm text-amber-900 disabled:opacity-50">Mark no-show</button>}
+                        {capabilities.can_cancel && <>
+                            <label className="text-sm text-gray-700 dark:text-gray-200">Cancellation reason
+                                <input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000}
+                                    className="mt-1 block rounded border border-gray-300 px-3 py-2 dark:bg-gray-700" />
+                            </label>
+                            <button disabled={busy} onClick={() => command('cancel')}
+                                className="rounded bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50">Cancel</button>
+                        </>}
+                    </div>
+                </section>
+            )}
+
+            <section className="mb-6 rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+                <h2 className="mb-3 font-semibold text-gray-900 dark:text-white">Accompanying guests</h2>
+                {accompanying.length === 0 && <p className="text-sm text-gray-500">No accompanying guests linked.</p>}
+                <ul className="space-y-2">
+                    {accompanying.map((guest) => <li key={guest.id} className="flex items-center justify-between gap-3 text-sm">
+                        <Link href={`/operations/pms/guests/${guest.id}`} className="text-blue-700 dark:text-blue-300">{guest.full_name}</Link>
+                        {capabilities.can_manage_guests && <button disabled={busy} className="text-red-700 disabled:opacity-50"
+                            onClick={() => router.delete(`/operations/pms/reservations/${reservation.id}/guests/${guest.id}`, {
+                                onError: () => setError('The guest relationship was not removed.'),
+                            })}>Remove</button>}
+                    </li>)}
+                </ul>
+                {capabilities.can_manage_guests && <div className="mt-4 flex flex-wrap gap-2">
+                    <input value={guestSearch} onChange={(event) => setGuestSearch(event.target.value)}
+                        aria-label="Search Property guests" placeholder="Name, code or email" maxLength={100}
+                        className="rounded border border-gray-300 px-3 py-2 text-sm dark:bg-gray-700" />
+                    <button onClick={() => router.get(`/operations/pms/reservations/${reservation.id}`,
+                        { guest_search: guestSearch }, { preserveState: true, replace: true })}
+                        className="rounded bg-gray-100 px-3 py-2 text-sm text-gray-800 dark:bg-gray-700 dark:text-white">Search</button>
+                    <select value={guestId} onChange={(event) => setGuestId(event.target.value)}
+                        aria-label="Accompanying guest" className="rounded border border-gray-300 px-3 py-2 text-sm dark:bg-gray-700">
+                        <option value="">Select a guest at this Property</option>
+                        {availableGuests.map((guest) => <option key={guest.id} value={guest.id}>{guest.name} ({guest.code})</option>)}
+                    </select>
+                    <button disabled={!guestId || busy} onClick={addGuest}
+                        className="rounded bg-blue-700 px-4 py-2 text-sm text-white disabled:opacity-50">Add guest</button>
+                    <Link href="/operations/pms/guests" className="px-2 py-2 text-sm text-blue-700 dark:text-blue-300">Find guests</Link>
+                </div>}
+            </section>
+            <div className="rounded-lg bg-blue-50 p-4 text-sm text-blue-900 dark:bg-blue-950 dark:text-blue-100">
+                Room assignment, check-in and checkout use the controlled <Link href="/frontdesk/arrivals" className="underline">Front Desk workspace</Link>.
+                Legacy PMS stay and folio commands do not establish controlled operational authority.
             </div>
         </AppLayout>
     );

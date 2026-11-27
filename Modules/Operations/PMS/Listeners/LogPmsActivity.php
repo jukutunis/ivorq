@@ -24,26 +24,25 @@ class LogPmsActivity
         ReservationCreated|ReservationConfirmed|ReservationCancelled|GuestCheckedIn|GuestCheckedOut|RoomBlockCreated|RoomBlockReleased|FolioCreated|FolioItemPosted|FolioItemVoided $event
     ): void {
         match (true) {
-            $event instanceof ReservationCreated   => $this->onReservationCreated($event),
+            $event instanceof ReservationCreated => $this->onReservationCreated($event),
             $event instanceof ReservationConfirmed => $this->onReservationConfirmed($event),
             $event instanceof ReservationCancelled => $this->onReservationCancelled($event),
-            $event instanceof GuestCheckedIn       => $this->onGuestCheckedIn($event),
-            $event instanceof GuestCheckedOut      => $this->onGuestCheckedOut($event),
-            $event instanceof RoomBlockCreated     => $this->onRoomBlockCreated($event),
-            $event instanceof RoomBlockReleased    => $this->onRoomBlockReleased($event),
-            $event instanceof FolioCreated         => $this->onFolioCreated($event),
-            $event instanceof FolioItemPosted      => $this->onFolioItemPosted($event),
-            $event instanceof FolioItemVoided      => $this->onFolioItemVoided($event),
+            $event instanceof GuestCheckedIn => $this->onGuestCheckedIn($event),
+            $event instanceof GuestCheckedOut => $this->onGuestCheckedOut($event),
+            $event instanceof RoomBlockCreated => $this->onRoomBlockCreated($event),
+            $event instanceof RoomBlockReleased => $this->onRoomBlockReleased($event),
+            $event instanceof FolioCreated => $this->onFolioCreated($event),
+            $event instanceof FolioItemPosted => $this->onFolioItemPosted($event),
+            $event instanceof FolioItemVoided => $this->onFolioItemVoided($event),
         };
     }
 
     private function onReservationCreated(ReservationCreated $event): void
     {
-        $res      = $event->reservation;
-        $guest    = $res->primaryGuest?->full_name ?? $res->primary_guest_id;
+        $res = $event->reservation;
 
         $this->activityService->log(
-            description: "Reservation [{$res->reservation_number}] created for guest {$guest} — {$res->arrival_date?->toDateString()} to {$res->departure_date?->toDateString()}",
+            description: "Reservation [{$res->reservation_number}] created",
             subject: $res,
         );
     }
@@ -60,20 +59,19 @@ class LogPmsActivity
 
     private function onReservationCancelled(ReservationCancelled $event): void
     {
-        $res    = $event->reservation;
-        $reason = $event->reason ? " — {$event->reason}" : '';
+        $res = $event->reservation;
 
         $this->activityService->log(
-            description: "Reservation [{$res->reservation_number}] cancelled{$reason}",
+            description: "Reservation [{$res->reservation_number}] cancelled",
             subject: $res,
         );
     }
 
     private function onGuestCheckedIn(GuestCheckedIn $event): void
     {
-        $res   = $event->reservation;
-        $stay  = $event->stay;
-        $room  = $stay->room?->room_number ?? $stay->room_id;
+        $res = $event->reservation;
+        $stay = $event->stay;
+        $room = $stay->room?->room_number ?? $stay->room_id;
         $guest = $stay->guest?->full_name ?? $stay->guest_id;
 
         $this->activityService->log(
@@ -84,9 +82,9 @@ class LogPmsActivity
 
     private function onGuestCheckedOut(GuestCheckedOut $event): void
     {
-        $res   = $event->reservation;
-        $stay  = $event->stay;
-        $room  = $stay->room?->room_number ?? $stay->room_id;
+        $res = $event->reservation;
+        $stay = $event->stay;
+        $room = $stay->room?->room_number ?? $stay->room_id;
         $guest = $stay->guest?->full_name ?? $stay->guest_id;
 
         $this->activityService->log(
@@ -97,11 +95,11 @@ class LogPmsActivity
 
     private function onRoomBlockCreated(RoomBlockCreated $event): void
     {
-        $block  = $event->roomBlock;
-        $room   = $block->room?->room_number ?? $block->room_id;
-        $type   = $block->block_type?->label() ?? $block->block_type;
-        $start  = $block->start_at?->toDateTimeString();
-        $end    = $block->end_at ? $block->end_at->toDateTimeString() : 'indefinite';
+        $block = $event->roomBlock;
+        $room = $block->room?->room_number ?? $block->room_id;
+        $type = $block->block_type?->label() ?? $block->block_type;
+        $start = $block->start_at?->toDateTimeString();
+        $end = $block->end_at ? $block->end_at->toDateTimeString() : 'indefinite';
 
         $this->activityService->log(
             description: "Room {$room} blocked [{$type}] from {$start} to {$end}",
@@ -112,8 +110,8 @@ class LogPmsActivity
     private function onRoomBlockReleased(RoomBlockReleased $event): void
     {
         $block = $event->roomBlock;
-        $room  = $block->room?->room_number ?? $block->room_id;
-        $by    = $block->releasedBy?->name ?? $block->released_by ?? 'system';
+        $room = $block->room?->room_number ?? $block->room_id;
+        $by = $block->releasedBy?->name ?? $block->released_by ?? 'system';
 
         $this->activityService->log(
             description: "Room {$room} block released by {$by}",
@@ -134,9 +132,9 @@ class LogPmsActivity
 
     private function onFolioItemPosted(FolioItemPosted $event): void
     {
-        $item  = $event->folioItem;
-        $by    = $item->postedBy?->name ?? $item->posted_by ?? 'system';
-        $type  = $item->item_type?->label() ?? $item->item_type;
+        $item = $event->folioItem;
+        $by = $item->postedBy?->name ?? $item->posted_by ?? 'system';
+        $type = $item->item_type?->label() ?? $item->item_type;
 
         $this->activityService->log(
             description: "Folio item [{$type}] posted — {$item->description} ({$item->amount}) by {$by}",

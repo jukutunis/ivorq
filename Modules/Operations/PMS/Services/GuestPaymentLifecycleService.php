@@ -89,6 +89,10 @@ class GuestPaymentLifecycleService
                 return $existing->fresh();
             }
 
+            if (in_array($reservation->status->value, ['cancelled', 'no_show'], true)) {
+                throw new DomainException('Cancelled or no-show reservations cannot record a new guest payment.');
+            }
+
             $payment = new GuestPaymentTransaction();
             $payment->forceFill([
                 'property_id' => $propertyId,

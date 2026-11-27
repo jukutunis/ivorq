@@ -10,16 +10,16 @@ class GuestResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'          => $this->id,
+            'id' => $this->id,
             'property_id' => $this->property_id,
 
-            'guest_code'  => $this->guest_code,
-            'full_name'   => $this->full_name,
-            'email'       => $this->email,
-            'phone'       => $this->phone,
-            'nationality' => $this->nationality,
-            'id_type'     => $this->id_type,
-            'id_number'   => $this->id_number,
+            'guest_code' => $this->guest_code,
+            'full_name' => $this->full_name,
+            'email' => $this->when($request->routeIs('operations.pms.guests.*'), $this->email),
+            'phone' => $this->when($request->routeIs('operations.pms.guests.*'), $this->phone),
+            'nationality' => $this->when($request->routeIs('operations.pms.guests.show', 'operations.pms.guests.edit'), $this->nationality),
+            'id_type' => $this->when($request->routeIs('operations.pms.guests.show', 'operations.pms.guests.edit'), $this->id_type),
+            'id_number' => $this->when($request->routeIs('operations.pms.guests.show', 'operations.pms.guests.edit'), $this->id_number),
 
             'guest_type' => [
                 'value' => $this->guest_type->value,
@@ -27,14 +27,14 @@ class GuestResource extends JsonResource
             ],
 
             'vip_level' => $this->vip_level,
-            'notes'     => $this->notes,
+            'notes' => $this->when($request->routeIs('operations.pms.guests.show', 'operations.pms.guests.edit'), $this->notes),
 
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
 
             'reservations' => ReservationResource::collection($this->whenLoaded('reservations')),
-            'stays'        => StayResource::collection($this->whenLoaded('stays')),
-            'folios'       => FolioResource::collection($this->whenLoaded('folios')),
+            'stays' => StayResource::collection($this->whenLoaded('stays')),
+            'folios' => FolioResource::collection($this->whenLoaded('folios')),
         ];
     }
 }

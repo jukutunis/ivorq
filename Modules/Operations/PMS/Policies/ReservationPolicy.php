@@ -4,6 +4,7 @@ namespace Modules\Operations\PMS\Policies;
 
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\PMS\Models\Reservation;
+use Shared\Services\CurrentPropertyService;
 
 class ReservationPolicy
 {
@@ -15,7 +16,7 @@ class ReservationPolicy
     public function view(User $user, Reservation $reservation): bool
     {
         return $user->hasPermissionTo('pms.reservation.view')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $reservation->property_id);
+            && app(CurrentPropertyService::class)->getExplicitPropertyId() === $reservation->property_id;
     }
 
     public function create(User $user): bool
@@ -26,13 +27,13 @@ class ReservationPolicy
     public function update(User $user, Reservation $reservation): bool
     {
         return $user->hasPermissionTo('pms.reservation.edit')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $reservation->property_id);
+            && app(CurrentPropertyService::class)->getExplicitPropertyId() === $reservation->property_id;
     }
 
     public function delete(User $user, Reservation $reservation): bool
     {
         return $user->hasPermissionTo('pms.reservation.delete')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $reservation->property_id);
+            && app(CurrentPropertyService::class)->getExplicitPropertyId() === $reservation->property_id;
     }
 
     /**
@@ -42,18 +43,18 @@ class ReservationPolicy
     public function changeStatus(User $user, Reservation $reservation): bool
     {
         return $user->hasPermissionTo('pms.reservation.edit')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $reservation->property_id);
+            && app(CurrentPropertyService::class)->getExplicitPropertyId() === $reservation->property_id;
     }
 
     public function checkIn(User $user, Reservation $reservation): bool
     {
         return $user->hasPermissionTo('pms.reservation.checkin')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $reservation->property_id);
+            && app(CurrentPropertyService::class)->getExplicitPropertyId() === $reservation->property_id;
     }
 
     public function checkOut(User $user, Reservation $reservation): bool
     {
         return $user->hasPermissionTo('pms.reservation.checkout')
-            && ($user->isSuperAdmin() || app(\Shared\Services\CurrentPropertyService::class)->getPropertyId() === $reservation->property_id);
+            && app(CurrentPropertyService::class)->getExplicitPropertyId() === $reservation->property_id;
     }
 }

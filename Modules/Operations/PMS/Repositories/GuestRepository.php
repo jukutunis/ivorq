@@ -5,13 +5,16 @@ namespace Modules\Operations\PMS\Repositories;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Modules\Operations\PMS\Models\Guest;
+use Modules\Operations\PMS\Repositories\Concerns\ScopedPmsRepository;
 use Shared\Exceptions\NotFoundException;
 
 class GuestRepository
 {
+    use ScopedPmsRepository;
+
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = Guest::latest();
+        $query = Guest::where('property_id', $this->propertyId())->latest();
 
         if (! empty($filters['guest_type'])) {
             $query->where('guest_type', $filters['guest_type']);
@@ -19,9 +22,9 @@ class GuestRepository
 
         if (! empty($filters['search'])) {
             $query->where(function ($q) use ($filters) {
-                $q->where('full_name', 'like', '%' . $filters['search'] . '%')
-                  ->orWhere('email', 'like', '%' . $filters['search'] . '%')
-                  ->orWhere('guest_code', 'like', '%' . $filters['search'] . '%');
+                $q->where('full_name', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('email', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('guest_code', 'like', '%'.$filters['search'].'%');
             });
         }
 
@@ -34,11 +37,7 @@ class GuestRepository
 
     public function find(string $id): Guest
     {
-        $guest = Guest::with([
-            'reservations.ratePlan',
-            'folios',
-            'stays.room',
-        ])->find($id);
+        $guest = Guest::where('property_id', $this->propertyId())->find($id);
 
         throw_if(! $guest, new NotFoundException('Guest'));
 
@@ -47,11 +46,13 @@ class GuestRepository
 
     public function findOrFail(string $id): Guest
     {
-        return Guest::findOrFail($id);
+        return Guest::where('property_id', $this->propertyId())->findOrFail($id);
     }
 
     public function create(array $data): Guest
     {
+        abort_unless(($data['property_id'] ?? null) === $this->propertyId(), 403);
+
         return Guest::create($data)->fresh();
     }
 
@@ -70,12 +71,12 @@ class GuestRepository
 
     public function findByCode(string $code): ?Guest
     {
-        return Guest::where('guest_code', $code)->first();
+        return Guest::where('property_id', $this->propertyId())->where('guest_code', $code)->first();
     }
 
     public function vip(): Collection
     {
-        return Guest::whereNotNull('vip_level')
+        return Guest::where('property_id', $this->propertyId())->whereNotNull('vip_level')
             ->orderBy('vip_level')
             ->orderBy('full_name')
             ->get();

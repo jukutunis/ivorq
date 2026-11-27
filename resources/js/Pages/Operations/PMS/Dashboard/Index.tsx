@@ -6,7 +6,8 @@ interface Stats {
     arrivals_today:   number;
     departures_today: number;
     in_house_count:   number;
-    available_rooms:  number;
+    legacy_in_house_count: number;
+    vacant_room_count: number;
 }
 
 interface Props {
@@ -61,7 +62,7 @@ export default function PmsDashboard({ stats, arrivals_today, departures_today }
             <div className="flex items-center justify-between mb-6">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">PMS</h1>
-                    <p className="text-sm text-gray-500 mt-1">Front Desk Overview</p>
+                    <p className="text-sm text-gray-500 mt-1">Property-scoped reservation and controlled Front Desk overview</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                     <Link href="/operations/pms/guests" className="bg-gray-100 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-200">
@@ -87,28 +88,31 @@ export default function PmsDashboard({ stats, arrivals_today, departures_today }
                 <StatCard
                     label="Arrivals Today"
                     value={stats.arrivals_today}
-                    href="/operations/pms/reservations?status=confirmed"
+                    href="/frontdesk/arrivals"
                     colorClass="text-blue-600"
                 />
                 <StatCard
                     label="Departures Today"
                     value={stats.departures_today}
-                    href="/operations/pms/reservations?status=checked_in"
+                    href="/frontdesk/departures"
                     colorClass="text-purple-600"
                 />
                 <StatCard
-                    label="In-House"
+                    label="Controlled In-House"
                     value={stats.in_house_count}
-                    href="/operations/pms/reservations?status=checked_in"
+                    href="/frontdesk/in-house"
                     colorClass="text-green-600"
                 />
                 <StatCard
-                    label="Available Rooms"
-                    value={stats.available_rooms}
+                    label="Operationally Vacant Rooms"
+                    value={stats.vacant_room_count}
                     href="/operations/rooms"
                     colorClass="text-gray-900"
                 />
             </div>
+            <p className="mb-6 text-xs text-gray-500">
+                Legacy in-house stay records: {stats.legacy_in_house_count}. These are historical PMS records and are excluded from the controlled stay count. Vacant room status is not commercial booking availability.
+            </p>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Arrivals Today */}

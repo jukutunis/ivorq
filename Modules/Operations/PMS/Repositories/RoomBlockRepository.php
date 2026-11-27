@@ -6,13 +6,17 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Modules\Operations\PMS\Enums\RoomBlockStatusEnum;
 use Modules\Operations\PMS\Models\RoomBlock;
+use Modules\Operations\PMS\Repositories\Concerns\ScopedPmsRepository;
 use Shared\Exceptions\NotFoundException;
 
 class RoomBlockRepository
 {
+    use ScopedPmsRepository;
+
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = RoomBlock::with(['room', 'releasedBy'])->latest('start_at');
+        $query = RoomBlock::where('property_id', $this->propertyId())
+            ->with(['room', 'releasedBy'])->latest('start_at');
 
         if (! empty($filters['room_id'])) {
             $query->where('room_id', $filters['room_id']);
@@ -31,7 +35,8 @@ class RoomBlockRepository
 
     public function find(string $id): RoomBlock
     {
-        $block = RoomBlock::with(['room', 'releasedBy'])->find($id);
+        $block = RoomBlock::where('property_id', $this->propertyId())
+            ->with(['room', 'releasedBy'])->find($id);
 
         throw_if(! $block, new NotFoundException('RoomBlock'));
 
@@ -40,11 +45,13 @@ class RoomBlockRepository
 
     public function findOrFail(string $id): RoomBlock
     {
-        return RoomBlock::findOrFail($id);
+        return RoomBlock::where('property_id', $this->propertyId())->findOrFail($id);
     }
 
     public function create(array $data): RoomBlock
     {
+        abort_unless(($data['property_id'] ?? null) === $this->propertyId(), 403);
+
         return RoomBlock::create($data)->fresh();
     }
 
@@ -68,11 +75,11 @@ class RoomBlockRepository
      */
     public function activeForRoom(string $roomId): Collection
     {
-        return RoomBlock::where('room_id', $roomId)
+        return RoomBlock::where('property_id', $this->propertyId())->where('room_id', $roomId)
             ->where('status', RoomBlockStatusEnum::Active)
             ->where(function ($q) {
                 $q->whereNull('end_at')
-                  ->orWhere('end_at', '>', now());
+                    ->orWhere('end_at', '>', now());
             })
             ->orderBy('start_at')
             ->get();
@@ -87,17 +94,17 @@ class RoomBlockRepository
      *                (null end_at means indefinite — always overlaps future periods)
      */
     public function hasOverlap(
-        string  $roomId,
-        string  $startAt,
+        string $roomId,
+        string $startAt,
         ?string $endAt,
         ?string $excludeId = null
     ): bool {
-        $query = RoomBlock::where('room_id', $roomId)
+        $query = RoomBlock::where('property_id', $this->propertyId())->where('room_id', $roomId)
             ->where('status', RoomBlockStatusEnum::Active)
             ->where('start_at', '<', $endAt ?? '9999-12-31 23:59:59')
             ->where(function ($q) use ($startAt) {
                 $q->whereNull('end_at')
-                  ->orWhere('end_at', '>', $startAt);
+                    ->orWhere('end_at', '>', $startAt);
             });
 
         if ($excludeId) {
@@ -109,7 +116,7 @@ class RoomBlockRepository
 
     public function expireOverdue(): int
     {
-        return RoomBlock::where('status', RoomBlockStatusEnum::Active)
+        return RoomBlock::where('property_id', $this->propertyId())->where('status', RoomBlockStatusEnum::Active)
             ->whereNotNull('end_at')
             ->where('end_at', '<=', now())
             ->update(['status' => RoomBlockStatusEnum::Expired]);

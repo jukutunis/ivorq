@@ -10,6 +10,8 @@ use Modules\Operations\PMS\Models\RoomBlock;
 
 class AvailabilityService
 {
+    public function __construct(private PmsPropertyAuthority $authority) {}
+
     /**
      * Count rooms of a given type available for the requested date range.
      *
@@ -23,16 +25,20 @@ class AvailabilityService
      * penalising the slot twice).
      */
     public function availableCount(
-        string  $roomType,
-        string  $arrivalDate,
-        string  $departureDate,
-        ?string $excludeReservationId = null
+        string $roomType,
+        string $arrivalDate,
+        string $departureDate,
+        ?string $excludeReservationId = null,
+        ?string $propertyId = null
     ): int {
-        $totalRooms = Room::where('room_type', $roomType)
+        [, $authoritativePropertyId] = $this->authority->require('pms.reservation.view');
+        abort_if($propertyId !== null && $propertyId !== $authoritativePropertyId, 403);
+        $propertyId = $authoritativePropertyId;
+        $totalRooms = Room::where('property_id', $propertyId)->where('room_type', $roomType)
             ->where('is_active', true)
             ->count();
 
-        $activeReservationCount = Reservation::where('reserved_room_type', $roomType)
+        $activeReservationCount = Reservation::where('property_id', $propertyId)->where('reserved_room_type', $roomType)
             ->whereIn('status', [
                 ReservationStatusEnum::Tentative->value,
                 ReservationStatusEnum::Confirmed->value,
@@ -43,11 +49,11 @@ class AvailabilityService
             ->when($excludeReservationId, fn ($q) => $q->where('id', '!=', $excludeReservationId))
             ->count();
 
-        $roomIdsOfType = Room::where('room_type', $roomType)
+        $roomIdsOfType = Room::where('property_id', $propertyId)->where('room_type', $roomType)
             ->where('is_active', true)
             ->pluck('id');
 
-        $blockedRoomCount = RoomBlock::where('status', RoomBlockStatusEnum::Active)
+        $blockedRoomCount = RoomBlock::where('property_id', $propertyId)->where('status', RoomBlockStatusEnum::Active)
             ->where('start_at', '<', $departureDate)
             ->where(function ($q) use ($arrivalDate) {
                 $q->whereNull('end_at')->orWhere('end_at', '>', $arrivalDate);
@@ -60,11 +66,12 @@ class AvailabilityService
     }
 
     public function isAvailable(
-        string  $roomType,
-        string  $arrivalDate,
-        string  $departureDate,
-        ?string $excludeReservationId = null
+        string $roomType,
+        string $arrivalDate,
+        string $departureDate,
+        ?string $excludeReservationId = null,
+        ?string $propertyId = null
     ): bool {
-        return $this->availableCount($roomType, $arrivalDate, $departureDate, $excludeReservationId) > 0;
+        return $this->availableCount($roomType, $arrivalDate, $departureDate, $excludeReservationId, $propertyId) > 0;
     }
 }

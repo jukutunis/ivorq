@@ -2,9 +2,6 @@
 
 namespace Modules\Operations\PMS\Services;
 
-use Illuminate\Validation\ValidationException;
-use Modules\Operations\PMS\Enums\FolioStatusEnum;
-use Modules\Operations\PMS\Events\FolioItemVoided;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
 use Modules\Operations\PMS\Repositories\FolioItemRepository;
@@ -14,22 +11,25 @@ use Shared\Services\CurrentPropertyService;
 /**
  * PMS Folio Service — compatibility façade over GuestLedgerFolioAggregateService.
  *
- * GLF-A: All controlled operations (open, post, void) are delegated to
- * GuestLedgerFolioAggregateService. This class retains legacy close/void
- * operations for the Folio aggregate itself.
+ * GLF-A controlled open, post, and item void delegate to the aggregate.
+ * Legacy whole-folio close and void commands fail closed.
  */
 class FolioService
 {
     public function __construct(
-        private FolioRepository                  $folioRepository,
-        private FolioItemRepository              $folioItemRepository,
+        private FolioRepository $folioRepository,
+        private FolioItemRepository $folioItemRepository,
         private GuestLedgerFolioAggregateService $aggregate,
-        private CurrentPropertyService           $currentProperty,
+        private CurrentPropertyService $currentProperty,
+        private PmsPropertyAuthority $authority,
     ) {}
 
     public function find(string $id): Folio
     {
-        return $this->folioRepository->find($id);
+        [, $propertyId] = $this->authority->require('pms.folio.view');
+
+        return Folio::query()->where('property_id', $propertyId)
+            ->with(['reservation.primaryGuest', 'guest', 'items.postedBy'])->findOrFail($id);
     }
 
     /**
@@ -44,7 +44,7 @@ class FolioService
             throw new \RuntimeException('Authenticated actor required to open a folio.');
         }
 
-        $idempotencyKey = 'createForReservation-' . $reservationId;
+        $idempotencyKey = 'createForReservation-'.$reservationId;
 
         return $this->aggregate->openWindow($actor, $reservationId, $idempotencyKey);
     }
@@ -90,17 +90,7 @@ class FolioService
      */
     public function close(string $folioId): Folio
     {
-        $folio = $this->folioRepository->findOrFail($folioId);
-
-        if (! $folio->status->canTransitionTo(FolioStatusEnum::Closed)) {
-            throw ValidationException::withMessages([
-                'folio' => ["Cannot close a folio in {$folio->status->label()} status."],
-            ]);
-        }
-
-        $folio->forceFill(['status' => FolioStatusEnum::Closed])->save();
-
-        return $folio->fresh();
+        abort(409, 'Controlled folio closure is unavailable through the legacy PMS path.');
     }
 
     /**
@@ -108,16 +98,6 @@ class FolioService
      */
     public function void(string $folioId): Folio
     {
-        $folio = $this->folioRepository->findOrFail($folioId);
-
-        if (! $folio->status->canTransitionTo(FolioStatusEnum::Void)) {
-            throw ValidationException::withMessages([
-                'folio' => ["Cannot void a folio in {$folio->status->label()} status."],
-            ]);
-        }
-
-        $folio->forceFill(['status' => FolioStatusEnum::Void])->save();
-
-        return $folio->fresh();
+        abort(409, 'Controlled folio void is unavailable through the legacy PMS path.');
     }
 }

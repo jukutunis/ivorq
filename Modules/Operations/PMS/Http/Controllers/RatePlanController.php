@@ -12,7 +12,6 @@ use Modules\Operations\PMS\Http\Requests\UpdateRatePlanRequest;
 use Modules\Operations\PMS\Http\Resources\RatePlanResource;
 use Modules\Operations\PMS\Models\RatePlan;
 use Modules\Operations\PMS\Services\RatePlanService;
-use Shared\Services\CurrentPropertyService;
 
 class RatePlanController extends Controller
 {
@@ -24,7 +23,7 @@ class RatePlanController extends Controller
     {
         $this->authorize('viewAny', RatePlan::class);
 
-        $filters   = request()->only(['plan_type', 'is_active']);
+        $filters = request()->only(['plan_type', 'is_active']);
         $ratePlans = $this->ratePlanService->paginate($filters);
 
         return Inertia::render('Operations/PMS/RatePlans/Index', [
@@ -51,11 +50,7 @@ class RatePlanController extends Controller
 
     public function store(StoreRatePlanRequest $request): RedirectResponse
     {
-        $data = array_merge($request->validated(), [
-            'property_id' => app(CurrentPropertyService::class)->getId(),
-        ]);
-
-        $ratePlan = $this->ratePlanService->create($data);
+        $ratePlan = $this->ratePlanService->create($request->validated());
 
         return redirect()->route('operations.pms.rate-plans.show', $ratePlan->id)
             ->with('success', 'Rate plan created successfully.');
@@ -77,7 +72,7 @@ class RatePlanController extends Controller
         $this->authorize('update', $model);
 
         return Inertia::render('Operations/PMS/RatePlans/Edit', [
-            'rate_plan'  => new RatePlanResource($model),
+            'rate_plan' => new RatePlanResource($model),
             'plan_types' => array_map(
                 fn (RatePlanTypeEnum $t) => ['value' => $t->value, 'label' => $t->label()],
                 RatePlanTypeEnum::cases()

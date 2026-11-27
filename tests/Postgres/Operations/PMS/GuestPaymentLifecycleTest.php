@@ -113,6 +113,24 @@ class GuestPaymentLifecycleTest extends PostgresTestCase
         $this->assertSame(1, DB::table('guest_payment_transactions')->count());
     }
 
+    public function test_terminal_reservation_rejects_new_payment_but_preserves_valid_replay(): void
+    {
+        $reservation = $this->makeGlfReservation();
+        $session = $this->openCashierSession();
+        $payment = $this->payments->recordCashPayment($this->glfActor, $reservation->id,
+            $session->id, '10.00', 'terminal-replay');
+        $reservation->update(['status' => 'cancelled']);
+        $this->assertSame($payment->id, $this->payments->recordCashPayment($this->glfActor,
+            $reservation->id, $session->id, '10.00', 'terminal-replay')->id);
+        try {
+            $this->payments->recordCashPayment($this->glfActor, $reservation->id,
+                $session->id, '10.00', 'terminal-new');
+            $this->fail('New payment on cancelled reservation was accepted.');
+        } catch (DomainException) {
+            $this->assertSame(1, GuestPaymentTransaction::count());
+        }
+    }
+
     public function test_recording_conflict_and_invalid_cashier_session_fail_closed(): void
     {
         $reservation = $this->makeGlfReservation();

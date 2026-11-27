@@ -125,15 +125,6 @@ export default function FolioShow({ folio }: Props) {
     const statusVal = String(folio.status.value);
     const items     = folio.items ?? folio.active_items ?? [];
 
-    function doAction(url: string) {
-        if (loading) return;
-        setLoading(true);
-        axios
-            .post(url)
-            .then(() => router.reload())
-            .finally(() => setLoading(false));
-    }
-
     function voidItem(itemId: string) {
         if (!confirm('Void this item?')) return;
         if (loading) return;
@@ -213,25 +204,8 @@ export default function FolioShow({ folio }: Props) {
                         >
                             Post Item
                         </button>
-                        <button
-                            onClick={() => {
-                                if (confirm('Close this folio?')) doAction(`/operations/pms/folios/${folio.id}/close`);
-                            }}
-                            disabled={loading}
-                            className="bg-gray-600 text-white px-4 py-2 rounded text-sm hover:bg-gray-700 disabled:opacity-60"
-                        >
-                            {loading ? '…' : 'Close Folio'}
-                        </button>
-                        <button
-                            onClick={() => {
-                                if (confirm('Void this folio? This cannot be undone.')) doAction(`/operations/pms/folios/${folio.id}/void`);
-                            }}
-                            disabled={loading}
-                            className="bg-red-100 text-red-700 px-4 py-2 rounded text-sm hover:bg-red-200 disabled:opacity-60"
-                        >
-                            {loading ? '…' : 'Void Folio'}
-                        </button>
                     </div>
+                    <p className="mt-3 text-xs text-gray-500">Folio closure and whole-folio void require a controlled Guest Ledger authority that is not available here.</p>
 
                     {showPostItem && (
                         <div className="mt-4 pt-4 border-t border-gray-100">
