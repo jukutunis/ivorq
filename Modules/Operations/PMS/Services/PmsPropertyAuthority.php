@@ -5,6 +5,7 @@ namespace Modules\Operations\PMS\Services;
 use Illuminate\Support\Facades\DB;
 use Modules\Foundation\User\Models\User;
 use Shared\Services\CurrentPropertyService;
+use Spatie\Permission\PermissionRegistrar;
 
 /** PMS commands require an explicit, active Property membership and team permission. */
 class PmsPropertyAuthority
@@ -49,10 +50,27 @@ class PmsPropertyAuthority
             ->where('property_user.status', 'active')->exists();
         abort_unless($valid, 403);
 
-        setPermissionsTeamId($propertyId);
-        abort_unless($actor->hasPermissionTo($permission), 403);
+        $freshActor = User::query()->whereKey($actor->id)->where('is_active', true)->first();
+        abort_unless($freshActor, 403);
+        abort_unless($this->hasPermission($freshActor, $propertyId, $permission), 403);
         $this->currentProperty->setPropertyId($propertyId);
 
-        return [$actor, $propertyId];
+        return [$freshActor, $propertyId];
+    }
+
+    public function hasPermission(User $actor, string $propertyId, string $permission): bool
+    {
+        $freshActor = User::query()->whereKey($actor->id)->where('is_active', true)->first();
+        if (! $freshActor) {
+            return false;
+        }
+        $previousTeamId = getPermissionsTeamId();
+        setPermissionsTeamId($propertyId);
+        try {
+            app(PermissionRegistrar::class)->forgetCachedPermissions();
+            return $freshActor->hasPermissionTo($permission);
+        } finally {
+            setPermissionsTeamId($previousTeamId);
+        }
     }
 }

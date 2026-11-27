@@ -16,6 +16,7 @@ class RoomBlockService
     public function __construct(
         private RoomBlockRepository $roomBlockRepository,
         private PmsPropertyAuthority $authority,
+        private PmsServiceInput $input,
     ) {}
 
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
@@ -38,6 +39,7 @@ class RoomBlockService
         abort_if(array_intersect(array_keys($data), ['property_id', 'status', 'released_at', 'released_by']) !== [], 422);
         abort_unless(Room::query()->where('property_id', $propertyId)
             ->whereKey($data['room_id'] ?? null)->exists(), 422);
+        $data = $this->input->roomBlock($data, true);
         $data['property_id'] = $propertyId;
         $data['status'] = RoomBlockStatusEnum::Active->value;
         if ($this->roomBlockRepository->hasOverlap($data['room_id'], $data['start_at'], $data['end_at'] ?? null)) {
@@ -63,6 +65,8 @@ class RoomBlockService
             abort_unless(Room::query()->where('property_id', $propertyId)
                 ->whereKey($data['room_id'])->exists(), 422);
         }
+        $data = $this->input->roomBlock($data, false,
+            $existing->start_at?->format('Y-m-d H:i:s'), $existing->end_at?->format('Y-m-d H:i:s'));
 
         $roomId = $data['room_id'] ?? $existing->room_id;
         $startAt = $data['start_at'] ?? $existing->start_at?->toDateTimeString();

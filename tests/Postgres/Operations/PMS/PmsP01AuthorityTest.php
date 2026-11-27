@@ -5,6 +5,7 @@ namespace Tests\Postgres\Operations\PMS;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Foundation\Audit\Models\AuditLog;
 use Modules\Operations\FrontDesk\Enums\FrontDeskStayStatusEnum;
@@ -259,5 +260,200 @@ class PmsP01AuthorityTest extends PostgresTestCase
         ])->assertSessionHasErrors(['property_id', 'status', 'assigned_room_id']);
         $this->assertSame(0, DB::table('stays')->where('reservation_id', $reservation->id)->count());
         $this->assertNull($reservation->fresh()->assigned_room_id);
+    }
+
+    public function test_retained_payment_without_folio_freezes_reservation_and_guest_relationships(): void
+    {
+        [$property, $actor, $guest] = $this->fixture();
+        $service = app(ReservationService::class);
+        $reservation = $service->create($this->input($guest->id));
+        $other = app(GuestService::class)->create(['full_name' => 'Other Guest']);
+        $sessionId = (string) Str::ulid();
+        DB::table('cashier_sessions')->insert([
+            'id' => $sessionId, 'property_id' => $property->id,
+            'cashier_user_id' => $actor->id, 'status' => 'OPEN',
+            'opened_at' => now(), 'opened_by' => $actor->id,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('guest_payment_transactions')->insert([
+            'id' => (string) Str::ulid(), 'property_id' => $property->id,
+            'payment_number' => 'R1-PAY-1', 'reservation_id' => $reservation->id,
+            'guest_id' => $guest->id, 'currency' => $property->currency,
+            'amount' => '10.00', 'tender_type' => 'CASH', 'cashier_session_id' => $sessionId,
+            'lifecycle_status' => 'VOIDED', 'recording_idempotency_key' => 'r1-payment',
+            'recorded_at' => now(), 'recorded_by' => $actor->id, 'source_snapshot' => '{}',
+            'created_at' => now(), 'updated_at' => now(), 'created_by' => $actor->id,
+        ]);
+
+        $this->assertSame(0, DB::table('folios')->where('reservation_id', $reservation->id)->count());
+        $this->assertTrue($service->capabilities($reservation)['has_operational_evidence']);
+        $this->assertFalse($service->capabilities($reservation)['can_edit']);
+        $this->assertDenied(fn () => $service->update($reservation->id, ['primary_guest_id' => $other->id]), 409);
+        $this->assertDenied(fn () => $service->confirm($reservation->id), 409);
+        $this->assertDenied(fn () => $service->cancel($reservation->id), 409);
+        $this->assertDenied(fn () => $service->delete($reservation->id), 409);
+        $this->assertDenied(fn () => app(GuestService::class)->addAccompanyingGuest($reservation->id, $other->id), 409);
+        $this->assertSame($guest->id, $reservation->fresh()->primary_guest_id);
+        $this->assertSame(0, AuditLog::where('auditable_id', $reservation->id)
+            ->whereIn('event', ['pms_reservation_amended', 'pms_reservation_confirmed',
+                'pms_reservation_cancelled', 'pms_reservation_deleted', 'pms_reservation_guest_linked'])->count());
+
+        $this->makePmsRoom($property);
+        $this->makePmsRoom($property);
+        $confirmed = $service->create($this->input($guest->id));
+        $service->confirm($confirmed->id);
+        app(GuestService::class)->addAccompanyingGuest($confirmed->id, $other->id);
+        DB::table('guest_deposit_transactions')->insert([
+            'id' => (string) Str::ulid(), 'property_id' => $property->id,
+            'deposit_number' => 'R1-DEP-1', 'reservation_id' => $confirmed->id,
+            'guest_id' => $guest->id, 'currency' => $property->currency,
+            'amount' => '10.00', 'tender_type' => 'CASH', 'cashier_session_id' => $sessionId,
+            'lifecycle_status' => 'VOIDED', 'recording_idempotency_key' => 'r1-deposit',
+            'recorded_at' => now(), 'recorded_by' => $actor->id, 'source_snapshot' => '{}',
+            'created_at' => now(), 'updated_at' => now(), 'created_by' => $actor->id,
+        ]);
+        $this->assertSame(0, DB::table('folios')->where('reservation_id', $confirmed->id)->count());
+        $this->assertDenied(fn () => $service->noShow($confirmed->id), 409);
+        $this->assertDenied(fn () => app(GuestService::class)
+            ->removeAccompanyingGuest($confirmed->id, $other->id), 409);
+        $this->assertSame(1, DB::table('reservation_guests')->where('reservation_id', $confirmed->id)
+            ->where('guest_id', $other->id)->count());
+        $this->assertSame(0, AuditLog::where('auditable_id', $confirmed->id)
+            ->whereIn('event', ['pms_reservation_no_show', 'pms_reservation_guest_unlinked'])->count());
+    }
+
+    public function test_fresh_team_permissions_ignore_stale_authenticated_roles(): void
+    {
+        [$property, $actor, $guest] = $this->fixture();
+        $service = app(ReservationService::class);
+        $actor->load('roles', 'permissions');
+        $this->assertSame(0, $service->paginate()->total());
+        $previousTeam = 'other-team';
+        setPermissionsTeamId($previousTeam);
+        DB::table('model_has_roles')->where('model_id', $actor->id)
+            ->where('model_type', $actor->getMorphClass())->delete();
+        $this->assertDenied(fn () => $service->create($this->input($guest->id)), 403);
+        $this->assertSame($previousTeam, getPermissionsTeamId());
+        $this->assertSame(0, Reservation::where('property_id', $property->id)->count());
+    }
+
+    public function test_fresh_team_permissions_reject_revoked_role_permission_and_foreign_team(): void
+    {
+        [$property, $actor, $guest] = $this->fixture();
+        $service = app(ReservationService::class);
+        $actor->load('roles', 'permissions');
+        $otherProperty = $this->createProperty($this->createCompany());
+        $actor->properties()->attach($otherProperty->id, [
+            'is_default' => false, 'status' => 'active', 'joined_at' => now(),
+        ]);
+        app(CurrentPropertyService::class)->setId($otherProperty->id);
+        try {
+            $service->create($this->input($guest->id));
+            $this->fail('Foreign-team authority was accepted.');
+        } catch (HttpException $exception) {
+            $this->assertSame(403, $exception->getStatusCode());
+        }
+        app(CurrentPropertyService::class)->setId($property->id);
+
+        $roleId = DB::table('roles')->where('name', 'property-admin')->value('id');
+        $permissionId = DB::table('permissions')->where('name', 'pms.reservation.create')->value('id');
+        DB::table('role_has_permissions')->where('role_id', $roleId)
+            ->where('permission_id', $permissionId)->delete();
+        try {
+            $service->create($this->input($guest->id));
+            $this->fail('Revoked role permission was accepted.');
+        } catch (HttpException $exception) {
+            $this->assertSame(403, $exception->getStatusCode());
+        }
+        $this->assertSame(0, Reservation::where('property_id', $property->id)->count());
+    }
+
+    public function test_direct_service_business_values_fail_before_mutation(): void
+    {
+        [$property, , $guest] = $this->fixture();
+        $reservation = app(ReservationService::class);
+        foreach ([
+            ['arrival_date' => 'tomorrow'],
+            ['arrival_date' => '2026-02-30'],
+            ['adults' => 21],
+            ['reserved_room_type' => 'unknown'],
+            ['primary_guest_id' => null],
+        ] as $bad) {
+            try {
+                $reservation->create(array_replace($this->input($guest->id), $bad));
+                $this->fail('Invalid direct reservation input was accepted.');
+            } catch (ValidationException) {
+                $this->assertSame(0, Reservation::where('property_id', $property->id)->count());
+            }
+        }
+        foreach ([
+            fn () => app(GuestService::class)->create(['full_name' => null]),
+            fn () => app(RatePlanService::class)->create(['rate_code' => 'X', 'rate_name' => 'X', 'plan_type' => 'invalid', 'base_rate' => 1]),
+            fn () => app(RoomBlockService::class)->create(['room_id' => $this->makePmsRoom($property)->id,
+                'block_type' => 'out_of_order', 'start_at' => 'next week']),
+        ] as $invalid) {
+            $this->expectInvalidDirectInput($invalid);
+        }
+        $valid = $reservation->create($this->input($guest->id));
+        foreach ([['arrival_date' => 'tomorrow'], ['children' => 21],
+            ['primary_guest_id' => null], ['departure_date' => '2026-12-01']] as $bad) {
+            $this->expectInvalidDirectInput(fn () => $reservation->update($valid->id, $bad));
+            $this->assertSame(2, $valid->fresh()->nights);
+        }
+        $rate = app(RatePlanService::class)->create([
+            'rate_code' => 'R1-VALID', 'rate_name' => 'Valid', 'plan_type' => 'nightly',
+            'base_rate' => '100.00',
+        ]);
+        $this->expectInvalidDirectInput(fn () => app(RatePlanService::class)->create([
+            'rate_code' => 'R1-VALID', 'rate_name' => 'Duplicate', 'plan_type' => 'nightly',
+            'base_rate' => '100.00',
+        ]));
+        $this->expectInvalidDirectInput(fn () => app(RatePlanService::class)
+            ->update($rate->id, ['base_rate' => '100000000.00']));
+        $room = $this->makePmsRoom($property);
+        $block = app(RoomBlockService::class)->create([
+            'room_id' => $room->id, 'block_type' => 'out_of_order',
+            'start_at' => '2026-12-01T10:00', 'end_at' => '2026-12-02T10:00',
+        ]);
+        $this->expectInvalidDirectInput(fn () => app(RoomBlockService::class)
+            ->update($block->id, ['end_at' => '2026-11-30T10:00']));
+        $this->assertSame('2026-12-02 10:00:00', $block->fresh()->end_at->format('Y-m-d H:i:s'));
+        $this->assertSame(1, DB::table('room_blocks')->where('property_id', $property->id)->count());
+        $this->assertSame(1, DB::table('rate_plans')->where('property_id', $property->id)->count());
+    }
+
+    public function test_malformed_cross_property_guest_pivot_is_never_repaired_or_mutated(): void
+    {
+        [$property, , $primary] = $this->fixture();
+        $otherProperty = $this->createProperty($this->createCompany());
+        $otherGuest = app(GuestService::class)->create(['full_name' => 'Second Guest']);
+        $reservation = app(ReservationService::class)->create($this->input($primary->id));
+        DB::table('reservation_guests')->insert([
+            'id' => (string) Str::ulid(), 'property_id' => $otherProperty->id,
+            'reservation_id' => $reservation->id, 'guest_id' => $otherGuest->id,
+            'is_primary' => false, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->assertDenied(fn () => app(ReservationService::class)
+            ->update($reservation->id, ['primary_guest_id' => $otherGuest->id]), 409);
+        $this->assertDenied(fn () => app(GuestService::class)
+            ->addAccompanyingGuest($reservation->id, $otherGuest->id), 409);
+        $this->assertDenied(fn () => app(GuestService::class)
+            ->removeAccompanyingGuest($reservation->id, $otherGuest->id), 409);
+        $this->assertSame($primary->id, $reservation->fresh()->primary_guest_id);
+        $this->assertSame(1, DB::table('reservation_guests')->where('property_id', $otherProperty->id)
+            ->where('reservation_id', $reservation->id)->count());
+        $this->assertSame(0, AuditLog::where('auditable_id', $reservation->id)
+            ->whereIn('event', ['pms_reservation_amended', 'pms_reservation_guest_linked',
+                'pms_reservation_guest_unlinked'])->count());
+    }
+
+    private function expectInvalidDirectInput(callable $call): void
+    {
+        try {
+            $call();
+            $this->fail('Invalid direct service input was accepted.');
+        } catch (ValidationException) {
+            $this->assertTrue(true);
+        }
     }
 }

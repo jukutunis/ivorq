@@ -8,16 +8,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Foundation\Audit\Models\AuditLog;
-use Modules\Operations\FrontDesk\Services\FrontDeskReservationEvidence;
 use Modules\Operations\PMS\Enums\ReservationStatusEnum;
 use Modules\Operations\PMS\Events\ReservationCancelled;
 use Modules\Operations\PMS\Events\ReservationConfirmed;
 use Modules\Operations\PMS\Events\ReservationCreated;
-use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\Guest;
 use Modules\Operations\PMS\Models\RatePlan;
 use Modules\Operations\PMS\Models\Reservation;
-use Modules\Operations\PMS\Models\Stay;
 
 class ReservationService
 {
@@ -27,7 +24,8 @@ class ReservationService
     public function __construct(
         private PmsPropertyAuthority $authority,
         private AvailabilityService $availabilityService,
-        private FrontDeskReservationEvidence $frontDeskEvidence,
+        private ReservationMutationEvidence $mutationEvidence,
+        private PmsServiceInput $input,
     ) {}
 
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
@@ -57,7 +55,7 @@ class ReservationService
         [$actor, $propertyId] = $this->authority->require('pms.reservation.view');
         abort_unless($reservation->property_id === $propertyId, 404);
         $evidence = $this->hasEvidence($reservation, $propertyId);
-        $editable = $actor->hasPermissionTo('pms.reservation.edit') && ! $evidence;
+        $editable = $this->authority->hasPermission($actor, $propertyId, 'pms.reservation.edit') && ! $evidence;
 
         return [
             'can_edit' => $editable && in_array($reservation->status, [
@@ -66,7 +64,7 @@ class ReservationService
             'can_confirm' => $editable && $reservation->status->canTransitionTo(ReservationStatusEnum::Confirmed),
             'can_cancel' => $editable && $reservation->status->canTransitionTo(ReservationStatusEnum::Cancelled),
             'can_no_show' => $editable && $reservation->status->canTransitionTo(ReservationStatusEnum::NoShow),
-            'can_manage_guests' => $editable && $actor->hasPermissionTo('pms.guest.view'),
+            'can_manage_guests' => $editable && $this->authority->hasPermission($actor, $propertyId, 'pms.guest.view'),
             'has_operational_evidence' => $evidence,
         ];
     }
@@ -74,13 +72,13 @@ class ReservationService
     public function create(array $data): Reservation
     {
         [$actor, $propertyId] = $this->authority->require('pms.reservation.create');
-        $data = $this->withNights($this->allowed($data));
+        $data = $this->withNights($this->input->reservation($this->allowed($data), true));
         if (($data['reservation_source'] ?? null) === null) {
             unset($data['reservation_source']);
         }
-        $this->validateReferences($data, $propertyId);
         $reservation = DB::transaction(function () use ($actor, $propertyId, $data) {
             DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first();
+            $this->validateReferences($data, $propertyId);
             $max = Reservation::query()->withTrashed()->where('property_id', $propertyId)
                 ->pluck('reservation_number')->reduce(function (int $max, string $number): int {
                     return preg_match('/^RES-(\d+)$/', $number, $matches)
@@ -104,7 +102,7 @@ class ReservationService
     public function update(string $id, array $data): Reservation
     {
         [$actor, $propertyId] = $this->authority->require('pms.reservation.edit');
-        $data = $this->allowed($data);
+        $data = $this->input->reservation($this->allowed($data), false);
 
         return DB::transaction(function () use ($id, $data, $actor, $propertyId) {
             DB::table('properties')->where('id', $propertyId)->lockForUpdate()->first();
@@ -112,8 +110,19 @@ class ReservationService
             $this->assertNoEvidence($reservation, $propertyId);
             abort_unless(in_array($reservation->status, [ReservationStatusEnum::Tentative,
                 ReservationStatusEnum::Confirmed, ReservationStatusEnum::Waitlisted], true), 409);
-            $this->validateReferences($data, $propertyId);
-            $merged = array_merge($reservation->only(self::WRITABLE), $data);
+            $merged = array_merge([
+                'primary_guest_id' => $reservation->primary_guest_id,
+                'rate_plan_id' => $reservation->rate_plan_id,
+                'arrival_date' => $reservation->arrival_date->toDateString(),
+                'departure_date' => $reservation->departure_date->toDateString(),
+                'adults' => $reservation->adults,
+                'children' => $reservation->children,
+                'reservation_source' => $reservation->reservation_source->value,
+                'reserved_room_type' => $reservation->reserved_room_type->value,
+                'remarks' => $reservation->remarks,
+            ], $data);
+            $merged = $this->input->reservation($merged, true);
+            $this->validateReferences($merged, $propertyId);
             $data['nights'] = $this->withNights($merged)['nights'];
             if ($reservation->status === ReservationStatusEnum::Confirmed &&
                 (isset($data['arrival_date']) || isset($data['departure_date']) || isset($data['reserved_room_type']))) {
@@ -121,9 +130,10 @@ class ReservationService
                 $candidate->forceFill($data);
                 $this->validateAvailabilityBeforeConfirm($candidate);
             }
+            $previousPrimary = $reservation->primary_guest_id;
             $reservation->update($data);
             if (array_key_exists('primary_guest_id', $data)) {
-                $this->syncPrimaryGuest($reservation, $data['primary_guest_id']);
+                $this->syncPrimaryGuest($reservation, $data['primary_guest_id'], $previousPrimary);
             }
             $this->audit('pms_reservation_amended', $reservation, $actor->id, ['fields' => array_keys($data)]);
 
@@ -237,8 +247,8 @@ class ReservationService
             throw ValidationException::withMessages(['dates' => ['Arrival and departure dates are required.']]);
         }
         try {
-            $arrival = CarbonImmutable::parse($data['arrival_date']);
-            $departure = CarbonImmutable::parse($data['departure_date']);
+            $arrival = CarbonImmutable::createFromFormat('!Y-m-d', $data['arrival_date']);
+            $departure = CarbonImmutable::createFromFormat('!Y-m-d', $data['departure_date']);
         } catch (\Throwable) {
             throw ValidationException::withMessages(['dates' => ['Valid arrival and departure dates are required.']]);
         }
@@ -254,7 +264,7 @@ class ReservationService
     private function validateReferences(array $data, string $propertyId): void
     {
         if (isset($data['primary_guest_id']) && ! Guest::query()->where('property_id', $propertyId)
-            ->whereKey($data['primary_guest_id'])->exists()) {
+            ->whereKey($data['primary_guest_id'])->lockForUpdate()->first()) {
             throw ValidationException::withMessages(['primary_guest_id' => ['Invalid guest.']]);
         }
         if (isset($data['rate_plan_id']) && ! RatePlan::query()->where('property_id', $propertyId)
@@ -268,16 +278,29 @@ class ReservationService
         return Reservation::query()->where('property_id', $propertyId)->lockForUpdate()->findOrFail($id);
     }
 
-    private function syncPrimaryGuest(Reservation $reservation, string $guestId): void
+    private function syncPrimaryGuest(Reservation $reservation, string $guestId, ?string $previousPrimary = null): void
     {
+        abort_if(DB::table('reservation_guests')->where('reservation_id', $reservation->id)
+            ->where('property_id', '!=', $reservation->property_id)->exists(), 409,
+            'Reservation guest relationship has an invalid Property.');
+        $primaryRows = DB::table('reservation_guests')->where('property_id', $reservation->property_id)
+            ->where('reservation_id', $reservation->id)->where('is_primary', true)->pluck('guest_id');
+        abort_if($primaryRows->count() > 1 || ($previousPrimary !== null && $primaryRows->isNotEmpty()
+            && $primaryRows->first() !== $previousPrimary), 409,
+            'Reservation primary guest relationship is inconsistent.');
+        $existing = DB::table('reservation_guests')->where('property_id', $reservation->property_id)
+            ->where('reservation_id', $reservation->id)
+            ->where('guest_id', $guestId)->first();
+        abort_if($existing && $existing->is_primary && $reservation->primary_guest_id !== $guestId, 409);
         $rows = DB::table('reservation_guests')->where('property_id', $reservation->property_id)
             ->where('reservation_id', $reservation->id);
         $rows->where('is_primary', true)->where('guest_id', '!=', $guestId)->delete();
-        $existing = DB::table('reservation_guests')->where('reservation_id', $reservation->id)
-            ->where('guest_id', $guestId)->first();
         if ($existing) {
-            DB::table('reservation_guests')->where('id', $existing->id)
+            $updated = DB::table('reservation_guests')->where('id', $existing->id)
+                ->where('property_id', $reservation->property_id)
+                ->where('reservation_id', $reservation->id)->where('guest_id', $guestId)
                 ->update(['is_primary' => true, 'updated_at' => now()]);
+            abort_unless($updated === 1, 409);
         } else {
             DB::table('reservation_guests')->insert([
                 'id' => (string) Str::ulid(), 'property_id' => $reservation->property_id,
@@ -295,10 +318,7 @@ class ReservationService
 
     private function hasEvidence(Reservation $reservation, string $propertyId): bool
     {
-        return $this->frontDeskEvidence->exists($propertyId, $reservation->id)
-            || Stay::query()->where('property_id', $propertyId)->where('reservation_id', $reservation->id)->exists()
-            || Folio::query()->where('property_id', $propertyId)->where('reservation_id', $reservation->id)->exists()
-            || $reservation->assigned_room_id !== null;
+        return $this->mutationEvidence->exists($propertyId, $reservation->id);
     }
 
     private function transition(Reservation $reservation, ReservationStatusEnum $to): void

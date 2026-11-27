@@ -16,6 +16,120 @@ class PmsP01ReservationConcurrencyTest extends PostgresTestCase
 {
     use CreatesPmsData;
 
+    public function test_folio_identity_and_guest_deletion_races_preserve_live_relationships(): void
+    {
+        $base = config('database.connections.pgsql');
+        $database = 'ivorq_pms_p01_r1_'.strtolower(Str::random(10));
+        $admin = new \PDO('pgsql:host='.$base['host'].';port='.$base['port'].';dbname=postgres',
+            $base['username'], $base['password'], [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+        $dir = sys_get_temp_dir().DIRECTORY_SEPARATOR.$database;
+        mkdir($dir, 0700, true);
+        $admin->exec('CREATE DATABASE "'.$database.'"');
+
+        try {
+            config()->set('database.connections.pgsql.database', $database);
+            DB::purge('pgsql');
+            $this->assertSame(0, Artisan::call('migrate', ['--force' => true, '--no-interaction' => true]));
+            $company = $this->createCompany();
+            $property = $this->createProperty($company);
+            $actor = $this->createPropertyAdmin($property);
+            $primary = $this->makePmsGuest($property);
+            $replacement = $this->makePmsGuest($property);
+            $reservation = $this->makePmsReservation($property, $primary);
+            $common = ['property_id' => $property->id, 'actor_id' => $actor->id];
+
+            $folio = $this->raceR1($database, $dir, 'folio',
+                ['action' => 'folio_open', 'reservation_id' => $reservation->id,
+                    'idempotency_key' => 'r1-folio-race'] + $common,
+                ['action' => 'replace_primary', 'reservation_id' => $reservation->id,
+                    'guest_id' => $replacement->id] + $common);
+            $this->assertTrue($folio[0]['ok'], $folio[0]['error'] ?? 'Folio opening failed');
+            if ($folio[1]['ok']) {
+                $this->assertSame($replacement->id, $folio[1]['guest_id']);
+            } else {
+                $this->assertStringContainsString('HttpException', $folio[1]['error']);
+            }
+            $this->assertSame($folio[0]['guest_id'], DB::table('folios')
+                ->where('id', $folio[0]['folio_id'])->value('guest_id'));
+            $this->assertSame($folio[0]['guest_id'], DB::table('reservations')
+                ->where('id', $reservation->id)->value('primary_guest_id'));
+            $this->assertSame(1, DB::table('folios')->where('reservation_id', $reservation->id)->count());
+
+            $candidate = $this->makePmsGuest($property);
+            $create = $this->raceR1($database, $dir, 'create',
+                ['action' => 'guest_delete', 'guest_id' => $candidate->id] + $common,
+                ['action' => 'create', 'guest_id' => $candidate->id] + $common);
+            $this->assertSame(1, (int) $create[0]['ok'] + (int) $create[1]['ok']);
+            $this->assertStringContainsString($create[0]['ok'] ? 'ValidationException' : 'HttpException',
+                $create[0]['ok'] ? $create[1]['error'] : $create[0]['error']);
+            $this->assertSame((bool) DB::table('reservations')->where('property_id', $property->id)
+                ->where('primary_guest_id', $candidate->id)->exists(), $create[1]['ok']);
+            $this->assertSame($create[1]['ok'], DB::table('guests')->where('id', $candidate->id)
+                ->whereNull('deleted_at')->exists());
+
+            $associateCandidate = $this->makePmsGuest($property);
+            $associationReservation = $this->makePmsReservation($property, $primary);
+            $association = $this->raceR1($database, $dir, 'associate',
+                ['action' => 'guest_delete', 'guest_id' => $associateCandidate->id] + $common,
+                ['action' => 'guest_associate', 'reservation_id' => $associationReservation->id,
+                    'guest_id' => $associateCandidate->id] + $common);
+            $this->assertSame(1, (int) $association[0]['ok'] + (int) $association[1]['ok']);
+            $this->assertStringContainsString('HttpException',
+                $association[0]['ok'] ? $association[1]['error'] : $association[0]['error']);
+            $this->assertSame($association[1]['ok'], DB::table('reservation_guests')
+                ->where('property_id', $property->id)->where('reservation_id', $associationReservation->id)
+                ->where('guest_id', $associateCandidate->id)->exists());
+            $this->assertSame($association[1]['ok'], DB::table('guests')
+                ->where('id', $associateCandidate->id)->whereNull('deleted_at')->exists());
+        } finally {
+            app(CurrentPropertyService::class)->clear();
+            DB::purge('pgsql');
+            config()->set('database.connections.pgsql.database', $base['database']);
+            $admin->exec('DROP DATABASE IF EXISTS "'.$database.'" WITH (FORCE)');
+            foreach (glob($dir.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
+                unlink($file);
+            }
+            rmdir($dir);
+        }
+    }
+
+    private function raceR1(string $database, string $dir, string $label, array $a, array $b): array
+    {
+        $go = $dir.DIRECTORY_SEPARATOR.'go-'.$label;
+        $processes = [];
+        try {
+            foreach ([$a, $b] as $index => $config) {
+                $config += ['database' => $database, 'base_path' => base_path(),
+                    'go' => $go, 'ready' => $dir.'/ready-'.$label.'-'.$index,
+                    'result' => $dir.'/result-'.$label.'-'.$index.'.json'];
+                $file = $dir.'/worker-'.$label.'-'.$index.'.json';
+                file_put_contents($file, json_encode($config, JSON_THROW_ON_ERROR));
+                $command = escapeshellarg(PHP_BINARY).' '.escapeshellarg(__DIR__.'/Support/PmsP01ReservationWorker.php')
+                    .' '.escapeshellarg($file);
+                $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, base_path());
+                $this->assertIsResource($process);
+                fclose($pipes[0]);
+                $processes[] = [$process, $pipes];
+            }
+            $this->waitFor([$dir.'/ready-'.$label.'-0', $dir.'/ready-'.$label.'-1']);
+            file_put_contents($go, 'go');
+            $this->waitFor([$dir.'/result-'.$label.'-0.json', $dir.'/result-'.$label.'-1.json']);
+            $results = [];
+            foreach ([0, 1] as $index) {
+                $results[] = json_decode(file_get_contents($dir.'/result-'.$label.'-'.$index.'.json'), true, 512, JSON_THROW_ON_ERROR);
+            }
+            $this->assertNotSame($results[0]['php_pid'], $results[1]['php_pid']);
+            $this->assertNotSame($results[0]['pg_pid'], $results[1]['pg_pid']);
+            return $results;
+        } finally {
+            foreach ($processes as [$process, $pipes]) {
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                proc_close($process);
+            }
+        }
+    }
+
     public function test_concurrent_create_allocates_distinct_numbers_and_complete_evidence(): void
     {
         $base = config('database.connections.pgsql');

@@ -65,6 +65,10 @@ class GuestDepositLifecycleService
                 return $existing->fresh();
             }
 
+            if (in_array($reservation->status->value, ['cancelled', 'no_show'], true)) {
+                throw new DomainException('Cancelled or no-show reservations cannot record a new guest deposit.');
+            }
+
             $deposit = new GuestDepositTransaction();
             $deposit->forceFill([
                 'property_id' => $propertyId, 'deposit_number' => sprintf('GDP-%05d', GuestDepositTransaction::where('property_id', $propertyId)->count() + 1),

@@ -44,6 +44,17 @@ class GuestDepositLifecycleTest extends PostgresTestCase
         $this->depositService->recordCashDeposit($this->glfActor,$reservation->id,$session->id,'126.00','deposit-record');
     }
 
+    public function test_terminal_reservation_rejects_new_deposit_but_preserves_valid_replay():void
+    {
+        $reservation=$this->makeGlfReservation();$session=$this->glfCCashierSession();
+        $deposit=$this->depositService->recordCashDeposit($this->glfActor,$reservation->id,$session->id,'10.00','terminal-replay');
+        $reservation->update(['status'=>'no_show']);
+        $this->assertSame($deposit->id,$this->depositService->recordCashDeposit($this->glfActor,$reservation->id,$session->id,'10.00','terminal-replay')->id);
+        try{$this->depositService->recordCashDeposit($this->glfActor,$reservation->id,$session->id,'10.00','terminal-new');
+            $this->fail('New deposit on no-show reservation was accepted.');
+        }catch(DomainException){$this->assertSame(1,GuestDepositTransaction::count());}
+    }
+
     public function test_cash_session_and_decimal_and_permission_guards_fail_closed():void
     {
         $reservation=$this->makeGlfReservation();$session=$this->glfCCashierSession();

@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Modules\Foundation\User\Models\User;
 use Modules\Operations\PMS\Services\ReservationService;
+use Modules\Operations\PMS\Services\GuestService;
+use Modules\Operations\PMS\Services\GuestLedgerFolioAggregateService;
 use Shared\Services\CurrentPropertyService;
 
 $config = json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR);
@@ -32,7 +34,21 @@ try {
     app(CurrentPropertyService::class)->setId($config['property_id']);
     $backendPid = DB::selectOne('select pg_backend_pid() as pid')->pid;
     $service = app(ReservationService::class);
-    $reservation = match ($config['action'] ?? 'create') {
+    $outcome = match ($config['action'] ?? 'create') {
+        'guest_delete' => ['deleted' => app(GuestService::class)->delete($config['guest_id'])],
+        'guest_associate' => (function () use ($config): array {
+            app(GuestService::class)->addAccompanyingGuest($config['reservation_id'], $config['guest_id']);
+            return ['associated' => true];
+        })(),
+        'folio_open' => (function () use ($actor, $config): array {
+            $folio = app(GuestLedgerFolioAggregateService::class)->openWindow(
+                $actor, $config['reservation_id'], $config['idempotency_key']);
+            return ['folio_id' => $folio->id, 'guest_id' => $folio->guest_id];
+        })(),
+        'replace_primary' => (function () use ($service, $config): array {
+            $reservation = $service->update($config['reservation_id'], ['primary_guest_id' => $config['guest_id']]);
+            return ['guest_id' => $reservation->primary_guest_id];
+        })(),
         'cancel' => $service->cancel($config['reservation_id'], 'Concurrent cancellation'),
         'no_show' => $service->noShow($config['reservation_id']),
         default => $service->create([
@@ -44,8 +60,10 @@ try {
     };
     $result = [
         'ok' => true, 'php_pid' => getmypid(), 'pg_pid' => $backendPid,
-        'id' => $reservation->id, 'number' => $reservation->reservation_number,
-        'status' => $reservation->status->value,
+        ...($outcome instanceof \Modules\Operations\PMS\Models\Reservation
+            ? ['id' => $outcome->id, 'number' => $outcome->reservation_number,
+                'status' => $outcome->status->value]
+            : $outcome),
     ];
 } catch (Throwable $error) {
     $result = ['ok' => false, 'php_pid' => getmypid(), 'pg_pid' => $backendPid ?? null,

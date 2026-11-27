@@ -12,7 +12,7 @@ class RatePlanService
     private const WRITABLE = ['rate_code', 'rate_name', 'plan_type', 'base_rate',
         'currency', 'is_active', 'description'];
 
-    public function __construct(private PmsPropertyAuthority $authority) {}
+    public function __construct(private PmsPropertyAuthority $authority, private PmsServiceInput $input) {}
 
     public function paginate(?array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
@@ -34,15 +34,21 @@ class RatePlanService
     public function create(array $data): RatePlan
     {
         [, $propertyId] = $this->authority->require('pms.rate-plan.manage');
+        $data = $this->input->ratePlan($this->allowed($data), true, $propertyId);
+        foreach (['currency', 'is_active'] as $field) {
+            if (array_key_exists($field, $data) && $data[$field] === null) {
+                unset($data[$field]);
+            }
+        }
 
-        return RatePlan::create($this->allowed($data) + ['property_id' => $propertyId])->fresh();
+        return RatePlan::create($data + ['property_id' => $propertyId])->fresh();
     }
 
     public function update(string $id, array $data): RatePlan
     {
         [, $propertyId] = $this->authority->require('pms.rate-plan.manage');
         $model = RatePlan::query()->where('property_id', $propertyId)->findOrFail($id);
-        $model->update($this->allowed($data));
+        $model->update($this->input->ratePlan($this->allowed($data), false, $propertyId, $model->id));
 
         return $model->fresh();
     }

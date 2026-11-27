@@ -14,6 +14,7 @@ use Modules\Operations\PMS\Events\FolioItemPosted;
 use Modules\Operations\PMS\Events\FolioItemVoided;
 use Modules\Operations\PMS\Models\Folio;
 use Modules\Operations\PMS\Models\FolioItem;
+use Modules\Operations\PMS\Models\Guest;
 use Modules\Operations\PMS\Models\Reservation;
 use Modules\Operations\PMS\Repositories\FolioItemRepository;
 use Modules\Operations\PMS\Repositories\FolioRepository;
@@ -80,29 +81,15 @@ class GuestLedgerFolioAggregateService
         // 4. Validate and normalise idempotency key
         $idempotencyKey = $this->validateIdempotencyKey($idempotencyKey);
 
-        // 5. Resolve reservation by ID + property
-        $reservation = $this->resolveReservation($reservationId, $propertyId);
-
-        // 6. Resolve primary guest
-        $guestId = $reservation->primary_guest_id;
-        if (empty($guestId)) {
-            throw ValidationException::withMessages([
-                'reservation' => ['Reservation has no primary guest.'],
-            ]);
-        }
-
-        // 7. Resolve currency from Property (immutable — ADR-001)
-        $currency = Property::findOrFail($propertyId)->currency;
-
-        // 8. Transaction with consistent lock order
+        // Identity and lifecycle are resolved only after the reservation lock.
         return DB::transaction(function () use (
-            $propertyId, $reservation, $guestId, $currency, $idempotencyKey, $actor
+            $propertyId, $reservationId, $idempotencyKey, $actor
         ) {
             // Lock Property row (serialises folio-number generation)
-            Property::where('id', $propertyId)->lockForUpdate()->firstOrFail();
+            $property = Property::where('id', $propertyId)->lockForUpdate()->firstOrFail();
 
             // Lock Reservation row
-            Reservation::where('id', $reservation->id)->lockForUpdate()->firstOrFail();
+            $reservation = $this->lockReservationForOpening($reservationId, $propertyId);
 
             // Idempotency check
             $existing = Folio::withoutGlobalScope('property')
@@ -115,8 +102,9 @@ class GuestLedgerFolioAggregateService
                 return $existing;
             }
 
+            $guestId = $this->guestForNewWindow($reservation, $propertyId);
             return $this->createFolioLocked(
-                $propertyId, $reservation->id, $guestId, $currency, $idempotencyKey, $actor
+                $propertyId, $reservation->id, $guestId, $property->currency, $idempotencyKey, $actor
             );
         });
     }
@@ -142,28 +130,17 @@ class GuestLedgerFolioAggregateService
         $reservation = Reservation::findOrFail($reservationId);
         $propertyId  = $reservation->property_id;
 
-        // 2. Resolve the Property for currency
-        $property = Property::findOrFail($propertyId);
-
-        // 3. Resolve primary guest from Reservation
-        $guestId = $reservation->primary_guest_id;
-        if (empty($guestId)) {
-            throw ValidationException::withMessages([
-                'reservation' => ['Reservation has no primary guest.'],
-            ]);
-        }
-
-        // 4. Build deterministic source-proven idempotency key
+        // Build deterministic source-proven idempotency key
         $idempotencyKey = $this->validateIdempotencyKey(
             'system-' . $sourcePurpose . '-' . $reservationId
         );
 
         // 5. Transaction with consistent lock order
         return DB::transaction(function () use (
-            $propertyId, $reservation, $guestId, $property, $idempotencyKey
+            $propertyId, $reservationId, $idempotencyKey
         ) {
-            Property::where('id', $propertyId)->lockForUpdate()->firstOrFail();
-            Reservation::where('id', $reservation->id)->lockForUpdate()->firstOrFail();
+            $property = Property::where('id', $propertyId)->lockForUpdate()->firstOrFail();
+            $reservation = $this->lockReservationForOpening($reservationId, $propertyId);
 
             $existing = Folio::withoutGlobalScope('property')
                 ->where('property_id', $propertyId)
@@ -175,6 +152,7 @@ class GuestLedgerFolioAggregateService
                 return $existing;
             }
 
+            $guestId = $this->guestForNewWindow($reservation, $propertyId);
             return $this->createFolioLocked(
                 $propertyId, $reservation->id, $guestId, $property->currency, $idempotencyKey, null
             );
@@ -540,20 +518,36 @@ class GuestLedgerFolioAggregateService
         }
     }
 
-    private function resolveReservation(string $reservationId, string $propertyId): Reservation
+    private function lockReservationForOpening(string $reservationId, string $propertyId): Reservation
     {
-        $reservation = Reservation::withoutGlobalScope('property')
-            ->where('id', $reservationId)
-            ->where('property_id', $propertyId)
-            ->first();
-
+        $reservation = Reservation::withoutGlobalScope('property')->whereKey($reservationId)
+            ->where('property_id', $propertyId)->lockForUpdate()->first();
         if (! $reservation) {
             throw ValidationException::withMessages([
                 'reservation' => ['Reservation not found in the current property.'],
             ]);
         }
-
         return $reservation;
+    }
+
+    private function guestForNewWindow(Reservation $reservation, string $propertyId): string
+    {
+        if (in_array($reservation->status->value, ['cancelled', 'no_show'], true)
+            || ! $reservation->primary_guest_id) {
+            throw ValidationException::withMessages([
+                'reservation' => ['Reservation cannot open a new folio window.'],
+            ]);
+        }
+
+        $guest = Guest::withoutGlobalScope('property')->whereKey($reservation->primary_guest_id)
+            ->where('property_id', $propertyId)->lockForUpdate()->first();
+        if (! $guest) {
+            throw ValidationException::withMessages([
+                'reservation' => ['Reservation primary guest is unavailable.'],
+            ]);
+        }
+
+        return $guest->id;
     }
 
     private function resolveItemType(mixed $itemType): FolioItemTypeEnum
